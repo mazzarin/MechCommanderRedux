@@ -296,6 +296,10 @@ std::expected<void, std::string> MCSdlPresenter::Upload(const MCFrame& frame)
 
 std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
 {
+    // The frame log's parts: the frame, the menus over it and the show (with the log open, the renderer's queue is run
+    // at each part's end, so each part's draws count in it, not in the show).
+    std::optional<MCFrameLog::Scope> part(std::in_place, "present.frame");
+
     if (auto uploaded = Upload(frame); !uploaded)
     {
         return uploaded;
@@ -325,20 +329,28 @@ std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
         SDL_RenderTexture(_Renderer.get(), _Texture.get(), &view, nullptr);
     }
 
+    RunQueueForLog();
+
     if (frame.Overlay != nullptr && !frame.Overlay->Draws.empty())
     {
-        MCFrameLog::Scope part("present.menus");
+        part.emplace("present.menus");
 
         if (auto drawn = DrawOverlay(frame.Overlay, MCUiShown(frame.Fade)); !drawn)
         {
             return drawn;
         }
+
+        RunQueueForLog();
     }
+
+    part.emplace("present.show");
 
     if (!SDL_RenderPresent(_Renderer.get()))
     {
         return std::unexpected(SdlError("SDL_RenderPresent"));
     }
+
+    part.reset();
 
     // The frame handed to the screen: the frame log's time between these is the screen's (a benchmark's hitches).
     MCFrameLog::Presented();
@@ -403,6 +415,8 @@ std::expected<void, std::string> MCSdlPresenter::DrawOverlay(const std::shared_p
     // The menus' picture is drawn by the CPU and uploaded only when it changes; else the one kept is shown again.
     if (overlay != _OverlayDrawn || _Overlay == nullptr)
     {
+        MCFrameLog::Scope part("present.menus.draw");
+
         if (auto drawn = _Ui.Draw(*overlay); !drawn)
         {
             return drawn;
@@ -433,6 +447,14 @@ std::expected<void, std::string> MCSdlPresenter::DrawOverlay(const std::shared_p
     SDL_RenderTexture(_Renderer.get(), _Overlay.get(), &box, &box);
     ApplyPresentation(_View);
     return {};
+}
+
+void MCSdlPresenter::RunQueueForLog()
+{
+    if (MCFrameLog::Enabled() && !SDL_FlushRenderer(_Renderer.get()))
+    {
+        SDL_Log("MCSdlPresenter: the frame log's flush of the renderer's queue failed: %s", SDL_GetError());
+    }
 }
 
 std::expected<void, std::string> MCSdlPresenter::UploadOverlay(const SDL_Surface& picture)

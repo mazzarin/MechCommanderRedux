@@ -4,6 +4,7 @@
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
 #include "platform/MCUiSoftware.h"
 #include "platform/MCUtf8Path.h"
@@ -825,6 +826,23 @@ namespace
         event.motion.y = y / density;
         return event;
     }
+
+    /// <summary>The present's parts in <paramref name="tally"/> (the frame log's), in ms a frame of
+    /// <paramref name="frames"/>.</summary>
+    std::string PresentParts(const MCFrameLog::MCTally& tally, int32_t frames)
+    {
+        std::string parts;
+
+        for (const auto& [name, ms] : tally.PartsMs)
+        {
+            if (name.starts_with("present"))
+            {
+                parts += std::format("{}{} {:.3f}", parts.empty() ? "" : ", ", name, ms / frames);
+            }
+        }
+
+        return parts.empty() ? std::string("none") : parts;
+    }
 }
 
 /// <summary>
@@ -833,7 +851,7 @@ namespace
 /// 1</c>, on the GPU renderer or with <c>--rml-software 1</c> the software one, and saves the whole window's picture
 /// into the folder. Then it times <c>--rml-frames</c> frames (200 by default) without vsync, the mouse moving down the
 /// list's rows (each frame restyles two): the menus' layout and recording a frame, the present with their draws and
-/// without, and their draws drawn alone and read back.
+/// without, and their draws drawn alone and read back; and the present's parts from a frame log beside the picture.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen")
 {
@@ -912,9 +930,15 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
     double withMs = 0.0;
     double readMs = 0.0;
     const uint64_t redrawsBefore = display->OverlayRedraws();
+    // The present's parts, each loop's tallied apart, from a frame log beside the picture.
+    const std::filesystem::path log = std::filesystem::path(path).replace_extension(".framelog");
+    REQUIRE(MCFrameLog::Open(log));
+    MCFrameLog::NextFrame();
+    MCFrameLog::StartTally();
 
     for (int32_t frame = 0; frame < frames; ++frame)
     {
+        MCFrameLog::NextFrame();
         const float y = rowsTop + std::fmod(static_cast<float>(frame) * RowStep, rowsHeight);
         MCInput::HandleEvent(MouseAt(*display, rowsX, y));
         const uint64_t start = SDL_GetPerformanceCounter();
@@ -932,15 +956,19 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
 
     // The software presenter's redraws of the menus' picture (none on the GPU: it draws them every frame).
     const uint64_t redraws = display->OverlayRedraws() - redrawsBefore;
+    MCFrameLog::NextFrame();
+    const MCFrameLog::MCTally withParts = MCFrameLog::TakeTally();
 
     // The same without the menus: a present alone, and an empty window's read back.
     const auto empty = std::make_shared<MCUiDraws>(MCUiDraws{.Width = width, .Height = height, .Draws = {}});
     display->SetOverlay(nullptr);
     double withoutMs = 0.0;
     double readEmptyMs = 0.0;
+    MCFrameLog::StartTally();
 
     for (int32_t frame = 0; frame < frames; ++frame)
     {
+        MCFrameLog::NextFrame();
         const uint64_t start = SDL_GetPerformanceCounter();
         REQUIRE(display->Present(false).has_value());
         const uint64_t shown = SDL_GetPerformanceCounter();
@@ -956,6 +984,11 @@ TEST_CASE_ISOLATED("tool: --rml-probe pictures and times the RmlUi probe screen"
         "an empty window {:.3f} (+{:.3f})\n",
         frames, width, height, menusMs / frames, withMs / frames, redraws, withoutMs / frames,
         (withMs - withoutMs) / frames, readMs / frames, readEmptyMs / frames, (readMs - readEmptyMs) / frames);
+    MCFrameLog::NextFrame();
+    const MCFrameLog::MCTally withoutParts = MCFrameLog::TakeTally();
+    MCFrameLog::Close();
+    std::cout << std::format("  the present's parts, ms a frame, with the menus: {}; without: {}\n",
+                             PresentParts(withParts, frames), PresentParts(withoutParts, frames));
 
     GHdArt = 0;
     MCHdArt::SetPackFolder({});

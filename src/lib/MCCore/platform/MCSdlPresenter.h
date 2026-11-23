@@ -59,6 +59,8 @@ private:
     /// <summary>Port-only: puts the menus' newly drawn <paramref name="picture"/> (premultiplied RGBA) in
     /// <see cref="_Overlay"/>, as <see cref="_Ui"/>'s comment says.</summary>
     std::expected<void, std::string> UploadOverlay(const SDL_Surface& picture);
+    /// <summary>With the frame log open, runs the renderer's queued draws now, so they count in the part made.</summary>
+    void RunQueueForLog();
 
     /// <summary>The window shown in (the display's); destroyed after the renderer.</summary>
     std::shared_ptr<SDL_Window> _Window;

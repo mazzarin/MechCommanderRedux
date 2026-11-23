@@ -209,7 +209,9 @@ namespace MCTestGame
         return files;
     }
 
-    KeepPrefs::KeepPrefs() : _Path(MCFileSystem::UserRoot() / PrefsFile)
+    // The test user folder the game boots into (Boot): MCFileSystem::UserRoot() names it only once the game is up, and
+    // the game folder before.
+    KeepPrefs::KeepPrefs() : _Path(UserFolder() / PrefsFile)
     {
         std::ifstream file(_Path, std::ios::binary);
         _Existed = file.is_open();

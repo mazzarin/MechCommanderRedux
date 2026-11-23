@@ -361,6 +361,7 @@ span, em, strong { display: inline; }
    A switch: <div class="switch"><div class="on">ON</div><div>OFF</div></div>; Left and Right, or a click.
    A stepper: <div class="stepper" data-choices="LOW|MEDIUM|HIGH" data-choice="1"><div class="arrow">&lt;</div>
    <div class="step-value"/><div class="arrow">&gt;</div></div>; Left and Right, or its arrows.
+   A switch or stepper held (.off on it) refuses Left, Right and clicks with the refusal's sound, as a dim button does.
    A slider: <input type="range" class="slider" min="0" max="100" step="5" value="50"/>, its number the screen's.
    A text box: <input type="text" class="field" value="..."/>; Enter leaves it.
    A window: its own document, shown over the screen: <body class="window-body"><div class="veil"/>

@@ -1,0 +1,18 @@
+<rml>
+<head>
+    <title>Question</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="dialog.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "Dialogs"): a question a remade screen asks before a change ("Remove the HD pack?"), in
+     the style frames' dialog_exit_mp.rml's shape: its heading the question, CANCEL and the act (logistics/MCQuestionWindow). -->
+<body class="window-body">
+    <div class="veil"></div>
+    <div class="window-place">
+        <div class="dialog panel glass">
+            <div class="titlebar"><div class="heading caps" id="heading"></div></div>
+            <div class="foot row"><div class="button" id="no">Cancel</div><div class="grow"></div><div class="button main" id="yes" data-first></div></div>
+        </div>
+    </div>
+</body>
+</rml>

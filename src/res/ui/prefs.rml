@@ -1,0 +1,41 @@
+<rml>
+<head>
+    <title>Preferences</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="prefs.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "Preferences"; the style frames' prefs_*.rml): one document in two places, from the main
+     menu on the night ground, and in a mission from the pause's ALL PREFERENCES over the battlefield (body.mission).
+     Its sections' rows are made from the settings (logistics/MCPrefsScreen); a section shows on its tab. -->
+<body class="night">
+    <div id="veil"></div>
+    <div class="stage16">
+        <div id="prefs" class="content">
+            <div id="sheet">
+                <div id="head" class="row bottom">
+                    <div class="grow"><div class="eyebrow" id="place">Main menu</div><div class="title caps">Preferences</div></div>
+                </div>
+                <div id="body">
+                    <div class="tabs side-tabs" id="sections"></div>
+                    <div class="scroll-box"><div class="scroller" id="rows"></div><div class="fade"></div></div>
+                </div>
+                <div id="foot" class="row">
+                    <div class="button" id="cancel">Cancel</div>
+                    <div class="grow"></div>
+                    <div class="button hidden" id="original">Original</div>
+                    <div class="button hidden" id="laptop">Laptop</div>
+                    <div class="button" id="defaults">Defaults</div>
+                    <div class="button main" id="accept">Accept</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar">
+        <div class="stage16">
+            <div class="content">
+                <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

@@ -1,0 +1,99 @@
+/* Port-only (SPEC-menus.md, "Preferences"): the game's copy of tools/menus-frames/frames/prefs.rcss with the controls
+   live. On the night ground from the main menu: a sheet 672 units wide at most, centred, its name along the top; its
+   sections as tabs down its left side (the kit's tabs, Q and E), the one shown white on the hover's fill, edged cyan;
+   the section's settings a row each: the name, a line under it only for what the name can't say, the control at the
+   right in one column, so the controls line up; a group's name in cyan over its rows. Along the bottom CANCEL (the way
+   back), then DEFAULTS and ACCEPT (ORIGINAL on HD, LAPTOP on CONTROLS). In a mission (body.mission) the same sheet in a
+   panel over the battlefield behind a light veil, at the mission's interface size. The pause's quick settings use the
+   same rows, without the lines (battle.rcss). */
+
+body.mission { background-color: transparent; }
+#veil { display: none; }
+body.mission #veil { display: block; background-color: #04040480; }
+
+#prefs { padding-top: 16dp; padding-bottom: 34dp; align-items: center; }
+#prefs > * { flex: 0 0 auto; }
+#sheet { flex: 1 1 0; width: 100%; max-width: 672dp; display: flex; flex-direction: column; }
+#sheet > * { flex: 0 0 auto; }
+body.mission #sheet { box-sizing: border-box; padding: 12dp; background-color: #040404d9; border: 1dp #2a3742; }
+
+#head { padding-bottom: 6dp; border-bottom: 1dp #2a3742; margin-bottom: 12dp; }
+#head > * { flex: 0 0 auto; }
+#head > .grow { flex: 1 1 0; }
+
+#sheet > #body { flex: 1 1 0; display: flex; flex-direction: row; align-items: stretch; gap: 16dp; }
+#body > * { flex: 0 0 auto; }
+#body > .scroll-box { flex: 1 1 0; }
+
+/* The sections: the kit's tabs, down the left. */
+.tabs.side-tabs { display: block; width: 112dp; border-right: 1dp #2a3742; }
+.tab.side-tab { display: block; box-sizing: border-box; height: 24dp; padding: 0 10dp; border-left: 2dp #04040400; border-bottom-width: 0; font-size: 11.63dp; line-height: 24dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; white-space: nowrap; }
+.tab.side-tab:hover { color: #fcfcfc; }
+.tab.side-tab.now { color: #fcfcfc; background-color: #12222e; border-left-color: #7cd4ec; border-bottom-width: 0; }
+
+/* A section's rows; only the section shown is laid out. */
+.section { display: none; }
+.section.shown { display: block; }
+
+/* A group's name over its rows; the first one at the top. */
+.group { margin-top: 12dp; padding-bottom: 4dp; }
+.group.first { margin-top: 0; }
+
+/* A setting: its name and the line under it, the control at the right in a column of its own. */
+.set-row { box-sizing: border-box; display: flex; flex-direction: row; align-items: center; gap: 12dp; height: 32dp; padding: 0 6dp; border-bottom: 1dp #141e26; }
+.set-row > * { flex: 0 0 auto; }
+.set-row > .set-words { flex: 1 1 0; }
+.set-row:hover { background-color: #12222e; }
+.set-row.quick { height: 24dp; }
+.set-name { font-size: 9.51dp; line-height: 13dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.set-line { font-size: 9.51dp; line-height: 13dp; color: #a4b0bc; white-space: nowrap; }
+.set-control { width: 196dp; display: flex; flex-direction: row; justify-content: flex-end; align-items: center; }
+.set-control > * { flex: 0 0 auto; }
+.set-row.held .set-name { color: #6c7a88; }
+.set-row.held .set-line { color: #a4b0bc; }
+.set-row.held .switch > div, .set-row.held .switch > div:hover { color: #6c7a88; border-color: #2a3742; }
+.set-row.held .switch > .on { background-color: #1e2a34; }
+.set-row.held .arrow, .set-row.held .arrow:hover { color: #6c7a88; }
+.set-row.held .step-value { color: #6c7a88; }
+.set-row.held input.range.slider sliderprogress { background-color: #6c7a88; }
+
+/* A mark on a setting that changes how the game plays, beside its name. */
+.tag { display: inline-block; margin-left: 6dp; padding: 0 4dp; border: 1dp #6c7a88; font-size: 8.75dp; line-height: 11dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+
+/* A slider in a row: its rail 120 units, its number beside it. */
+.set-control input.range.slider { width: 120dp; margin-right: 10dp; }
+.level { width: 26dp; font-size: 9.51dp; line-height: 20dp; font-weight: 600; text-align: right; color: #fcfcfc; }
+.set-control .step-value { width: 96dp; }
+
+/* CONTROLS: the commands in a list, a key and its alternate each in a box; a key being set waits in cyan. */
+.keys-head { display: flex; flex-direction: row; height: 16dp; padding: 0 6dp; border-bottom: 1dp #2a3742; font-size: 8.75dp; line-height: 16dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; }
+.keys-head > * { flex: 0 0 auto; }
+.keys-head > .grow { flex: 1 1 0; }
+.key-row { box-sizing: border-box; display: flex; flex-direction: row; align-items: center; height: 18dp; padding: 0 6dp; border-bottom: 1dp #141e26; }
+.key-row > * { flex: 0 0 auto; }
+.key-row > .grow { flex: 1 1 0; }
+.key-row:hover { background-color: #12222e; }
+.command { font-size: 11.63dp; line-height: 17dp; white-space: nowrap; }
+.key-group { margin-top: 8dp; height: 16dp; padding: 0 6dp; font-size: 9.51dp; line-height: 16dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; }
+.key-group.first { margin-top: 4dp; }
+.c-key { width: 112dp; margin-left: 8dp; }
+.bind { box-sizing: border-box; height: 16dp; padding: 0 6dp; border: 1dp #2a3742; font-size: 9.51dp; line-height: 14dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; tab-index: auto; nav: auto; focus: auto; cursor: pointer; }
+.bind:hover { border-color: #6c7a88; }
+.bind.empty { border-color: #1e2a34; }
+.bind.waiting { border-color: #7cd4ec; color: #7cd4ec; }
+
+/* REPORTS: what is sent, in running text under the setting. */
+.about { margin-top: 12dp; padding: 0 6dp; font-size: 11.63dp; line-height: 16dp; color: #dce4e4; white-space: normal; }
+.about p { margin-bottom: 8dp; }
+
+#foot { margin-top: 12dp; padding-top: 8dp; border-top: 1dp #2a3742; gap: 8dp; }
+#foot > * { flex: 0 0 auto; }
+#foot > .grow { flex: 1 1 0; }
+#foot > .button.hidden, .set-control > .button.hidden { display: none; }
+
+/* The hint line along the foot of the night screens: the mouse's at the left, the keys at the right. */
+#hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 34dp; }
+#hintbar .content { padding-top: 8dp; }
+
+/* Over the battlefield the hint line and the CHANGES PLAY tag are the battle's smallest, 8.5 units (battle.rcss). */
+body.mission .hints, body.mission .tag { font-size: 8.99dp; }

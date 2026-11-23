@@ -645,6 +645,9 @@
     <ClCompile Include="logistics\MCPrefsPage.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCPrefsScreen.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCPurchaseDlg.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -663,7 +666,13 @@
     <ClCompile Include="logistics\MCPurVehicleList.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCQuestionWindow.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCRegistrySettings.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCRemadeScreens.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCRepairScreen.cpp">
@@ -676,6 +685,12 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCSessionScreen.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCSettingsModel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCSettingsScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCSmuti.cpp">
@@ -2161,6 +2176,9 @@
     <ClInclude Include="logistics\MCPrefsPage.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCPrefsScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCPurchaseDlg.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2179,7 +2197,13 @@
     <ClInclude Include="logistics\MCPurVehicleList.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCQuestionWindow.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCRegistrySettings.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCRemadeScreens.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCRepairScreen.h">
@@ -2192,6 +2216,12 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCSessionScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCSettingsModel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCSettingsScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCSmuti.h">

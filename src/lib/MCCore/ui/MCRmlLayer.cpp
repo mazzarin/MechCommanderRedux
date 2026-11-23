@@ -82,6 +82,23 @@ namespace
     {
         return static_cast<int>(std::floor(point * density));
     }
+
+    /// <summary>
+    /// <paramref name="key"/> to the layer's top screen while it takes the keys first (MCRmlScreen::TakesKeys); whether
+    /// it used it. Pinned while it runs: what it does with the key can close it.
+    /// </summary>
+    bool GiveRawKey(const MCRmlLayer& layer, const SDL_KeyboardEvent& key)
+    {
+        const MCOptionalRef<MCRmlScreen> top = layer.Top();
+
+        if (!top.has_value() || !top->get().TakesKeys())
+        {
+            return false;
+        }
+
+        const std::shared_ptr<MCRmlScreen> screen = top->get().shared_from_this();
+        return screen->OnRawKey(key);
+    }
 }
 
 MCRmlLayer::MCRmlLayer(Key, Rml::Context& context, MCKind kind, MCUnit unit, MCRmlKit& kit)
@@ -255,6 +272,12 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
         }
         case SDL_EVENT_KEY_DOWN:
         {
+            // A screen waiting for a key (CONTROLS' PRESS A KEY) has it first, whatever it is.
+            if (GiveRawKey(*this, event.key))
+            {
+                return true;
+            }
+
             const Rml::Input::KeyIdentifier key = KeyOf(event.key.key);
             const int held = ModifiersOf(event.key.mod);
 
@@ -298,6 +321,12 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
         }
         case SDL_EVENT_KEY_UP:
         {
+            // A modifier let go alone is a binding too (CONTROLS' ALT).
+            if (GiveRawKey(*this, event.key))
+            {
+                return true;
+            }
+
             if (const Rml::Input::KeyIdentifier key = KeyOf(event.key.key); key != Rml::Input::KI_UNKNOWN)
             {
                 _Context.ProcessKeyUp(key, ModifiersOf(event.key.mod));
@@ -330,6 +359,25 @@ bool MCRmlLayer::Typing() const
 
 void MCRmlLayer::Update()
 {
+    // The screens shown first, each pinned: what one does in its frame can close it, or open another.
+    std::vector<std::shared_ptr<MCRmlScreen>> shown;
+
+    for (const MCGuiRef<MCRmlScreen>& screen : _Screens)
+    {
+        if (std::shared_ptr<MCRmlScreen> pinned = screen.Pin(); pinned != nullptr && pinned->Shown())
+        {
+            shown.push_back(std::move(pinned));
+        }
+    }
+
+    for (const std::shared_ptr<MCRmlScreen>& screen : shown)
+    {
+        if (!screen->WasDestroyed() && screen->Shown())
+        {
+            screen->OnFrame();
+        }
+    }
+
     _Kit.Update(_Context);
     _Context.Update();
 }

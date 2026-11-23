@@ -1,0 +1,39 @@
+<rml>
+<head>
+    <title>Update</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="update.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "UPDATE"; the style frames' update*.rml): from the main menu's update line, INTERNET's
+     "Update to play online." and a newer game's UPDATE. The version running, what the new one brings, its download and
+     where the update stands, in the game's words (logistics/MCUpdateScreen). -->
+<body class="painting">
+    <div class="stage16">
+        <div id="frame" class="content">
+            <div id="update" class="panel glass">
+                <div class="titlebar row bottom"><div class="grow"><div class="eyebrow" id="place">Main menu</div><div class="title caps">Update</div></div><div class="data grey caps nowrap" id="running"></div></div>
+                <div class="row gap12 grow" id="update-body">
+                    <div id="notes">
+                        <div class="list-head row"><div class="cell grow" style="padding-left: 0;" id="brings"></div><div class="cell" id="changes"></div></div>
+                        <div class="scroll-box"><div class="scroller" id="note-list"></div><div class="fade"></div></div>
+                    </div>
+                    <div id="facts">
+                        <div class="heading caps nowrap" style="margin-bottom: 8dp;" id="version"></div>
+                        <div class="fact" id="size-fact"><div class="label">Download</div><div id="size"></div></div>
+                        <div class="fact" id="small-fact"><div class="label">Smaller art</div><div id="small"></div></div>
+                        <div class="status"><div id="status"></div><div class="meter hidden" id="meter"><div class="meter-fill cream" id="meter-fill" style="width: 0%;"></div></div></div>
+                    </div>
+                </div>
+                <div id="foot" class="row"><div class="button" id="back">Back</div><div class="grow"></div><div class="button hidden" id="second"></div><div class="button main hidden" id="act"></div></div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar" class="bar glass">
+        <div class="stage16">
+            <div class="content">
+                <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

@@ -56,6 +56,8 @@
 using namespace MCScreenInput;
 using MCTestGuest::DialogText;
 using MCTestGuest::ElementOf;
+using MCTestGuest::InRoom;
+using MCTestGuest::OnAccess;
 using MCTestGuest::OnInternet;
 using MCTestGuest::OnLan;
 using MCTestGuest::PressDialogCancel;
@@ -74,7 +76,6 @@ using Rows = std::vector<std::string>;
 namespace
 {
     constexpr std::string_view Service = MCFakeGames::ServiceUrl;
-    constexpr std::string_view ListPath = "/list";
     constexpr std::string_view CountUrl = "https://games.test/count";
 
     /// <summary>The rows of <see cref="MCInternetSpots::EveryKindOfGame"/> as INTERNET shows them.</summary>
@@ -92,23 +93,6 @@ namespace
         Settle();
     }
 
-    /// <summary>The list's socket scripted and the games' sockets to <paramref name="service"/>, for the test's time.</summary>
-    class MCServicesScope
-    {
-    public:
-        MCServicesScope(MCServiceScript::ListScript& list, MCFakeGames::MCFakeGamesService& service)
-            : _Scope([toList = MCServiceScript::ListOpener(list), toGames = service.Opener(),
-                      listUrl = std::format("{}{}", Service, ListPath)](const std::string& url)
-                     { return url.starts_with(listUrl) ? toList(url) : toGames(url); },
-                     MCServiceScript::Answering(R"({"online":1})", _Asked), Service, Version)
-        {
-        }
-
-    private:
-        std::string _Asked;
-        MCServiceScript::SetupScope _Scope;
-    };
-
     /// <summary>INTERNET's screen (made by its first opening).</summary>
     MCGamesScreen& Internet()
     {
@@ -123,14 +107,6 @@ namespace
         return [counts = std::move(counts)] { return Internet().Seen().Counts == counts; };
     }
 
-    /// <summary>MULTIPLAYER ACCESS (the 1998 screen) shown, nothing over it, the change that showed it over.</summary>
-    bool OnAccess()
-    {
-        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        return logistics->CurrentScreen() == logistics->MultiplayerScreen &&
-               logistics->MultiplayerScreen->IsShowing() && !OnInternet() && !OnLan() && !MCScreenChange::Running();
-    }
-
     /// <summary>INTERNET opened from MULTIPLAYER ACCESS, its list answered with no games, the player's name set.</summary>
     MCGamesScreen& OpenInternetScreen(MCServiceScript::ListScript& list)
     {
@@ -143,12 +119,6 @@ namespace
         MCGamesScreen& screen = Internet();
         screen.SetPlayerName("Commander");
         return screen;
-    }
-
-    /// <summary>Whether the room (the 1998 session screen) shows.</summary>
-    bool InRoom()
-    {
-        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen && GlobalLog()->SessionScreen->IsShowing();
     }
 
     /// <summary>HOST GAME, then its window's HOST GAME for 4 players: the room. The game's name.</summary>

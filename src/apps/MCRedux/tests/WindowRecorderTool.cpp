@@ -1,5 +1,8 @@
 #include "stdafx.h"
+#include "MCFakeUpdaterBackend.h"
+#include "MCInternetSpots.h"
 #include "MCTest.h"
+#include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
@@ -12,9 +15,13 @@
 #include "main/MCGameContext.h"
 #include "main/MCHdSettings.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCConnectMenu.h"
+#include "logistics/MCGamesScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUpdatePage.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
@@ -27,6 +34,7 @@
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCHdArt.h"
+#include "ui/MCRmlDialog.h"
 
 // Port-only, a tool (SPEC-menus.md's stage 1): --record-window <folder> records the whole window as presented, frame
 // by frame, through the two changes of screen stage 1 made: BEGIN MISSION to the battlefield's first seconds, and the
@@ -49,6 +57,13 @@
 // loss's REPLAY MISSION, a quick-start mission's win to SOLO MISSIONS, Escape back to the main menu, and the
 // campaign's last mission won to the main menu (its end movies skipped with Escape); each part's summary ends with the
 // flow's stack.
+//
+// Port-only (SPEC-menus.md's stage 3): --record-window-games 1 times INTERNET's and LAN's changes and windows instead of
+// the mission's, through a scripted games list and a stand-in service (tests/MCInternetSpots.h): MULTIPLAYER ACCESS's
+// INTERNET, HOST GAME's window and its HOST GAME into the room, the room's EXIT back, JOIN GAME's wait and its CANCEL,
+// a newer game's JOIN GAME (its dialog) and UPDATE, UPDATE's way back, BACK, then LAN and its BACK. Each step's press to
+// the end of the first frame showing what it opened goes to the output and the frame log ("step <name>: ..."), beside
+// the changes' own lines; nothing is recorded.
 
 namespace
 {
@@ -665,9 +680,10 @@ namespace
     /// <summary>
     /// Runs the game's frames at a 60 Hz display's pace, each as long as the real time since the game's clock last
     /// caught up (<paramref name="time"/>), until <paramref name="done"/> (or <paramref name="mostSeconds"/>); whether
-    /// <paramref name="done"/> came.
+    /// <paramref name="done"/> came. <paramref name="afterFrame"/> runs as each frame ends (presented).
     /// </summary>
-    bool RunPaced(const MCRealTime& time, const std::function<bool()>& done, double mostSeconds)
+    bool RunPaced(const MCRealTime& time, const std::function<bool()>& done, double mostSeconds,
+                  const std::function<void()>& afterFrame = {})
     {
         const auto refresh = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / PaceHz));
         const Clock::time_point end =
@@ -689,6 +705,12 @@ namespace
             }
 
             MCTestGame::RunFrame(static_cast<float>(std::clamp(time.Behind(), ShortestFrame, LongestFrame)));
+
+            if (afterFrame)
+            {
+                afterFrame();
+            }
+
             std::this_thread::sleep_until(now + refresh);
         }
 
@@ -783,6 +805,99 @@ namespace
 
         return text;
     }
+
+    /// <summary>
+    /// A step of --record-window-games: <paramref name="press"/>, then paced frames until <paramref name="landed"/> holds
+    /// and no change runs. The press to the end of the first frame after which <paramref name="landed"/> held is
+    /// printed and logged (a window's or a dialog's first whole frame; a change's is its own line in the frame log).
+    /// </summary>
+    void TimeStep(const MCRealTime& time, std::string_view name, const std::function<void()>& press,
+                  const std::function<bool()>& landed)
+    {
+        RunPacedFor(time, SecondsBefore);
+        std::optional<double> firstMs;
+        const Clock::time_point pressed = Clock::now();
+        press();
+        const bool came = RunPaced(
+            time, [&firstMs] { return firstMs.has_value() && Settled(); }, MostChangeSeconds,
+            [&]
+            {
+                if (!firstMs.has_value() && landed())
+                {
+                    firstMs = std::chrono::duration<double, std::milli>(Clock::now() - pressed).count();
+                }
+            });
+        CHECK(came);
+        const std::string line =
+            came ? std::format("step {}: the press to the end of the first frame showing it {:.1f} ms", name,
+                               firstMs.value_or(0.0))
+                 : std::format("step {}: never landed", name);
+        MCFrameLog::Line(line);
+        std::cout << std::format("  {}; the flow's stack: {}\n", line, MCScreenFlow::StackText());
+    }
+
+    /// <summary>
+    /// --record-window-games (see the top of this file), from the main menu: <paramref name="list"/> is the scripted
+    /// games list.
+    /// </summary>
+    void TimeGames(const MCRealTime& time, MCServiceScript::ListScript& list)
+    {
+        using namespace MCInternetSpots;
+        using MCTestGuest::InRoom;
+        using MCTestGuest::OnAccess;
+        using MCTestGuest::OnInternet;
+        using MCTestGuest::OnLan;
+        constexpr std::string_view PlayerName = "Commander";
+        constexpr int ListedOnline = 37;
+        constexpr int ListedInGames = 12;
+        const auto dialogShown = [] { return MCRmlDialogs::Shown(); };
+
+        ConnectScreen();
+        REQUIRE(RunPaced(time, OnAccess, MostChangeSeconds));
+
+        // INTERNET, its games listed, the first picked.
+        TimeStep(time, "internet", [] { MCScreenInput::Click(InternetX, InternetY); }, OnInternet);
+        MCGamesScreen& internet = *MCTestGuest::Games(MCGamesWhere::Internet);
+        internet.SetPlayerName(std::string(PlayerName));
+        list.Send(EveryKindOfGame(ListedOnline, ListedInGames));
+        REQUIRE(RunPaced(time, [&internet] { return !internet.Seen().Rows.empty(); }, MostChangeSeconds));
+        internet.PickKey("K7QF");
+
+        // HOST GAME's window, closed, then again and its HOST GAME: the room; the room's EXIT back to INTERNET.
+        const auto hostShown = [&internet] { return internet.HostWindow() && internet.HostWindow()->Shown(); };
+        TimeStep(time, "host-window", [&internet] { internet.PressHost(); }, hostShown);
+        TimeStep(
+            time, "host-window-back", [&internet] { internet.HostWindow()->Back(); }, [&] { return !hostShown(); });
+        internet.PressHost();
+        REQUIRE(RunPaced(time, hostShown, MostChangeSeconds));
+        TimeStep(time, "host-to-room", [&internet] { internet.HostWindow()->PressHost(); }, InRoom);
+        TimeStep(
+            time, "room-exit",
+            []
+            {
+                MCGuiObject& exit = *GlobalLog()->SessionScreen->ExitButton;
+                MCScreenInput::Click(exit.GlobalX() + exit.Width() / 2, exit.GlobalY() + exit.Height() / 2);
+            },
+            OnInternet);
+
+        // JOIN GAME on Bob's game: the wait, its CANCEL. A newer game's JOIN GAME: its dialog, its UPDATE, and back.
+        list.Send(EveryKindOfGame(ListedOnline, ListedInGames));
+        REQUIRE(RunPaced(time, [&internet] { return !internet.Seen().Rows.empty(); }, MostChangeSeconds));
+        internet.PickKey("K7QF");
+        TimeStep(time, "join-wait", [&internet] { internet.PressJoin(); }, dialogShown);
+        TimeStep(
+            time, "join-cancel", [] { MCRmlDialogs::Dialog()->PressOther(); },
+            [] { return OnInternet() && !MCRmlDialogs::Shown(); });
+        internet.PickKey("W8ZE");
+        TimeStep(time, "join-newer", [&internet] { internet.PressJoin(); }, dialogShown);
+        TimeStep(time, "update", [] { MCRmlDialogs::Dialog()->PressMain(); }, [] { return UpdatePageShown(); });
+        TimeStep(time, "update-back", [] { HideUpdatePage(); }, OnInternet);
+
+        // BACK, then LAN and its BACK.
+        TimeStep(time, "internet-back", [&internet] { internet.Back(); }, OnAccess);
+        TimeStep(time, "lan", [] { MCScreenInput::Click(LanX, LanY); }, OnLan);
+        TimeStep(time, "lan-back", [] { MCTestGuest::Games(MCGamesWhere::Lan)->Back(); }, OnAccess);
+    }
 }
 
 /// <summary>Tool: <c>--record-window &lt;folder&gt;</c> (see the top of this file).</summary>
@@ -834,6 +949,19 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     };
 
     const MCTestGame::SaveGameCleanup saves;
+    // --record-window-games' list and service, from before the menus start (as the internet tests have them).
+    const bool games = MCTest::Option("record-window-games").has_value();
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    std::optional<MCInternetSpots::MCServicesScope> services;
+    std::optional<MCTestUpdater::MCFakeUpdater> updater;
+
+    if (games)
+    {
+        services.emplace(list, service);
+        updater.emplace();
+    }
+
     REQUIRE(MCTestGame::StartLogistics());
     // The mouse in the window's middle, where a player's rests: left in the corner, the battle's edge scrolling runs
     // the camera off the ground the units see.
@@ -857,6 +985,13 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         ~MCCloseLog() { MCFrameLog::Close(); }
     } closeLog;
     RunPaced(time, Settled, MostChangeSeconds);
+
+    if (games)
+    {
+        TimeGames(time, list);
+        return;
+    }
+
     NewCampaign();
     RunPaced(time, Settled, MostChangeSeconds);
     RunPacedFor(time, SecondsBefore);

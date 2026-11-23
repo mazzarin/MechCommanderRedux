@@ -900,6 +900,20 @@ namespace MCTestGuest
         return OnGames(MCGamesWhere::Internet);
     }
 
+    /// <summary>MULTIPLAYER ACCESS (the 1998 screen) shown, nothing over it, the change that showed it over.</summary>
+    inline bool OnAccess()
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        return logistics->CurrentScreen() == logistics->MultiplayerScreen &&
+               logistics->MultiplayerScreen->IsShowing() && !OnInternet() && !OnLan() && !MCScreenChange::Running();
+    }
+
+    /// <summary>Whether the room (the 1998 session screen) shows.</summary>
+    inline bool InRoom()
+    {
+        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen && GlobalLog()->SessionScreen->IsShowing();
+    }
+
     /// <summary>The element <paramref name="id"/> in a remade screen's document; none while it isn't open.</summary>
     inline Rml::Element* ElementOf(const MCRmlScreen& screen, const char* id)
     {

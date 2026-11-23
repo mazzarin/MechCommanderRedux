@@ -115,6 +115,7 @@ bool MCPauseScreen::OpenOverMission()
     if (!multiplayer)
     {
         GamePaused = true;
+        pause->_Paused = true;
     }
 
     return true;
@@ -210,12 +211,7 @@ void MCPauseScreen::Resume()
     // The mission's end in a match can come while Preferences is open over it: its changes aren't kept.
     CloseOver();
     Keep();
-
-    if (!_Multiplayer)
-    {
-        GamePaused = false;
-    }
-
+    Unpause();
     Close();
 }
 
@@ -224,6 +220,14 @@ void MCPauseScreen::Keep()
     if (std::exchange(_Changed, false))
     {
         MCSettingsModel::Keep();
+    }
+}
+
+void MCPauseScreen::Unpause()
+{
+    if (std::exchange(_Paused, false))
+    {
+        GamePaused = false;
     }
 }
 
@@ -320,11 +324,6 @@ void MCPauseScreen::OnDestroy()
     // The mission's end takes it down too: the battle isn't left paused.
     CloseOver();
     Keep();
-
-    if (!_Multiplayer)
-    {
-        GamePaused = false;
-    }
-
+    Unpause();
     MCSettingsScreen::OnDestroy();
 }

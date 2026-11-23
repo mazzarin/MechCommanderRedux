@@ -54,6 +54,9 @@ namespace
     constexpr std::string_view HdAudioKey = "HDAudio";
     constexpr std::string_view ReportsKey = "Reports";
 
+    /// <summary>Whether REPORTS changed on the screen open now: the player's answer, given as it's kept.</summary>
+    bool ReportsChanged = false;
+
     const std::vector<std::string> OffOn = {"Off", "On"};
 
     /// <summary>The groups' names (cyan over their rows).</summary>
@@ -738,9 +741,21 @@ namespace
                                        .Name = "HD audio",
                                        .Key = HdAudioKey,
                                        .Choices = {"Off", "On", "Orchestral"}});
-        // ORCHESTRAL only when the pack has orchestral music.
+        // ORCHESTRAL only when the pack has orchestral music. Without it ORCHESTRAL plays the stereo music, as ON does:
+        // it shows as ON, and stays the player's ORCHESTRAL (PREFS keeps it) unless they pick another.
         hdAudio.Choices = []
         { return MCHdAudio::HasOrchestral() ? std::vector<std::string>{"Off", "On", "Orchestral"} : OffOn; };
+        const auto shownAudio = []
+        { return GHdAudio == HdAudioOrchestral && !MCHdAudio::HasOrchestral() ? int{HdAudioOn} : GHdAudio; };
+        hdAudio.Get = shownAudio;
+        hdAudio.Set = [shownAudio, stored = hdAudio.Set](int choice)
+        {
+            if (choice != shownAudio())
+            {
+                stored(choice);
+            }
+        };
+
         hdAudio.Control = MCControl::Switch;
         hdAudio.Line = []
         { return GHdAudio != HdAudioOff && !MCHdAudio::PackReadable() ? PackNeeded("audio") : std::string(); };
@@ -759,8 +774,8 @@ namespace
                                     [&reports](int choice)
                                 {
                                     reports.Value.get() = choice != 0 ? 1 : 0;
-                                    // Changed here, it's the player's own choice: no notice or question comes after.
-                                    MCTelemetry::Chosen();
+                                    // The player's own choice once kept (ACCEPT): no notice or question comes after.
+                                    ReportsChanged = true;
                                 }});
         return all;
     }
@@ -841,17 +856,13 @@ int MCSettingsModel::LevelPercent(const MCSetting& setting, int level)
 
 void MCSettingsModel::Opened(bool inMission)
 {
+    ReportsChanged = false;
+
     if (!inMission)
     {
         EnsureRegistryVersion();
         // A debug console's art mode is for the run only (MCArtModes.h): the screen shows and keeps the player's own.
         EndArtMode();
-    }
-
-    // ORCHESTRAL without the pack's orchestral music plays its stereo music, as ON does: it shows as ON.
-    if (GHdAudio == HdAudioOrchestral && !MCHdAudio::HasOrchestral())
-    {
-        GHdAudio = HdAudioOn;
     }
 }
 
@@ -902,10 +913,17 @@ void MCSettingsModel::Restore(const MCSaved& saved)
     GInterfaceSize = saved.InterfaceSize;
     GScrollSpeed = saved.ScrollSpeed;
     MCHdSettings::Restore(saved.Hd);
+    ReportsChanged = false;
 }
 
 void MCSettingsModel::Keep()
 {
+    // REPORTS changed here is the player's answer: the notice is seen, and no question comes after.
+    if (std::exchange(ReportsChanged, false))
+    {
+        MCTelemetry::Chosen();
+    }
+
     SavePrefs();
 }
 

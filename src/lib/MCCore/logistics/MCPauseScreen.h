@@ -49,9 +49,16 @@ private:
     /// it is kept), and LEAVE MATCH's question (it lives on the layer, and would hold the keys over the results).
     /// </summary>
     void CloseOver();
+    /// <summary>The mission let go, if this pause is what paused it.</summary>
+    void Unpause();
 
     bool _Multiplayer;
     bool _Changed = false;
+    /// <summary>
+    /// Whether this pause paused the mission (single player, once it opened): one that never opened leaves the mission's
+    /// pause as it was, for 1998's (the Pause key's) to take.
+    /// </summary>
+    bool _Paused = false;
     MCGuiHandle<MCPrefsScreen> _Prefs;
     MCGuiHandle<MCQuestionWindow> _Question;
 };

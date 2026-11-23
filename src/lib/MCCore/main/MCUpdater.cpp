@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include "main/MCUpdater.h"
+#include "network/MCIntroNote.h"
+#include "network/MCRejoinNote.h"
 #include "platform/MCInput.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
@@ -1441,11 +1443,22 @@ auto MCUpdater::SetGpuSamplesBc7(bool samples) -> void
     }
 }
 
+auto MCUpdater::CanRestartForHd() -> bool
+{
+    return Step == MCStep::SetsArmed;
+}
+
 auto MCUpdater::RestartForHd() -> void
 {
-    if (Step != MCStep::SetsArmed)
+    if (!CanRestartForHd())
     {
         return;
+    }
+
+    // Port-only (SPEC-menus.md's "The intro movies"): the game starts itself again, so its next start skips the intro.
+    if (const auto written = MCIntroNote::Write(MCFileSystem::UserRoot(), MCRejoinNote::Now()); !written)
+    {
+        SDL_Log("Updater: the HD pack's RESTART can't leave its intro note: %s", written.error().c_str());
     }
 
     // The new copy waits for this one's lock as it ends, then its start swaps the change in.

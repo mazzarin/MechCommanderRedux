@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCSettingsScreen.h"
 #include "logistics/MCQuestionWindow.h"
+#include "main/MCUpdater.h"
 #include "ui/MCRmlKit.h"
 
 #include <RmlUi/Core/Element.h>
@@ -235,7 +236,9 @@ void MCSettingsScreen::OnRowPress(const MCSetting& setting)
         }
     }
 
-    if (setting.Word && setting.Word() == MCSettingsModel::RestartWord)
+    // The HD pack's RESTART quits the game: what the screen changed is kept first, but only for a restart that goes
+    // ahead (a refused one leaves the screen as it was).
+    if (setting.Word && setting.Word() == MCSettingsModel::RestartWord && MCUpdater::CanRestartForHd())
     {
         BeforeRestart();
     }

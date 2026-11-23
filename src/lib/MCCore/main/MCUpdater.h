@@ -318,7 +318,13 @@ namespace MCUpdater
     /// </summary>
     void StopHd();
 
-    /// <summary>RESTART on HD OPTIONS: with the HD pack's change ready, the game quits and starts again, putting it in.</summary>
+    /// <summary>Whether <see cref="RestartForHd"/> restarts now: the HD pack's change is ready to put in.</summary>
+    bool CanRestartForHd();
+
+    /// <summary>
+    /// RESTART on HD OPTIONS: with the HD pack's change ready, the game quits and starts again, putting it in, and
+    /// leaves the intro note (network/MCIntroNote.h) so the new start skips the intro movies. Otherwise nothing.
+    /// </summary>
     void RestartForHd();
 
     /// <summary>

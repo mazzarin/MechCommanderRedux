@@ -1606,11 +1606,14 @@ TEST_CASE("updater: HD OPTIONS shows the HD art's size and both sets' sizes; the
         CHECK_EQ(MCUpdater::HdPack().TwoXBytes, uint64_t{TerrainAt2x.size() + Palette.size()});
         MCUpdater::CheckAtStart();
         REQUIRE(FramesUntilIdle());
+        CHECK(!MCUpdater::CanRestartForHd());
 
         MCUpdater::ChooseHdArt(true);
         CHECK(MCUpdater::HdPack().TwoXChosen);
         REQUIRE(FramesUntil([] { return MCUpdater::HdPack().Stage == MCStage::Ready; }));
         CHECK(release.Armed());
+        // RESTART (HD OPTIONS, Preferences' HD pack) restarts now, its intro note left (not called: it quits).
+        CHECK(MCUpdater::CanRestartForHd());
         const auto choice = MCContentUpdater::Choice(*MakeDisk(), game);
         REQUIRE(choice.has_value());
         CHECK(choice->Picked == MCContentUpdater::MCPicked::Player);

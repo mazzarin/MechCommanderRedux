@@ -149,14 +149,17 @@ namespace MCSettingsModel
 
     /// <summary>
     /// A screen opens on the settings (Preferences, the pause): in the menus a debug console's art mode gives way to
-    /// the player's own (MCArtModes.h), and ORCHESTRAL without the pack's orchestral music shows as ON, as it plays.
+    /// the player's own (MCArtModes.h).
     /// </summary>
     void Opened(bool inMission);
     /// <summary>The settings now, for <see cref="Restore"/>.</summary>
     MCSaved Save();
     /// <summary>CANCEL: the settings put back as <paramref name="saved"/> has them.</summary>
     void Restore(const MCSaved& saved);
-    /// <summary>ACCEPT, and the pause closing: the settings written to PREFS.CFG (SavePrefs).</summary>
+    /// <summary>
+    /// ACCEPT, and the pause closing: the settings written to PREFS.CFG (SavePrefs), and REPORTS, if it changed, given
+    /// as the player's answer (MCTelemetry::Chosen).
+    /// </summary>
     void Keep();
     /// <summary>
     /// DEFAULTS: <paramref name="section"/>'s settings put back to this build's defaults, but those a running mission

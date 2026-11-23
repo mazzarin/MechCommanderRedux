@@ -7,6 +7,7 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "iface/MCKeyBindings.h"
+#include "iface/MCTacticalInterface.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMenuScreens.h"
@@ -25,6 +26,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "platform/MCPresenter.h"
+#include "sound/MCHdAudio.h"
 #include "ui/MCRmlChecks.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
@@ -457,6 +459,40 @@ TEST_CASE_ISOLATED("game: CONTROLS' boxes take the next key, a modifier alone, a
 }
 
 /// <summary>
+/// HD AUDIO's ORCHESTRAL without the pack's orchestral music plays the stereo music, as ON does: the switch shows ON,
+/// and the player's ORCHESTRAL stays theirs (a screen opened and cancelled, or ON picked again, leaves it) until they
+/// pick another.
+/// </summary>
+TEST_CASE_ISOLATED("game: ORCHESTRAL without orchestral music shows as ON and stays the player's through CANCEL")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs keptPrefs;
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    REQUIRE(MCTestGame::StartLogistics());
+    RunWhileChanging();
+    REQUIRE(!MCHdAudio::HasOrchestral());
+    const MCOptionalRef<const MCSettingsModel::MCSetting> audio = MCSettingsModel::Find("hd-audio");
+    REQUIRE(audio.has_value());
+    GHdAudio = HdAudioOrchestral;
+    CHECK_EQ(audio->get().Get(), int{HdAudioOn});
+
+    const std::shared_ptr<MCPrefsScreen> prefs = OpenPreferences();
+    CHECK_EQ(GHdAudio, int{HdAudioOrchestral});
+    audio->get().Set(HdAudioOn);
+    CHECK_EQ(GHdAudio, int{HdAudioOrchestral});
+    ClickOn(Find(*prefs, "cancel"));
+    CheckOnMainMenu();
+    CHECK_EQ(GHdAudio, int{HdAudioOrchestral});
+
+    audio->get().Set(HdAudioOff);
+    CHECK_EQ(GHdAudio, int{HdAudioOff});
+}
+
+/// <summary>
 /// Escape in a single player mission opens the pause over the battlefield (its interface size; nothing spilling, every
 /// text readable at the recorded windows), the mission waiting behind it; Escape and RESUME go back to the battle. ALL
 /// PREFERENCES opens Preferences over the battlefield with the rows a mission can't take held, saying why, and Escape
@@ -571,6 +607,51 @@ TEST_CASE_ISOLATED("game: Escape in a mission opens the pause; RESUME, ALL PREFE
     CHECK(StackNow() == landed);
     CHECK_EQ(MCScreenFlow::Unrouted(), 0u);
     CHECK(!Menus().Mission().Showing());
+}
+
+/// <summary>
+/// A key changed in CONTROLS over the battlefield (Escape, ALL PREFERENCES, CONTROLS, ACCEPT) works as the battle
+/// resumes: the battle's own copy of the keys, taken as the mission starts, is taken again as Preferences keeps them.
+/// </summary>
+TEST_CASE_ISOLATED("game: a key changed from the pause works as the battle resumes")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs keptPrefs;
+    const MCTestGame::SaveGameCleanup saves;
+    StartBattle();
+    PressEscape();
+    const std::shared_ptr<MCPauseScreen> pause = ThePause();
+    REQUIRE(pause != nullptr);
+    ClickOn(Find(*pause, "all"));
+    const std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OnTop<MCPrefsScreen>(MCRemadeTest::MCLayer::Mission);
+    REQUIRE(prefs != nullptr);
+    prefs->ShowSection(MCSection::Controls);
+    RunFrames(SettleFrames);
+
+    const auto row = std::ranges::find_if(MCKeyBindings::ControlRows(),
+                                          [](const MCKeyBindings::MCControlRow& found) { return !found.IsHeading(); });
+    REQUIRE(row != MCKeyBindings::ControlRows().end());
+    const auto command = static_cast<size_t>(row->Command);
+    ClickOn(Find(*prefs, std::format("key-{}", command)));
+    REQUIRE(prefs->Binding());
+    MCScreenInput::RealKey(SDL_SCANCODE_K);
+    const uint32_t changed = prefs->EditedKeys()[command];
+    CHECK_EQ(MCKeyBindings::KeyName(changed), "K");
+    const std::shared_ptr<MCTacticalInterface> tactical = TacticalInterface();
+    REQUIRE(tactical != nullptr);
+    REQUIRE(tactical->Key(row->Command) != changed);
+
+    ClickOn(Find(*prefs, "accept"));
+    RunFrames(SettleFrames);
+    REQUIRE(ThePause() == pause);
+    ClickOn(Find(*pause, "resume"));
+    CHECK(!MCPauseScreen::Shows());
+    CHECK(!GamePaused);
+    CHECK_EQ(tactical->Key(row->Command), changed);
 }
 
 /// <summary>

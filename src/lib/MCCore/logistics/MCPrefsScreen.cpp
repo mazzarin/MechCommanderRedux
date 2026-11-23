@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCPrefsScreen.h"
+#include "iface/MCTacticalInterface.h"
 #include "platform/MCInput.h"
 #include "ui/MCRmlKit.h"
 
@@ -411,6 +412,13 @@ void MCPrefsScreen::BeforeRestart()
     _Done = true;
     StopWaiting();
     MCKeyBindings::SetPlayer(_Keys);
+
+    // The battle reads its own copy of the keys, taken as the mission starts: a key changed over it reaches it now.
+    if (const std::shared_ptr<MCTacticalInterface> tactical = TacticalInterface(); InMission() && tactical != nullptr)
+    {
+        tactical->TakePlayerKeys();
+    }
+
     MCSettingsModel::Keep();
 }
 

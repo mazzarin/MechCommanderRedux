@@ -217,14 +217,11 @@ bool MCUpdateScreen::Open(std::optional<MCLobbyUpdate::MCJoinAfter> join)
         return false;
     }
 
+    // The flow makes the screen as the press opens it (the kind's Prepare), and the screen takes the game along; a
+    // press refused while another change runs goes no further. Either way no game is left for a screen made later.
     PendingJoin = std::move(join);
-
-    // Refused while another change runs (the press goes no further), with the game it was given.
-    if (!MCScreenFlow::Open(MCMenuScreens::Update()))
-    {
-        PendingJoin.reset();
-    }
-
+    MCScreenFlow::Open(MCMenuScreens::Update());
+    PendingJoin.reset();
     return true;
 }
 

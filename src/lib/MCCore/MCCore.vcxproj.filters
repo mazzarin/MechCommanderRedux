@@ -1475,6 +1475,9 @@
     <ClCompile Include="ui\MCRmlChecks.cpp">
       <Filter>ui</Filter>
     </ClCompile>
+    <ClCompile Include="ui\MCRmlFlow.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
     <ClCompile Include="ui\MCRmlKit.cpp">
       <Filter>ui</Filter>
     </ClCompile>
@@ -3012,6 +3015,9 @@
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlChecks.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\MCRmlFlow.h">
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="ui\MCRmlKit.h">

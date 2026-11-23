@@ -530,6 +530,7 @@
     <ClCompile Include="terrain\MCVideoWindow.cpp" />
     <ClCompile Include="ui\MCRmlArt.cpp" />
     <ClCompile Include="ui\MCRmlChecks.cpp" />
+    <ClCompile Include="ui\MCRmlFlow.cpp" />
     <ClCompile Include="ui\MCRmlKit.cpp" />
     <ClCompile Include="ui\MCRmlLayer.cpp" />
     <ClCompile Include="ui\MCRmlMenus.cpp" />
@@ -1057,6 +1058,7 @@
     <ClInclude Include="terrain\MCVideoWindow.h" />
     <ClInclude Include="ui\MCRmlArt.h" />
     <ClInclude Include="ui\MCRmlChecks.h" />
+    <ClInclude Include="ui\MCRmlFlow.h" />
     <ClInclude Include="ui\MCRmlKit.h" />
     <ClInclude Include="ui\MCRmlLayer.h" />
     <ClInclude Include="ui\MCRmlMenus.h" />

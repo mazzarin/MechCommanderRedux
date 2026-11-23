@@ -13,6 +13,7 @@
 #include "gui/MCScreenFlow.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "gui/MCUpdateDisplay.h"
+#include "ui/MCRmlFlow.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
@@ -542,6 +543,8 @@ auto MCGuiSystem::RunFrameCallbacks(bool includeAdded) -> void
     // it adds runs from the next frame, as one added by a callback.
     MCScreenChange::Tend();
     MCScreenFlow::Tend();
+    // Port-only (SPEC-menus.md, the remade screens): the screens shown, their lists kept up and their jobs moved along.
+    MCRmlFlow::Tend();
 
     for (size_t i = 0; i < (includeAdded ? _Callbacks.size() : count); i++)
     {

@@ -156,7 +156,8 @@ void MCRmlScreen::Show()
         return;
     }
 
-    WriteKeys();
+    OnShow();
+    ShowKeys();
     _Document->Show(Modal ? Rml::ModalFlag::Modal : Rml::ModalFlag::None, Rml::FocusFlag::Document);
 
     // The focus on what the player most likely wants, without its ring until a key is pressed.
@@ -169,7 +170,7 @@ void MCRmlScreen::Show()
     Layer().Shown(*this);
 }
 
-void MCRmlScreen::WriteKeys()
+void MCRmlScreen::ShowKeys()
 {
     if (_Document == nullptr)
     {
@@ -208,6 +209,8 @@ void MCRmlScreen::Hide()
         {
             Layer().Hidden(*this);
         }
+
+        OnHide();
     }
 }
 

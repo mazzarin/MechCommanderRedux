@@ -736,6 +736,24 @@ namespace
         mech->Deployed = true;
     }
 
+    /// <summary>
+    /// <paramref name="scancode"/> pressed and let go as SDL sends it, without a frame of its own (RealKey's run unpaced
+    /// and outside the frame log): the menus' layer takes it at once, and the paced frames after it show the change.
+    /// </summary>
+    void PressKey(SDL_Scancode scancode)
+    {
+        for (const bool down : {true, false})
+        {
+            SDL_Event key{};
+            key.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+            key.key.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
+            key.key.scancode = scancode;
+            key.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
+            key.key.down = down;
+            MCInput::HandleEvent(key);
+        }
+    }
+
     /// <summary>The mission's results brought up at once (not recorded), ended as <paramref name="result"/>.</summary>
     void EndToResults(uint32_t result)
     {
@@ -947,9 +965,9 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
             "saved",
             [&time]
             {
-                MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+                PressKey(SDL_SCANCODE_RETURN);
                 RunPacedFor(time, SecondsBefore);
-                MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+                PressKey(SDL_SCANCODE_RETURN);
             },
             [&] { return shows(&MCLogistics::BriefingScreen); });
 
@@ -957,15 +975,13 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         toMain("to-main-again");
         openSaves("load-game", MCSavesScreen::MCMode::Load);
         recordLanding(
-            "loaded", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); },
-            [&] { return shows(&MCLogistics::BriefingScreen); });
+            "loaded", [] { PressKey(SDL_SCANCODE_RETURN); }, [&] { return shows(&MCLogistics::BriefingScreen); });
 
         // LOAD GAME opened again, Escape back to the main menu.
         toMain("to-main-last");
         openSaves("load-game-again", MCSavesScreen::MCMode::Load);
         recordLanding(
-            "load-game-back", [] { MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE); },
-            [&] { return shows(&MCLogistics::MainScreen); });
+            "load-game-back", [] { PressKey(SDL_SCANCODE_ESCAPE); }, [&] { return shows(&MCLogistics::MainScreen); });
         return;
     }
 

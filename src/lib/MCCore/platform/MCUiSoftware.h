@@ -8,7 +8,8 @@
 /// the software renderer (MCSdlPresenter): onto a picture of the window's size, transparent where nothing is drawn
 /// (premultiplied RGBA8), with SDL's software renderer, which every machine runs alike. Rectangles (nearly every draw:
 /// boxes, borders, pictures, letters) are drawn as SDL_RenderTexture copies of whole texels onto whole pixels, the boxes
-/// of one colour by <see cref="MCUiFill"/> (SDL's blend, sooner); other triangles with SDL_RenderGeometry. Colours are
+/// of one colour by <see cref="MCUiFill"/> (SDL's blend, sooner); other triangles with SDL_RenderGeometry, the untextured
+/// ones by <see cref="MCUiTriangle"/> (SDL's pixels, sooner) unless SDL would take some as a rectangle. Colours are
 /// premultiplied and blended so (<c>SDL_BLENDMODE_BLEND_PREMULTIPLIED</c>), a scissor is SDL's clip rectangle.
 /// </summary>
 /// <remarks>
@@ -133,6 +134,29 @@ std::vector<SDL_Rect> MCUiChangedBoxes(std::span<const MCUiDraw> before, std::sp
 
 /// <summary>The window pixels <paramref name="draw"/> may draw on, inside <paramref name="window"/> (empty: none).</summary>
 SDL_Rect MCUiFootprint(const MCUiDraw& draw, const SDL_Rect& window);
+
+/// <summary>
+/// The vertices the software path gives SDL_RenderGeometry for <paramref name="piece"/>'s triangles of
+/// <paramref name="draw"/>, into <paramref name="vertices"/>: corners on whole pixels, colours straight (SDL's software
+/// triangles blend straight alpha), the texture's places as recorded.
+/// </summary>
+void MCUiSdlTriangles(const MCUiDraw& draw, const MCUiPiece& piece, std::vector<SDL_Vertex>& vertices);
+
+/// <summary>
+/// Whether SDL's software renderer takes some of <paramref name="vertices"/>' triangles (given SDL_RenderGeometry
+/// without indices, textured) as a rectangle, so not as triangles: SDL_SW_RenderGeometryRaw's walk and test, as they
+/// stand (two in a row sharing two corners, which name an upright rectangle's in one colour; the last's third corner
+/// may lie anywhere).
+/// </summary>
+bool MCUiSdlMakesRectangles(std::span<const SDL_Vertex> vertices);
+
+/// <summary>
+/// An untextured triangle over <paramref name="picture"/> (RGBA32), cut to <paramref name="clip"/>, as SDL's software
+/// renderer draws one through a white texel blended straight (SDL_SW_BlitTriangle, SDL_BLENDMODE_BLEND): its corners
+/// and colours taken as SDL takes them, the same pixels found (half-pixel fixed point, the top-left rule), each one's
+/// colour between the corners' rounded down, blended as its slow path blends it. The same bytes, several times sooner.
+/// </summary>
+void MCUiTriangle(SDL_Surface& picture, const SDL_Rect& clip, std::span<const SDL_Vertex, 3> corners);
 
 /// <summary>
 /// A box of one colour (premultiplied RGBA) over <paramref name="box"/> of <paramref name="picture"/> (RGBA32), blended

@@ -482,29 +482,29 @@ TEST_CASE_ISOLATED("menus: the software path's partial redraw gives a whole redr
 namespace
 {
     /// <summary>
-    /// The software path's boxes and pictures drawn the plain way, for the tests: every rectangle a copy by SDL's
-    /// software renderer (a box its white texel scaled and coloured, a picture its texels scaled), cut by the draw's
-    /// scissor, the whole picture each time.
+    /// The software path's draws drawn the plain way, for the tests: every rectangle a copy by SDL's software renderer (a
+    /// box its white texel scaled and coloured, a picture its texels scaled), other triangles by its SDL_RenderGeometry,
+    /// cut by the draw's scissor, the whole picture each time.
     /// </summary>
-    class MCSdlRectangles
+    class MCSdlPlain
     {
     public:
-        MCSdlRectangles(int width, int height)
+        MCSdlPlain(int width, int height)
             : _Surface(SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32))
             , _Renderer(_Surface != nullptr ? SDL_CreateSoftwareRenderer(_Surface.get()) : nullptr)
         {
             _White = Texture(MCUiTexture{.Id = 0, .Width = 1, .Height = 1, .Pixels = {255, 255, 255, 255}});
         }
 
-        ~MCSdlRectangles()
+        ~MCSdlPlain()
         {
             _Textures.clear();
             _White.reset();
             _Renderer.reset();
         }
 
-        MCSdlRectangles(const MCSdlRectangles&) = delete;
-        MCSdlRectangles& operator=(const MCSdlRectangles&) = delete;
+        MCSdlPlain(const MCSdlPlain&) = delete;
+        MCSdlPlain& operator=(const MCSdlPlain&) = delete;
 
         const SDL_Surface& Draw(const MCUiDraws& draws)
         {
@@ -529,7 +529,19 @@ namespace
 
                 for (const MCUiPiece& piece : MCUiPieces(draw))
                 {
-                    REQUIRE(piece.Quad.has_value());
+                    if (!piece.Quad.has_value())
+                    {
+                        constexpr Uint8 Full = 255;
+                        MCUiSdlTriangles(draw, piece, _Vertices);
+                        SDL_SetTextureColorMod(texture, Full, Full, Full);
+                        SDL_SetTextureAlphaMod(texture, Full);
+                        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+                        SDL_RenderGeometry(renderer, texture, _Vertices.data(), static_cast<int>(_Vertices.size()),
+                                           nullptr, 0);
+                        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+                        continue;
+                    }
+
                     const MCUiQuad& quad = *piece.Quad;
                     SDL_SetTextureColorMod(texture, quad.Color[0], quad.Color[1], quad.Color[2]);
                     SDL_SetTextureAlphaMod(texture, quad.Color[3]);
@@ -567,17 +579,20 @@ namespace
         MCSdlHandle<SDL_Renderer> _Renderer;
         MCSdlHandle<SDL_Texture> _White;
         std::unordered_map<uint64_t, MCSdlHandle<SDL_Texture>> _Textures;
+        std::vector<SDL_Vertex> _Vertices;
     };
 
     /// <summary>
-    /// Random rectangles over a window, as RmlUi draws them (two triangles over four corners): boxes of one colour and
-    /// pictures (whole texels, scaled up, down or not, nearest or smooth), some cut by a scissor, some partly outside
-    /// the window, in premultiplied colours (some opaque, some nothing).
+    /// Random draws over a window: rectangles as RmlUi draws them (two triangles over four corners), boxes of one colour
+    /// and pictures (whole texels, scaled up, down or not, nearest or smooth); and triangles (a gradient's two, a
+    /// border's slanted edge, any, and two kinds SDL takes as a rectangle: a box of one colour between triangles, a right
+    /// triangle after one sharing two of its corners); some cut by a scissor, some partly outside the window, in
+    /// premultiplied colours (some opaque, some nothing).
     /// </summary>
-    class MCRandomRectangles
+    class MCRandomDraws
     {
     public:
-        MCRandomRectangles(int width, int height) : _Width(width), _Height(height)
+        MCRandomDraws(int width, int height) : _Width(width), _Height(height)
         {
             constexpr int Pictures = 6;
             constexpr int PictureSizeMost = 48;
@@ -601,13 +616,120 @@ namespace
             }
         }
 
-        /// <summary>A rectangle's draw, made anew.</summary>
+        /// <summary>A draw made anew: a rectangle, or (one in three) triangles.</summary>
         MCUiDraw Draw()
         {
-            // Some past the window's edges.
-            constexpr int Beyond = 40;
-            constexpr int SizeMost = 400;
+            constexpr int Kinds = 3;
+            MCUiDraw draw = Between(1, Kinds) == 1 ? Triangles() : Rectangle();
             constexpr int OneIn = 4;
+
+            if (Between(1, OneIn) == 1)
+            {
+                draw.Scissor = SDL_Rect{Between(0, _Width / 2), Between(0, _Height / 2), Between(1, _Width / 2),
+                                        Between(1, _Height / 2)};
+            }
+
+            return draw;
+        }
+
+        int Between(int low, int high) { return std::uniform_int_distribution<int>(low, high)(_Random); }
+
+    private:
+        // Some past the window's edges.
+        static constexpr int Beyond = 40;
+        static constexpr int SizeMost = 400;
+
+        /// <summary>A place across and one down, some past the window's edges.</summary>
+        float Across() { return static_cast<float>(Between(-Beyond, _Width + Beyond)); }
+        float Down() { return static_cast<float>(Between(-Beyond, _Height + Beyond)); }
+
+        /// <summary>
+        /// Untextured triangles: a gradient's two, a border's slanted edge, any, or two SDL takes as a rectangle.
+        /// </summary>
+        MCUiDraw Triangles()
+        {
+            constexpr int Kinds = 5;
+            auto geometry = std::make_shared<MCUiGeometry>();
+            std::vector<MCUiVertex>& at = geometry->Vertices;
+            const auto corner = [this](float x, float y, const std::array<uint8_t, PixelBytes>& color)
+            { return MCUiVertex{.X = x, .Y = y, .Color = color}; };
+            const float x = Across();
+            const float y = Down();
+            const auto w = static_cast<float>(Between(1, SizeMost));
+            const auto h = static_cast<float>(Between(1, SizeMost));
+
+            switch (Between(1, Kinds))
+            {
+                case 1:
+                {
+                    // A vertical gradient: two colours, top and bottom.
+                    const std::array<uint8_t, PixelBytes> top = Color();
+                    const std::array<uint8_t, PixelBytes> bottom = Color();
+                    at = {corner(x, y, top), corner(x + w, y, top), corner(x + w, y + h, bottom),
+                          corner(x, y + h, bottom)};
+                    geometry->Indices = {0, 1, 2, 0, 2, 3};
+                    break;
+                }
+                case 2:
+                {
+                    // A border's top edge, its ends slanted, in one colour.
+                    constexpr int WidthMost = 8;
+                    const auto width = static_cast<float>(Between(1, WidthMost));
+                    const std::array<uint8_t, PixelBytes> color = Color();
+                    at = {corner(x, y, color), corner(x + w + 2 * width, y, color),
+                          corner(x + w + width, y + width, color), corner(x + width, y + width, color)};
+                    geometry->Indices = {0, 1, 2, 0, 2, 3};
+                    break;
+                }
+                case 3:
+                {
+                    // Any triangles, either way round, each corner its own colour.
+                    constexpr int Most = 4;
+
+                    for (int i = 0, count = Between(1, Most); i < count; ++i)
+                    {
+                        for (int k = 0; k < 3; ++k)
+                        {
+                            geometry->Indices.push_back(static_cast<int32_t>(at.size()));
+                            at.push_back(corner(Across(), Down(), Color()));
+                        }
+                    }
+
+                    break;
+                }
+                case 4:
+                {
+                    // A rectangle's lower left or upper right half after a triangle sharing an edge with its right
+                    // angle (SDL fills the whole rectangle and leaves the first triangle out: SDL_SW_RenderGeometryRaw
+                    // looks only at the corners it names) or its diagonal (SDL draws both, unless the first's third
+                    // corner is a right angle too), that third corner sometimes in the same colour.
+                    const std::array<uint8_t, PixelBytes> color = Color();
+                    const bool lowerLeft = Between(0, 1) == 1;
+                    const bool sameColour = Between(0, 1) == 1;
+                    at = {corner(x, y, color), lowerLeft ? corner(x, y + h, color) : corner(x + w, y, color),
+                          corner(Across(), Down(), sameColour ? color : Color()), corner(x + w, y + h, color)};
+                    geometry->Indices = Between(0, 1) == 1 ? std::vector<int32_t>{0, 1, 2, 0, 3, 1}
+                                                           : std::vector<int32_t>{0, 3, 2, 0, 3, 1};
+                    break;
+                }
+                default:
+                {
+                    // A box of one colour between two triangles: not a rectangle to the pieces, one to SDL.
+                    const std::array<uint8_t, PixelBytes> color = Color();
+                    at = {corner(Across(), Down(), Color()), corner(Across(), Down(), Color()), corner(x, y, color),
+                          corner(x + w, y, color),           corner(x + w, y + h, color),       corner(x, y + h, color),
+                          corner(Across(), Down(), Color())};
+                    geometry->Indices = {0, 1, 2, 2, 3, 4, 2, 4, 5, 5, 6, 0};
+                    break;
+                }
+            }
+
+            return MCUiDraw{.Geometry = std::move(geometry)};
+        }
+
+        /// <summary>A rectangle's draw: a box of one colour or a picture.</summary>
+        MCUiDraw Rectangle()
+        {
             const int x = Between(-Beyond, _Width);
             const int y = Between(-Beyond, _Height);
             const int w = Between(1, SizeMost);
@@ -640,19 +762,9 @@ namespace
 
             geometry->Indices = {0, 1, 2, 0, 2, 3};
             draw.Geometry = std::move(geometry);
-
-            if (Between(1, OneIn) == 1)
-            {
-                draw.Scissor = SDL_Rect{Between(0, _Width / 2), Between(0, _Height / 2), Between(1, _Width / 2),
-                                        Between(1, _Height / 2)};
-            }
-
             return draw;
         }
 
-        int Between(int low, int high) { return std::uniform_int_distribution<int>(low, high)(_Random); }
-
-    private:
         /// <summary>A premultiplied colour: opaque, nothing, or any alpha with channels no more than it.</summary>
         std::array<uint8_t, PixelBytes> Color()
         {
@@ -671,26 +783,27 @@ namespace
 }
 
 /// <summary>
-/// The software path's rectangles come out as SDL's software renderer draws them, byte for byte: boxes of one colour
-/// (MCUiFill, SDL's blend) and pictures scaled once and copied after (SDL's scale), cut by scissors and the window's
-/// edges, drawn whole and then, as draws are taken away, changed and added, only where they changed.
+/// The software path's draws come out as SDL's software renderer draws them, byte for byte: boxes of one colour
+/// (MCUiFill, SDL's blend), pictures scaled once and copied after (SDL's scale) and untextured triangles (MCUiTriangle,
+/// SDL's), cut by scissors and the window's edges, drawn whole and then, as draws are taken away, changed and added,
+/// only where they changed.
 /// </summary>
-TEST_CASE_ISOLATED("menus: the software path's boxes and pictures draw as SDL's renderer draws them, byte for byte")
+TEST_CASE_ISOLATED("menus: the software path's draws come out as SDL's renderer draws them, byte for byte")
 {
     constexpr int Width = 640;
     constexpr int Height = 480;
-    constexpr int Rectangles = 300;
+    constexpr int Draws = 400;
     constexpr int Changes = 12;
-    MCRandomRectangles random(Width, Height);
+    MCRandomDraws random(Width, Height);
     MCUiDraws draws{.Width = Width, .Height = Height};
 
-    for (int i = 0; i < Rectangles; ++i)
+    for (int i = 0; i < Draws; ++i)
     {
         draws.Draws.push_back(random.Draw());
     }
 
     MCUiSoftware software;
-    MCSdlRectangles plain(Width, Height);
+    MCSdlPlain plain(Width, Height);
     REQUIRE(software.Draw(draws).has_value());
     CHECK_EQ(PictureDifference(*software.Picture(), plain.Draw(draws)), "");
 

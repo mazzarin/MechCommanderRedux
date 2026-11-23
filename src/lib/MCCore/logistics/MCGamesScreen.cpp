@@ -1072,7 +1072,8 @@ MCScreenFlow::MCScreenKind MCGamesKind(MCGamesWhere where)
 {
     MCScreenFlow::MCScreenKind kind = MCRmlFlow::Kind(
         NameOf(where), [where](MCRmlLayer& layer)
-        { return MCGuiHandle<MCRmlScreen>(layer.CreateChild<MCGamesScreen>([](MCGamesScreen&) {}, where)); });
+        { return MCGuiHandle<MCRmlScreen>(layer.CreateChild<MCGamesScreen>([](MCGamesScreen&) {}, where)); },
+        MCRmlFlow::MCKeep::Kept);
 
     // LAN from MULTIPLAYER on a build with no internet games stands for MULTIPLAYER ACCESS: its way back is the main
     // menu (the screen under it would open it again), the multiplayer game let go as it shows.

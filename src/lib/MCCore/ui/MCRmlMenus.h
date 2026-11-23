@@ -104,6 +104,12 @@ public:
     bool HandleEvent(const SDL_Event& event);
 
     /// <summary>
+    /// Port-only (SPEC-menus.md, a change of screen): while <paramref name="held"/> says so, the player's clicks and keys
+    /// over a shown screen are taken and dropped (a change fades); none: never held.
+    /// </summary>
+    void HoldInput(std::function<bool()> held);
+
+    /// <summary>
     /// Lays out what changed and records the frame's draws, the mission's layer under the menus' (none shown: none at
     /// all). Unchanged since the last frame: the same draws, so the presenters keep their picture.
     /// </summary>
@@ -129,6 +135,7 @@ private:
     std::unique_ptr<MCRmlKit> _Kit;
     std::unique_ptr<MCRmlLayer> _Mission;
     std::unique_ptr<MCRmlLayer> _Menus;
+    std::function<bool()> _InputHeld;
     bool _Hd = false;
     bool _Started = false;
     int32_t _Width = 0;

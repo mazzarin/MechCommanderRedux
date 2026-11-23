@@ -707,8 +707,8 @@ auto MCLogistics::SetCurrentScreen(std::weak_ptr<MCLogObject> screen) -> void
     const std::shared_ptr<MCLogObject> after = screen.lock();
     _CurrentScreen = std::move(screen);
 
-    // Port-only (SPEC-menus.md's stage 3): an old screen come up goes over the remade ones, which hide (one made
-    // logistics' screen is shown just after).
+    // Port-only (SPEC-menus.md, the remade screens): an old screen come up goes over the remade ones, which hide (one
+    // made logistics' screen is shown just after).
     if (after != nullptr && (after->ShowWindow || after != before))
     {
         MCRmlFlow::OldScreenShown();

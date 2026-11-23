@@ -721,7 +721,7 @@ auto MCMission::Run() -> int32_t
         }
         case MCMissionState::Logistics:
         {
-            // Port-only (SPEC-menus.md's stage 3): not while a remade screen shows over it (ui/MCRmlFlow).
+            // Port-only (SPEC-menus.md, the remade screens): not while a remade screen shows over it (ui/MCRmlFlow).
             if (Logistics != nullptr && Logistics->CurrentScreen()->IsShowing() == 0 && !MCRmlFlow::Showing())
             {
                 Logistics->ShowLogScreen(true, false);

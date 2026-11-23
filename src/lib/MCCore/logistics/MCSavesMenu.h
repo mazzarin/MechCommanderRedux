@@ -10,7 +10,6 @@
 #include "logistics/MCSaves.h"
 #include "ui/MCRmlScreen.h"
 
-class MCGuiCallback;
 class MCRmlModel;
 
 /// <summary>The saves dialog: a question with CANCEL and its answer, or a message with OK.</summary>
@@ -45,19 +44,17 @@ public:
     void Answer();
 
     void OnDestroy() override;
+    /// <summary>Each frame while it shows: a message that closes itself closed once its time is up.</summary>
+    void OnFrame() override;
 
 protected:
     void MakeModels(Rml::Context& context) override;
     void OnLoaded(Rml::ElementDocument& document) override;
 
 private:
-    /// <summary>Each frame while a message that closes itself shows: closed once its time is up.</summary>
-    void Tick();
-
     std::unique_ptr<MCRmlModel> _Model;
     MCSay _Say;
     double _ShownAt = 0;
-    std::shared_ptr<MCGuiCallback> _Ticker;
 };
 
 /// <summary>LOAD GAME and SAVE GAME.</summary>

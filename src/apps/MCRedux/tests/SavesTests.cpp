@@ -24,6 +24,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "ui/MCRmlChecks.h"
+#include "ui/MCRmlFlow.h"
 #include "ui/MCRmlMenus.h"
 
 #include <RmlUi/Core/Element.h>
@@ -583,7 +584,7 @@ TEST_CASE_ISOLATED("game: SAVE GAME saves under the name typed, asks before writ
     RunWhileChanging();
     MCMenuScreens::LeaveCampaign();
     RunWhileChanging();
-    REQUIRE(MCRmlMenus::ForGame().has_value());
+    REQUIRE(MCRmlFlow::Menus().has_value());
     double clock = 0.0;
     MCRmlMenus::Running()->get().SetClock([&clock] { return clock; });
 

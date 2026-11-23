@@ -1,14 +1,13 @@
 #include "stdafx.h"
 #include "logistics/MCSavesMenu.h"
 #include "ai/MCMoveGeometry.h"
-#include "gui/MCGuiCallback.h"
-#include "gui/MCGuiSystem.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCLogistics.h"
 #include "sound/MCSoundSystem.h"
 #include "ui/MCRmlArt.h"
+#include "ui/MCRmlFlow.h"
 #include "ui/MCRmlKit.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
@@ -46,26 +45,23 @@ namespace
         return screen;
     }
 
-    /// <summary>The screen on the game's menus, made the first time it's wanted; none when the menus can't start.</summary>
-    MCOptionalRef<MCSavesScreen> MadeScreen()
+    /// <summary>
+    /// The one screen both kinds show, LOAD GAME's and SAVE GAME's (MCRmlFlow's make): made on the menus' layer the first
+    /// time either is wanted, and kept.
+    /// </summary>
+    MCGuiHandle<MCRmlScreen> SharedScreen(MCRmlLayer& layer)
     {
         if (const std::shared_ptr<MCSavesScreen> screen = TheScreen().Lock();
-            screen != nullptr && !screen->WasDestroyed())
+            screen == nullptr || screen->WasDestroyed())
         {
-            return *screen;
+            TheScreen() = layer.CreateChild<MCSavesScreen>([](MCSavesScreen&) {});
         }
 
-        const auto menus = MCRmlMenus::ForGame();
-
-        if (!menus)
-        {
-            SDL_Log("Menus: LOAD GAME and SAVE GAME can't show: %s", menus.error().c_str());
-            return std::nullopt;
-        }
-
-        TheScreen() = menus->get().Menus().CreateChild<MCSavesScreen>([](MCSavesScreen&) {});
-        return *TheScreen();
+        return TheScreen();
     }
+
+    /// <summary>The screen's preparation's read, which the list's filling follows.</summary>
+    constexpr std::string_view ReadPart = "menus.read";
 
     std::string PointsText(uint32_t points)
     {
@@ -231,24 +227,9 @@ void MCSavesDialog::Ask(MCSay say)
     }
 
     _ShownAt = RmlNow();
-
-    if (_Say.ClosesAfter > 0 && _Ticker == nullptr && HasGuiSystem())
-    {
-        _Ticker = std::make_shared<MCGuiCallback>();
-        const std::weak_ptr<MCRmlScreen> self = weak_from_this();
-        _Ticker->SetExec(
-            [self]
-            {
-                if (const std::shared_ptr<MCRmlScreen> dialog = self.lock(); dialog != nullptr)
-                {
-                    static_cast<MCSavesDialog&>(*dialog).Tick();
-                }
-            });
-        GuiSystem().AddCallback(_Ticker);
-    }
 }
 
-void MCSavesDialog::Tick()
+void MCSavesDialog::OnFrame()
 {
     if (Shown() && _Say.ClosesAfter > 0 && RmlNow() - _ShownAt >= _Say.ClosesAfter)
     {
@@ -272,12 +253,6 @@ void MCSavesDialog::Answer()
 
 void MCSavesDialog::OnDestroy()
 {
-    if (_Ticker != nullptr && HasGuiSystem())
-    {
-        GuiSystem().RemoveCallback(*_Ticker);
-    }
-
-    _Ticker.reset();
     _Model.reset();
     MCRmlScreen::OnDestroy();
 }
@@ -531,7 +506,7 @@ void MCSavesScreen::SetControls()
         Keys = {{"Esc", "Back"}};
     }
 
-    WriteKeys();
+    ShowKeys();
 
     if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
     {
@@ -762,66 +737,45 @@ void MCSavesScreen::OnDestroy()
 MCScreenFlow::MCScreenKind MCSavesMenu::Kind(MCSavesScreen::MCMode mode)
 {
     using MCMode = MCSavesScreen::MCMode;
-    return {
-        .Name = mode == MCMode::Load ? "load" : "save",
-        .Prepare =
-            [mode]
+    // Kept (its document read once): each opening fills it again from the saves as they are (saves.fill).
+    MCScreenFlow::MCScreenKind kind =
+        MCRmlFlow::Kind(mode == MCMode::Load ? "load" : "save", SharedScreen, MCRmlFlow::MCKeep::Kept);
+    kind.Prepare = [made = std::move(kind.Prepare), mode]
+    {
+        // Read (first time), then filled for this opening and its data shown, then laid out and recorded; nothing when
+        // the menus can't start.
+        std::vector<MCScreenChange::MCPiece> pieces = made();
+        const auto fill = [mode]
         {
-            const MCOptionalRef<MCSavesScreen> made = MadeScreen();
-
-            if (!made.has_value())
+            if (const MCOptionalRef<MCSavesScreen> screen = Screen();
+                screen.has_value() && screen->get().Error().empty())
             {
-                return std::vector<MCScreenChange::MCPiece>();
+                MCSavesScreen& saves = screen->get();
+                saves.Back = [] { MCScreenFlow::Back(); };
+                saves.SetUp(mode, mode == MCMode::Save ? std::optional(PlayedCampaign()) : std::nullopt);
+                saves.Layer().Context().Update();
             }
+        };
 
-            // Read (first time), then filled for this opening and its data shown, then laid out and recorded.
-            std::vector<MCScreenChange::MCPiece> pieces = made->get().Prepare();
-            const std::weak_ptr<MCRmlScreen> self = made->get().weak_from_this();
-            const auto fill = [self, mode]
-            {
-                if (const std::shared_ptr<MCRmlScreen> screen = self.lock();
-                    screen != nullptr && screen->Error().empty())
-                {
-                    auto& saves = static_cast<MCSavesScreen&>(*screen);
-                    saves.Back = [] { MCScreenFlow::Back(); };
-                    saves.SetUp(mode, mode == MCMode::Save ? std::optional(PlayedCampaign()) : std::nullopt);
-                    screen->Layer().Context().Update();
-                }
-            };
+        if (!pieces.empty())
+        {
+            const auto read = std::ranges::find(pieces, ReadPart, &MCScreenChange::MCPiece::Part);
+            pieces.insert(read != pieces.end() ? read + 1 : pieces.begin(),
+                          MCScreenChange::MCPiece{.Part = "saves.fill", .Run = fill});
+        }
 
-            pieces.insert(pieces.begin() + 1, MCScreenChange::MCPiece{.Part = "saves.fill", .Run = fill});
-            return pieces;
-        },
-        .Show =
-            []
-        {
-            if (const MCOptionalRef<MCSavesScreen> screen = Screen(); screen.has_value())
-            {
-                screen->get().Show();
-            }
-        },
-        .Hide =
-            []
-        {
-            if (const MCOptionalRef<MCSavesScreen> screen = Screen(); screen.has_value())
-            {
-                screen->get().Hide();
-            }
-        },
-        .Ready =
-            []
-        {
-            const MCOptionalRef<MCSavesScreen> screen = Screen();
-            return !screen.has_value() || screen->get().Ready();
-        },
-        .Shows =
-            [mode]
-        {
-            const MCOptionalRef<MCSavesScreen> screen = Screen();
-            return screen.has_value() && screen->get().Shown() && screen->get().Mode() == mode;
-        },
-        .GivesWay = true,
+        return pieces;
     };
+
+    // The one screen shows both: the kind shows while it does in its mode.
+    kind.Shows = [mode]
+    {
+        const MCOptionalRef<MCSavesScreen> screen = Screen();
+        return screen.has_value() && screen->get().Shown() && screen->get().Mode() == mode;
+    };
+
+    kind.GivesWay = true;
+    return kind;
 }
 
 MCOptionalRef<MCSavesScreen> MCSavesMenu::Screen()

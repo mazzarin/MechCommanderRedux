@@ -26,6 +26,10 @@
     <MCDxcSha256>AD31B1FC8443175D204F77A611FDB3EF2EC42759BDC2F1167368DE24A4A7E7F1</MCDxcSha256>
     <MCDxcDir>$(MSBuildThisFileDirectory)build\tools\dxc-$(MCDxcVersion)\</MCDxcDir>
     <MCDxc>$(MCDxcDir)bin\x64\dxc.exe</MCDxc>
+    <!-- Port-only: the shaders as HLSL 2018, whose && || and ?: evaluate both sides. HLSL 2021 (dxc's default) compiles
+         them as branches, and AMD's driver (26.10, RDNA 3) gets that valid SPIR-V wrong: HD pictures drawn through a
+         colour table came out black (the HUD's mech icons, dimmed menu art). The Mac's glslang never branches there. -->
+    <MCDxcLanguage>-HV 2018</MCDxcLanguage>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>

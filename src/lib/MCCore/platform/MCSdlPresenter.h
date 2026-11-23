@@ -53,9 +53,12 @@ private:
     void ApplyPresentation(const SDL_Rect& view);
     /// <summary>
     /// Port-only: draws the menus' <paramref name="overlay"/> over the whole window, its colours times
-    /// <paramref name="shown"/> (the fade): drawn by the CPU and uploaded when it isn't the overlay drawn last.
+    /// <paramref name="shown"/> (the fade): drawn by the CPU when it isn't the overlay drawn last, the boxes it
+    /// changed uploaded.
     /// </summary>
     std::expected<void, std::string> DrawOverlay(const std::shared_ptr<const MCUiDraws>& overlay, float shown);
+    /// <summary>Port-only: the menus' picture uploaded to <see cref="_Overlay"/> where it changed since the last.</summary>
+    std::expected<void, std::string> UploadOverlay();
     /// <summary>With the frame log open, runs the renderer's queued draws now, so they count in the part made.</summary>
     void RunQueueForLog();
 
@@ -84,6 +87,12 @@ private:
     /// <summary>Port-only: the menus' draws <see cref="_Overlay"/> holds (MCRmlMenus hands the same ones out again
     /// while nothing changes).</summary>
     std::shared_ptr<const MCUiDraws> _OverlayDrawn;
+    /// <summary>
+    /// Port-only: the boxes of the menus' picture drawn since <see cref="_Overlay"/> was last uploaded (the tests'
+    /// reads draw it too); the whole picture when the texture is new.
+    /// </summary>
+    std::vector<SDL_Rect> _OverlayStale;
+    bool _OverlayWhole = true;
     /// <summary>Port-only, for the tests: how many times the menus' picture was drawn and uploaded.</summary>
     uint64_t _OverlayUploads = 0;
 };

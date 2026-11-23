@@ -225,7 +225,7 @@ std::vector<MCUiPiece> MCUiPieces(const MCUiDraw& draw)
     return pieces;
 }
 
-bool MCUiSameDraws(const MCUiDraws& first, const MCUiDraws& second)
+bool MCUiSameDraw(const MCUiDraw& first, const MCUiDraw& second)
 {
     const auto sameScissor = [](const std::optional<SDL_Rect>& a, const std::optional<SDL_Rect>& b)
     {
@@ -233,12 +233,12 @@ bool MCUiSameDraws(const MCUiDraws& first, const MCUiDraws& second)
                (!a.has_value() || (a->x == b->x && a->y == b->y && a->w == b->w && a->h == b->h));
     };
 
-    const auto sameDraw = [&sameScissor](const MCUiDraw& a, const MCUiDraw& b)
-    {
-        return a.Geometry == b.Geometry && a.Texture == b.Texture && a.X == b.X && a.Y == b.Y &&
-               sameScissor(a.Scissor, b.Scissor);
-    };
+    return first.Geometry == second.Geometry && first.Texture == second.Texture && first.X == second.X &&
+           first.Y == second.Y && sameScissor(first.Scissor, second.Scissor);
+}
 
+bool MCUiSameDraws(const MCUiDraws& first, const MCUiDraws& second)
+{
     return first.Width == second.Width && first.Height == second.Height &&
-           std::ranges::equal(first.Draws, second.Draws, sameDraw);
+           std::ranges::equal(first.Draws, second.Draws, MCUiSameDraw);
 }

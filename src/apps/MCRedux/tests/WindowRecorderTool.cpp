@@ -39,13 +39,14 @@
 #include "platform/MCRenderer.h"
 #include "sprite/MCHdArt.h"
 #include "ui/MCRmlDialog.h"
+#include "ui/MCRmlFlow.h"
 
 // Port-only, a tool (SPEC-menus.md's stage 1): --record-window <folder> records the whole window as presented, frame
 // by frame, through the two changes of screen stage 1 made: BEGIN MISSION to the battlefield's first seconds, and the
 // results' DONE to the next screen. Each frame is read back from the GPU as the window shows it (the presenter's
 // RecordWindow), with when it was presented, and checked: no frame held past a refresh and a half (frozen), no picture
 // changing size between two frames that aren't black, no step between two frames bigger than a fade's (a black cut),
-// nothing but the surround round the view. The game's clock follows the real one, the frames paced as the display's
+// nothing but the surround round the view (but where the remade menus fill the window). The game's clock follows the real one, the frames paced as the display's
 // vsync would pace them. Each part's folder gets video.mp4 (a frame a sixtieth of a second, by ffmpeg), frames.csv and
 // summary.txt; the summary is printed too.
 //
@@ -160,6 +161,11 @@ namespace
         /// first turns, under a fade or not.
         /// </summary>
         bool StartingUp = false;
+        /// <summary>
+        /// The remade menus shown (stage 8's BRIEFING, DEPLOY and loading screen): they fill the window, nothing of it
+        /// the surround.
+        /// </summary>
+        bool Menus = false;
         /// <summary>The colour round the view as shown (faded).</summary>
         SDL_Color Surround{};
         /// <summary>Where the view lands in the window, in pixels.</summary>
@@ -330,6 +336,7 @@ namespace
                              .State = Mission()->State,
                              .Loading = LoadingScreenUp,
                              .StartingUp = Scenario() != nullptr && Scenario()->StartingUp,
+                             .Menus = MCRmlFlow::Showing(),
                              .Surround = MCFadedColor(display.Surround(), display.Fade(), display.FadeScales()),
                              .Shown = SDL_Rect{
                                  static_cast<int>(std::lround(viewport.X)), static_cast<int>(std::lround(viewport.Y)),
@@ -415,7 +422,8 @@ namespace
                     const SDL_Color color = frame.Pixels[static_cast<size_t>(y) * frame.Width + x];
                     luma += Luma(color);
 
-                    if ((!rowInView || x < shown.x || x >= shown.x + shown.w) && !NearColor(color, stats.Note.Surround))
+                    if (!stats.Note.Menus && (!rowInView || x < shown.x || x >= shown.x + shown.w) &&
+                        !NearColor(color, stats.Note.Surround))
                     {
                         stats.Stray++;
                     }

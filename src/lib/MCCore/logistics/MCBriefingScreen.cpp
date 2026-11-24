@@ -63,14 +63,9 @@ namespace
     /// </summary>
     void DrawDropZoneMarker(const MCPane& pane, const MCLogistics::DropZonePosition& zone, float scale, int32_t lineY)
     {
-        constexpr float r = 0.70710677f;
-        const float x = zone.X;
-        const float yR = zone.Y * r;
-        const auto diff = static_cast<float>(yR - static_cast<double>(x) * r);
-        const double across = (static_cast<double>(x) * r + yR) / scale;
-        const auto down = static_cast<float>(diff / scale);
-        const auto screenX = static_cast<float>(across + 490.0);
-        const auto screenY = static_cast<float>(141.0 - down + 31.0);
+        const SDL_FPoint at = MCBriefingScreen::MapPointOf(zone.X, zone.Y, scale);
+        const float screenX = at.x;
+        const float screenY = at.y;
 
         const auto bend = static_cast<int32_t>((screenX - 351.0f) * 0.5f + 351.0f);
         VfxLineDraw(pane, 0x157, lineY, bend, lineY, DropZoneColor);
@@ -159,6 +154,20 @@ auto MCBriefingScreen::Init() -> void
 
     SmackerWindow.reset();
     EmptySlot.reset();
+}
+
+SDL_FPoint MCBriefingScreen::MapPointOf(float worldX, float worldY, float scale)
+{
+    // The original's sums, in its mix of float and double.
+    constexpr float r = 0.70710677f;
+    constexpr double AcrossMiddle = 490.0;
+    constexpr double DownMiddle = 141.0;
+    constexpr double DownMargin = 31.0;
+    const float yR = worldY * r;
+    const auto diff = static_cast<float>(yR - static_cast<double>(worldX) * r);
+    const double across = (static_cast<double>(worldX) * r + yR) / scale;
+    const auto down = static_cast<float>(diff / scale);
+    return SDL_FPoint{static_cast<float>(across + AcrossMiddle), static_cast<float>(DownMiddle - down + DownMargin)};
 }
 
 auto MCBriefingScreen::DrawBackground() -> void
@@ -336,10 +345,10 @@ auto MCBriefingScreen::PaintLook(const MCPane& target) -> void
     {
         MCWindow& map = MapPicture->Bitmap();
         std::array<MCScreenVertex, 4> vertices = {};
-        vertices[0] = {0x159, 0x1a, 0, 0, 0, 0};
-        vertices[1] = {0x273, 0x1a, 0, map.XMax << 16, 0, 0};
-        vertices[2] = {0x273, 0x134, 0, map.XMax << 16, map.YMax << 16, 0};
-        vertices[3] = {0x159, 0x134, 0, 0, map.YMax << 16, 0};
+        vertices[0] = {MapLeft, MapTop, 0, 0, 0, 0};
+        vertices[1] = {MapRight, MapTop, 0, map.XMax << 16, 0, 0};
+        vertices[2] = {MapRight, MapBottom, 0, map.XMax << 16, map.YMax << 16, 0};
+        vertices[3] = {MapLeft, MapBottom, 0, 0, map.YMax << 16, 0};
         VfxMapPolygon(target, vertices, map, VfxMapTransparent);
     }
 

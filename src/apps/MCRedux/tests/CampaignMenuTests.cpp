@@ -299,6 +299,16 @@ namespace
         return window;
     }
 
+    /// <summary>The drop zone tags BRIEFING's map shows, in the document's order (F1 to F3).</summary>
+    std::vector<Rml::Element*> ZoneTagsShown(const MCCampaignScreen& screen)
+    {
+        REQUIRE(screen.Document().has_value());
+        Rml::ElementList tags;
+        screen.Document()->get().QuerySelectorAll(tags, "#map .zone-tag");
+        std::erase_if(tags, [](Rml::Element* tag) { return !tag->IsVisible(true); });
+        return tags;
+    }
+
     /// <summary>The screen's BRIEFING showing the campaign's briefing <paramref name="file"/> (a file in the game's missions).</summary>
     void ShowBriefing(MCCampaignScreen& screen, std::string_view file)
     {
@@ -339,6 +349,66 @@ TEST_CASE("logistics: a briefing's text is read into its objectives, fire suppor
 }
 
 /// <summary>
+/// A match's drop zone tag (tools/upscale/zone_tags.py's pictures, 39 by 19 map pixels) hangs its tail's tip on its
+/// zone: from the bottom right, as 1998's flags, wherever that keeps it on the map's picture; near the left edge from
+/// the bottom left, near the top from the top right, in the top left corner from the top left; hard by the right edge,
+/// where none fits, still the bottom right (the least outside). Its picture is its group's in its tail's corner.
+/// </summary>
+TEST_CASE("logistics: a match's drop zone tag hangs its tail on its zone, mirrored at the map's edges")
+{
+    using MCCampaignMenu::MCTail;
+    using MCCampaignMenu::MCZoneTag;
+    constexpr float Side = 283.0f;
+
+    struct MCCase
+    {
+        std::string_view Name;
+        float X;
+        float Y;
+        MCTail Tail;
+        std::string_view Source;
+    };
+
+    constexpr std::array<MCCase, 6> Cases = {{
+        {"the middle", 140.0f, 140.0f, MCTail::BottomRight, "art/zone_tag_F1_br.png"},
+        {"the left edge", 10.0f, 140.0f, MCTail::BottomLeft, "art/zone_tag_F1_bl.png"},
+        {"the top edge", 140.0f, 6.0f, MCTail::TopRight, "art/zone_tag_F1_tr.png"},
+        {"the top left corner", 10.0f, 6.0f, MCTail::TopLeft, "art/zone_tag_F1_tl.png"},
+        {"the bottom edge", 140.0f, 281.0f, MCTail::BottomRight, "art/zone_tag_F1_br.png"},
+        {"hard by the right edge", 282.5f, 140.0f, MCTail::BottomRight, "art/zone_tag_F1_br.png"},
+    }};
+
+    for (const MCCase& each : Cases)
+    {
+        const MCTest::Scope scope{std::string(each.Name)};
+        const MCZoneTag tag = MCCampaignMenu::ZoneTag(1, each.X, each.Y, Side, Side);
+        CHECK(tag.Tail == each.Tail);
+        CHECK_EQ(MCCampaignMenu::ZoneTagSource(tag), std::string(each.Source));
+        CHECK_EQ(tag.Group, 1);
+        CHECK_EQ(tag.X, each.X);
+        CHECK_EQ(tag.Y, each.Y);
+        CHECK_EQ(tag.Width, 39.0f);
+        CHECK_EQ(tag.Height, 19.0f);
+
+        // Inside the picture wherever a corner fits.
+        if (each.Name != Cases.back().Name)
+        {
+            CHECK(tag.Left >= 0.0f && tag.Top >= 0.0f && tag.Left + tag.Width <= Side && tag.Top + tag.Height <= Side);
+        }
+    }
+
+    // The tip: the bottom right's at its picture's (37.25, 17.25), the top left's at (0.5, 0.25).
+    const MCZoneTag middle = MCCampaignMenu::ZoneTag(2, 140.0f, 140.0f, Side, Side);
+    CHECK_EQ(middle.Left, 140.0f - 37.25f);
+    CHECK_EQ(middle.Top, 140.0f - 17.25f);
+    CHECK_EQ(MCCampaignMenu::ZoneTagSource(middle), std::string("art/zone_tag_F2_br.png"));
+    const MCZoneTag corner = MCCampaignMenu::ZoneTag(3, 10.0f, 6.0f, Side, Side);
+    CHECK_EQ(corner.Left, 10.0f - 0.5f);
+    CHECK_EQ(corner.Top, 6.0f - 0.25f);
+    CHECK_EQ(MCCampaignMenu::ZoneTagSource(corner), std::string("art/zone_tag_F3_tl.png"));
+}
+
+/// <summary>
 /// A new campaign's first briefing shows the remade BRIEFING over the 1998 briefing (set up as ever, hidden, logistics'
 /// screen still): the mission's operation and number over its title, its objectives, fire support, orders, warnings and
 /// map, read from its briefing; Q and E change between BRIEFING and DEPLOY; Escape goes to the main menu. With
@@ -367,6 +437,10 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     CHECK_EQ(screen.Orders().size(), size_t{5});
     CHECK_EQ(screen.Warnings().size(), size_t{2});
     CHECK_EQ(screen.MapSource(), std::string("map:mis0101"));
+    // The campaign's map has its own F1 painted: no drop zone tags over it.
+    CHECK(screen.ZoneMap().Tags.empty());
+    CHECK(screen.ZonesShown().empty());
+    CHECK(ZoneTagsShown(screen).empty());
 
     const std::shared_ptr<MCDisplay> display = MCInput::Display();
     REQUIRE(display != nullptr);
@@ -1218,6 +1292,11 @@ namespace
     constexpr std::string_view LogisticsMatchPort = "28997";
     constexpr std::string_view ReadyOncePort = "28945";
     constexpr std::string_view LauncherLeavePort = "28947";
+    constexpr std::string_view InnerSphereZonesPort = "28937";
+    constexpr std::string_view ClanZonesPort = "28939";
+    /// <summary>The room's teams (MCRoomModel::AssignPlayer's): the first plays the Inner Sphere's side, home team 0.</summary>
+    constexpr int32_t InnerSphereTeam = 1;
+    constexpr int32_t ClanTeam = 2;
     /// <summary>A drop's weight for BEGIN MISSION to go (any above none).</summary>
     constexpr int32_t DroppedTons = 35;
     /// <summary>1998's "has left the game" that ends a launcher's game (MCLogistics::HandleLostPlayer), and its length.</summary>
@@ -1232,10 +1311,11 @@ namespace
     constexpr int AllChoice = 1;
 
     /// <summary>
-    /// A LAN match hosted as COMMANDER (team 1) on <paramref name="port"/> with <paramref name="ann"/> (the tests'
-    /// player, team 2), its mission's file hers too, and the room's BEGIN PLANNING pressed: the match's remade briefing.
+    /// A LAN match hosted as COMMANDER (on <paramref name="myTeam"/>, team 1 unless said) on <paramref name="port"/>
+    /// with <paramref name="ann"/> (the tests' player, on the other team), its mission's file hers too, and the room's
+    /// BEGIN PLANNING pressed: the match's remade briefing.
     /// </summary>
-    MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann, std::string_view port)
+    MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann, std::string_view port, int32_t myTeam = InnerSphereTeam)
     {
         MCCampaignMenu::Remade() = true;
         REQUIRE(MCTestGame::StartLogistics());
@@ -1251,9 +1331,10 @@ namespace
             MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
         REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
         ann.AnswerFiles(sameData);
-        GlobalLog()->Room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
-        GlobalLog()->Room.AssignPlayer(ann.Id(), 2, 0, false);
-        GlobalLog()->Room.LoadMission(MatchMission);
+        MCRoomModel& room = GlobalLog()->Room;
+        room.AssignPlayer(manager.MyPlayerID, myTeam, 0, false);
+        room.AssignPlayer(ann.Id(), myTeam == InnerSphereTeam ? ClanTeam : InnerSphereTeam, 0, false);
+        room.LoadMission(MatchMission);
         REQUIRE(
             MCTestGuest::SettleUntil([&] { return ann.MissionsLoaded() == 1 && MCTestGuest::DialogText().empty(); }));
         MCTestGuest::Settle();
@@ -1320,6 +1401,102 @@ namespace
         MCFidpMessage message(0, sizeof(lost));
         message.SetMessageBuffer(LinkupBytes(lost));
         MultiPlayerSystemCallback(message);
+    }
+
+    /// <summary>
+    /// A match's BRIEFING's drop zone tags, planned by <see cref="PlanMatch"/> on ARENA (its zones away from its map's
+    /// edges): the team's three of the mission's six from <paramref name="firstZone"/> (1998's MarkedZone), F1 to F3,
+    /// each zone where 1998's briefing marked it (MCBriefingScreen::MapPointOf) in the picture it stretched over its
+    /// map area, each tag inside the picture with its tail at the bottom right; at every window the players' reports
+    /// name and the frames' (4:3 to 21:9) each tail's tip within a pixel of its zone on the map as drawn (the picture
+    /// fitted to its box at its left and top), each tag at the picture's scale; the screen laid out with no problems.
+    /// Saved with --shots as <paramref name="what"/> at the frames' windows, 1920x1080 and 3440x1440.
+    /// </summary>
+    void CheckZoneTags(MCCampaignScreen& screen, int32_t firstZone, std::string_view what)
+    {
+        constexpr size_t Zones = 3;
+        constexpr float Pixel = 1.0f;
+        constexpr float Exact = 1e-3f;
+        constexpr std::array<MCMenusPictures::MCWindowSize, 2> MoreShots = {{{1920, 1080}, {3440, 1440}}};
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        REQUIRE(logistics != nullptr);
+        REQUIRE(logistics->BriefingScreen != nullptr);
+        const MCBriefingScreen& briefing = *logistics->BriefingScreen;
+        REQUIRE_EQ(briefing.MarkedZone, firstZone);
+        REQUIRE(briefing.MapPicture != nullptr);
+        const MCCampaignMenu::MCZoneMap& map = screen.ZoneMap();
+        CHECK_EQ(map.Width, static_cast<float>(briefing.MapPicture->Bitmap().XMax + 1));
+        CHECK_EQ(map.Height, static_cast<float>(briefing.MapPicture->Bitmap().YMax + 1));
+        REQUIRE_EQ(map.Tags.size(), Zones);
+        // 1998 stretched the picture over its map area, its first to its last pixel each way.
+        const float areaWidth = static_cast<float>(MCBriefingScreen::MapRight - MCBriefingScreen::MapLeft + 1);
+        const float areaHeight = static_cast<float>(MCBriefingScreen::MapBottom - MCBriefingScreen::MapTop + 1);
+
+        for (size_t i = 0; i < Zones; ++i)
+        {
+            const MCTest::Scope scope{std::format("{} F{}", what, i + 1)};
+            const MCCampaignMenu::MCZoneTag& tag = map.Tags[i];
+            const MCLogistics::DropZonePosition& zone =
+                logistics->DropZonePositions[static_cast<size_t>(firstZone) + i];
+            const SDL_FPoint marked = MCBriefingScreen::MapPointOf(zone.X, zone.Y, briefing.MarkerScale);
+            CHECK_EQ(tag.Group, static_cast<int>(i + 1));
+            CHECK(std::abs(tag.X - (marked.x - MCBriefingScreen::MapLeft) / areaWidth * map.Width) < Exact);
+            CHECK(std::abs(tag.Y - (marked.y - MCBriefingScreen::MapTop) / areaHeight * map.Height) < Exact);
+            CHECK(tag.Tail == MCCampaignMenu::MCTail::BottomRight);
+            CHECK(tag.Left >= 0.0f && tag.Top >= 0.0f && tag.Left + tag.Width <= map.Width &&
+                  tag.Top + tag.Height <= map.Height);
+        }
+
+        REQUIRE(MCRmlMenus::Running().has_value());
+        MCRmlMenus& menus = MCRmlMenus::Running()->get();
+        Rml::Element& mapElement = ElementOf(screen, "map");
+        std::vector<MCMenusPictures::MCWindowSize> windows(MCMenusPictures::PlayersWindows.begin(),
+                                                           MCMenusPictures::PlayersWindows.end());
+        windows.insert(windows.end(), MCMenusPictures::FrameWindows.begin(), MCMenusPictures::FrameWindows.end());
+
+        for (const MCMenusPictures::MCWindowSize& window : windows)
+        {
+            // The window's frame, the screen's frame at its size (the tags follow the map's box), laid out again.
+            menus.SetWindow(window.Width, window.Height);
+            menus.Frame();
+            menus.Menus().Tend();
+            menus.Frame();
+            const MCTest::Scope scope{std::format("{} {}x{}", what, window.Width, window.Height)};
+            const Rml::Vector2f origin = mapElement.GetAbsoluteOffset(Rml::BoxArea::Content);
+            const Rml::Vector2f box = mapElement.GetBox().GetSize(Rml::BoxArea::Content);
+            const float scale = std::min(box.x / map.Width, box.y / map.Height);
+            const std::vector<Rml::Element*> tags = ZoneTagsShown(screen);
+            REQUIRE_EQ(tags.size(), Zones);
+            REQUIRE_EQ(screen.ZonesShown().size(), Zones);
+
+            for (size_t i = 0; i < Zones; ++i)
+            {
+                const MCCampaignMenu::MCZoneTag& tag = map.Tags[i];
+                const Rml::Vector2f at = tags[i]->GetAbsoluteOffset(Rml::BoxArea::Border);
+                const Rml::Vector2f size = tags[i]->GetBox().GetSize(Rml::BoxArea::Border);
+                // The tail's tip where its picture has it, at the size drawn.
+                const float tipX = at.x + (tag.X - tag.Left) / tag.Width * size.x;
+                const float tipY = at.y + (tag.Y - tag.Top) / tag.Height * size.y;
+                CHECK(std::abs(tipX - (origin.x + tag.X * scale)) <= Pixel);
+                CHECK(std::abs(tipY - (origin.y + tag.Y * scale)) <= Pixel);
+                CHECK(std::abs(size.x - tag.Width * scale) <= Pixel);
+                CHECK(std::abs(size.y - tag.Height * scale) <= Pixel);
+                CHECK_EQ(screen.ZonesShown()[i].Picture, std::format("image({})", MCCampaignMenu::ZoneTagSource(tag)));
+            }
+        }
+
+        CheckLaidOut(menus, what);
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        REQUIRE(display != nullptr);
+        std::vector<MCMenusPictures::MCWindowSize> shots(MCMenusPictures::FrameWindows.begin(),
+                                                         MCMenusPictures::FrameWindows.end());
+        shots.insert(shots.end(), MoreShots.begin(), MoreShots.end());
+
+        for (const MCMenusPictures::MCWindowSize& size : shots)
+        {
+            REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
+            Shot(what);
+        }
     }
 
     /// <summary>A line typed in the chat's box <paramref name="box"/> and sent with Enter, as a player does.</summary>
@@ -1404,7 +1581,7 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
     REQUIRE(display != nullptr);
     REQUIRE(display->RendererKind() == MCRendererKind::Software);
     HideClock(screen);
-    DrawnEach(*display, clock, "briefing_mp", {0x19d01778, 0xf75dfc6b, 0x35d84ec5});
+    DrawnEach(*display, clock, "briefing_mp", {0xdcb34a67, 0xbaa0c8d8, 0x25a44f9c});
     CheckLaidOut(menus, "briefing mp");
 
     // DEPLOY: ALL chosen under the groups holds in every place; a line then goes to all.
@@ -1439,6 +1616,62 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
              (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "ANN has left the game."}));
     CHECK(MCTestGuest::DialogText().empty());
     CHECK(MCCampaignMenu::Shown());
+}
+
+/// <summary>
+/// A match's BRIEFING (briefing_b_mp_zones_hdtags) on the Inner Sphere's side (the room's team 1, home team 0): its
+/// map tags the side's drop zones, the mission's first three, F1 to F3 as the HD briefing maps tag 1998's flags, each
+/// tail on its zone at every window (<see cref="CheckZoneTags"/>). DEPLOY shows none; BRIEFING again shows the same.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's BRIEFING tags the Inner Sphere's three drop zones on its map")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    MCCampaignScreen& screen = PlanMatch(ann, InnerSphereZonesPort);
+    REQUIRE_EQ(MultiPlayer()->HomeTeam, 0);
+    CheckZoneTags(screen, 0, "briefing_mp_zones");
+
+    const std::vector<MCCampaignScreen::MCZoneShown> placed = screen.ZonesShown();
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(ZoneTagsShown(screen).empty());
+    screen.ChooseTab(MCCampaignScreen::MCTab::Briefing);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(ZoneTagsShown(screen).size(), size_t{3});
+    CHECK(screen.ZonesShown() == placed);
+}
+
+/// <summary>
+/// The same match's BRIEFING on the Clans' side (the room's team 2, home team 1): its map tags the mission's last three
+/// drop zones, F1 to F3 (<see cref="CheckZoneTags"/>), none where the other side's are.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's BRIEFING tags the Clans' three drop zones on its map")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t ClanZones = 3;
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    MCCampaignScreen& screen = PlanMatch(ann, ClanZonesPort, ClanTeam);
+    REQUIRE_EQ(MultiPlayer()->HomeTeam, 1);
+    CheckZoneTags(screen, ClanZones, "briefing_mp_zones_clan");
+
+    // The other side's zones aren't these.
+    const std::vector<MCCampaignMenu::MCZoneTag>& tags = screen.ZoneMap().Tags;
+
+    for (size_t zone = 0; zone < tags.size(); ++zone)
+    {
+        const MCLogistics::DropZonePosition& theirs = GlobalLog()->DropZonePositions[zone];
+        const MCLogistics::DropZonePosition& ours =
+            GlobalLog()->DropZonePositions[static_cast<size_t>(ClanZones) + zone];
+        CHECK(theirs.X != ours.X || theirs.Y != ours.Y);
+    }
 }
 
 /// <summary>

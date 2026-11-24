@@ -23,6 +23,45 @@ class MCLogPart;
 class MCLogisticsTabs;
 class MCRmlModel;
 
+namespace MCCampaignMenu
+{
+    /// <summary>The corner of a drop zone's tag its tail leaves from (tools/upscale/zone_tags.py's br, bl, tr, tl).</summary>
+    enum class MCTail : uint8_t
+    {
+        BottomRight,
+        BottomLeft,
+        TopRight,
+        TopLeft,
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 8): a team's drop zone's tag on a match's BRIEFING map, as the HD briefing maps
+    /// tag 1998's painted flags: its group (1 to 3, DEPLOY's; F1 to F3), the corner its tail leaves from, the zone (its
+    /// tail's tip) and its box, in the map picture's own pixels (the 1998 picture's).
+    /// </summary>
+    struct MCZoneTag
+    {
+        int Group = 0;
+        MCTail Tail = MCTail::BottomRight;
+        float X = 0;
+        float Y = 0;
+        float Left = 0;
+        float Top = 0;
+        float Width = 0;
+        float Height = 0;
+
+        bool operator==(const MCZoneTag&) const = default;
+    };
+
+    /// <summary>The map picture's size in its own pixels (the 1998 picture's), and the team's tags on it.</summary>
+    struct MCZoneMap
+    {
+        float Width = 0;
+        float Height = 0;
+        std::vector<MCZoneTag> Tags;
+    };
+}
+
 /// <summary>BRIEFING and DEPLOY.</summary>
 class MCCampaignScreen final : public MCRmlScreen
 {
@@ -104,6 +143,18 @@ public:
         std::vector<MCCard> Cards;
     };
 
+    /// <summary>A drop zone's tag as it shows over BRIEFING's map: its box in pixels from the map's corner, its picture.</summary>
+    struct MCZoneShown
+    {
+        std::string Left;
+        std::string Top;
+        std::string Width;
+        std::string Height;
+        std::string Picture;
+
+        bool operator==(const MCZoneShown&) const = default;
+    };
+
     /// <summary>A segment of the weight's ramp: its height, and whether it is lit, cyan (would be added) or red.</summary>
     struct MCSegment
     {
@@ -138,6 +189,9 @@ public:
     const std::vector<MCLine>& Orders() const { return _Orders; }
     const std::vector<MCLine>& Warnings() const { return _Warnings; }
     const std::string& MapSource() const { return _MapSource; }
+    /// <summary>A match's drop zones' tags on the map (none in single player), and as they show at the window's size.</summary>
+    const MCCampaignMenu::MCZoneMap& ZoneMap() const { return _ZoneMap; }
+    const std::vector<MCZoneShown>& ZonesShown() const { return _Zones; }
     const std::vector<MCCard>& ReadyCards() const { return _Ready; }
     const std::vector<MCGroup>& Groups() const { return _Groups; }
     const std::vector<MCSegment>& Ramp() const { return _Ramp; }
@@ -258,6 +312,11 @@ private:
     static std::optional<std::pair<bool, size_t>> CardOf(const Rml::Element* element);
     /// <summary>The carried card's place over the drop (pixels from its corner).</summary>
     void PlaceCarried();
+    /// <summary>
+    /// The drop zones' tags placed over the map as it is laid out now (the picture drawn to fit its box, at its left and
+    /// top: the tags at its scale); whether they moved.
+    /// </summary>
+    bool PlaceZoneTags();
     /// <summary>The ramp's lit and cyan lengths moved along to the weight's (its timings); whether a segment changed.</summary>
     bool StepRamp(double now);
     /// <summary>A match's players in the bar, read again; whether they changed.</summary>
@@ -298,6 +357,10 @@ private:
     std::string _WarningsHead;
     std::vector<MCLine> _Warnings;
     std::string _MapSource;
+    MCCampaignMenu::MCZoneMap _ZoneMap;
+    std::vector<MCZoneShown> _Zones;
+    /// <summary>The map's box (pixels) the tags were last placed in.</summary>
+    SDL_FPoint _ZoneBox{};
     bool _Video = false;
     /// <summary>The operation the video's window names ("Operation 1 · Beachhead").</summary>
     std::string _VideoEyebrow;
@@ -328,6 +391,23 @@ private:
 
 namespace MCCampaignMenu
 {
+    /// <summary>
+    /// The tag of group <paramref name="group"/> with its tail's tip at (<paramref name="x"/>, <paramref name="y"/>) on
+    /// a map picture <paramref name="width"/> by <paramref name="height"/> (its own pixels): the tail at the bottom
+    /// right, as 1998's flags, unless the tag would cross the picture's edge; then the first of the other corners
+    /// (bottom left, top right, top left) that keeps it inside, or, with none, the one least outside.
+    /// </summary>
+    MCZoneTag ZoneTag(int group, float x, float y, float width, float height);
+
+    /// <summary>
+    /// In a match, the briefing map's picture and the tags of this game's team's three drop zones on it, each zone
+    /// placed as 1998's briefing marked it (MCBriefingScreen::MapPointOf); outside a match, none.
+    /// </summary>
+    MCZoneMap ZoneTags();
+
+    /// <summary>A tag's picture, as the app's art names it (<c>art/zone_tag_F1_br.png</c>; its HD copy in art/hd).</summary>
+    std::string ZoneTagSource(const MCZoneTag& tag);
+
     /// <summary>A match's player as the screens before the battle show them (the bar's second row, the loading screen).</summary>
     struct MCMatchPlayer
     {

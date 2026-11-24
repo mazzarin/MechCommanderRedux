@@ -7,6 +7,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCChatView.h"
+#include "logistics/MCLogPort.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCMissionNames.h"
@@ -107,6 +108,47 @@ namespace
 
     /// <summary>What the log calls the screen.</summary>
     constexpr std::string_view BriefingName = "the briefing";
+
+    /// <summary>
+    /// A drop zone tag's picture (tools/upscale/zone_tags.py, its zone_tags.json): the corner its tail leaves from, as
+    /// the files name it, and its box's size and the tail's tip in 1998 map pixels (art/hd's pictures are 4x that,
+    /// art's 1x). F1 to F3 share each corner's.
+    /// </summary>
+    struct MCTagShape
+    {
+        MCCampaignMenu::MCTail Tail;
+        std::string_view Corner;
+        float Width;
+        float Height;
+        float TipX;
+        float TipY;
+    };
+
+    /// <summary>The tags' corners in the order they're tried: 1998's flags' bottom right first, then its mirrors.</summary>
+    constexpr std::array<MCTagShape, 4> ZoneTagShapes = {{
+        {MCCampaignMenu::MCTail::BottomRight, "br", 39.0f, 19.0f, 37.25f, 17.25f},
+        {MCCampaignMenu::MCTail::BottomLeft, "bl", 39.0f, 19.0f, 0.5f, 17.25f},
+        {MCCampaignMenu::MCTail::TopRight, "tr", 39.0f, 19.0f, 37.25f, 0.25f},
+        {MCCampaignMenu::MCTail::TopLeft, "tl", 39.0f, 19.0f, 0.5f, 0.25f},
+    }};
+    /// <summary>A team's drop zones: one a group (DEPLOY's three), F1 to F3.</summary>
+    constexpr int ZoneGroups = 3;
+    constexpr std::string_view ZoneTagFormat = "art/zone_tag_F{}_{}.png";
+    constexpr std::string_view ZoneTagPicture = "image({})";
+    /// <summary>A length in whole pixels, as RmlUi reads it.</summary>
+    constexpr std::string_view PixelsFormat = "{:.0f}px";
+    /// <summary>The 1998 briefing's map area on its screen, in pixels each way (its first to its last).</summary>
+    constexpr float MapAreaWidth = static_cast<float>(MCBriefingScreen::MapRight - MCBriefingScreen::MapLeft + 1);
+    constexpr float MapAreaHeight = static_cast<float>(MCBriefingScreen::MapBottom - MCBriefingScreen::MapTop + 1);
+
+    // The shapes in MCTail's order, so a tail finds its own.
+    static_assert(std::ranges::all_of(std::views::iota(size_t{0}, ZoneTagShapes.size()), [](size_t i)
+                                      { return ZoneTagShapes[i].Tail == static_cast<MCCampaignMenu::MCTail>(i); }));
+
+    const MCTagShape& ShapeOf(MCCampaignMenu::MCTail tail)
+    {
+        return ZoneTagShapes[static_cast<size_t>(tail)];
+    }
 
     MCGuiHandle<MCCampaignScreen>& TheScreen()
     {
@@ -261,6 +303,9 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.List("objectives", _Objectives, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
     model.List("orders", _Orders, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
     model.List("warnings", _Warnings, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
+    model.List("zones", _Zones, std::pair{"left", &MCZoneShown::Left}, std::pair{"top", &MCZoneShown::Top},
+               std::pair{"width", &MCZoneShown::Width}, std::pair{"height", &MCZoneShown::Height},
+               std::pair{"picture", &MCZoneShown::Picture});
     // The cards' list first: the groups' rows hold their cards (RmlUi's register then knows a list of cards).
     model.List("ready", _Ready, std::pair{"kind", &MCCard::Kind}, std::pair{"who", &MCCard::Who},
                std::pair{"what", &MCCard::What}, std::pair{"tons", &MCCard::Tons},
@@ -473,6 +518,55 @@ void MCCampaignScreen::ReadBriefing()
             map->SetProperty("decorator", std::format("image({} contain left top)", _MapSource));
         }
     }
+
+    // A match's map has no flags painted in: the team's drop zones are tagged over it (a campaign's has its own).
+    _ZoneMap = _Multiplayer ? MCCampaignMenu::ZoneTags() : MCCampaignMenu::MCZoneMap{};
+    _Zones.clear();
+    _ZoneBox = {};
+    PlaceZoneTags();
+}
+
+bool MCCampaignScreen::PlaceZoneTags()
+{
+    Rml::Element* map = ElementOf(Document(), MapId);
+    const Rml::Vector2f box = map != nullptr ? map->GetBox().GetSize(Rml::BoxArea::Content) : Rml::Vector2f(0, 0);
+
+    // The map not laid out (another tab shows): the tags stay as they were placed; nor moved, they stay.
+    if (box.x <= 0 || box.y <= 0 || (box.x == _ZoneBox.x && box.y == _ZoneBox.y))
+    {
+        return false;
+    }
+
+    _ZoneBox = SDL_FPoint{box.x, box.y};
+    std::vector<MCZoneShown> shown;
+
+    // The picture drawn to fit the box with its own shape (contain), at its left and top; each tag at its scale, on
+    // whole pixels, its tail's tip on the zone.
+    if (_ZoneMap.Width > 0 && _ZoneMap.Height > 0)
+    {
+        const float scale = std::min(box.x / _ZoneMap.Width, box.y / _ZoneMap.Height);
+
+        for (const MCCampaignMenu::MCZoneTag& tag : _ZoneMap.Tags)
+        {
+            const float width = std::round(tag.Width * scale);
+            const float height = std::round(tag.Height * scale);
+            const float left = std::round(tag.X * scale - (tag.X - tag.Left) * width / tag.Width);
+            const float top = std::round(tag.Y * scale - (tag.Y - tag.Top) * height / tag.Height);
+            shown.push_back(MCZoneShown{.Left = std::format(PixelsFormat, left),
+                                        .Top = std::format(PixelsFormat, top),
+                                        .Width = std::format(PixelsFormat, width),
+                                        .Height = std::format(PixelsFormat, height),
+                                        .Picture = std::format(ZoneTagPicture, MCCampaignMenu::ZoneTagSource(tag))});
+        }
+    }
+
+    if (shown == _Zones)
+    {
+        return false;
+    }
+
+    _Zones = std::move(shown);
+    return true;
 }
 
 bool MCCampaignScreen::FillBar()
@@ -1471,6 +1565,8 @@ void MCCampaignScreen::OnFrame()
     if (_Multiplayer)
     {
         changed = FillPlayers() || changed;
+        // The map's drop zone tags follow its box (a window resized, BRIEFING shown again).
+        changed = PlaceZoneTags() || changed;
 
         if (_Model != nullptr)
         {
@@ -1718,6 +1814,87 @@ MCCampaignMenu::MCMissionRead MCCampaignMenu::ReadMission()
     const std::string scenario = Scenario();
     read.MapSource = scenario.empty() ? std::string() : std::string(MCRmlArt::MapScheme) + scenario;
     return read;
+}
+
+MCCampaignMenu::MCZoneTag MCCampaignMenu::ZoneTag(int group, float x, float y, float width, float height)
+{
+    std::optional<MCZoneTag> best;
+    float bestOutside = 0;
+
+    // The first corner least outside the picture: one inside, or the bottom right's 1998 flag where none is.
+    for (const MCTagShape& shape : ZoneTagShapes)
+    {
+        const MCZoneTag tag{.Group = group,
+                            .Tail = shape.Tail,
+                            .X = x,
+                            .Y = y,
+                            .Left = x - shape.TipX,
+                            .Top = y - shape.TipY,
+                            .Width = shape.Width,
+                            .Height = shape.Height};
+        const float outside = std::max(0.0f, -tag.Left) + std::max(0.0f, -tag.Top) +
+                              std::max(0.0f, tag.Left + tag.Width - width) +
+                              std::max(0.0f, tag.Top + tag.Height - height);
+
+        if (!best.has_value() || outside < bestOutside)
+        {
+            best = tag;
+            bestOutside = outside;
+        }
+    }
+
+    return *best;
+}
+
+MCCampaignMenu::MCZoneMap MCCampaignMenu::ZoneTags()
+{
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+    if (logistics == nullptr || MultiPlayer() == nullptr || logistics->BriefingScreen == nullptr)
+    {
+        return {};
+    }
+
+    // 1998's marks, set as its briefing read the match's mission (MCBriefingScreen::DrawBackground): the team's first
+    // zone (the Clans' the last three), the world units to a map pixel, the map's picture.
+    const MCBriefingScreen& briefing = *logistics->BriefingScreen;
+
+    if (briefing.MarkedZone < 0 || !(briefing.MarkerScale > 0) || briefing.MapPicture == nullptr)
+    {
+        return {};
+    }
+
+    const MCWindow& picture = briefing.MapPicture->Bitmap();
+    MCZoneMap map{.Width = static_cast<float>(picture.XMax + 1), .Height = static_cast<float>(picture.YMax + 1)};
+
+    if (map.Width <= 0 || map.Height <= 0)
+    {
+        return {};
+    }
+
+    for (int group = 1; group <= ZoneGroups; ++group)
+    {
+        const auto zone = static_cast<size_t>(briefing.MarkedZone + group - 1);
+
+        if (zone >= logistics->DropZonePositions.size())
+        {
+            break;
+        }
+
+        // Where 1998 marked it on its screen, in the picture it stretched over the map area.
+        const MCLogistics::DropZonePosition& at = logistics->DropZonePositions[zone];
+        const SDL_FPoint marked = MCBriefingScreen::MapPointOf(at.X, at.Y, briefing.MarkerScale);
+        const float x = (marked.x - static_cast<float>(MCBriefingScreen::MapLeft)) / MapAreaWidth * map.Width;
+        const float y = (marked.y - static_cast<float>(MCBriefingScreen::MapTop)) / MapAreaHeight * map.Height;
+        map.Tags.push_back(ZoneTag(group, x, y, map.Width, map.Height));
+    }
+
+    return map;
+}
+
+std::string MCCampaignMenu::ZoneTagSource(const MCZoneTag& tag)
+{
+    return std::format(ZoneTagFormat, tag.Group, ShapeOf(tag.Tail).Corner);
 }
 
 std::string MCCampaignMenu::Pictured(std::string_view source)

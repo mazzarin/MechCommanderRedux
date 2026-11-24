@@ -35,6 +35,7 @@ namespace
     constexpr uint32_t StringLength = 0xfe;
 
     uint64_t TheRevision = 0;
+    bool TheLock = false;
 
     MCLogistics& Logistics()
     {
@@ -392,7 +393,7 @@ auto MCDeploy::Lift(MCLogPart& part) -> MCRefusal
         return MCRefusal::NotOwn;
     }
 
-    if (Logistics().BriefingScreen->ButtonsLocked)
+    if (Locked())
     {
         return MCRefusal::Locked;
     }
@@ -576,8 +577,7 @@ auto MCDeploy::Begin() -> MCBegin
         return MCBegin::Ready;
     }
 
-    TheRevision++;
-    Logistics().BriefingScreen->ButtonsLocked = true;
+    SetLocked(true);
     MultiPlayer()->SendReadyForBattle();
     std::string text = MCFormatPrintf(LoadGameString(ReadyString, ReadyStringLength).c_str(),
                                       MultiPlayer()->SessionManager->MyPlayer()->Name.c_str());
@@ -592,6 +592,17 @@ auto MCDeploy::TooManyUnitsText() -> std::string
     const int32_t units = NumUnits();
     const int32_t most = MaxUnits();
     return MCFormatPrintf(LoadGameString(TooManyUnitsString, StringLength).c_str(), units, most, units - most);
+}
+
+auto MCDeploy::Locked() -> bool
+{
+    return TheLock;
+}
+
+auto MCDeploy::SetLocked(bool locked) -> void
+{
+    TheLock = locked;
+    TheRevision++;
 }
 
 auto MCDeploy::Revision() -> uint64_t

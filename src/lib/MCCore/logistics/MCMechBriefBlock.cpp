@@ -316,7 +316,7 @@ auto MCMechBriefBlock::PickUp(MCGuiEvent& event) -> void
     const std::shared_ptr<MCLogPart> part = Part();
     screen.ShowBriefing(part);
 
-    if (part->LocalPart == 0 || screen.ButtonsLocked)
+    if (part->LocalPart == 0 || MCDeploy::Locked())
     {
         return;
     }

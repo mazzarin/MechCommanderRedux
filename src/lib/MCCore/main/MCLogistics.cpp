@@ -17,6 +17,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCCompInventoryBlock.h"
+#include "logistics/MCDeploy.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCFileScrollPane.h"
@@ -1683,7 +1684,26 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 
     MCBriefingScreen& briefing = *BriefingScreen;
     ShowTickerOn(briefing);
-    briefing.SetUpDeploy();
+    // The 1998 briefing's own pictures (its deploy pane's blocks and slots, its unit box, its panes, its tonnage bar,
+    // its screen buttons), made only where it shows.
+    const auto setUpPictures = [this, &briefing]
+    {
+        briefing.SetUpDeploy();
+        briefing.MissionPane->SetScrollPos(0.0f);
+        briefing.DeployPane->SetScrollPos(0.0f);
+        briefing.DrawTonnageBar();
+        DrawScreenButtons();
+
+        // Show the briefing box of the first unit in the deploy pane (none: the box area is blank).
+        if (!briefing.DeployUnits.empty())
+        {
+            briefing.ShowBriefing(briefing.DeployUnits.front());
+        }
+        else
+        {
+            briefing.HideBriefing();
+        }
+    };
 
     // The original blanked the local player's empty drop slots here (the screen draws them each frame), then the box
     // area under them (the box is shown again below).
@@ -1692,10 +1712,7 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
     ShowLogScreen(true, previous != RepairScreen && previous != PurchaseScreen);
     briefing.MovieStarted = false;
     briefing.SetUpMission();
-    briefing.MissionPane->SetScrollPos(0.0f);
-    briefing.DeployPane->SetScrollPos(0.0f);
-    briefing.CalcTonnages();
-    DrawScreenButtons();
+    MCDeploy::CountTons();
 
     if (MultiPlayer() == nullptr)
     {
@@ -1723,16 +1740,6 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
         briefing.SetUpOperation();
     }
 
-    // Show the briefing box of the first unit in the deploy pane (none: the box area is blank).
-    if (!briefing.DeployUnits.empty())
-    {
-        briefing.ShowBriefing(briefing.DeployUnits.front());
-    }
-    else
-    {
-        briefing.HideBriefing();
-    }
-
     if (remade)
     {
         briefing.ShowGuiWindow(false);
@@ -1745,6 +1752,8 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
         // The remade screen can't show (the log says why): the 1998 briefing's.
         briefing.ShowGuiWindow(true);
     }
+
+    setUpPictures();
 
     if (animate)
     {

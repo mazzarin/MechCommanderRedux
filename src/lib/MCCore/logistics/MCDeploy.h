@@ -149,4 +149,14 @@ namespace MCDeploy
 
     /// <summary>The count bumped (a change made elsewhere: a network's message, a cheat).</summary>
     void Changed();
+
+    /// <summary>
+    /// A match's ready lock: once the player's BEGIN MISSION has told the others it's ready (<see cref="Begin"/>), the
+    /// drop and the tabs are theirs no more until a campaign or match loads (1998's briefing's ButtonsLocked, now the
+    /// model's: the remade DEPLOY and the 1998 briefing read it).
+    /// </summary>
+    bool Locked();
+
+    /// <summary>The ready lock set or let go (a load lets it go), the count bumped.</summary>
+    void SetLocked(bool locked);
 }

@@ -773,7 +773,7 @@ void MCCampaignScreen::SendReady(size_t ready, std::optional<size_t> group)
 
 void MCCampaignScreen::SendBack(size_t slot)
 {
-    if (_Carry.has_value() || GlobalLog()->BriefingScreen->ButtonsLocked)
+    if (_Carry.has_value() || MCDeploy::Locked())
     {
         return;
     }
@@ -822,7 +822,7 @@ void MCCampaignScreen::PickUpSlot(size_t slot, bool byKeys)
 {
     const std::shared_ptr<MCLogPart> part = MCDeploy::SlotUnit(slot);
 
-    if (part == nullptr || _Carry.has_value() || !MCDeploy::Open(slot) || GlobalLog()->BriefingScreen->ButtonsLocked)
+    if (part == nullptr || _Carry.has_value() || !MCDeploy::Open(slot) || MCDeploy::Locked())
     {
         return;
     }

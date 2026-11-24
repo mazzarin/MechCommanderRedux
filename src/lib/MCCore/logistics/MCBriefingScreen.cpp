@@ -124,7 +124,7 @@ auto MCBriefingScreen::Init() -> void
     CurrentTab = OperationTab;
     CurDeployTonnage = 0;
     PlayMovie = false;
-    ButtonsLocked = false;
+    MCDeploy::SetLocked(false);
     ChatBlinking = false;
     ChatBlinkOn = false;
     ChatTimerOn = false;
@@ -384,7 +384,7 @@ auto MCBriefingScreen::PaintLook(const MCPane& target) -> void
     PaintTonnageBar(target, MaxDeployTonnage, CurDeployTonnage, GlobalLog()->HammerDown != 0);
     std::string_view launchName = "lsbdf01.tga";
 
-    if (!LaunchPressed && !ButtonsLocked)
+    if (!LaunchPressed && !MCDeploy::Locked())
     {
         launchName = MCDeploy::CanBegin() ? "lsbdf00.tga" : "lsbdf00a.tga";
     }
@@ -570,7 +570,7 @@ auto MCBriefingScreen::DrawTonnageBar() -> void
 {
     // Port: the bar and the launch button are drawn each frame (PaintLook) with the figures of now; a new figure ends
     // a press shown on the launch button (the original painted it up again).
-    if (!ButtonsLocked)
+    if (!MCDeploy::Locked())
     {
         LaunchPressed = false;
     }
@@ -668,7 +668,7 @@ auto MCBriefingScreen::ShowHoverHelp(int32_t xPos, int32_t yPos) -> void
     {
         ShowHelp(0x41);
 
-        if (!ButtonsLocked)
+        if (!MCDeploy::Locked())
         {
             MCLogistics::HoverScreenButton(*this, 2);
         }
@@ -677,7 +677,7 @@ auto MCBriefingScreen::ShowHoverHelp(int32_t xPos, int32_t yPos) -> void
     {
         ShowHelp(0x42);
 
-        if (!ButtonsLocked)
+        if (!MCDeploy::Locked())
         {
             MCLogistics::HoverScreenButton(*this, 3);
         }
@@ -724,13 +724,13 @@ auto MCBriefingScreen::HandleClick(int32_t xPos, int32_t yPos) -> void
 {
     const POINT point{xPos, yPos};
 
-    if (!ButtonsLocked && Inside(point, 2, 0x34, 0xd1, 0x45))
+    if (!MCDeploy::Locked() && Inside(point, 2, 0x34, 0xd1, 0x45))
     {
         GlobalLog()->SetUpPurchaseScreen(true);
         return;
     }
 
-    if (!ButtonsLocked && Inside(point, 2, 0x46, 0xd1, 0x57))
+    if (!MCDeploy::Locked() && Inside(point, 2, 0x46, 0xd1, 0x57))
     {
         GlobalLog()->SetUpRepairScreen(true);
         return;
@@ -764,7 +764,7 @@ auto MCBriefingScreen::HandleClick(int32_t xPos, int32_t yPos) -> void
         return;
     }
 
-    if (!ButtonsLocked && Inside(point, 0x205, 0x14a, 0x270, 0x15c))
+    if (!MCDeploy::Locked() && Inside(point, 0x205, 0x14a, 0x270, 0x15c))
     {
         Launch();
     }

@@ -6,6 +6,7 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCDeploy.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCMissionLogisticsBridge.h"
@@ -352,7 +353,7 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
     MCPacketFile packetFile;
     MCFitIniFile file;
     bool quickStart = false;
-    BriefingScreen->ButtonsLocked = false;
+    MCDeploy::SetLocked(false);
     GuiSystem().ActivatePaletteFromTga(ArtPath + "logart\\lsrupm05.tga");
 
     // Start from empty lists and inventories.

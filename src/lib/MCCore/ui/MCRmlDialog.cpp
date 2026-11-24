@@ -134,7 +134,8 @@ void MCRmlDialog::Fill()
 
     Keys.clear();
 
-    if (!_Say.Main.empty())
+    // One that leaves opens on its way back, which Enter would press: Enter isn't its answer's key.
+    if (!_Say.Main.empty() && !(_Say.Leaves && !_Say.Other.empty()))
     {
         Keys.push_back({EnterKey, _Say.Main});
     }
@@ -143,6 +144,19 @@ void MCRmlDialog::Fill()
     {
         Keys.push_back({EscapeKey, _Say.Other});
     }
+}
+
+MCOptionalRef<Rml::Element> MCRmlDialog::FirstFocus(Rml::ElementDocument& document)
+{
+    if (_Say.Leaves && !_Say.Other.empty())
+    {
+        if (Rml::Element* other = document.GetElementById("other"); other != nullptr)
+        {
+            return *other;
+        }
+    }
+
+    return MCRmlScreen::FirstFocus(document);
 }
 
 void MCRmlDialog::Say(MCSay say)

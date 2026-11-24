@@ -38,5 +38,8 @@ void Cancel();
 /// <summary>Leaves the session (multiplayer) and goes back to the main menu; from a lobby launch, the game quits.</summary>
 void DoExit();
 
+/// <summary>Port: <see cref="DoExit"/>'s leaving a match: the multiplayer logistics taken down and the session left.</summary>
+void LeaveMatch();
+
 /// <summary>The exit button: asks for confirmation, then <see cref="DoExit"/>.</summary>
 void CheckExit();

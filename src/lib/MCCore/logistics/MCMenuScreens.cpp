@@ -20,8 +20,11 @@
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCGameSession.h"
+#include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRoomEnd.h"
+#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
 
 namespace
@@ -348,8 +351,30 @@ auto MCMenuScreens::AskLeaveGame() -> void
 
 auto MCMenuScreens::LeaveCampaign() -> void
 {
-    if (MultiPlayer() != nullptr)
+    if (const std::shared_ptr<MCMultiPlayer> game = MultiPlayer(); game != nullptr)
     {
+        // Port-only (SPEC-menus.md's stage 8): over the remade briefing, a remade dialog opening on CANCEL, the game's
+        // name above it: the original's question (dialog_exit_mp), its EXIT landing on the games list the match came
+        // from; a launcher's game, "Leave the game?", which ends it (the room's way back's end).
+        if (MCCampaignMenu::Shown())
+        {
+            const bool launcher = LaunchedFromLobby != 0;
+            MCRmlDialog::MCSay say{
+                .Eyebrow = game->SessionName,
+                .Heading = launcher
+                               ? std::string(LeaveGameQuestion)
+                               : MCRmlDialogs::SentenceCase(LoadGameString(ExitMultiplayerString, GameStringBuffer)),
+                .Main = std::string(launcher ? LeaveWord : ExitWord),
+                .Other = std::string(CancelWord),
+                .OnMain = launcher ? std::function<void()>([] { KillTheGame(); }) : std::function<void()>(ExitToGames),
+                .Leaves = true};
+
+            if (MCRmlDialogs::Show(std::move(say)))
+            {
+                return;
+            }
+        }
+
         CheckExit();
         return;
     }
@@ -362,6 +387,21 @@ auto MCMenuScreens::LeaveCampaign() -> void
 
     PlayLogSound(MainMenuSample);
     MCScreenFlow::Change("campaign back", [] { GlobalLog()->SetUpMainScreen(false); });
+}
+
+auto MCMenuScreens::ExitToGames() -> void
+{
+    const MCRoomEnd::MCGames games = MCRoomEnd::GamesOf();
+
+    // A modem or serial game: the original's way, to the main menu.
+    if (games == MCRoomEnd::MCGames::None)
+    {
+        DoExit();
+        return;
+    }
+
+    LeaveMatch();
+    MCRoomEnd::ShowGames(games, {});
 }
 
 auto MCMenuScreens::PrepareRoom() -> void

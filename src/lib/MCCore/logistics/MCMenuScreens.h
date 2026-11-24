@@ -52,9 +52,16 @@ namespace MCMenuScreens
 
     /// <summary>
     /// The campaign's screens' MAIN MENU (and Escape): in single player the main menu, RETURN TO GAME coming back; in a
-    /// match the original's question first (CheckExit).
+    /// match the original's question first (CheckExit; over the remade briefing a remade dialog, its EXIT
+    /// <see cref="ExitToGames"/>, a launcher's "Leave the game?" ending the game).
     /// </summary>
     void LeaveCampaign();
+
+    /// <summary>
+    /// Port-only (stage 8): a match left from its briefing: the original's leaving (LeaveMatch), landing on the games
+    /// list it came from (the LAN games, INTERNET) as a room's end does; 1998 went to the main menu.
+    /// </summary>
+    void ExitToGames();
 
     /// <summary>
     /// The room opened at a network's word (a join, the host's word to show it, a lobby's room, a rematch): its set-up at
@@ -75,4 +82,14 @@ namespace MCMenuScreens
     /// <summary>The text of <see cref="AskQuit"/>'s and <see cref="AskLeaveGame"/>'s questions.</summary>
     inline constexpr std::string_view QuitQuestion = "Quit the game?";
     inline constexpr std::string_view LeaveGameQuestion = "Leave the game?";
+
+    /// <summary>
+    /// A match's "Exit Multiplayer?" over the remade briefing (<see cref="LeaveCampaign"/>): the original's string, and
+    /// the buttons' words.
+    /// </summary>
+    inline constexpr uint32_t ExitMultiplayerString = 0xaf;
+    inline constexpr int32_t GameStringBuffer = 0xfe;
+    inline constexpr std::string_view ExitWord = "Exit";
+    inline constexpr std::string_view LeaveWord = "Leave";
+    inline constexpr std::string_view CancelWord = "Cancel";
 }

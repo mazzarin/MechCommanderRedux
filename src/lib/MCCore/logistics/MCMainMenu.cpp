@@ -145,11 +145,16 @@ void DoExit()
             return;
         }
 
-        GlobalLog()->DestroyMultiplayer();
-        MultiPlayer()->LeaveSession();
+        LeaveMatch();
     }
 
     GlobalLog()->SetUpMainScreen(false);
+}
+
+void LeaveMatch()
+{
+    GlobalLog()->DestroyMultiplayer();
+    MultiPlayer()->LeaveSession();
 }
 
 void CheckExit()

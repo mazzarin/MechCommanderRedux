@@ -26,6 +26,11 @@ public:
         std::string Other;
         std::function<void()> OnMain;
         std::function<void()> OnOther;
+        /// <summary>
+        /// Port-only (SPEC-menus.md's stage 8): its answer leaves (a match): it opens on its way back, as the spec's
+        /// windows that delete or leave do.
+        /// </summary>
+        bool Leaves = false;
     };
 
     MCRmlDialog();
@@ -45,6 +50,7 @@ public:
 
 protected:
     void OnLoaded(Rml::ElementDocument& document) override;
+    MCOptionalRef<Rml::Element> FirstFocus(Rml::ElementDocument& document) override;
 
 private:
     /// <summary>The words put in the document, and its buttons shown or not.</summary>

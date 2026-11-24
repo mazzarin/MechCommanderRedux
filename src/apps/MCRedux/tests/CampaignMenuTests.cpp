@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "MCMenusPictures.h"
+#include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCScreenChange.h"
@@ -18,15 +19,19 @@
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUnitLimits.h"
 #include "gui/MCUpdateDisplay.h"
+#include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogPart.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
+#include "linkup/MCSessionManager.h"
+#include "network/MCMultiPlayer.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "ui/MCRmlChecks.h"
+#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlMenus.h"
 
 #include <RmlUi/Core/Context.h>
@@ -804,4 +809,56 @@ TEST_CASE_ISOLATED("game: the operation's video draws the same on every machine 
     }
 
     window.Close();
+}
+
+/// <summary>
+/// A match's briefing (a LAN game's, its name STEEL RAIN): Escape asks "Exit multiplayer?" (1998's string) as
+/// dialog_exit_mp has it, the game's name above it, opening on CANCEL; CANCEL keeps the briefing; EXIT leaves the match
+/// for the LAN games it came from, MULTIPLAYER ACCESS and the main menu under them (1998 went to the main menu).
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's briefing asks before leaving, and leaves for the games list it came from")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    auto game = std::make_shared<MCMultiPlayer>();
+    MCGameContext::Current().SetMultiPlayer(game);
+    REQUIRE_EQ(game->Start(), 0);
+    game->SessionManager->CurrentConnection = MCNetProtocol::TcpIp;
+    game->SessionName = "STEEL RAIN";
+
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(MCRmlDialogs::Shown());
+    const MCGuiHandle<MCRmlDialog> dialog = MCRmlDialogs::Dialog();
+    REQUIRE(dialog);
+    CHECK_EQ(dialog->Said().Eyebrow, std::string("STEEL RAIN"));
+    CHECK_EQ(dialog->Said().Heading, std::string("Exit multiplayer?"));
+    CHECK_EQ(dialog->Said().Main, std::string("Exit"));
+    CHECK_EQ(dialog->Said().Other, std::string("Cancel"));
+    const Rml::Element* focus = dialog->Layer().Context().GetFocusElement();
+    REQUIRE(focus != nullptr);
+    CHECK_EQ(focus->GetId(), std::string("other"));
+    Shot("exit_mp");
+
+    // Escape: its CANCEL, the briefing as it was.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!MCRmlDialogs::Shown());
+    CHECK(MCCampaignMenu::Shown());
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
+
+    // EXIT: the LAN games.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(MCRmlDialogs::Shown());
+    dialog->PressMain();
+    RunWhileChanging();
+    CHECK(!MCCampaignMenu::Shown());
+    CHECK(MCTestGuest::OnLan());
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > multiplayer > lan"));
 }

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCInput.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFrameLog.h"
 
 namespace
 {
@@ -613,6 +614,7 @@ namespace MCInput
         // Port-only: a check for the frame presented ahead before the input is read (MCDisplay::ShowBeforeInput).
         if (const std::shared_ptr<MCDisplay> display = Display(); display != nullptr)
         {
+            MCFrameLog::Scope probe("probe.pump show");
             display->ShowBeforeInput();
         }
 
@@ -639,8 +641,18 @@ namespace MCInput
         applyTextInput();
         SDL_Event event;
 
-        while (SDL_PollEvent(&event))
+        for (;;)
         {
+            {
+                MCFrameLog::Scope probe("probe.pump poll");
+
+                if (!SDL_PollEvent(&event))
+                {
+                    break;
+                }
+            }
+
+            MCFrameLog::Scope probe(event.type == SDL_EVENT_KEY_DOWN ? "probe.pump key down" : "probe.pump other event");
             HandleEvent(event);
         }
 
@@ -886,7 +898,7 @@ namespace MCInput
         }
 
         // Port-only: the menus over the game take what they use (SetEventLayer).
-        if (input.Layer && input.Layer(event))
+        if (MCFrameLog::Scope probe("probe.pump layer"); input.Layer && input.Layer(event))
         {
             return;
         }

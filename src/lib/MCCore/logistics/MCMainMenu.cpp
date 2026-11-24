@@ -16,6 +16,7 @@
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
 #include "platform/MCInput.h"
+#include "platform/MCFrameLog.h"
 #include "sound/MCSoundSystem.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCSystemConfig.h"
@@ -66,17 +67,34 @@ namespace
     /// </summary>
     void StartCampaign(std::string_view campaign, std::string_view startFile, bool firstPlanet)
     {
-        EnsureRegistryVersion();
-        SoundSystem()->StopDigitalMusic();
-        SoundSystem()->PlayBettySample(0x19);
+        {
+            MCFrameLog::Scope probe("probe.press registry");
+            EnsureRegistryVersion();
+        }
+        {
+            MCFrameLog::Scope probe("probe.press music stop");
+            SoundSystem()->StopDigitalMusic();
+        }
+        {
+            MCFrameLog::Scope probe("probe.press betty");
+            SoundSystem()->PlayBettySample(0x19);
+        }
 
         // Port-only: the campaign started and its briefing set up in the fade, where the main menu sat frozen for it
         // before its fade began (64-65 ms on the A10, 18-38 on the M4 Pro); port-only (SPEC-menus.md's stage 2): in a
         // change of screen through the flow, the main menu fading out live, the briefing fading in. Betty's line and the
         // music's stop at the click; from it, live, the remade briefing's document read and the campaign loaded, a step
         // a frame; the briefing set up once the screen is dark.
-        std::vector<MCScreenChange::MCPiece> job = MCCampaignMenu::Ahead();
-        std::ranges::move(CampaignStartPieces(std::string(campaign), startFile, firstPlanet), std::back_inserter(job));
+        std::vector<MCScreenChange::MCPiece> job;
+        {
+            MCFrameLog::Scope probe("probe.press ahead");
+            job = MCCampaignMenu::Ahead();
+        }
+        {
+            MCFrameLog::Scope probe("probe.press pieces");
+            std::ranges::move(CampaignStartPieces(std::string(campaign), startFile, firstPlanet), std::back_inserter(job));
+        }
+        MCFrameLog::Scope probe("probe.press change");
         MCScreenFlow::Change("new campaign", ShowCampaignStarted, std::move(job));
     }
 }

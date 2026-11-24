@@ -780,10 +780,11 @@ TEST_CASE("file: the registry's values read back at once and are saved behind th
     constexpr std::string_view Version = "MCX v1.8 1234.";
     ScratchFolder folder("registry");
     const std::filesystem::path file = folder.Path() / "user/registry.cfg";
+    // Read as text, as the store writes it (Windows' line ends read back as \n).
     const auto text = [&file]
     {
-        const std::vector<uint8_t> bytes = ReadFile(file);
-        return std::string(bytes.begin(), bytes.end());
+        std::ifstream in(file);
+        return std::string(std::istreambuf_iterator<char>(in), {});
     };
 
     // The file's lines, by key and value name lower-cased, in order.

@@ -563,9 +563,10 @@ TEST_CASE_ISOLATED("game: NEW CAMPAIGN's press waits for no file, the build's ve
     MCRegistry::WaitForSaves();
     REQUIRE(!CheckRegistryVersionNumber());
     const std::filesystem::path file = MCFileSystem::ResolveWrite("registry.cfg");
+    // Read as text, as the store writes it (Windows' line ends read back as \n).
     const auto text = [&file]
     {
-        std::ifstream in(file, std::ios::binary);
+        std::ifstream in(file);
         return std::string(std::istreambuf_iterator<char>(in), {});
     };
 

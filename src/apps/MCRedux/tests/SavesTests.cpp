@@ -94,6 +94,14 @@ TEST_CASE("saves: a briefing names its operation on its FEDCOM line and its miss
     CHECK_EQ(written.Operation, std::string("SKYHOOK"));
     CHECK_EQ(written.Mission, std::string("DESTROY CLAN HEADQUARTERS BUILDING"));
 
+    // A single mission against a Clan's aces has a STARCOM line in its place (xsbrf0401.txt's).
+    const MCMissionNames::MCWritten clan = MCMissionNames::FromBriefing("%fm%fc1%c****CLASSIFIED****%n\r\n"
+                                                                        "%fs%fc4%cSTARCOM:SOLO/04PRDN01%n\r\n"
+                                                                        "%fc5%c----------%n\r\n"
+                                                                        "%fc6%c***DESTROY ALL ACES***%n\r\n");
+    CHECK_EQ(clan.Operation, std::string("SOLO"));
+    CHECK_EQ(clan.Mission, std::string("DESTROY ALL ACES"));
+
     // One without them names nothing.
     const MCMissionNames::MCWritten nothing = MCMissionNames::FromBriefing("Commander,\r\n***A TITLE***\r\n");
     CHECK(nothing.Operation.empty());

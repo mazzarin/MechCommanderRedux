@@ -10,6 +10,7 @@
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCPurchaseScreen.h"
@@ -130,6 +131,7 @@ namespace
     struct MCIds
     {
         MCScreenId Main = MCScreenFlow::NoScreen;
+        MCScreenId Campaigns = MCScreenFlow::NoScreen;
         MCScreenId Multiplayer = MCScreenFlow::NoScreen;
         MCScreenId Lan = MCScreenFlow::NoScreen;
         MCScreenId Internet = MCScreenFlow::NoScreen;
@@ -141,7 +143,6 @@ namespace
         MCScreenId Preferences = MCScreenFlow::NoScreen;
         MCScreenId Update = MCScreenFlow::NoScreen;
         MCScreenId Campaign = MCScreenFlow::NoScreen;
-        MCScreenId Connection = MCScreenFlow::NoScreen;
         MCScreenId ReadyRoom = MCScreenFlow::NoScreen;
     };
 
@@ -170,10 +171,25 @@ namespace
 auto MCMenuScreens::Register() -> void
 {
     Registered = true;
-    Ids.Main = MCScreenFlow::Register(
-        OldScreen("main", [] { return Showing(&MCLogistics::MainScreen); }, ShowMainMenu, AskQuit));
-    Ids.Multiplayer = MCScreenFlow::Register(
-        OldScreen("multiplayer", [] { return Showing(&MCLogistics::MultiplayerScreen); }, ConnectScreen));
+    // Port-only (SPEC-menus.md, stage 7): the main menu remade (logistics/MCMainMenuScreen.h), read live from the press
+    // and shown over logistics' 1998 main screen, which stays its screen, hidden (MCLogistics::ShowLogScreen): shown
+    // as 1998's CANCEL showed the main menu, the multiplayer game let go; the old screen where RmlUi can't start.
+    MCScreenKind main = MCMainMenuScreens::Kind(MCMainPanel::Main);
+    main.Show = ShowMainMenu;
+    main.Hide = []
+    {
+        MCMainMenuScreens::HideAll();
+        HideShown();
+    };
+
+    main.Leave = AskQuit;
+    main.Shows = [] { return MCMainMenuScreens::Shown(MCMainPanel::Main) || Showing(&MCLogistics::MainScreen); };
+    Ids.Main = MCScreenFlow::Register(std::move(main));
+    // Its submenus, swapped in its place from it with no fade; reached from another screen (INTERNET's BACK, a
+    // landing), they fade as any change. MULTIPLAYER is 1998's MULTIPLAYER ACCESS, whose mpscreen.fit, modem and
+    // serial screens aren't made.
+    Ids.Campaigns = MCScreenFlow::Register(MCMainMenuScreens::Kind(MCMainPanel::Campaigns));
+    Ids.Multiplayer = MCScreenFlow::Register(MCMainMenuScreens::Kind(MCMainPanel::Multiplayer));
     // Port-only (SPEC-menus.md's stage 3): LAN and INTERNET remade (logistics/MCGamesScreen).
     Ids.Lan = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Lan));
     Ids.Internet = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Internet));
@@ -193,10 +209,9 @@ auto MCMenuScreens::Register() -> void
     Ids.MissionPick = MCScreenFlow::Register(OldScreen(
         "mission pick", [] { return ShowingLoad(true, false); }, [] { GlobalLog()->SetUpSessionScreen(); },
         Back("mission pick back", CancelToSession), true));
-    // Stage 5: LOAD GAME and SAVE GAME remade (logistics/MCSavesMenu); SOLO MISSIONS on the old file screen until 7.
+    // Stage 5: LOAD GAME and SAVE GAME remade (logistics/MCSavesMenu); stage 7: SOLO MISSIONS, the main menu's submenu.
     Ids.Load = MCScreenFlow::Register(MCSavesMenu::Kind(MCSavesScreen::MCMode::Load));
-    Ids.Solo = MCScreenFlow::Register(
-        OldScreen("solo missions", [] { return ShowingLoad(false, true); }, SoloLoadScreen, {}, true));
+    Ids.Solo = MCScreenFlow::Register(MCMainMenuScreens::Kind(MCMainPanel::Solo));
     Ids.Save = MCScreenFlow::Register(MCSavesMenu::Kind(MCSavesScreen::MCMode::Save));
     // Port-only (SPEC-menus.md, stage 6): Preferences remade (logistics/MCPrefsScreen.h), made afresh at each press so it
     // reads the settings as they are then; ACCEPT shows the screen below, CANCEL and Escape go back (its Leave puts the
@@ -231,9 +246,6 @@ auto MCMenuScreens::Register() -> void
                    Showing(&MCLogistics::RepairScreen);
         },
         ReturnToGame, LeaveCampaign));
-    Ids.Connection = MCScreenFlow::Register(OldScreen(
-        "connection", [] { return Showing(&MCLogistics::ModemScreen) || Showing(&MCLogistics::SerialScreen); },
-        ConnectScreen, Back("connection back", CancelToConnect)));
     Ids.ReadyRoom = MCScreenFlow::Register(
         OldScreen("ready room", [] { return Showing(&MCLogistics::ConnectScreen); }, [] {}, [] { KillTheGame(); }));
 }
@@ -241,6 +253,11 @@ auto MCMenuScreens::Register() -> void
 auto MCMenuScreens::Main() -> MCScreenId
 {
     return TheIds().Main;
+}
+
+auto MCMenuScreens::Campaigns() -> MCScreenId
+{
+    return TheIds().Campaigns;
 }
 
 auto MCMenuScreens::Multiplayer() -> MCScreenId
@@ -298,11 +315,6 @@ auto MCMenuScreens::Campaign() -> MCScreenId
     return TheIds().Campaign;
 }
 
-auto MCMenuScreens::Connection() -> MCScreenId
-{
-    return TheIds().Connection;
-}
-
 auto MCMenuScreens::ReadyRoom() -> MCScreenId
 {
     return TheIds().ReadyRoom;
@@ -335,6 +347,11 @@ auto MCMenuScreens::RoomStack() -> std::vector<MCScreenId>
 
 auto MCMenuScreens::AskQuit() -> void
 {
+    if (MCMainMenuScreens::AskQuit())
+    {
+        return;
+    }
+
     Ask(QuitQuestion, GameOverMan);
 }
 

@@ -9,10 +9,13 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
+#include <vector>
 #else
 #include <arpa/inet.h>
 #include <cerrno>
 #include <fcntl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -492,5 +495,82 @@ bool MCSocketTransport::EndSending(MCSocket::Handle socket)
     return shutdown(ToNative(socket), SD_SEND) == 0;
 #else
     return shutdown(ToNative(socket), SHUT_WR) == 0;
+#endif
+}
+
+bool MCSocketTransport::HasNetwork()
+{
+#ifdef _WIN32
+    // The addresses Winsock binds to (as libjuice's udp.c lists them): the loopback is never among them.
+    constexpr size_t AddressListBytes = 4096;
+
+    if (!MCSocket::Startup())
+    {
+        return false;
+    }
+
+    const NativeSocket probe = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+    if (probe == NativeInvalid)
+    {
+        return false;
+    }
+
+    std::vector<char> list(AddressListBytes);
+    DWORD needed = 0;
+    const auto query = [&]
+    {
+        return WSAIoctl(probe, SIO_ADDRESS_LIST_QUERY, nullptr, 0, list.data(), static_cast<DWORD>(list.size()),
+                        &needed, nullptr, nullptr);
+    };
+
+    int result = query();
+
+    if (result != 0 && WSAGetLastError() == WSAEFAULT && needed > list.size())
+    {
+        list.resize(needed);
+        result = query();
+    }
+
+    CloseNative(probe);
+
+    if (result != 0)
+    {
+        return false;
+    }
+
+    const auto& addresses = *reinterpret_cast<const SOCKET_ADDRESS_LIST*>(list.data());
+
+    for (INT index = 0; index < addresses.iAddressCount; index++)
+    {
+        const sockaddr* address = addresses.Address[index].lpSockaddr;
+
+        if (address != nullptr && address->sa_family == AF_INET &&
+            !MCSocket::IsLoopback(ntohl(reinterpret_cast<const sockaddr_in*>(address)->sin_addr.s_addr)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+#else
+    ifaddrs* interfaces = nullptr;
+
+    if (getifaddrs(&interfaces) != 0)
+    {
+        return false;
+    }
+
+    constexpr unsigned int Running = IFF_UP | IFF_RUNNING;
+    bool found = false;
+
+    for (const ifaddrs* entry = interfaces; entry != nullptr && !found; entry = entry->ifa_next)
+    {
+        found = entry->ifa_addr != nullptr && entry->ifa_addr->sa_family == AF_INET &&
+                (entry->ifa_flags & Running) == Running && (entry->ifa_flags & IFF_LOOPBACK) == 0;
+    }
+
+    freeifaddrs(interfaces);
+    return found;
 #endif
 }

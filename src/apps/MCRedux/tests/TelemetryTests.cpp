@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "../MCMemorySystem.h"
 #include "../MCTelemetryBackend.h"
+#include "MCMenusPictures.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "RemadeScreens.h"
@@ -8,12 +9,14 @@
 #include "MCTestGuest.h"
 #include "TestGame.h"
 #include "fakes/MCFakeMemorySystem.h"
+#include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCLogButton.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
@@ -22,10 +25,13 @@
 #include "main/MCLogistics.h"
 #include "main/MCTelemetry.h"
 #include "mission/MCMission.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCInput.h"
 #include "platform/MCMemoryRoom.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCVulkanShaders.h"
+#include "ui/MCRmlDialog.h"
 #include "update/MCInstalled.h"
 #include "update/MCUpdateDisk.h"
 
@@ -1030,6 +1036,17 @@ TEST_CASE("reports: frame-time percentiles, and who's asked first")
 
 namespace
 {
+    /// <summary>Frames for the menus to lay a new window out and draw it whole.</summary>
+    void SettleMenusWindow()
+    {
+        constexpr int32_t SettleFrames = 4;
+
+        for (int32_t frame = 0; frame < SettleFrames; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 60.0f);
+        }
+    }
+
     /// <summary>
     /// Port-only (SPEC-menus.md's stage 6): the reports' notice remade, on top of the menus: its title and sentences,
     /// OK alone; null when it doesn't show.
@@ -1053,6 +1070,10 @@ namespace
     }
 }
 
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 7): over the remade main menu the notice is stage 6's remade dialog (the 1998 one
+/// would show under it), drawn on the software renderer at the recorded frames' windows; its OK turns REPORTS on.
+/// </summary>
 TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its OK turns REPORTS on")
 {
     if (!MCTestGame::Available())
@@ -1062,7 +1083,10 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
 
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
-    REQUIRE(MCTestGame::StartLogistics());
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    // The saves pinned (none): the menu under the dialog the same whatever earlier tests left.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
     reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
@@ -1072,15 +1096,44 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
     const std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
     REQUIRE(notice != nullptr);
     MCScreenInput::SaveWindowShot("reports notice");
+    // Port-only (stage 7): over the remade main menu, at the recorded frames' windows.
+    MCScreenInput::RealMove(0, 0);
+    MCMenusPictures::CheckWindowFrames(*MCInput::Display(), "main_menu_reports_notice",
+                                       {0x648a1cdb, 0xfacd7593, 0xd500388d}, SettleMenusWindow);
     REQUIRE(MCRemadeTest::Press(*notice, "yes"));
     MCTestGame::RunFrame(1.0f / 15.0f);
-    CHECK(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
+    CHECK(MCMainMenuScreens::MainOnTop());
     CHECK_EQ(GReports, 1);
     CHECK(MCTelemetry::Reporting());
     MCTestGame::RunFrame(1.0f / 15.0f);
-    CHECK(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
+    CHECK(MCMainMenuScreens::MainOnTop());
+}
 
-    // The old message box, as the notice shows where the menus' RmlUi can't start: its text inside its panel.
+/// <summary>
+/// The reports' notice as 1998's message box, as it shows where the menus' RmlUi can't start (over 1998's main menu,
+/// nothing remade showing): its text inside its panel.
+/// </summary>
+TEST_CASE_ISOLATED("game: the reports' notice in 1998's message box keeps its text inside its panel")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs prefs;
+    MCFakeReports reports;
+    const MCTestGame::OldMainMenu oldMenu;
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+    reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    const std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
+    REQUIRE(notice != nullptr);
+    REQUIRE(MCRemadeTest::Press(*notice, "yes"));
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    REQUIRE(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
     ShowMenuMessage(ReportsText(MCPrompt::Notice));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE(dialog.IsShowing());
@@ -1137,7 +1190,10 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     reports.Log->Countries = {"DE"};
-    REQUIRE(MCTestGame::StartLogistics());
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    // The saves pinned (none): the menu under the dialog the same whatever earlier tests left.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(reports.Log->Requests.empty());
     // Port-only (SPEC-menus.md's stage 6): the question remade, a dialog over the main menu, SEND with the focus.
@@ -1154,9 +1210,14 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
                          "MechCommander Redux run better?"));
     CHECK_EQ(MCRemadeTest::Words(*question, "kept"), std::string("No name or IP address is kept."));
     MCScreenInput::SaveWindowShot("reports question");
+    // Port-only (stage 7): over the remade main menu, at the recorded frames' windows.
+    MCScreenInput::RealMove(0, 0);
+    MCMenusPictures::CheckWindowFrames(*MCInput::Display(), "main_menu_reports_question",
+                                       {0xe3e5ec71, 0x3b5e4814, 0x52bdd4cd}, SettleMenusWindow);
     REQUIRE(MCRemadeTest::Press(*question, "no"));
     MCTestGame::RunFrame(1.0f / 15.0f);
-    CHECK(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
+    CHECK(MCRemadeTest::OnTop<MCRmlScreen>() != question);
+    CHECK(MCMainMenuScreens::MainOnTop());
     CHECK_EQ(GReports, 0);
     CHECK(!MCTelemetry::Reporting());
     CHECK(MCTelemetry::Prompt() == MCPrompt::None);

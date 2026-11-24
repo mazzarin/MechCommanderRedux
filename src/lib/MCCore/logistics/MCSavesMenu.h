@@ -187,6 +187,12 @@ namespace MCSavesMenu
     MCOptionalRef<MCSavesScreen> Screen();
 
     /// <summary>
+    /// Port-only (stage 7): LOAD GAME opened through the flow on <paramref name="campaign"/>'s saves (a campaign's LOAD
+    /// in CAMPAIGNS); every campaign's without one, as the main menu's LOAD GAME opens.
+    /// </summary>
+    void OpenLoad(std::optional<MCSaves::MCCampaign> campaign);
+
+    /// <summary>
     /// The words: "This save couldn't be loaded.", the save's, the name's, the disk's and the delete's refusals, the saved
     /// message, the questions.
     /// </summary>

@@ -10,17 +10,11 @@
 #include <string>
 #include <string_view>
 
-// Where the tests click on MULTIPLAYER ACCESS and INTERNET CONNECTION (the middles of their controls, in the screens'
-// 640x480), INTERNET CONNECTION's elements (the LAN screen's), and the games a scripted list (fakes/MCServiceScript.h)
-// shows: the internet screens' tests and the HD menus tour share them.
+// Where the tests click on INTERNET CONNECTION (the middles of its controls, in the screen's 640x480), its elements (the
+// LAN screen's), and the games a scripted list (fakes/MCServiceScript.h) shows: the internet screens' tests and the HD
+// menus tour share them. MULTIPLAYER (remade, stage 7) is pressed by its elements (MCTestGuest::PressInternet).
 namespace MCInternetSpots
 {
-    /// <summary>MULTIPLAYER ACCESS's two buttons.</summary>
-    constexpr int32_t InternetX = 477;
-    constexpr int32_t InternetY = 166;
-    constexpr int32_t LanX = 477;
-    constexpr int32_t LanY = 228;
-
     /// <summary>
     /// INTERNET CONNECTION's HOST GAME, CANCEL, the host block's PRIVATE (the word, and its check box), and the CODE box.
     /// </summary>

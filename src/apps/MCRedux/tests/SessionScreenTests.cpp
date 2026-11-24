@@ -48,6 +48,9 @@
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+
 using namespace MCScreenInput;
 using MCTestGuest::Guest;
 using MCTestGuest::Settle;
@@ -256,7 +259,7 @@ namespace
 /// The remade room's boxes take what the 1998 room's did. The chat sends what the 1998 chat box could
 /// (MCLogChatInput): its characters one byte each, the accented 0xbf-0xfd as those bytes, '%' (the chat formatter's
 /// code) and the rest left out, and shows that line back with its accents, as it does the chat's names and its own
-/// lines. The points take seven digits at most, as the 1998 RP box (whose tick would send more cut to seven).
+/// lines. Enter in the box says what's typed (the box marked data-line: Enter is RmlUi's, not the next control's). The points take seven digits at most, as the 1998 RP box (whose tick would send more cut to seven).
 /// </summary>
 TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's boxes did")
 {
@@ -290,6 +293,19 @@ TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's b
     const std::vector<std::string> accented = room.Seen().Chat;
     CHECK(std::ranges::find(accented, std::string("Ren\xc3\xa9: hi")) != accented.end());
     CHECK(std::ranges::find(accented, std::string("Ren\xc3\xa9 joined.")) != accented.end());
+
+    // Typed into the chat's box and Enter, as a player says a line: said, the box emptied, the keys still in it.
+    Rml::Element* say = MCTestGuest::ElementOf(room, "say");
+    REQUIRE(say != nullptr);
+    MCTestGuest::RealClickOn(*say);
+    MCTestGuest::RealType("Ready when you are");
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    Settle();
+    const std::vector<std::string> typed = room.Seen().Chat;
+    CHECK(std::ranges::find(typed, std::string("Bob: Ready when you are")) != typed.end());
+    CHECK_EQ(say->GetAttribute<Rml::String>("value", "unread"), std::string());
+    REQUIRE(say->GetContext() != nullptr);
+    CHECK(say->GetContext()->GetFocusElement() == say);
 
     room.TypePoints(MCRoomModel::Team1, "9,999,999");
     Settle();

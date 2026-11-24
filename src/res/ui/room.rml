@@ -97,7 +97,7 @@
                     </div>
                     <div class="chat-say">
                         <div class="switch small" id="to" data-hint="Who reads it"><div data-class-off="!can_team_chat">Team</div><div>All</div></div>
-                        <input type="text" class="field" id="say" maxlength="255"/>
+                        <input type="text" class="field" id="say" maxlength="255" data-line=""/>
                     </div>
                 </div>
             </div>

@@ -98,6 +98,165 @@ namespace
     }
 }
 
+// ---- a host's goodbye ----------------------------------------------------------------------------------------------
+
+namespace
+{
+    /// <summary>Port-only (SPEC-menus.md, "In the room"): a host's goodbye under way (LeaveAfterGoodbye).</summary>
+    struct MCGoodbye
+    {
+        std::unique_ptr<MCDirectPlay> DirectPlay;
+        /// <summary>The internet game the session's links ride, if it is one.</summary>
+        std::unique_ptr<MCInternetGame> Internet;
+        /// <summary>The players told, by id: the goodbye ends when none is left in the session.</summary>
+        std::vector<uint32_t> Told;
+        std::chrono::steady_clock::time_point Until;
+    };
+
+    /// <summary>The goodbye under way, and the DirectPlay objects its end closed whose joiners' links linger.</summary>
+    struct MCGoodbyes
+    {
+        std::optional<MCGoodbye> Saying;
+        std::vector<std::unique_ptr<MCDirectPlay>> Closed;
+    };
+
+    /// <summary>
+    /// The process's goodbye, apart from any game: a way back to the main menu drops the game that said it. Made once
+    /// and never destroyed: one the process ends with (a test's) is cut off with it, where a static's end would close
+    /// its sockets after the statics they need had gone. On the game's thread only.
+    /// </summary>
+    MCGoodbyes& Goodbyes()
+    {
+        static MCGoodbyes* const goodbyes = new MCGoodbyes();
+        return *goodbyes;
+    }
+
+    /// <summary>
+    /// The goodbye ended now, as a host's leave that hands nothing on: its joiners told the session ends, their links
+    /// held open until they've read it, unless they ride the internet game, which ends with it (its leaving waiting up to
+    /// <paramref name="internetWait"/>).
+    /// </summary>
+    void EndGoodbye(std::chrono::milliseconds internetWait = {})
+    {
+        MCGoodbyes& goodbyes = Goodbyes();
+
+        if (!goodbyes.Saying.has_value())
+        {
+            return;
+        }
+
+        MCGoodbye goodbye = std::move(*goodbyes.Saying);
+        goodbyes.Saying.reset();
+        goodbye.DirectPlay->Close();
+
+        if (goodbye.DirectPlay->Lingering())
+        {
+            goodbyes.Closed.push_back(std::move(goodbye.DirectPlay));
+        }
+
+        if (goodbye.Internet != nullptr)
+        {
+            goodbye.Internet->End(internetWait);
+        }
+    }
+
+    /// <summary>The goodbye ended now if it rides an internet game (the sockets opened from now on would be its).</summary>
+    void EndInternetGoodbye()
+    {
+        if (const std::optional<MCGoodbye>& saying = Goodbyes().Saying;
+            saying.has_value() && saying->Internet != nullptr)
+        {
+            SDL_Log("MCSessionManager: a new connection ends the goodbye, whose internet game its sockets would ride");
+            EndGoodbye();
+        }
+    }
+
+    /// <summary>
+    /// The goodbye moved along: its links tended, what came in dropped, the players gone noted; ended (its internet
+    /// game's leaving waiting up to <paramref name="internetWait"/>) when none is left or its time is up.
+    /// </summary>
+    void PumpSaying(std::chrono::milliseconds internetWait)
+    {
+        std::optional<MCGoodbye>& saying = Goodbyes().Saying;
+
+        if (!saying.has_value())
+        {
+            return;
+        }
+
+        MCGoodbye& goodbye = *saying;
+
+        if (goodbye.Internet != nullptr)
+        {
+            goodbye.Internet->Update();
+        }
+
+        goodbye.DirectPlay->Pump();
+        DropReceived(*goodbye.DirectPlay);
+        std::vector<uint32_t> inSession;
+        goodbye.DirectPlay->EnumPlayers(
+            [&inSession](uint32_t id, uint32_t /*playerType*/, const DPNAME& /*name*/, uint32_t /*flags*/)
+            {
+                inSession.push_back(id);
+                return true;
+            },
+            0);
+        std::erase_if(goodbye.Told, [&inSession](uint32_t id) { return !std::ranges::contains(inSession, id); });
+
+        if (goodbye.Told.empty())
+        {
+            SDL_Log("MCSessionManager: every player told has left; the goodbye ends");
+            EndGoodbye(internetWait);
+        }
+        else if (std::chrono::steady_clock::now() >= goodbye.Until)
+        {
+            SDL_Log("MCSessionManager: not waiting longer for %zu players to leave; the goodbye ends",
+                    goodbye.Told.size());
+            EndGoodbye(internetWait);
+        }
+    }
+
+    /// <summary>The links the goodbye's end closed, each dropped once its joiners have closed theirs.</summary>
+    void PumpGoodbyeLinks()
+    {
+        std::vector<std::unique_ptr<MCDirectPlay>>& closed = Goodbyes().Closed;
+
+        for (const std::unique_ptr<MCDirectPlay>& directPlay : closed)
+        {
+            directPlay->Pump();
+        }
+
+        std::erase_if(closed, [](const std::unique_ptr<MCDirectPlay>& directPlay) { return !directPlay->Lingering(); });
+    }
+}
+
+bool MCSessionManager::SaysGoodbye()
+{
+    return Goodbyes().Saying.has_value();
+}
+
+bool MCSessionManager::GoodbyeLingers()
+{
+    const MCGoodbyes& goodbyes = Goodbyes();
+    return goodbyes.Saying.has_value() || !goodbyes.Closed.empty();
+}
+
+void MCSessionManager::PumpGoodbye()
+{
+    PumpSaying({});
+    PumpGoodbyeLinks();
+}
+
+void MCSessionManager::FinishGoodbye(std::chrono::milliseconds internetWait)
+{
+    while (GoodbyeLingers())
+    {
+        PumpSaying(internetWait);
+        PumpGoodbyeLinks();
+        std::this_thread::sleep_for(GoodbyePumpEvery);
+    }
+}
+
 uint32_t MCSessionManager::TicksPerMs()
 {
     return static_cast<uint32_t>(MCPort::PerformanceFrequency()) / 1000;
@@ -115,8 +274,7 @@ MCSessionManager::MCSessionManager(const _GUID& appGUID) : _AppGuid(appGUID)
 MCSessionManager::~MCSessionManager()
 {
     std::scoped_lock lock(CriticalSection);
-    // Port-only (Redux HD): a goodbye still under way ends with the game it belongs to.
-    EndGoodbye();
+    // Port-only (SPEC-menus.md, "In the room"): a host's goodbye still under way goes on after this game (PumpGoodbye).
     // Port (Redux HD): an internet game ends here, while the network it's on is sure to be there.
     EndInternet();
     DestroyDirectPlayInterface();
@@ -183,99 +341,25 @@ void MCSessionManager::LeaveAfterGoodbye(std::vector<uint32_t> told, std::chrono
     EndGoodbye();
     SDL_Log("MCSessionManager: leaving \"%s\"; its goodbye to %zu players goes on apart", session->Name.c_str(),
             told.size());
-    // No one new comes in while it says goodbye, and the LAN's searches (for available sessions) no longer list it.
+    // No one new comes in while it says goodbye: the LAN's searches (for available sessions) no longer list it, nor
+    // does the service's list (its links kept).
     session->SessionDesc.dwFlags |= DPSESSION_NEWPLAYERSDISABLED;
     DirectPlay->SetSessionDesc(session->SessionDesc, 0);
+
+    if (Internet != nullptr)
+    {
+        Internet->Unlist();
+    }
+
     HandsOn = true;
     ForgetSession();
-    _Goodbye = MCGoodbye{.DirectPlay = std::move(DirectPlay),
-                         .Internet = std::move(Internet),
-                         .Told = std::move(told),
-                         .Until = std::chrono::steady_clock::now() + wait};
+    Goodbyes().Saying = MCGoodbye{.DirectPlay = std::move(DirectPlay),
+                                  .Internet = std::move(Internet),
+                                  .Told = std::move(told),
+                                  .Until = std::chrono::steady_clock::now() + wait};
     // As DestroyDirectPlayInterface leaves it, then a DirectPlay object for the next session.
     CurrentConnection = MCNetProtocol::None;
     CreateDirectPlayInterface();
-}
-
-void MCSessionManager::PumpGoodbye(std::chrono::milliseconds internetWait)
-{
-    if (!_Goodbye.has_value())
-    {
-        return;
-    }
-
-    MCGoodbye& goodbye = *_Goodbye;
-
-    if (goodbye.Internet != nullptr)
-    {
-        goodbye.Internet->Update();
-    }
-
-    goodbye.DirectPlay->Pump();
-    DropReceived(*goodbye.DirectPlay);
-    std::vector<uint32_t> inSession;
-    goodbye.DirectPlay->EnumPlayers(
-        [&inSession](uint32_t id, uint32_t /*playerType*/, const DPNAME& /*name*/, uint32_t /*flags*/)
-        {
-            inSession.push_back(id);
-            return true;
-        },
-        0);
-    std::erase_if(goodbye.Told, [&inSession](uint32_t id) { return !std::ranges::contains(inSession, id); });
-
-    if (goodbye.Told.empty())
-    {
-        SDL_Log("MCSessionManager: every player told has left; the goodbye ends");
-        EndGoodbye(internetWait);
-    }
-    else if (std::chrono::steady_clock::now() >= goodbye.Until)
-    {
-        SDL_Log("MCSessionManager: not waiting longer for %zu players to leave; the goodbye ends", goodbye.Told.size());
-        EndGoodbye(internetWait);
-    }
-}
-
-void MCSessionManager::EndGoodbye(std::chrono::milliseconds internetWait)
-{
-    if (!_Goodbye.has_value())
-    {
-        return;
-    }
-
-    MCGoodbye goodbye = std::move(*_Goodbye);
-    _Goodbye.reset();
-    // As a host's leave that hands nothing on: its joiners told the session ends, their links held open until they've
-    // read it (PumpClosed), unless they ride the internet game, which ends with it.
-    goodbye.DirectPlay->Close();
-
-    if (goodbye.DirectPlay->Lingering())
-    {
-        _Closed.push_back(std::move(goodbye.DirectPlay));
-    }
-
-    if (goodbye.Internet != nullptr)
-    {
-        goodbye.Internet->End(internetWait);
-    }
-}
-
-void MCSessionManager::EndInternetGoodbye()
-{
-    if (_Goodbye.has_value() && _Goodbye->Internet != nullptr)
-    {
-        SDL_Log("MCSessionManager: a new connection ends the goodbye, whose internet game its sockets would ride");
-        EndGoodbye();
-    }
-}
-
-void MCSessionManager::FinishGoodbye(std::chrono::milliseconds internetWait)
-{
-    while (_Goodbye.has_value() || KeepsClosedLinks())
-    {
-        PumpGoodbye(internetWait);
-        PumpClosedLinks();
-        std::this_thread::sleep_for(GoodbyePumpEvery);
-    }
 }
 
 // ---- message queues ------------------------------------------------------------------------------------------------

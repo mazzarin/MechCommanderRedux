@@ -115,6 +115,11 @@ public:
     std::optional<MCServiceRefusal> Refusal() const { return _Refusal; }
     /// <summary>A host's room as it stands, for the service's list (its public setting the game's own).</summary>
     void SetRoom(MCServiceRoom room);
+    /// <summary>
+    /// Port-only (SPEC-menus.md, "In the room"): a host's room off the service's list as its goodbye starts, its links
+    /// kept (MCServiceSignaling::Unlist).
+    /// </summary>
+    void Unlist();
     /// <summary>Whether the service won't list the room by its name.</summary>
     bool NameRefused();
     /// <summary>

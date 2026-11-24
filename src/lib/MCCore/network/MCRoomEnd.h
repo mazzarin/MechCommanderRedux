@@ -73,9 +73,18 @@ namespace MCRoomEnd
 
     /// <summary>
     /// Port-only (SPEC-menus.md, "In the room"): a launcher's LEAVE ("Leave the game?" answered): the host's goodbye
-    /// (<see cref="CloseRoom"/>), then the game ends; RunGame waits for the goodbye with the window gone.
+    /// (<see cref="CloseRoom"/>), then the game ends; RunGame waits for the goodbye with the window gone
+    /// (<see cref="FinishGoodbye"/>).
     /// </summary>
     [[noreturn]] void LeaveLauncherGame();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md, "In the room"): the game's end (RunGame) with a host's goodbye under way (a launcher's
+    /// LEAVE, or a LEAVE just before quitting): the window goes, then the process waits for the goodbye
+    /// (MCSessionManager::FinishGoodbye; an internet game's leaving up to <paramref name="internetWait"/>), nothing on
+    /// the screen waiting for it. Nothing happens without one.
+    /// </summary>
+    void FinishGoodbye(std::chrono::milliseconds internetWait);
 
     /// <summary>
     /// Port-only (SPEC-menus.md's stage 2): whether the host's REMATCH waits for its guests to leave: nothing more to

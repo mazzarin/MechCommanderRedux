@@ -22,6 +22,8 @@
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "platform/MCDirectPlay.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
 #include "sprite/MCHdArt.h"
 
 namespace
@@ -565,6 +567,23 @@ auto MCRoomEnd::LeaveLauncherGame() -> void
 {
     CloseRoom();
     KillTheGame();
+}
+
+auto MCRoomEnd::FinishGoodbye(std::chrono::milliseconds internetWait) -> void
+{
+    if (!MCSessionManager::GoodbyeLingers())
+    {
+        return;
+    }
+
+    SDL_Log("Room end: the game ends once its goodbye to its room has gone, its window hidden meanwhile");
+
+    if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+    {
+        SDL_HideWindow(&display->Window());
+    }
+
+    MCSessionManager::FinishGoodbye(internetWait);
 }
 
 auto MCRoomEnd::HostSaid(uint32_t fromId, int32_t how) -> bool

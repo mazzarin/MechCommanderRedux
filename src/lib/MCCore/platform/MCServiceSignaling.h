@@ -180,6 +180,12 @@ public:
     /// for it; one past the pace waits, the latest kept, and goes when the pace allows (<see cref="Take"/>).
     /// </summary>
     void SetRoom(const MCServiceRoom& room);
+    /// <summary>
+    /// Port-only (SPEC-menus.md, "In the room"): the hosted game's public room off the service's list, the room otherwise
+    /// as it stands (a host's goodbye to its room, its links kept till its guests have gone). Nothing goes for a room
+    /// already private.
+    /// </summary>
+    void Unlist();
     /// <summary>Whether the service won't list the room by its name (the host picks another).</summary>
     bool NameRefused();
     /// <summary>

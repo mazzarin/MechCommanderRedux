@@ -122,6 +122,43 @@ namespace
         return std::chrono::steady_clock::now() - pressed;
     }
 
+    /// <summary>
+    /// A LAN search at <paramref name="address"/>, the game's frames between its asks (a host's goodbye answers in them):
+    /// whether a search for any room hears of one there, then whether one for open rooms, as the LAN games' is, lists it.
+    /// </summary>
+    std::pair<bool, bool> LanSearchHears(std::string_view address)
+    {
+        constexpr int32_t MostLooks = 30;
+        MCDirectPlay searcher;
+        REQUIRE(MCTestGuest::Connect(searcher, address) == DP_OK);
+        DPSESSIONDESC2 desc{};
+        desc.dwSize = sizeof(desc);
+        desc.guidApplication = MultiPlayerAppGuid;
+        const auto look = [&](uint32_t flags)
+        {
+            bool heard = false;
+            searcher.EnumSessions(
+                desc, 0,
+                [&heard](const DPSESSIONDESC2& /*session*/, uint32_t found)
+                {
+                    heard = heard || (found & DPESC_TIMEDOUT) == 0;
+                    return (found & DPESC_TIMEDOUT) == 0;
+                },
+                flags | MCENUMSESSIONS_NOWAIT);
+            return heard;
+        };
+
+        bool heard = false;
+
+        for (int32_t asked = 0; asked < MostLooks && !heard; asked++)
+        {
+            heard = look(0);
+            Step();
+        }
+
+        return {heard, look(DPENUMSESSIONS_AVAILABLE)};
+    }
+
     /// <summary>A clock the tests move on by hand: the room's end's waits, and the lobby updates' (a guest's rejoin).</summary>
     class ManualClock
     {
@@ -293,7 +330,7 @@ TEST_CASE_ISOLATED(
     MCTestGuest::PressInRoom("leave");
     REQUIRE(SettleUntil([] { return OnLan(); }));
     CHECK(!InSession());
-    CHECK(!MultiPlayer()->SessionManager->SaysGoodbye());
+    CHECK(!MCSessionManager::SaysGoodbye());
     CHECK(eve.RoomEnds().empty());
     eve.Leave();
 
@@ -313,17 +350,23 @@ TEST_CASE_ISOLATED(
     CHECK(OnLan());
     CHECK(!InSession());
     CHECK(took < MCRoomEnd::LeaveWait);
-    CHECK(manager.SaysGoodbye());
+    CHECK(MCSessionManager::SaysGoodbye());
     SaveShot("room end 3 left at once", ScreenHash());
+
+    // Off the LAN's lists meanwhile: the room answers a search as shut to new players, and the LAN games ask for open
+    // rooms only.
+    const auto [answers, listed] = LanSearchHears(address);
+    CHECK(answers);
+    CHECK(!listed);
     REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
     CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Closed)});
     CHECK(!ann.Lost());
     CHECK(!cal.Lost());
-    CHECK(manager.SaysGoodbye());
+    CHECK(MCSessionManager::SaysGoodbye());
 
     // She leaves on it: the goodbye ends, the host still on the LAN games, nothing said; CAL's session ends with it.
     ann.Leave();
-    REQUIRE(SettleUntil([&] { return !manager.SaysGoodbye(); }));
+    REQUIRE(SettleUntil([&] { return !MCSessionManager::SaysGoodbye(); }));
     CHECK(OnLan());
     CHECK(DialogText().empty());
     CHECK(SettleUntil([&] { return cal.Lost(); }));
@@ -338,7 +381,7 @@ TEST_CASE_ISOLATED(
     LeaveTheRoom(MCLeaveBy::Click);
     CHECK(OnLan());
     REQUIRE(SettleUntil([&] { return !dan.RoomEnds().empty(); }));
-    CHECK(SettleUntil([] { return !MultiPlayer()->SessionManager->SaysGoodbye(); }));
+    CHECK(SettleUntil([] { return !MCSessionManager::SaysGoodbye(); }));
     CHECK(SettleUntil([&] { return dan.Lost(); }));
     dan.Leave();
 
@@ -349,11 +392,11 @@ TEST_CASE_ISOLATED(
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(eli.Id()); }));
     MultiPlayer()->SessionManager->HandsOn = false;
     LeaveTheRoom(MCLeaveBy::Click);
-    REQUIRE(MultiPlayer()->SessionManager->SaysGoodbye());
+    REQUIRE(MCSessionManager::SaysGoodbye());
     REQUIRE(SettleUntil([&] { return !eli.RoomEnds().empty(); }));
     HostFromLan(Port);
     CHECK(InSession());
-    CHECK(!MultiPlayer()->SessionManager->SaysGoodbye());
+    CHECK(!MCSessionManager::SaysGoodbye());
     CHECK(SettleUntil([&] { return eli.Lost(); }));
 }
 
@@ -419,14 +462,57 @@ TEST_CASE_ISOLATED("game: a LAN host's Escape leaves its remade room at once, no
 
     // She leaves on the word: the goodbye ends.
     ann.Leave();
-    CHECK(SettleUntil([] { return !MultiPlayer()->SessionManager->SaysGoodbye(); }));
+    CHECK(SettleUntil([] { return !MCSessionManager::SaysGoodbye(); }));
     CHECK(OnLan());
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md, "In the room"): the host's goodbye outlives its game. LEAVE, then straight on to the main
+/// menu (Escape on the LAN games, then on MULTIPLAYER), which drops the multiplayer game: the goodbye goes on, the guest
+/// told and her link kept until she leaves on the word, so her game says "Bob closed the game.", never a lost
+/// connection.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN host's goodbye goes on after its LEAVE and a way back to the main menu")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28985";
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    HostFromLan(Port);
+    Guest ann("ANN", MCMatchRule::Supported);
+    REQUIRE(ann.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", Port)));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()); }));
+    MultiPlayer()->SessionManager->HandsOn = false;
+
+    // LEAVE, then Escape on the LAN games and on MULTIPLAYER: the main menu, the multiplayer game gone, the goodbye on.
+    LeaveTheRoom(MCLeaveBy::Click);
+    REQUIRE(OnLan());
+    RealKey(SDL_SCANCODE_ESCAPE);
+    REQUIRE(SettleUntil(MCTestGuest::OnAccess));
+    RealKey(SDL_SCANCODE_ESCAPE);
+    REQUIRE(SettleUntil(MCTestGuest::OnMainMenu));
+    REQUIRE(MultiPlayer() == nullptr);
+    CHECK(MCSessionManager::SaysGoodbye());
+
+    // ANN is told, her link kept until she leaves on the word; then the goodbye ends.
+    REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
+    CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Closed)});
+    CHECK(!ann.Lost());
+    CHECK(MCSessionManager::SaysGoodbye());
+    ann.Leave();
+    CHECK(SettleUntil([] { return !MCSessionManager::GoodbyeLingers(); }));
+    CHECK(MCTestGuest::OnMainMenu());
 }
 
 /// <summary>
 /// Port-only (SPEC-menus.md, "In the room"): a launcher's host's LEAVE ("Leave the game?" answered LEAVE) tells its
 /// guests the room closes and ends the game; the goodbye goes on apart, and the game's end waits for it (RunGame's
-/// MCSessionManager::FinishGoodbye, the window gone) until the guest has left on the word, its link kept until then.
+/// MCRoomEnd::FinishGoodbye, the window gone) until the guest has left on the word, its link kept until then, and no
+/// longer: the game ends as she leaves, not when the goodbye's time is up.
 /// </summary>
 TEST_CASE_ISOLATED("game: a launcher host's LEAVE tells its guests the room closes, the game ending once they've left")
 {
@@ -468,10 +554,11 @@ TEST_CASE_ISOLATED("game: a launcher host's LEAVE tells its guests the room clos
 
     CHECK(quit == std::optional<int32_t>(0));
     CHECK(!InSession());
-    REQUIRE(manager.SaysGoodbye());
+    REQUIRE(MCSessionManager::SaysGoodbye());
 
     // ANN leaves once she has the word, her link still up then; the game's end waits for her, not for the wait's end.
-    std::atomic<bool> lostFirst = false;
+    bool lostFirst = false;
+    std::chrono::steady_clock::time_point left;
     std::jthread guest(
         [&]
         {
@@ -483,17 +570,16 @@ TEST_CASE_ISOLATED("game: a launcher host's LEAVE tells its guests the room clos
             }
 
             lostFirst = ann.Lost();
+            left = std::chrono::steady_clock::now();
             ann.Leave();
         });
-    const auto finishing = std::chrono::steady_clock::now();
-    manager.FinishGoodbye({});
-    const std::chrono::steady_clock::duration finished = std::chrono::steady_clock::now() - finishing;
+    MCRoomEnd::FinishGoodbye({});
+    const auto finished = std::chrono::steady_clock::now();
     guest.join();
     CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Closed)});
     CHECK(!lostFirst);
-    CHECK(!manager.SaysGoodbye());
-    CHECK(!manager.KeepsClosedLinks());
-    CHECK(finished < MCRoomEnd::LeaveWait);
+    CHECK(!MCSessionManager::GoodbyeLingers());
+    CHECK(finished - left < MCRoomEnd::LeaveWait / 2);
 }
 
 /// <summary>

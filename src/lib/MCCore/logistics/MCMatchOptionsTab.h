@@ -22,6 +22,8 @@ struct MCPane;
 // every player sees, and the rules the match plays by (MCMatchOptions, MultiPlayer()->Played). The host sets them, and
 // what the match plays of every change goes to the guests, who see them locked. An option a player's game doesn't have
 // is held at the mission's own (or off) on the host's list, saying whose, while that player is in the session.
+// The rows, their values and the host's changes are logistics/MCMatchOptionRows.h's (the remade MATCH OPTIONS and
+// the room read the same).
 
 /// <summary>The tab's word, lettered in the briefing tabs' own letters.</summary>
 inline constexpr std::string_view MatchOptionsWord = "MATCH OPTIONS";
@@ -65,32 +67,3 @@ MCGuiHandle<MCLogOptionList> AddMatchOptionsList(MCGuiObject& screen);
 /// the host's messages.
 /// </summary>
 void ShowMatchOptions(MCLogOptionList& list);
-
-/// <summary>
-/// Port-only (SPEC-menus.md's stage 4): the MATCH OPTIONS rows, headings and options in the list's order (PLAY, then
-/// WEAPONS' families), each option's value the one <see cref="ReadMatchOptions"/> read, its change the host's (sent as
-/// the list's is).
-/// </summary>
-std::span<const MCLogOptionList::Row> MatchOptionRows();
-
-/// <summary>The rows' values (<see cref="MatchOptionRows"/>) read from what the match plays now (MultiPlayer()->Played).</summary>
-void ReadMatchOptions();
-
-/// <summary>
-/// Why the host can't change row <paramref name="row"/> of <see cref="MatchOptionRows"/> ("TELL BOB TO UPGRADE."), a
-/// weapon family's with its heading's; empty when it can.
-/// </summary>
-std::string MatchOptionHeld(int32_t row);
-
-/// <summary>
-/// Port-only (SPEC-menus.md's stage 4): the other players whose game holds row <paramref name="row"/> (MatchOptionHeld),
-/// their names as typed; none when it isn't held, or out of a session.
-/// </summary>
-std::vector<std::string> MatchOptionHeldBy(int32_t row);
-
-/// <summary>
-/// Why an option is held, for the other players (<paramref name="names"/>, as shown) whose game doesn't have it, every
-/// one named: "TELL BOB, ANN AND SALLY TO UPGRADE." (the list wraps it over as many lines as it needs,
-/// MCLogOptionList::SetHeld). Empty for no players.
-/// </summary>
-std::string MatchTellToUpgrade(std::span<const std::string> names);

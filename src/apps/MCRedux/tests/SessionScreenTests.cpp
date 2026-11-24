@@ -25,6 +25,7 @@
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogSlider.h"
+#include "logistics/MCMatchOptionRows.h"
 #include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCRoomScreen.h"
@@ -227,7 +228,7 @@ TEST_CASE_ISOLATED(
 
 namespace
 {
-    /// <summary>The MATCH OPTIONS list's rows (logistics/MCMatchOptionsTab.cpp): its headings and its options.</summary>
+    /// <summary>The MATCH OPTIONS list's rows (logistics/MCMatchOptionRows.cpp): its headings and its options.</summary>
     constexpr int32_t WeatherRow = 1;
     constexpr int32_t TimeRow = 2;
     constexpr int32_t BrakingRow = 3;

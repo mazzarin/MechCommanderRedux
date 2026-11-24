@@ -1,7 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCMatchOptionsWindow.h"
-#include "logistics/MCLogOptionList.h"
-#include "logistics/MCMatchOptionsTab.h"
+#include "logistics/MCMatchOptionRows.h"
 #include "main/MCWeaponBans.h"
 #include "network/MCMultiPlayer.h"
 #include "ui/MCRmlDialog.h"
@@ -72,7 +71,7 @@ namespace
     /// <summary>Row <paramref name="row"/>'s place; none for a heading (or no row).</summary>
     std::optional<MCPlace> PlaceOf(int32_t row)
     {
-        const std::span<const MCLogOptionList::Row> rows = MatchOptionRows();
+        const std::span<const MCOptionRow> rows = MatchOptionRows();
 
         if (row < 0 || static_cast<size_t>(row) >= rows.size() || rows[static_cast<size_t>(row)].IsHeading())
         {
@@ -217,13 +216,13 @@ std::vector<int32_t> MCMatchOptionsWindow::RowsOf(MCTab tab)
 
 auto MCMatchOptionsWindow::RowNow(int32_t row) const -> MCRowNow
 {
-    const std::span<const MCLogOptionList::Row> rows = MatchOptionRows();
-    const MCLogOptionList::Row& option = rows[static_cast<size_t>(row)];
+    const std::span<const MCOptionRow> rows = MatchOptionRows();
+    const MCOptionRow& option = rows[static_cast<size_t>(row)];
     const int value = option.Value.has_value() ? option.Value->get() : 0;
     MCRowNow now{.Row = row, .HeldBy = MatchOptionHeldBy(row)};
 
     // The choices the room plays (the 1998 list's: those it doesn't are skipped), and the value's word.
-    for (const MCLogOptionList::Choice& choice : option.Choices)
+    for (const MCOptionChoice& choice : option.Choices)
     {
         if (choice.Value == value)
         {
@@ -254,7 +253,7 @@ auto MCMatchOptionsWindow::Seen(int32_t row) const -> MCSeenRow
 
     ReadMatchOptions();
     const MCRowNow now = RowNow(row);
-    const MCLogOptionList::Row& option = MatchOptionRows()[static_cast<size_t>(row)];
+    const MCOptionRow& option = MatchOptionRows()[static_cast<size_t>(row)];
     MCSeenRow seen{.Name = place->Family.has_value() ? std::string(FamilyWords[*place->Family].Name)
                                                      : MCRmlDialogs::AsSentence(option.Label),
                    .Value = now.Value,
@@ -448,7 +447,7 @@ void MCMatchOptionsWindow::Changed(int32_t row, int32_t choice)
     }
 
     // The 1998 list's change: the value set, then its change (sent to the guests as the list sends it).
-    const MCLogOptionList::Row& option = MatchOptionRows()[static_cast<size_t>(row)];
+    const MCOptionRow& option = MatchOptionRows()[static_cast<size_t>(row)];
     const int32_t value = now.Offered[static_cast<size_t>(choice)];
     SDL_Log("MATCH OPTIONS: the host sets %.*s to %d", static_cast<int>(option.Label.size()), option.Label.data(),
             value);

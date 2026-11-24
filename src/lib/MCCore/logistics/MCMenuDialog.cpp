@@ -133,6 +133,7 @@ bool MCMenuDialog::StillSaid() const
 
 void MCMenuDialog::AnswerRemade(bool ok)
 {
+    const std::shared_ptr<MCMenuDialog> pinned = shared_from_this();
     // As Enter and Escape press its buttons in the 1998 box: OK, then the dialog closed with OK's result; CANCEL with 0.
     _SaidOverRemade = false;
     const bool two = TwoButton;
@@ -237,6 +238,9 @@ void MCMenuDialog::CloseIn(int32_t milliseconds)
 
 void MCMenuDialog::Deactivate(int32_t result)
 {
+    // Port-only: kept alive through its answer (here, and in Enter, Escape, TakeKey and AnswerRemade), which may end
+    // logistics, and the dialog with it, before it returns.
+    const std::shared_ptr<MCMenuDialog> pinned = shared_from_this();
     const std::shared_ptr<MCReusableDialog> view = _View.Lock();
 
     // Port-only (SPEC-menus.md's stage 4): said over the remade screens, it grabbed nothing; closed by its timeout (or by
@@ -298,12 +302,14 @@ void MCMenuDialog::Deactivate(int32_t result)
 
 void MCMenuDialog::Enter()
 {
+    const std::shared_ptr<MCMenuDialog> pinned = shared_from_this();
     Ok.Run();
     Deactivate(TwoButton ? QuestionOkResult : 0);
 }
 
 void MCMenuDialog::Escape()
 {
+    const std::shared_ptr<MCMenuDialog> pinned = shared_from_this();
     // OB-074 (fixed): Escape answers a question with CANCEL; original behaviour (OB-074): it runs a message's one button
     // (OK) too.
     (TwoButton ? Cancel : Ok).Run();
@@ -312,6 +318,8 @@ void MCMenuDialog::Escape()
 
 void MCMenuDialog::TakeKey(uint32_t key)
 {
+    const std::shared_ptr<MCMenuDialog> pinned = shared_from_this();
+
     if (KeyTaker && KeyTaker(key))
     {
         Deactivate(0);

@@ -2,7 +2,7 @@
 
 // Port-only (SPEC-menus.md's stage 4, "MATCH OPTIONS"): the match's options as a window over the remade room
 // (ui/match_options.rml), the room's VIEW (a guest's) or CHANGE (the host's). FORCES, PLAY and WEAPONS down its side,
-// the tab's options beside them: the options the 1998 MATCH OPTIONS tab has (logistics/MCMatchOptionsTab's rows), no
+// the tab's options beside them: the options the 1998 MATCH OPTIONS tab has (logistics/MCMatchOptionRows.h), no
 // others, each with the value the match plays. The host's are switches and steppers, each change the 1998 list's
 // (sent as it was); a guest's are their values, with "The host sets these.". An option a player's game doesn't have is
 // held, saying whose: "Tell Ann to upgrade.". DONE (the host's) or CLOSE (a guest's), and Escape, go back to the room.

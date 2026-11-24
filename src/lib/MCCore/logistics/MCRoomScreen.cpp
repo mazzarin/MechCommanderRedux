@@ -5,8 +5,8 @@
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCChatView.h"
 #include "logistics/MCChooseMapWindow.h"
-#include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCMatchMaps.h"
+#include "logistics/MCMatchOptionRows.h"
 #include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCSessionScreen.h"
@@ -112,7 +112,7 @@ namespace
     }
 
     /// <summary>The option row's value's name, as it shows ("Mission's", "On").</summary>
-    std::string ValueName(const MCLogOptionList::Row& row)
+    std::string ValueName(const MCOptionRow& row)
     {
         if (!row.Value.has_value())
         {
@@ -120,7 +120,7 @@ namespace
         }
 
         const int value = row.Value->get();
-        const auto found = std::ranges::find(row.Choices, value, &MCLogOptionList::Choice::Value);
+        const auto found = std::ranges::find(row.Choices, value, &MCOptionChoice::Value);
         return found != row.Choices.end() ? Sentence(found->Name) : std::to_string(value);
     }
 }
@@ -443,7 +443,7 @@ void MCRoomScreen::ShowMatch()
     // The options as the match plays them (MATCH OPTIONS' rows), the most skilled pilot first as the room's frames
     // have it; the weapons as how many families are on. An option held (a player's game lacks it) shows grey.
     ReadMatchOptions();
-    const std::span<const MCLogOptionList::Row> rows = MatchOptionRows();
+    const std::span<const MCOptionRow> rows = MatchOptionRows();
     const std::string_view pilot = MCCapabilityOf(MCMatchOption::MostSkilledPilot).Name;
     std::vector<MCOption> options;
     int headings = 0;
@@ -453,7 +453,7 @@ void MCRoomScreen::ShowMatch()
 
     for (size_t at = 0; at < rows.size(); ++at)
     {
-        const MCLogOptionList::Row& row = rows[at];
+        const MCOptionRow& row = rows[at];
 
         if (row.IsHeading())
         {

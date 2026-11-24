@@ -645,6 +645,9 @@
     <ClCompile Include="logistics\MCMatchMaps.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCMatchOptionRows.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCMatchOptionsTab.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2272,6 +2275,9 @@
     <ClInclude Include="logistics\MCMatchMaps.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCMatchOptionRows.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCMatchOptionsTab.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2306,6 +2312,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCOperationVideo.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCOptionRow.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCPauseScreen.h">

@@ -14,12 +14,14 @@
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
+#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
 
 namespace
@@ -173,8 +175,18 @@ auto MCMenuScreens::Register() -> void
     // Port-only (SPEC-menus.md's stage 3): LAN and INTERNET remade (logistics/MCGamesScreen).
     Ids.Lan = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Lan));
     Ids.Internet = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Internet));
+    // Port-only (SPEC-menus.md's stage 4): the remade room (logistics/MCRoomScreen) shows in the 1998 room's place, which
+    // stays logistics' screen, hidden.
     Ids.Room = MCScreenFlow::Register(OldScreen(
-        "room", [] { return Showing(&MCLogistics::SessionScreen); }, [] { GlobalLog()->SetUpSessionScreen(); },
+        "room",
+        []
+        {
+            const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+            const std::shared_ptr<MCLogObject> shown = logistics != nullptr ? logistics->CurrentScreen() : nullptr;
+            return (shown != nullptr && logistics->SessionScreen.Is(*shown) && RoomScreenShown()) ||
+                   Showing(&MCLogistics::SessionScreen);
+        },
+        [] { GlobalLog()->SetUpSessionScreen(); },
         []
         {
             // A launcher's game: the room is where it starts, and leaving it ends the game.
@@ -209,8 +221,9 @@ auto MCMenuScreens::Register() -> void
     Ids.Connection = MCScreenFlow::Register(OldScreen(
         "connection", [] { return Showing(&MCLogistics::ModemScreen) || Showing(&MCLogistics::SerialScreen); },
         ConnectScreen, Back("connection back", CancelToConnect)));
-    Ids.ReadyRoom = MCScreenFlow::Register(
-        OldScreen("ready room", [] { return Showing(&MCLogistics::ConnectScreen); }, [] {}, [] { KillTheGame(); }));
+    Ids.ReadyRoom = MCScreenFlow::Register(OldScreen(
+        "ready room", [] { return LauncherScreenShown() || Showing(&MCLogistics::ConnectScreen); }, [] {},
+        [] { KillTheGame(); }));
     // UPDATE from INTERNET (a newer game, "Update to play online."): the main menu's page over it until stage 6
     // remakes UPDATE; its DONE and Escape go back to INTERNET.
     Ids.Update = MCScreenFlow::Register(
@@ -332,6 +345,21 @@ auto MCMenuScreens::AskQuit() -> void
 
 auto MCMenuScreens::AskLeaveGame() -> void
 {
+    // Port-only (SPEC-menus.md's stage 4): over the remade room, its name above "Leave the game?", CANCEL and LEAVE.
+    constexpr std::string_view LeaveWord = "Leave";
+    constexpr std::string_view CancelWord = "Cancel";
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+    if (RoomScreenShown() && logistics != nullptr &&
+        MCRmlDialogs::Show(MCRmlDialog::MCSay{.Eyebrow = logistics->Room.Name(),
+                                              .Heading = std::string(LeaveGameQuestion),
+                                              .Main = std::string(LeaveWord),
+                                              .Other = std::string(CancelWord),
+                                              .OnMain = [] { KillTheGame(); }}))
+    {
+        return;
+    }
+
     Ask(LeaveGameQuestion, [] { KillTheGame(); });
 }
 

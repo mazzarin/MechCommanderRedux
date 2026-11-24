@@ -135,4 +135,10 @@ public:
     void ChooseMission(std::string_view mission);
     /// <summary>Starts the match (the host's BEGIN PLANNING), when it can start.</summary>
     void BeginPlanning();
+
+    /// <summary>
+    /// The room's work each frame, whichever room shows (the remade one's frame or the 1998 one's draw): the host's
+    /// match options sent again when a player's rules change what the match plays.
+    /// </summary>
+    void Tend();
 };

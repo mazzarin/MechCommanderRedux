@@ -1,5 +1,7 @@
 #pragma once
 
+#include "logistics/MCLogOptionList.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -63,6 +65,28 @@ MCGuiHandle<MCLogOptionList> AddMatchOptionsList(MCGuiObject& screen);
 /// the host's messages.
 /// </summary>
 void ShowMatchOptions(MCLogOptionList& list);
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 4): the MATCH OPTIONS rows, headings and options in the list's order (PLAY, then
+/// WEAPONS' families), each option's value the one <see cref="ReadMatchOptions"/> read, its change the host's (sent as
+/// the list's is).
+/// </summary>
+std::span<const MCLogOptionList::Row> MatchOptionRows();
+
+/// <summary>The rows' values (<see cref="MatchOptionRows"/>) read from what the match plays now (MultiPlayer()->Played).</summary>
+void ReadMatchOptions();
+
+/// <summary>
+/// Why the host can't change row <paramref name="row"/> of <see cref="MatchOptionRows"/> ("TELL BOB TO UPGRADE."), a
+/// weapon family's with its heading's; empty when it can.
+/// </summary>
+std::string MatchOptionHeld(int32_t row);
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 4): the other players whose game holds row <paramref name="row"/> (MatchOptionHeld),
+/// their names as typed; none when it isn't held, or out of a session.
+/// </summary>
+std::vector<std::string> MatchOptionHeldBy(int32_t row);
 
 /// <summary>
 /// Why an option is held, for the other players (<paramref name="names"/>, as shown) whose game doesn't have it, every

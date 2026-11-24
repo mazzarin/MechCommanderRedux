@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCReusableDialog.h"
 #include "ui/MCRmlDialog.h"
+#include "ui/MCRmlFlow.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "iface/MCKeyBindings.h"
@@ -200,7 +201,144 @@ auto MCReusableDialog::HandleEvent(MCGuiEvent& event) -> void
     MCGuiObject::HandleEvent(event);
 }
 
+auto MCReusableDialog::WordOf(const MCLogButton& button) -> std::string
+{
+    constexpr std::string_view CancelPicture = "bh_cancl";
+    std::string name = button.UpPictureName;
+    std::ranges::transform(name, name.begin(),
+                           [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+    return name.starts_with(CancelPicture) ? "Cancel" : "OK";
+}
+
+auto MCReusableDialog::IsShowing() -> bool
+{
+    return MCLogObject::IsShowing() || StillSaid();
+}
+
+auto MCReusableDialog::StillSaid() const -> bool
+{
+    if (!_SaidOverRemade)
+    {
+        return false;
+    }
+
+    // Hidden by a change of screens, its say comes back (MCRmlDialogs::Tend) unless a newer one took its place.
+    if (MCRmlDialogs::Returning(_Said))
+    {
+        return true;
+    }
+
+    const MCGuiHandle<MCRmlDialog> dialog = MCRmlDialogs::Dialog();
+    return MCRmlDialogs::Shown() && dialog && dialog->Said().Text == _Said;
+}
+
+auto MCReusableDialog::SayOverRemade() -> bool
+{
+    if (!MCRmlFlow::Showing())
+    {
+        return false;
+    }
+
+    // Its buttons as Enter and Escape press them here (HandleEvent): OK, then the dialog closed with OK's result; CANCEL,
+    // or a message's one button for Escape, with 0.
+    const std::weak_ptr<MCGuiObject> self = weak_from_this();
+    const auto answer = [self](bool ok)
+    {
+        const std::shared_ptr<MCGuiObject> object = self.lock();
+
+        if (object == nullptr)
+        {
+            return;
+        }
+
+        auto& dialog = static_cast<MCReusableDialog&>(*object);
+        dialog._SaidOverRemade = false;
+        const bool two = dialog.TwoButton;
+        (ok ? *dialog.OkButton : *dialog.CancelButton).RunCallback();
+        dialog.Deactivate(ok && two ? -1 : 0);
+    };
+
+    _Said = MCRmlDialogs::AsSentence(Text);
+    MCRmlDialog::MCSay say{.Text = _Said,
+                           .Main = OkButton->Disabled ? std::string() : WordOf(*OkButton),
+                           .Other = TwoButton ? WordOf(*CancelButton) : std::string(),
+                           .OnMain = [answer] { answer(true); },
+                           .OnOther = [answer] { answer(false); }};
+
+    // Through a change to a 1998 screen with no remade one after it, it shows the old way, as the original's stayed up.
+    say.OnLost = [self]
+    {
+        const std::shared_ptr<MCGuiObject> object = self.lock();
+
+        if (object == nullptr)
+        {
+            return;
+        }
+
+        auto& dialog = static_cast<MCReusableDialog&>(*object);
+
+        if (std::exchange(dialog._SaidOverRemade, false))
+        {
+            dialog.ShowOld();
+        }
+    };
+
+    // A key asked for, as HandleEvent takes it: true closes the dialog as OK does (its callback with 0).
+    if (KeyTaker)
+    {
+        say.TakeKey = [self](uint32_t key)
+        {
+            const std::shared_ptr<MCGuiObject> object = self.lock();
+
+            if (object == nullptr)
+            {
+                return;
+            }
+
+            auto& dialog = static_cast<MCReusableDialog&>(*object);
+
+            if (dialog.KeyTaker && dialog.KeyTaker(key))
+            {
+                dialog.Deactivate(0);
+            }
+        };
+    }
+
+    if (!MCRmlDialogs::Show(std::move(say)))
+    {
+        return false;
+    }
+
+    _SaidOverRemade = true;
+    ShowGuiWindow(false);
+
+    if (Timeout > 0)
+    {
+        GuiSystem().AddTimer(weak_from_this(), TimeoutTimer, Timeout, 0, 0, false);
+    }
+
+    return true;
+}
+
 auto MCReusableDialog::Activate() -> void
+{
+    // Port-only (SPEC-menus.md's stage 4): over a remade screen, the remade dialog says it (a key asked for, it passes
+    // here).
+    if (SayOverRemade())
+    {
+        return;
+    }
+
+    _SaidOverRemade = false;
+    ShowOld();
+
+    if (Timeout > 0)
+    {
+        GuiSystem().AddTimer(weak_from_this(), TimeoutTimer, Timeout, 0, 0, false);
+    }
+}
+
+auto MCReusableDialog::ShowOld() -> void
 {
     GuiSystem().Grab(weak_from_this());
     // The original painted the dialog afresh: a press left on its buttons was gone.
@@ -213,16 +351,26 @@ auto MCReusableDialog::Activate() -> void
     MoveTo(shown.x + shown.w / 2 - (parent != nullptr ? parent->GlobalX() : 0) - Width() / 2,
            shown.y + shown.h / 2 - (parent != nullptr ? parent->GlobalY() : 0) - Height() / 2, false);
     ShowGuiWindow(true);
-
-    if (Timeout > 0)
-    {
-        GuiSystem().AddTimer(weak_from_this(), TimeoutTimer, Timeout, 0, 0, false);
-    }
 }
 
 auto MCReusableDialog::Deactivate(int32_t dialogResult) -> void
 {
-    GuiSystem().Release();
+    // Port-only (SPEC-menus.md's stage 4): said over the remade screens, it grabbed nothing; closed by its timeout (or
+    // by its owner), the remade dialog closes too.
+    if (_SaidOverRemade)
+    {
+        if (StillSaid())
+        {
+            MCRmlDialogs::Close();
+        }
+
+        _SaidOverRemade = false;
+    }
+    else
+    {
+        GuiSystem().Release();
+    }
+
     ShowGuiWindow(false);
     // Port-only (SPEC-menus.md's stage 3): a wait said over a remade screen in this dialog's place ends with it.
     MCRmlDialogs::EndWait();

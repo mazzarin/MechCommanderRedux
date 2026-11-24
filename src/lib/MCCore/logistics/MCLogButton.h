@@ -77,6 +77,11 @@ public:
     /// paint showed it up again).
     /// </summary>
     bool Pressed = false;
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): the up picture's file name, as given (a dialog's button said by its word over
+    /// the remade screens).
+    /// </summary>
+    std::string UpPictureName;
     std::shared_ptr<MCLogPort> UpPicture;
     std::shared_ptr<MCLogPort> DownPicture;
     std::shared_ptr<MCLogPort> GrayPicture;

@@ -24,6 +24,7 @@
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCGenericScreen.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCUpdater.h"
 #include "main/MCGamePaths.h"
@@ -505,6 +506,14 @@ auto MCSessionScreen::OnDestroy() -> void
 
 auto MCSessionScreen::Draw() -> void
 {
+    // Port-only (SPEC-menus.md's stage 4): the UPDATE page closed, the remade room again in the 1998 room's place.
+    if (UpdateOver && !UpdatePageShown() && ShowWindow)
+    {
+        UpdateOver = false;
+        ShowGuiWindow(true);
+        return;
+    }
+
     if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager->CurrentSession() == nullptr)
     {
         return;
@@ -523,7 +532,7 @@ auto MCSessionScreen::Draw() -> void
         DrawMatchTabs(frame, *tabs, FrontTab, newChat && (MCPort::Milliseconds() / ChatBlinkMs) % 2 == 0);
     }
 
-    MultiPlayer()->UpdateMatchOptions();
+    Room().Tend();
     ShowMatchOptions(*MatchOptionsList);
     MedWhiteFont->WriteString(frame, 0x180, 199, Room().MissionName);
     MedWhiteFont->WriteString(frame, 0x180, 0xe3, Room().MapName);
@@ -731,6 +740,18 @@ auto MCSessionScreen::ShowTab(MCSessionTab tab) -> void
 
 auto MCSessionScreen::ShowGuiWindow(bool show) -> void
 {
+    // Port-only (SPEC-menus.md's stage 4): the remade room in its place.
+    if (!show)
+    {
+        UpdateOver = false;
+        HideRoomScreen();
+    }
+    else if (!UpdateOver && ShowRoomScreen())
+    {
+        MCLogObject::ShowGuiWindow(false);
+        return;
+    }
+
     if (!show && FrontTab == MCSessionTab::Options)
     {
         FrontTab = MCSessionTab::Chat;
@@ -743,6 +764,14 @@ auto MCSessionScreen::ShowGuiWindow(bool show) -> void
     }
 
     MCLogObject::ShowGuiWindow(show);
+}
+
+auto MCSessionScreen::ShowUpdateOver() -> void
+{
+    UpdateOver = true;
+    HideRoomScreen();
+    MCLogObject::ShowGuiWindow(true);
+    ShowUpdatePageOver(*this);
 }
 
 auto MCSessionScreen::Activate(bool refresh) -> void

@@ -2,6 +2,7 @@
 #include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCLogOptionList.h"
 #include "linkup/MCFidpPlayer.h"
+#include "linkup/MCSessionManager.h"
 #include "main/MCWeaponBans.h"
 #include "logistics/MCLogPort.h"
 #include "network/MCMultiPlayer.h"
@@ -382,16 +383,23 @@ namespace
     /// Why the host can't choose what <paramref name="rule"/> covers (MatchTellToUpgrade): the other players whose game
     /// doesn't have it, by name (empty: every player's has it).
     /// </summary>
-    std::string TellToUpgrade(MCMultiPlayer& game, uint32_t rule)
+    std::vector<std::string> NamesWithout(MCMultiPlayer& game, uint32_t rule)
     {
         std::vector<std::string> names;
 
         for (const uint32_t id : game.PlayersWithout(rule))
         {
             const std::shared_ptr<MCFidpPlayer> player = game.SessionManager->GetPlayer(id);
-            names.push_back(MCUpperText(player != nullptr ? std::string_view(player->Name) : UnknownPlayer));
+            names.emplace_back(player != nullptr ? std::string_view(player->Name) : UnknownPlayer);
         }
 
+        return names;
+    }
+
+    std::string TellToUpgrade(MCMultiPlayer& game, uint32_t rule)
+    {
+        std::vector<std::string> names = NamesWithout(game, rule);
+        std::ranges::transform(names, names.begin(), [](const std::string& name) { return MCUpperText(name); });
         return MatchTellToUpgrade(names);
     }
 
@@ -560,7 +568,7 @@ auto AddMatchOptionsList(MCGuiObject& screen) -> MCGuiHandle<MCLogOptionList>
         });
 }
 
-auto ShowMatchOptions(MCLogOptionList& list) -> void
+auto ReadMatchOptions() -> void
 {
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
 
@@ -569,7 +577,7 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
         return;
     }
 
-    // What the match plays; an option a player's game doesn't have held at the mission's own (or off), naming whose.
+    // What the match plays.
     const MCMatchOptions& played = game->Played;
     WeatherValue = ValueOf(played.Weather);
     TimeValue = ValueOf(played.TimeOfDay);
@@ -585,7 +593,19 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
     {
         WeaponValues[family] = OnOf(rules, WeaponFamilies[family].Rule, false);
     }
+}
 
+auto ShowMatchOptions(MCLogOptionList& list) -> void
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+    if (game == nullptr)
+    {
+        return;
+    }
+
+    // What the match plays; an option a player's game doesn't have held at the mission's own (or off), naming whose.
+    ReadMatchOptions();
     const bool host = game->IsHost != 0;
     list.SetLocked(!host, LockedHint);
 
@@ -605,4 +625,41 @@ auto MatchTellToUpgrade(std::span<const std::string> names) -> std::string
     }
 
     return std::format("TELL {} TO UPGRADE.", MCNamesJoined(names));
+}
+
+auto MatchOptionRows() -> std::span<const MCLogOptionList::Row>
+{
+    return Rows;
+}
+
+auto MatchOptionHeldBy(int32_t row) -> std::vector<std::string>
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+    // Out of a session no player is asked (MatchOptionHeld).
+    if (game == nullptr || game->SessionManager == nullptr || game->SessionManager->MyPlayerID == 0)
+    {
+        return {};
+    }
+
+    const int32_t asked = row > WeaponsRow ? WeaponsRow : row;
+    const auto found = std::ranges::find(RuleRows, asked, &RuleRow::Row);
+    return found != RuleRows.end() ? NamesWithout(*game, MCCapabilityOf(found->Option).Rules)
+                                   : std::vector<std::string>();
+}
+
+auto MatchOptionHeld(int32_t row) -> std::string
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+    // Out of a session (the room ending under a view still shown) no player is asked: their list would be made again.
+    if (game == nullptr || game->SessionManager == nullptr || game->SessionManager->MyPlayerID == 0)
+    {
+        return {};
+    }
+
+    // A weapon family's row is held with the WEAPONS heading's.
+    const int32_t asked = row > WeaponsRow ? WeaponsRow : row;
+    const auto found = std::ranges::find(RuleRows, asked, &RuleRow::Row);
+    return found != RuleRows.end() ? TellToUpgrade(*game, MCCapabilityOf(found->Option).Rules) : std::string();
 }

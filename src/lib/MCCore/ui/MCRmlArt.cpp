@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "ui/MCRmlArt.h"
+#include "lib/MCFile.h"
 #include "logistics/MCLogPort.h"
 #include "main/MCGamePaths.h"
 #include "sprite/MCBc7.h"
@@ -48,10 +49,24 @@ namespace
         return file;
     }
 
-    std::expected<MCArtPicture, std::string> ReadArt(std::string_view name)
+    /// <summary>
+    /// The briefing map a map's name stands for (<c>map:</c>): its <c>.log.tga</c> under TerrainPath, as the room's 1998
+    /// screen read it.
+    /// </summary>
+    std::expected<std::string, std::string> MapFile(std::string_view name)
     {
-        const std::expected<std::string, std::string> path = ArtFile(name);
+        if (name.empty() || name.find("..") != std::string_view::npos || name.find(':') != std::string_view::npos ||
+            name.find('/') != std::string_view::npos || name.find('\\') != std::string_view::npos)
+        {
+            return std::unexpected(std::format("'{}' isn't the name of a map", name));
+        }
 
+        return GamePath(TerrainPath, name, ".log.tga");
+    }
+
+    /// <summary>The 8-bit TGA at <paramref name="path"/> (a game file), with its colour map.</summary>
+    std::expected<MCArtPicture, std::string> ReadTga(const std::expected<std::string, std::string>& path)
+    {
         if (!path)
         {
             return std::unexpected(path.error());
@@ -85,6 +100,11 @@ namespace
         }
 
         return picture;
+    }
+
+    std::expected<MCArtPicture, std::string> ReadArt(std::string_view name)
+    {
+        return ReadTga(ArtFile(name));
     }
 
     /// <summary>The 1998 picture in its colours, premultiplied (its key transparent).</summary>
@@ -295,12 +315,15 @@ namespace MCRmlArt
 
     std::expected<MCRmlRecorder::MCLoaded, std::string> Load(std::string_view source, bool hd, const MCRmlFiles& files)
     {
-        if (!source.starts_with(Scheme))
+        const bool map = source.starts_with(MapScheme);
+
+        if (!source.starts_with(Scheme) && !map)
         {
             return LoadAppArt(source, hd, files);
         }
 
-        const std::expected<MCArtPicture, std::string> picture = ReadArt(source.substr(Scheme.size()));
+        const std::expected<MCArtPicture, std::string> picture =
+            map ? ReadTga(MapFile(source.substr(MapScheme.size()))) : ReadArt(source.substr(Scheme.size()));
 
         if (!picture)
         {

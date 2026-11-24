@@ -322,19 +322,20 @@ TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line o
     Guest guest("ANN");
     REQUIRE(HostLobbyRoom("28883", {guest}));
     MCSessionScreen& screen = *GlobalLog()->SessionScreen;
-    REQUIRE(screen.UpdateLine != nullptr);
-    const auto [lineX, lineY] = Middle(*screen.UpdateLine);
+    REQUIRE(RoomScreenShown());
 
-    // Nothing waits: no line, and nothing there to click.
-    CHECK(screen.FindObject(lineX, lineY) != screen.UpdateLine);
+    // Nothing waits: no line in the room's foot (the remade room, SPEC-menus.md's stage 4).
+    MCTestGuest::Step();
+    CHECK(RoomScreen()->Seen().UpdateLine.empty());
     MCScreenInput::SaveShot("lobby session 0 nothing new", MCScreenInput::ScreenHash());
 
     MCUpdater::Found(std::string(NewVersion), std::string(NewNotes));
     Settle();
-    CHECK(screen.FindObject(lineX, lineY) == screen.UpdateLine);
+    CHECK(!RoomScreen()->Seen().UpdateLine.empty());
     MCScreenInput::SaveShot("lobby session 1 update waits", MCScreenInput::ScreenHash());
 
-    ClickOn(*screen.UpdateLine);
+    // Its line opens the 1998 UPDATE page over the 1998 room, in the remade room's place until it closes.
+    MCTestGuest::PressInRoom("update");
     REQUIRE(UpdatePageShown());
     CHECK_EQ(UpdatePageStatus(), std::string("A NEWER VERSION IS OUT."));
     const std::shared_ptr<MCLogTextButton> install = MCScreenInput::FindTextButton(screen, "INSTALL");
@@ -350,8 +351,8 @@ TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line o
 
     ClickOn(*done);
     CHECK(!UpdatePageShown());
-    CHECK(screen.FindObject(lineX, lineY) == screen.UpdateLine);
-    CHECK(screen.FindObject(startX, startY) == screen.StartButton);
+    CHECK(SettleUntil([] { return RoomScreenShown(); }));
+    CHECK(!screen.ShowWindow);
 }
 
 namespace
@@ -407,7 +408,7 @@ TEST_CASE_ISOLATED(
     cal.SendRules(hostId, MCMatchRule::Supported & ~MCMatchRule::RejoinsHost);
     MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     UpdateReady();
-    ShowUpdatePageOver(screen);
+    screen.ShowUpdateOver();
     Settle();
     const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
     REQUIRE(restart != nullptr);
@@ -556,11 +557,11 @@ TEST_CASE_ISOLATED("game: a lobby's START asks while a guest is away updating, a
     ann.Leave();
     Settle();
     MCReusableDialog& question = *GlobalLog()->QuestionDialog;
-    ClickOn(*screen.StartButton);
+    MCTestGuest::PressInRoom("begin");
     REQUIRE(question.IsShowing());
-    CHECK_EQ(question.Text, std::string("ANN IS UPDATING. START WITHOUT ANN?"));
+    CHECK_EQ(question.Text, std::string("ANN is updating. Start without ANN?"));
     MCScreenInput::SaveShot("lobby start waits 1 start asks", MCScreenInput::ScreenHash());
-    ClickOn(*question.CancelButton);
+    MCTestGuest::PressDialogCancel();
     CHECK(!question.IsShowing());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     CHECK(MCLobbyUpdate::LeftToUpdate(ann.Id()));
@@ -746,17 +747,20 @@ TEST_CASE_ISOLATED("game: a lobby's START counts only the players there, and ask
     // Team 2 only the guests away: START grays, and a click asks nothing.
     CHECK(screen.StartButton->Disabled);
     CHECK_EQ(MCSessionScreen::Room().StartWaits, std::string("WAITING FOR ANN, CAL TO REJOIN."));
+    // The remade room's foot says it with the names as typed.
+    REQUIRE(RoomScreenShown());
+    CHECK_EQ(RoomScreen()->Seen().Status, std::string("Waiting for ANN and CAL to rejoin."));
     MCReusableDialog& question = *GlobalLog()->QuestionDialog;
-    ClickOn(*screen.StartButton);
+    MCTestGuest::PressInRoom("begin");
     CHECK(!question.IsShowing());
 
     // DAN on team 2 too: START asks, naming both, and OK starts the match without them.
     screen.AssignPlayer(dan.Id(), 2, 2, false);
     CHECK(!screen.StartButton->Disabled);
-    ClickOn(*screen.StartButton);
+    MCTestGuest::PressInRoom("begin");
     REQUIRE(question.IsShowing());
-    CHECK_EQ(question.Text, std::string("ANN, CAL ARE UPDATING. START WITHOUT THEM?"));
-    ClickOn(*question.OkButton);
+    CHECK_EQ(question.Text, std::string("ANN and CAL are updating. Start without them?"));
+    MCTestGuest::PressDialogOk();
     CHECK(!question.IsShowing());
     CHECK(GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen);
     CHECK(std::ranges::contains(MultiPlayer()->Match.Team1Players, hostId));
@@ -816,7 +820,7 @@ namespace
     /// <summary>The UPDATE page over the session screen, its RESTART button (null when the page has none).</summary>
     std::shared_ptr<MCLogTextButton> RestartOnPage(MCSessionScreen& screen)
     {
-        ShowUpdatePageOver(screen);
+        screen.ShowUpdateOver();
         Settle();
         return MCScreenInput::FindTextButton(screen, "RESTART");
     }
@@ -1012,11 +1016,10 @@ namespace
         return MultiPlayer() != nullptr && MultiPlayer()->SessionManager->CurrentSession() != nullptr;
     }
 
-    /// <summary>The message dialog's text, when it shows.</summary>
+    /// <summary>The dialog's text, when one shows: the remade one's over the remade screens, else the 1998 one's.</summary>
     std::string DialogText()
     {
-        const MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-        return dialog.ShowWindow ? dialog.Text : std::string();
+        return MCTestGuest::DialogText();
     }
 
     /// <summary>
@@ -1116,7 +1119,7 @@ TEST_CASE_ISOLATED("game: a lobby's guest started from the rejoin note joins, an
     };
 
     CHECK(hostRestarts());
-    CHECK_EQ(DialogText(), std::string("BOB IS UPDATING."));
+    CHECK_EQ(DialogText(), std::string("BOB is updating."));
     // The waiting screen's change of screen (its fades) done.
     REQUIRE(MCTestGame::FinishChanges());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen);
@@ -1148,7 +1151,7 @@ TEST_CASE_ISOLATED("game: a lobby's guest started from the rejoin note joins, an
 
     // It restarts again, its update going in this time.
     CHECK(hostRestarts());
-    CHECK_EQ(DialogText(), std::string("BOB IS UPDATING."));
+    CHECK_EQ(DialogText(), std::string("BOB is updating."));
 
     // The host's game quits, and its new version opens the room again.
     bob->Close();
@@ -1187,7 +1190,7 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update tells the ro
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     UpdateReady();
-    ShowUpdatePageOver(screen);
+    screen.ShowUpdateOver();
     Settle();
     const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
     REQUIRE(restart != nullptr);
@@ -1236,7 +1239,7 @@ TEST_CASE_ISOLATED(
     bob.reset();
 
     clock.Pass(MCLobbyUpdate::RejoinWait - MCLobbyUpdate::TryEvery);
-    CHECK_EQ(DialogText(), std::string("BOB IS UPDATING."));
+    CHECK_EQ(DialogText(), std::string("BOB is updating."));
     clock.Pass(MCLobbyUpdate::TryEvery);
     CHECK(!InSession());
     CHECK_EQ(DialogText(), std::string("Couldn't join the room again: it has closed."));
@@ -1401,8 +1404,9 @@ namespace
     /// <summary>What a game refused at the door for the time of day and the weather says.</summary>
     constexpr std::string_view RefusedForTime =
         "YOUR GAME DOESN'T HAVE THIS MATCH'S TIME OF DAY. UPDATE YOUR GAME TO JOIN.";
+    /// <summary>The weather's as the remade dialog says it, over the launcher's join (SPEC-menus.md's stage 4).</summary>
     constexpr std::string_view RefusedForWeather =
-        "YOUR GAME DOESN'T HAVE THIS MATCH'S WEATHER. UPDATE YOUR GAME TO JOIN.";
+        "Your game doesn't have this match's weather. Update your game to join.";
 }
 
 /// <summary>
@@ -1452,11 +1456,12 @@ TEST_CASE_ISOLATED("game: a lobby's guest waiting for its host's new version, re
     MultiPlayer()->ServerID = bob->Id();
     bob->SendUpdating(MultiPlayer()->SessionManager->MyPlayerID);
     REQUIRE(SettleUntil([] { return !InSession(); }));
-    CHECK_EQ(DialogText(), std::string("BOB IS UPDATING."));
+    CHECK_EQ(DialogText(), std::string("BOB is updating."));
     bob->Close();
     bob.reset();
 
     Host newBob;
+    // The room closed, the launcher's join shows again, the refusal said over it.
     newBob.RefuseWith("WEATHER");
     REQUIRE(newBob.Open(Port, std::string(HostName), std::string(RoomName)));
     const auto opened = std::chrono::steady_clock::now();

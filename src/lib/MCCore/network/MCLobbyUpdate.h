@@ -72,6 +72,9 @@ namespace MCLobbyUpdate
     /// </summary>
     std::string StartWaitsText();
 
+    /// <summary>Port-only (SPEC-menus.md's stage 4): the same, for the remade room: "Waiting for Ann and Cal to rejoin.".</summary>
+    std::string StartWaitsLine();
+
     /// <summary>
     /// What START asks while guests are away updating ("ANN IS UPDATING. START WITHOUT ANN?"); empty when none is. The
     /// start never waits for them: the host's OK starts the match without them (<see cref="MatchStarts"/>).

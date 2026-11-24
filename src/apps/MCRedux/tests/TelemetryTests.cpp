@@ -1109,9 +1109,8 @@ TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice onc
     REQUIRE(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string(ReportsText(MCPrompt::Notice)));
     MCScreenInput::SaveShot("reports notice session screen", MCScreenInput::ScreenHash());
-    MCScreenInput::RealClick(dialog.OkButton->GlobalX() + dialog.OkButton->Width() / 2,
-                             dialog.OkButton->GlobalY() + dialog.OkButton->Height() / 2);
-    MCTestGuest::Settle();
+    // Over the remade room (SPEC-menus.md's stage 4), the remade dialog says it.
+    MCTestGuest::PressDialogOk();
     CHECK(!dialog.IsShowing());
     CHECK_EQ(GReports, 1);
 

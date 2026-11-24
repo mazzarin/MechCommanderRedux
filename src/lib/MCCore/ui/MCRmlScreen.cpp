@@ -275,6 +275,50 @@ bool MCRmlScreen::OnChange(const std::string& id, std::function<void(int value)>
     return true;
 }
 
+bool MCRmlScreen::OnText(const std::string& id, std::function<void(const std::string& text, bool enter)> act)
+{
+    Rml::Element* element = _Document != nullptr ? _Document->GetElementById(id) : nullptr;
+
+    if (element == nullptr)
+    {
+        SDL_Log("Menus: %s has no text box '%s'", _Path.c_str(), id.c_str());
+        return false;
+    }
+
+    // RmlUi's text boxes say ENTER as a change with its "linebreak".
+    auto action = std::make_shared<MCAction>(
+        weak_from_this(), [act = std::move(act)](Rml::Event& event)
+        { act(event.GetParameter<Rml::String>("value", ""), event.GetParameter<bool>("linebreak", false)); });
+    element->AddEventListener(Rml::EventId::Change, action.get());
+    _Listening.push_back(
+        MCListening{.Element = element, .Event = static_cast<int>(Rml::EventId::Change), .Action = std::move(action)});
+    return true;
+}
+
+bool MCRmlScreen::OnChangeIn(const std::string& id, std::function<void(const std::string& control, int value)> act)
+{
+    Rml::Element* element = _Document != nullptr ? _Document->GetElementById(id) : nullptr;
+
+    if (element == nullptr)
+    {
+        SDL_Log("Menus: %s has no element '%s' to change in", _Path.c_str(), id.c_str());
+        return false;
+    }
+
+    // A control's change rises to it (RmlUi's change event bubbles), from its target.
+    auto action = std::make_shared<MCAction>(weak_from_this(),
+                                             [act = std::move(act)](Rml::Event& event)
+                                             {
+                                                 const Rml::Element* target = event.GetTargetElement();
+                                                 act(target != nullptr ? target->GetId() : Rml::String(),
+                                                     event.GetParameter<int>("value", 0));
+                                             });
+    element->AddEventListener(Rml::EventId::Change, action.get());
+    _Listening.push_back(
+        MCListening{.Element = element, .Event = static_cast<int>(Rml::EventId::Change), .Action = std::move(action)});
+    return true;
+}
+
 bool MCRmlScreen::OnKey(int /*key*/, int /*modifiers*/)
 {
     return false;

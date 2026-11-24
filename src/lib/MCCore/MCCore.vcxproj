@@ -189,6 +189,7 @@
     <ClCompile Include="logistics\MCArtWords.cpp" />
     <ClCompile Include="logistics\MCBriefingBox.cpp" />
     <ClCompile Include="logistics\MCBriefingScreen.cpp" />
+    <ClCompile Include="logistics\MCChooseMapWindow.cpp" />
     <ClCompile Include="logistics\MCCompInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCCompPurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCConnectMenu.cpp" />
@@ -227,7 +228,9 @@
     <ClCompile Include="logistics\MCLogTextObject.cpp" />
     <ClCompile Include="logistics\MCLogToolButton.cpp" />
     <ClCompile Include="logistics\MCMainMenu.cpp" />
+    <ClCompile Include="logistics\MCMatchMaps.cpp" />
     <ClCompile Include="logistics\MCMatchOptionsTab.cpp" />
+    <ClCompile Include="logistics\MCMatchOptionsWindow.cpp" />
     <ClCompile Include="logistics\MCMechBriefBlock.cpp" />
     <ClCompile Include="logistics\MCMechInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCMechPurchaseBlock.cpp" />
@@ -250,6 +253,7 @@
     <ClCompile Include="logistics\MCReportsNotice.cpp" />
     <ClCompile Include="logistics\MCReusableDialog.cpp" />
     <ClCompile Include="logistics\MCRoomModel.cpp" />
+    <ClCompile Include="logistics\MCRoomScreen.cpp" />
     <ClCompile Include="logistics\MCSessionScreen.cpp" />
     <ClCompile Include="logistics\MCSmuti.cpp" />
     <ClCompile Include="logistics\MCSplashScreen.cpp" />
@@ -726,6 +730,7 @@
     <ClInclude Include="logistics\MCArtWords.h" />
     <ClInclude Include="logistics\MCBriefingBox.h" />
     <ClInclude Include="logistics\MCBriefingScreen.h" />
+    <ClInclude Include="logistics\MCChooseMapWindow.h" />
     <ClInclude Include="logistics\MCCompInventoryBlock.h" />
     <ClInclude Include="logistics\MCCompPurchaseBlock.h" />
     <ClInclude Include="logistics\MCConnectMenu.h" />
@@ -764,7 +769,9 @@
     <ClInclude Include="logistics\MCLogTextObject.h" />
     <ClInclude Include="logistics\MCLogToolButton.h" />
     <ClInclude Include="logistics\MCMainMenu.h" />
+    <ClInclude Include="logistics\MCMatchMaps.h" />
     <ClInclude Include="logistics\MCMatchOptionsTab.h" />
+    <ClInclude Include="logistics\MCMatchOptionsWindow.h" />
     <ClInclude Include="logistics\MCMechBriefBlock.h" />
     <ClInclude Include="logistics\MCMechInventoryBlock.h" />
     <ClInclude Include="logistics\MCMechPurchaseBlock.h" />
@@ -787,6 +794,7 @@
     <ClInclude Include="logistics\MCReportsNotice.h" />
     <ClInclude Include="logistics\MCReusableDialog.h" />
     <ClInclude Include="logistics\MCRoomModel.h" />
+    <ClInclude Include="logistics\MCRoomScreen.h" />
     <ClInclude Include="logistics\MCSessionScreen.h" />
     <ClInclude Include="logistics\MCSmuti.h" />
     <ClInclude Include="logistics\MCSplashScreen.h" />

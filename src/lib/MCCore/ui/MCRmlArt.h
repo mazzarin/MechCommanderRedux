@@ -20,6 +20,12 @@ namespace MCRmlArt
 {
     /// <summary>The scheme a picture's source starts with.</summary>
     inline constexpr std::string_view Scheme = "art:";
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): a map's briefing picture, <c>map:&lt;map&gt;</c> (the room's and CHOOSE MAP's),
+    /// its <c>&lt;map&gt;.log.tga</c> under the game's TerrainPath, read and drawn as <c>art:</c>'s (the briefing maps' HD
+    /// copies by its pixels).
+    /// </summary>
+    inline constexpr std::string_view MapScheme = "map:";
 
     /// <summary>
     /// The picture <paramref name="source"/> names, with its HD copy when <paramref name="hd"/> and the pack has one;

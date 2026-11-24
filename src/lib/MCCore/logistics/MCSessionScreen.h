@@ -53,6 +53,9 @@ public:
     /// <summary>Port: what the screen shows of the shared places.</summary>
     MCLogScreenChrome ScreenChrome;
 
+    /// <summary>Port-only (SPEC-menus.md's stage 4): the 1998 room shows for the UPDATE page over it (ShowUpdateOver).</summary>
+    bool UpdateOver = false;
+
     /// <summary>Name drops, the ping/resource point timer, and (port-only) a click on a tab.</summary>
     void HandleEvent(MCGuiEvent& event) override;
 
@@ -68,8 +71,17 @@ public:
     /// <summary>
     /// Port-only: the screen hidden with MATCH OPTIONS in front puts the chat back in front first, so the next screen's
     /// chat shows (each screen's chat window takes the shown state of the one before, MCLogistics::ShowChatOn).
+    /// Port-only (SPEC-menus.md's stage 4): shown, the remade room (logistics/MCRoomScreen) shows in its place and the
+    /// screen stays hidden, logistics' screen still; only where the remade room can't show (the menus can't start), the
+    /// 1998 room. Hidden, the remade room hides with it.
     /// </summary>
     void ShowGuiWindow(bool show) override;
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): the remade room's update line: the 1998 UPDATE page over the 1998 room, shown
+    /// in the remade room's place until the page closes (stage 6 remakes UPDATE).
+    /// </summary>
+    void ShowUpdateOver();
 
     /// <summary>
     /// Fills the screen from the session: the players, the teams and the controls for host or guest;

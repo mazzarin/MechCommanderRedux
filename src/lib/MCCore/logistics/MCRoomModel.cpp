@@ -242,3 +242,11 @@ auto MCRoomModel::BeginPlanning() -> void
         screen->get().Begin();
     }
 }
+
+auto MCRoomModel::Tend() -> void
+{
+    if (const std::shared_ptr<MCMultiPlayer> game = MultiPlayer(); game != nullptr)
+    {
+        game->UpdateMatchOptions();
+    }
+}

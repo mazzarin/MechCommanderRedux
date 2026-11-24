@@ -150,9 +150,16 @@ void AskGivenWayKeys()
         return;
     }
 
-    // However it closes, PREFS keeps the answer (the key, or none), so the player is asked once.
-    ShowMenuMessage(GivenWayText(*givenWay), [](int32_t) { SavePrefs(); });
+    // However it closes, PREFS keeps the answer (the key, or none), so the player is asked once. Port-only
+    // (SPEC-menus.md's stage 4): its key taker set before it shows, so over a remade screen (a launcher's room) the
+    // remade dialog asks for the key.
     MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    dialog.SetText(GivenWayText(*givenWay));
+    dialog.SetTwoButton(false);
+    dialog.Callback = [](int32_t) { SavePrefs(); };
+    dialog.OkButton->SetUpPicture("bh_okay.tga");
+    dialog.OkButton->SetDownPicture("bg_okay.tga");
+    dialog.OkButton->Disabled = false;
     const MCKeyCommand command = givenWay->Command;
     dialog.KeyTaker = [&dialog, command](uint32_t key)
     {
@@ -170,5 +177,6 @@ void AskGivenWayKeys()
         return true;
     };
 
+    dialog.Activate();
     GuiSystem().SetText(dialog.weak_from_this());
 }

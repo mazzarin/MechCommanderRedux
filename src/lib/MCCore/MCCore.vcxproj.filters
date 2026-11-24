@@ -498,6 +498,9 @@
     <ClCompile Include="logistics\MCBriefingScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCChooseMapWindow.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCCompInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -612,7 +615,13 @@
     <ClCompile Include="logistics\MCMainMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCMatchMaps.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCMatchOptionsTab.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCMatchOptionsWindow.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCMechBriefBlock.cpp">
@@ -679,6 +688,9 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCRoomModel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCRoomScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCSessionScreen.cpp">
@@ -2029,6 +2041,9 @@
     <ClInclude Include="logistics\MCBriefingScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCChooseMapWindow.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCCompInventoryBlock.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2143,7 +2158,13 @@
     <ClInclude Include="logistics\MCMainMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCMatchMaps.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCMatchOptionsTab.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCMatchOptionsWindow.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCMechBriefBlock.h">
@@ -2210,6 +2231,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCRoomModel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCRoomScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCSessionScreen.h">

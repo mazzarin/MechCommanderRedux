@@ -31,8 +31,15 @@ public:
     /// <summary>Enter presses OK (or Cancel on a one-button dialog), Escape cancels, the timeout closes it.</summary>
     void HandleEvent(MCGuiEvent& event) override;
 
-    /// <summary>Grabs the input, centres and shows the dialog, and starts the timeout timer if any.</summary>
+    /// <summary>
+    /// Grabs the input, centres and shows the dialog, and starts the timeout timer if any. Port-only (SPEC-menus.md's
+    /// stage 4): over a remade screen, said in the remade dialog instead (this one would show under it), its buttons
+    /// running this one's as Enter and Escape do here, a key asked for passed to <see cref="KeyTaker"/>.
+    /// </summary>
     void Activate();
+
+    /// <summary>Port-only: shown, or said over the remade screens (<see cref="Activate"/>) while that shows.</summary>
+    bool IsShowing() override;
 
     /// <summary>
     /// Hides the dialog and calls the callback with <paramref name="result"/>; unless <see cref="KeepCallbacks"/>
@@ -72,6 +79,8 @@ public:
     std::function<bool(uint32_t key)> KeyTaker;
     /// <summary>The OK button (a child).</summary>
     MCGuiHandle<MCLogDialogButton> OkButton;
+    /// <summary>The word a button's picture says ("Cancel" for <c>bh_cancl</c>, else "OK"), for the remade dialog.</summary>
+    static std::string WordOf(const MCLogButton& button);
     /// <summary>The Cancel button (a child).</summary>
     MCGuiHandle<MCLogDialogButton> CancelButton;
     std::shared_ptr<MCLogPort> TopPiece;
@@ -87,6 +96,24 @@ protected:
     /// right edge.
     /// </summary>
     int32_t WrapWidth() { return Width() - 0x19; }
+
+private:
+    /// <summary>Says the dialog over the remade screens (<see cref="Activate"/>); false when none shows.</summary>
+    bool SayOverRemade();
+
+    /// <summary>
+    /// Whether the remade dialog still says what <see cref="SayOverRemade"/> said there (or will again, a change of
+    /// screens having hidden it).
+    /// </summary>
+    bool StillSaid() const;
+
+    /// <summary>Shown the old way: grabbing the screen, centred on what the window shows.</summary>
+    void ShowOld();
+
+    /// <summary>Port-only: said over the remade screens by its last <see cref="Activate"/>, not yet answered.</summary>
+    bool _SaidOverRemade = false;
+    /// <summary>What it said there.</summary>
+    std::string _Said;
 };
 
 /// <summary>

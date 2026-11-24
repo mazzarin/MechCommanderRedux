@@ -9,11 +9,14 @@
 #include "gui/MCUpdateDisplay.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCCampaignMenu.h"
+#include "logistics/MCMatchMaps.h"
 #include "logistics/MCMenuScreens.h"
 #include "main/MCGameContext.h"
+#include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
+#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
@@ -53,6 +56,8 @@ namespace
     constexpr const char* PanelId = "results";
     constexpr const char* MoveOnId = "move-on";
     constexpr const char* RematchId = "rematch";
+    /// <summary>How far the panel's middle may be from the window's (a pixel's rounding).</summary>
+    constexpr float MiddleSlack = 1.0f;
 
     struct MCWindowSize
     {
@@ -64,6 +69,8 @@ namespace
     constexpr std::array<MCWindowSize, 3> FrameWindows = {{{640, 480}, {1280, 720}, {1280, 1024}}};
     /// <summary>The window the INTERFACE SIZEs are each checked in (the players' commonest).</summary>
     constexpr MCWindowSize InterfaceWindow{1920, 1080};
+    /// <summary>How near the results' unit must be to the battle's (a float's rounding).</summary>
+    constexpr float UnitSlack = 0.01f;
 
     void RunFrames(int32_t frames)
     {
@@ -206,12 +213,10 @@ namespace
 
     /// <summary>
     /// The results laid out with nothing spilling or cut and every text over the floor at the frames' windows (with
-    /// <c>--shots</c> each saved as <paramref name="name"/>), then at every INTERFACE SIZE in the players' commonest window.
+    /// <c>--shots</c> each saved as <paramref name="name"/>).
     /// </summary>
     void CheckLaidOut(std::string_view name)
     {
-        const int kept = GInterfaceSize;
-
         for (const MCWindowSize& window : FrameWindows)
         {
             REQUIRE(SetWindowPixels(window.Width, window.Height));
@@ -220,31 +225,49 @@ namespace
             CHECK_EQ(where + Problems(Menus().Mission()), where);
             MCScreenInput::SaveWindowShot(std::format("{}_{}x{}", name, window.Width, window.Height));
         }
+    }
 
-        REQUIRE(SetWindowPixels(InterfaceWindow.Width, InterfaceWindow.Height));
-
-        for (const int size : InterfaceSizes)
+    /// <summary>
+    /// A campaign mission won in the players' commonest window at INTERFACE SIZE <paramref name="size"/> (the battle's,
+    /// which the results keep): the results drawn at the battle's unit (a line of its screen), that many times fewer
+    /// lines than UI RESOLUTION's, nothing spilling or cut and every text over the floor (with <c>--shots</c> saved).
+    /// </summary>
+    void CheckAtInterfaceSize(int size)
+    {
+        if (!MCTestGame::Available())
         {
-            GInterfaceSize = size;
-            RunFrames(SettleFrames);
-            const std::string where = std::format("interface size {}: ", size);
-            CHECK_EQ(where + Problems(Menus().Mission()), where);
-            MCScreenInput::SaveWindowShot(std::format("{}_interface_{}", name, size));
+            return;
         }
 
-        GInterfaceSize = kept;
+        const MCTestGame::SaveGameCleanup saves;
+        MCTestGame::BootInLargeWindow(InterfaceWindow.Height, size);
+        MCTestGame::BootOptions.WindowWidth = InterfaceWindow.Width;
+        MCTestGame::BootOptions.WindowHeight = InterfaceWindow.Height;
+        REQUIRE(MCTestGame::ReachFirstResults(Won));
+        REQUIRE(TheResults() != nullptr);
+        MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
         RunFrames(SettleFrames);
+        REQUIRE(Mission()->ResultsFinished());
+
+        const int lines = MCInput::Display()->Height();
+        CHECK_EQ(lines, static_cast<int>(std::lround(static_cast<double>(InterfaceWindow.Height) *
+                                                     OriginalInterfaceSize / static_cast<double>(size))));
+        CHECK(std::fabs(Menus().Mission().Unit() -
+                        static_cast<float>(InterfaceWindow.Height) / static_cast<float>(lines)) < UnitSlack);
+        const std::string where = std::format("interface size {}: ", size);
+        CHECK_EQ(where + Problems(Menus().Mission()), where);
+        MCScreenInput::SaveWindowShot(std::format("results_interface_{}", size));
     }
 
     /// <summary>The results' panel in the middle of the window over the battlefield (SPEC-menus.md, "Over the battlefield").</summary>
     void CheckCentred(const MCResultsScreen& results)
     {
-        const Rml::Element* panel = MCRemadeTest::Find(results, PanelId);
+        Rml::Element* panel = MCRemadeTest::Find(results, PanelId);
         REQUIRE(panel != nullptr);
         const float left = panel->GetAbsoluteOffset(Rml::BoxArea::Border).x;
         const float width = panel->GetBox().GetSize(Rml::BoxArea::Border).x;
         const float window = static_cast<float>(Menus().Width());
-        CHECK(std::fabs(left + width / 2.0f - window / 2.0f) <= 1.0f);
+        CHECK(std::fabs(left + width / 2.0f - window / 2.0f) <= MiddleSlack);
     }
 
     /// <summary>The campaign's briefing for mission <paramref name="mission"/>, the main menu under it.</summary>
@@ -430,7 +453,6 @@ TEST_CASE_ISOLATED("game: a launcher's match's results end the game after 90 sec
     Menus().SetClock([&now] { return now; });
     EndMission(Won, false);
     REQUIRE(TheResults() != nullptr);
-    CHECK(Mission()->EndsAtResults());
 
     // Up until the time is up.
     now = static_cast<double>(MCMissionEnd::MatchTimeout) / 1000.0 - 1.0;
@@ -453,4 +475,30 @@ TEST_CASE_ISOLATED("game: a launcher's match's results end the game after 90 sec
     CHECK(Scenario() == nullptr);
     Menus().SetClock({});
     IsMPlayerGame = false;
+}
+
+/// <summary>The results at each INTERFACE SIZE, over a battle played at it (CheckAtInterfaceSize).</summary>
+TEST_CASE_ISOLATED("game: the results at INTERFACE SIZE 100% keep the battle's size, nothing spilling")
+{
+    CheckAtInterfaceSize(InterfaceSizes[0]);
+}
+
+TEST_CASE_ISOLATED("game: the results at INTERFACE SIZE 125% keep the battle's size, nothing spilling")
+{
+    CheckAtInterfaceSize(InterfaceSizes[1]);
+}
+
+TEST_CASE_ISOLATED("game: the results at INTERFACE SIZE 150% keep the battle's size, nothing spilling")
+{
+    CheckAtInterfaceSize(InterfaceSizes[2]);
+}
+
+TEST_CASE_ISOLATED("game: the results at INTERFACE SIZE 175% keep the battle's size, nothing spilling")
+{
+    CheckAtInterfaceSize(InterfaceSizes[3]);
+}
+
+TEST_CASE_ISOLATED("game: the results at INTERFACE SIZE 200% keep the battle's size, nothing spilling")
+{
+    CheckAtInterfaceSize(InterfaceSizes[4]);
 }

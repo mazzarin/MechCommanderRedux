@@ -118,6 +118,19 @@ body.over-battle { background-color: transparent; }
     .p-skill { width: 46dp; padding-left: 4dp; }
 }
 
+/* 4:3 and 5:4 (the frames stop at 16:10): narrower again, every column kept, the callsigns' room what's left. */
+@media (max-aspect-ratio: 3/2) {
+    .result-body { gap: 12dp; }
+    .outcome { width: 170dp; }
+    .p-mech { width: 56dp; }
+    .p-kills { width: 32dp; padding-right: 6dp; }
+    .p-rank { width: 50dp; }
+    .p-skill { width: 40dp; padding-left: 3dp; }
+    .c-mech { width: 96dp; }
+    .c-who { width: 72dp; }
+    .c-n { width: 36dp; }
+}
+
 /* The hint line along the window's foot, over the battlefield. */
 #hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 34dp; }
 #hintbar .content { padding-top: 8dp; }
@@ -128,3 +141,7 @@ body.over-battle { background-color: transparent; }
    at 7.6 at every step. Its texts over the battlefield (the hint line, a CHANGES PLAY tag) are 8.5 units (8.99dp), the
    battle's own smallest, as its callsigns. */
 body.over-battle .hints, body.over-battle .tag { font-size: 8.99dp; }
+/* The results' smallest texts (the numbers' names, the objectives' groups, the pilots' columns, a pilot's state) the
+   same, over the battlefield at any interface size. */
+body.over-battle .fig .what, body.over-battle .obj-head, body.over-battle .pilot-head div,
+body.over-battle .p-status { font-size: 8.99dp; }

@@ -17,6 +17,7 @@
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
+#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "platform/MCDisplay.h"
@@ -404,7 +405,7 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
     CHECK(Mission()->ResultsScreen == nullptr);
     const MCOptionalRef<MCResultsScreen> results = MCResultsMenu::Screen();
     REQUIRE(results.has_value());
-    const Rml::Element* panel = MCRemadeTest::Find(results->get(), ResultsPanel);
+    Rml::Element* panel = MCRemadeTest::Find(results->get(), ResultsPanel);
     REQUIRE(panel != nullptr);
     const Rml::Vector2f middle =
         panel->GetAbsoluteOffset(Rml::BoxArea::Border) + panel->GetBox().GetSize(Rml::BoxArea::Border) / 2.0f;

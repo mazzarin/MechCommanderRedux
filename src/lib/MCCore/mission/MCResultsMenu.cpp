@@ -128,6 +128,9 @@ MCResultsScreen::MCResultsScreen()
     SetDocument(ScreenDocument);
     // Escape skips the count, as 1998's did; the results' only ways on are their buttons.
     Back = [this] { Skip(); };
+    // A match's best pilot's pictures, bound in single player too (an empty decorator is no picture's syntax error).
+    _BestMech = MCCampaignScreen::NoPicture;
+    _BestFace = MCCampaignScreen::NoPicture;
 }
 
 MCResultsScreen::~MCResultsScreen() = default;

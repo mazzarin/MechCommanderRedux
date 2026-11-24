@@ -29,6 +29,13 @@ void SoloLoadScreen();
 /// </summary>
 void LoadGame();
 
+/// <summary>
+/// The save <paramref name="name"/> loaded (a campaign's .sav, or a single mission's .sol), as the load screen's LOAD
+/// loads it: the music stopped, the briefing set up on success; whether the game took it (a refused one leaves no
+/// campaign).
+/// </summary>
+bool LoadSavedGame(std::string_view name, bool campaign);
+
 /// <summary>Loads the multiplayer mission chosen on the load screen (the host's session screen).</summary>
 void LoadMPGame();
 

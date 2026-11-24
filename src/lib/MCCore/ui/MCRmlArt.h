@@ -21,11 +21,17 @@ namespace MCRmlArt
     /// <summary>The scheme a picture's source starts with.</summary>
     inline constexpr std::string_view Scheme = "art:";
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 4): a map's briefing picture, <c>map:&lt;map&gt;</c> (the room's and CHOOSE MAP's),
-    /// its <c>&lt;map&gt;.log.tga</c> under the game's TerrainPath, read and drawn as <c>art:</c>'s (the briefing maps' HD
-    /// copies by its pixels).
+    /// Port-only (stage 5): a campaign mission's briefing map, <c>map:&lt;scenario&gt;</c> (<c>map:mis0203</c>): the
+    /// <c>.log.tga</c> its mission file's MapFile names (MCLogistics::BriefingMapFile), read and coloured as
+    /// <c>art:</c>'s pictures are, with the pack's HD copy (found by its pixels, as the briefing finds it) on HD.
     /// </summary>
     inline constexpr std::string_view MapScheme = "map:";
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): a map's briefing picture by its map file, <c>terrain:&lt;map&gt;</c> (the
+    /// room's and CHOOSE MAP's), its <c>&lt;map&gt;.log.tga</c> under the game's TerrainPath, read and drawn as
+    /// <c>map:</c>'s.
+    /// </summary>
+    inline constexpr std::string_view TerrainScheme = "terrain:";
 
     /// <summary>
     /// The picture <paramref name="source"/> names, with its HD copy when <paramref name="hd"/> and the pack has one;

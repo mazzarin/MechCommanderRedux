@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MCTest.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCUiSoftware.h"
 #include "ui/MCRmlChecks.h"
@@ -9,8 +10,9 @@
 #include <RmlUi/Core/Context.h>
 
 // Port-only (SPEC-menus.md's "Testing"): what the remade screens' tests share: the windows they're drawn and checked
-// at, a picture's hash, where --shots saves one, and the frames' check (a screen drawn on the software path at the
-// frames' windows, and laid out and read at the players').
+// at, a picture's hash (an SDL surface's or the game window's), where --shots saves one, the game's window set to a
+// size, and the frames' check (a screen drawn on the software path at the frames' windows, and laid out and read at the
+// players').
 
 namespace MCMenusPictures
 {
@@ -68,6 +70,38 @@ namespace MCMenusPictures
         }
 
         return hash;
+    }
+
+    /// <summary>The FNV-1a hash of a window's picture as the display reads it.</summary>
+    inline uint32_t PictureHash(const MCDisplay::MCShownScreen& picture)
+    {
+        uint32_t hash = FnvBasis;
+        hash = (hash ^ static_cast<uint32_t>(picture.Width)) * FnvPrime;
+        hash = (hash ^ static_cast<uint32_t>(picture.Height)) * FnvPrime;
+
+        for (const SDL_Color& pixel : picture.Pixels)
+        {
+            for (const uint8_t channel : {pixel.r, pixel.g, pixel.b, pixel.a})
+            {
+                hash = (hash ^ channel) * FnvPrime;
+            }
+        }
+
+        return hash;
+    }
+
+    /// <summary>The window made <paramref name="width"/> x <paramref name="height"/> pixels (in points on a dense screen).</summary>
+    inline bool SetWindowPixels(MCDisplay& display, int width, int height)
+    {
+        SDL_Window& window = display.Window();
+        const float density = std::max(SDL_GetWindowPixelDensity(&window), 1.0f);
+        SDL_SetWindowSize(&window, static_cast<int>(std::lround(static_cast<float>(width) / density)),
+                          static_cast<int>(std::lround(static_cast<float>(height) / density)));
+        SDL_SyncWindow(&window);
+        int pixelWidth = 0;
+        int pixelHeight = 0;
+        SDL_GetWindowSizeInPixels(&window, &pixelWidth, &pixelHeight);
+        return pixelWidth == width && pixelHeight == height;
     }
 
     /// <summary>Where --shots saves the picture <paramref name="name"/> (a .png); none without --shots.</summary>

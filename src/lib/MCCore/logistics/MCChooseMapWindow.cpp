@@ -215,7 +215,7 @@ void MCChooseMapWindow::ShowPick()
     {
         const MCMatchMap& map = _Maps[static_cast<size_t>(_Picked)];
         _PickName = map.Name;
-        _PickPic = std::format("{}{}", MCRmlArt::MapScheme, map.MapFile);
+        _PickPic = std::format("{}{}", MCRmlArt::TerrainScheme, map.MapFile);
         _PickFacts = FactsOf(map);
 
         for (std::string& paragraph : MCParagraphs(map.Description))

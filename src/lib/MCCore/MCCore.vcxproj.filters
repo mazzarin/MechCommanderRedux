@@ -642,6 +642,9 @@
     <ClCompile Include="logistics\MCMissionLogisticsBridge.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCMissionNames.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCPilotInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -691,6 +694,12 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCRoomScreen.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCSaves.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCSavesMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCSessionScreen.cpp">
@@ -2185,6 +2194,9 @@
     <ClInclude Include="logistics\MCMissionLogisticsBridge.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCMissionNames.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCPilotInventoryBlock.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2234,6 +2246,12 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCRoomScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCSaves.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCSavesMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCSessionScreen.h">

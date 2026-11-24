@@ -198,6 +198,12 @@ public:
     static std::optional<MCPicturePixels> BriefingMapOf(std::string_view scenario);
 
     /// <summary>
+    /// Port-only: the game path of the map <see cref="BriefingMapOf"/> reads for <paramref name="scenario"/>
+    /// (<c>TerrainPath</c>'s <c>&lt;MapFile&gt;.log.tga</c>); none when the mission file names none.
+    /// </summary>
+    static std::optional<std::string> BriefingMapFile(std::string_view scenario);
+
+    /// <summary>
     /// Port-only: on a sharp screen, has the pack's readers read the HD copy of <see cref="BriefingMapOf"/>
     /// <paramref name="scenario"/> ahead of the briefing's set-up: the way back from a mission's results asks as its
     /// fade begins, so the briefing made near black finds it read.

@@ -454,7 +454,7 @@ void MCRoomScreen::ShowMatch()
     Keep("has_map", _HasMap, hasMap);
     Keep("map_title", _MapTitle, hasMap ? room.MissionName : std::string());
     Keep("map_pic", _MapPic,
-         hasMap && !room.MapFile.empty() ? std::format("{}{}", MCRmlArt::MapScheme, room.MapFile) : std::string());
+         hasMap && !room.MapFile.empty() ? std::format("{}{}", MCRmlArt::TerrainScheme, room.MapFile) : std::string());
     Keep("map_time", _MapTime,
          hasMap && !room.MissionTime.empty() && room.MissionTime != NoTimeLimit
              ? std::format(TimeLimitFormat, room.MissionTime)

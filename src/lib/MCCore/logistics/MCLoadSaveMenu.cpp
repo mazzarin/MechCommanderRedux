@@ -117,27 +117,35 @@ void LoadGame()
         return;
     }
 
-    std::string fileName = pane->Files[pane->SelectedFile].Name;
-    SoundSystem()->StopDigitalMusic();
-    GlobalLog()->BriefingScreen->HideBriefing();
     const bool campaign = !LoadingSolo;
     LoadingSolo = false;
-    Solo = !campaign;
-    LastLogisticsMissionState = 0;
 
-    if (GlobalLog()->LoadCampaign(fileName, campaign ? ".sav" : ".sol", false, true) == 0)
-    {
-        // Original behaviour: the save screen is the one hidden, not the load screen shown.
-        GlobalLog()->SaveScreen->ShowGuiWindow(false);
-        GlobalLog()->SetUpBriefingScreen(false);
-        SoundSystem()->PlayDigitalMusic(0x16, true);
-    }
-    else
+    if (!LoadSavedGame(pane->Files[pane->SelectedFile].Name, campaign))
     {
         // Port fix: the original said nothing when it refused a save, and the load screen stayed up as if the click
         // had missed.
         ShowMenuMessage(RefusedSaveText);
     }
+}
+
+bool LoadSavedGame(std::string_view name, bool campaign)
+{
+    std::string fileName(name);
+    SoundSystem()->StopDigitalMusic();
+    GlobalLog()->BriefingScreen->HideBriefing();
+    Solo = !campaign;
+    LastLogisticsMissionState = 0;
+
+    if (GlobalLog()->LoadCampaign(fileName, campaign ? ".sav" : ".sol", false, true) != 0)
+    {
+        return false;
+    }
+
+    // Original behaviour: the save screen is the one hidden, not the load screen shown.
+    GlobalLog()->SaveScreen->ShowGuiWindow(false);
+    GlobalLog()->SetUpBriefingScreen(false);
+    SoundSystem()->PlayDigitalMusic(0x16, true);
+    return true;
 }
 
 void LoadMPGame()

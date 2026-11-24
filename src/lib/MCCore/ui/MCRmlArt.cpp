@@ -1,8 +1,8 @@
 #include "stdafx.h"
 #include "ui/MCRmlArt.h"
-#include "lib/MCFile.h"
 #include "logistics/MCLogPort.h"
 #include "main/MCGamePaths.h"
+#include "main/MCLogistics.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCShapeFile.h"
@@ -49,24 +49,58 @@ namespace
         return file;
     }
 
-    /// <summary>
-    /// The briefing map a map's name stands for (<c>map:</c>): its <c>.log.tga</c> under TerrainPath, as the room's 1998
-    /// screen read it.
-    /// </summary>
-    std::expected<std::string, std::string> MapFile(std::string_view name)
+    /// <summary>The briefing map a mission's name stands for (its mission file's MapFile's <c>.log.tga</c>).</summary>
+    std::expected<std::string, std::string> MapFile(std::string_view scenario)
     {
-        if (name.empty() || name.find("..") != std::string_view::npos || name.find(':') != std::string_view::npos ||
-            name.find('/') != std::string_view::npos || name.find('\\') != std::string_view::npos)
+        if (scenario.empty() || scenario.find_first_of(":/\\.") != std::string_view::npos)
         {
-            return std::unexpected(std::format("'{}' isn't the name of a map", name));
+            return std::unexpected(std::format("'{}' isn't the name of a mission", scenario));
         }
 
-        return GamePath(TerrainPath, name, ".log.tga");
+        if (std::optional<std::string> path = MCLogistics::BriefingMapFile(scenario); path.has_value())
+        {
+            return std::move(*path);
+        }
+
+        return std::unexpected(std::format("the mission {} names no map", scenario));
     }
 
-    /// <summary>The 8-bit TGA at <paramref name="path"/> (a game file), with its colour map.</summary>
-    std::expected<MCArtPicture, std::string> ReadTga(const std::expected<std::string, std::string>& path)
+    /// <summary>
+    /// The briefing map a map file's name stands for (<c>terrain:</c>): its <c>.log.tga</c> under TerrainPath, as the
+    /// room's 1998 screen read it.
+    /// </summary>
+    std::expected<std::string, std::string> TerrainFile(std::string_view map)
     {
+        if (map.empty() || map.find("..") != std::string_view::npos ||
+            map.find_first_of(":/\\") != std::string_view::npos)
+        {
+            return std::unexpected(std::format("'{}' isn't the name of a map", map));
+        }
+
+        return GamePath(TerrainPath, map, ".log.tga");
+    }
+
+    /// <summary>The picture a source names: <c>art:</c>'s, <c>map:</c>'s or <c>terrain:</c>'s file.</summary>
+    std::expected<std::string, std::string> GameFile(std::string_view source)
+    {
+        if (source.starts_with(MCRmlArt::MapScheme))
+        {
+            return MapFile(source.substr(MCRmlArt::MapScheme.size()));
+        }
+
+        if (source.starts_with(MCRmlArt::TerrainScheme))
+        {
+            return TerrainFile(source.substr(MCRmlArt::TerrainScheme.size()));
+        }
+
+        return ArtFile(source.substr(MCRmlArt::Scheme.size()));
+    }
+
+    /// <summary>The game's picture <paramref name="source"/> names (<c>art:</c>'s, <c>map:</c>'s or <c>terrain:</c>'s), with its colours.</summary>
+    std::expected<MCArtPicture, std::string> ReadArt(std::string_view source)
+    {
+        const std::expected<std::string, std::string> path = GameFile(source);
+
         if (!path)
         {
             return std::unexpected(path.error());
@@ -100,11 +134,6 @@ namespace
         }
 
         return picture;
-    }
-
-    std::expected<MCArtPicture, std::string> ReadArt(std::string_view name)
-    {
-        return ReadTga(ArtFile(name));
     }
 
     /// <summary>The 1998 picture in its colours, premultiplied (its key transparent).</summary>
@@ -315,15 +344,12 @@ namespace MCRmlArt
 
     std::expected<MCRmlRecorder::MCLoaded, std::string> Load(std::string_view source, bool hd, const MCRmlFiles& files)
     {
-        const bool map = source.starts_with(MapScheme);
-
-        if (!source.starts_with(Scheme) && !map)
+        if (!source.starts_with(Scheme) && !source.starts_with(MapScheme) && !source.starts_with(TerrainScheme))
         {
             return LoadAppArt(source, hd, files);
         }
 
-        const std::expected<MCArtPicture, std::string> picture =
-            map ? ReadTga(MapFile(source.substr(MapScheme.size()))) : ReadArt(source.substr(Scheme.size()));
+        const std::expected<MCArtPicture, std::string> picture = ReadArt(source);
 
         if (!picture)
         {
@@ -347,7 +373,7 @@ namespace MCRmlArt
 
     std::expected<std::array<SDL_Color, 256>, std::string> Colors(std::string_view name)
     {
-        const std::expected<MCArtPicture, std::string> picture = ReadArt(name);
+        const std::expected<MCArtPicture, std::string> picture = ReadArt(std::string(Scheme) + std::string(name));
 
         if (!picture)
         {

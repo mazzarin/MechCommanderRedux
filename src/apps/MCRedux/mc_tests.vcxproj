@@ -92,6 +92,18 @@
     <CopyFileToFolders Include="..\..\res\ui\match_options.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\missions.json">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\saves.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\saves.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\saves_dialog.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\net.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
@@ -240,6 +252,7 @@
     <ClCompile Include="tests\PurchaseTests.cpp" />
     <ClCompile Include="tests\ReleaseCopyTests.cpp" />
     <ClCompile Include="tests\RoomEndTests.cpp" />
+    <ClCompile Include="tests\SavesTests.cpp" />
     <ClCompile Include="tests\ScenarioTests.cpp" />
     <ClCompile Include="tests\ScreenChangeTests.cpp" />
     <ClCompile Include="tests\ScreenFlowTests.cpp" />

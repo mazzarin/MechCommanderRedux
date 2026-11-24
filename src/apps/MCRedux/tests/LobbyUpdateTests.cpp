@@ -518,7 +518,7 @@ namespace
             screen.AssignPlayer(id, 2, slot++, false);
         }
 
-        screen.MissionFile = StartMission;
+        MCSessionScreen::Room().MissionFile = StartMission;
         screen.CheckGoodToGo();
     }
 }
@@ -731,7 +731,7 @@ TEST_CASE_ISOLATED("game: a lobby's START counts only the players there, and ask
     screen.AssignPlayer(dan.Id(), 1, 1, false);
     screen.AssignPlayer(ann.Id(), 2, 0, false);
     screen.AssignPlayer(cal.Id(), 2, 1, false);
-    screen.MissionFile = StartMission;
+    MCSessionScreen::Room().MissionFile = StartMission;
     screen.CheckGoodToGo();
     REQUIRE(!screen.StartButton->Disabled);
 

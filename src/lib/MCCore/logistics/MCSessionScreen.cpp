@@ -176,7 +176,7 @@ namespace
             return;
         }
 
-        SendFileName(GuaranteedHeader(MCMPMessageType::LoadMission), Screen().MissionFile);
+        SendFileName(GuaranteedHeader(MCMPMessageType::LoadMission), MCSessionScreen::Room().MissionFile);
         // Port-only (the personal build): then the points as the host has them: a guest's load sets the mission's own,
         // and the host may have changed them since (or set them again as it showed the room again).
         SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), ReadPoints(*Screen().Team1RPText), 1);
@@ -199,7 +199,7 @@ namespace
     /// <summary>Tells every player to start the loaded mission.</summary>
     void StartMissionNow()
     {
-        std::string missionName = SplitFileName(Screen().MissionFile);
+        std::string missionName = SplitFileName(MCSessionScreen::Room().MissionFile);
         // Port-only (the personal build): the room takes players until here (the original locked it at the ready room's
         // GO).
         MultiPlayer()->SessionManager->LockSession();
@@ -307,12 +307,17 @@ namespace
         screen.FillBox(0x1f, 0x162, 0xc6, 0x1d3, 0x10);
         int16_t top = 0x163;
 
-        for (int32_t row = 0; row < Screen().NumUnassigned; ++row)
+        for (int32_t row = 0; row < MCSessionScreen::Room().NumUnassigned; ++row)
         {
             screen.FillBox(0x1f, top, 0xc6, static_cast<int16_t>(top + 0xd), 0x12);
             top += UnassignedRow;
         }
     }
+}
+
+auto MCSessionScreen::Room() -> MCRoomModel&
+{
+    return GlobalLog()->Room;
 }
 
 auto MCSessionScreen::SortedPlayerIds(std::span<const uint32_t> ids) -> std::array<uint32_t, MaxPlayers>
@@ -450,10 +455,10 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
             });
     };
 
-    Team1TechBase = 1;
+    Room().Team1TechBase = 1;
     Team1ISButton = makeTechButton(0x153, 1, 1, true);
     Team1ClanButton = makeTechButton(0x179, 1, -1, false);
-    Team2TechBase = -1;
+    Room().Team2TechBase = -1;
     Team2ISButton = makeTechButton(0x215, 2, 1, false);
     Team2ClanButton = makeTechButton(0x23b, 2, -1, true);
 
@@ -491,7 +496,7 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
 
     SetBackground(BackgroundArt);
     ShowGuiWindow(false);
-    NumUnassigned = 0;
+    Room().NumUnassigned = 0;
     return 0;
 }
 
@@ -499,8 +504,8 @@ auto MCSessionScreen::OnDestroy() -> void
 {
     MatchTabs = {};
     DropTargets.clear();
-    MissionFile.clear();
-    MapName.clear();
+    // Port-only (SPEC-menus.md's stage 4): the mission and the map go with the room's model, which logistics owns (the
+    // screen closes as logistics goes, which may be gone already).
     ClearMap();
     MCLogObject::OnDestroy();
 }
@@ -527,8 +532,8 @@ auto MCSessionScreen::Draw() -> void
 
     MultiPlayer()->UpdateMatchOptions();
     ShowMatchOptions(*MatchOptionsList);
-    MedWhiteFont->WriteString(frame, 0x180, 199, MissionName);
-    MedWhiteFont->WriteString(frame, 0x180, 0xe3, MapName);
+    MedWhiteFont->WriteString(frame, 0x180, 199, Room().MissionName);
+    MedWhiteFont->WriteString(frame, 0x180, 0xe3, Room().MapName);
     MedWhiteFont->WriteString(frame, 0x20e, 199, MissionLabel.empty() ? LoadGameString(0x37f, 0xfe) : MissionLabel);
     DrawStartWaits(frame);
 
@@ -627,23 +632,23 @@ auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
                 }
 
                 // Tell the others when the host changed a team's points.
-                if (Team1RP != ReadPoints(*Team1RPText))
+                if (Room().Team1RP != ReadPoints(*Team1RPText))
                 {
-                    Team1RP = ReadPoints(*Team1RPText);
+                    Room().Team1RP = ReadPoints(*Team1RPText);
 
                     if (MultiPlayer()->IsHost != 0)
                     {
-                        SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), Team1RP, 1);
+                        SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), Room().Team1RP, 1);
                     }
                 }
 
-                if (Team2RP != ReadPoints(*Team2RPText))
+                if (Room().Team2RP != ReadPoints(*Team2RPText))
                 {
-                    Team2RP = ReadPoints(*Team2RPText);
+                    Room().Team2RP = ReadPoints(*Team2RPText);
 
                     if (MultiPlayer()->IsHost != 0)
                     {
-                        SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), Team2RP, 2);
+                        SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), Room().Team2RP, 2);
                     }
                 }
 
@@ -768,8 +773,8 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     // asks to leave the game, which ends it).
     ExitButton->Callback().SetExec([] { MCScreenFlow::Back(); });
     CancelMission();
-    Team2RP = 0;
-    Team1RP = 0;
+    Room().Team2RP = 0;
+    Room().Team1RP = 0;
     int32_t slotY = UnassignedTop;
 
     for (auto& nameObject : PlayerNames)
@@ -779,10 +784,10 @@ auto MCSessionScreen::Activate(bool refresh) -> void
         slotY += UnassignedRow;
     }
 
-    Team1Players.fill(NoPlayer);
-    Team2Players.fill(NoPlayer);
-    NumUnassigned = 0;
-    NumPlayers = 0;
+    Room().Team1Players.fill(NoPlayer);
+    Room().Team2Players.fill(NoPlayer);
+    Room().NumUnassigned = 0;
+    Room().NumPlayers = 0;
 
     if (isHost && !refresh)
     {
@@ -804,14 +809,14 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     Team1ISButton->Toggled = true;
     Team1ClanButton->Toggled = false;
     Team2ISButton->Toggled = false;
-    Team1TechBase = 1;
+    Room().Team1TechBase = 1;
     Team2ClanButton->Toggled = true;
-    Team2TechBase = -1;
+    Room().Team2TechBase = -1;
 
     // The players' ids in ascending order (the empty slots last).
     std::vector<uint32_t> sessionIds;
     const auto& players = MultiPlayer()->SessionManager->GetPlayers(nullptr);
-    NumPlayers = static_cast<int32_t>(players.size());
+    Room().NumPlayers = static_cast<int32_t>(players.size());
 
     for (const auto& player : players)
     {
@@ -827,7 +832,7 @@ auto MCSessionScreen::Activate(bool refresh) -> void
 
     MCMPPlayerLights& lights = *GlobalLog()->PlayerLights;
     GlobalLog()->ShowLightsOn(*this, std::nullopt);
-    lights.SetNumPlayers(NumPlayers);
+    lights.SetNumPlayers(Room().NumPlayers);
     size_t index = 0;
     // Port-only (the personal build): the host's guests whose games are up as they are shown the room (WatchRoom).
     _ShownReady.clear();
@@ -874,8 +879,8 @@ auto MCSessionScreen::Activate(bool refresh) -> void
         ControlsOn();
     }
 
-    MissionName.clear();
-    MapName.clear();
+    Room().MissionName.clear();
+    Room().MapName.clear();
     MissionLabel.clear();
 
     if (const std::shared_ptr<MCLogChatWindow> chatWindow = GlobalLog()->ChatWindowOn(*this); chatWindow != nullptr)
@@ -897,9 +902,9 @@ auto MCSessionScreen::Activate(bool refresh) -> void
 auto MCSessionScreen::ShowRoomAgain() -> void
 {
     // The host's picks as they stand; the screen then starts afresh, for everyone.
-    const std::array<uint32_t, TeamSlots> team1 = Team1Players;
-    const std::array<uint32_t, TeamSlots> team2 = Team2Players;
-    const std::array<int8_t, 2> techBases = {Team1TechBase, Team2TechBase};
+    const std::array<uint32_t, TeamSlots> team1 = Room().Team1Players;
+    const std::array<uint32_t, TeamSlots> team2 = Room().Team2Players;
+    const std::array<int8_t, 2> techBases = {Room().Team1TechBase, Room().Team2TechBase};
     const std::array<int32_t, 2> points = {ReadPoints(*Team1RPText), ReadPoints(*Team2RPText)};
     // The host's own mission, or (Port-only, Redux HD) a room's taken over, whose host loaded it (TakeOverRoom).
     const std::string mission = _LoadedMission;
@@ -957,7 +962,7 @@ auto MCSessionScreen::SetTeamsAgain(const std::array<int8_t, 2>& techBases, cons
 auto MCSessionScreen::Picks() const -> MCRoomPicks
 {
     MCRoomPicks picks;
-    picks.Mission = MissionFile.empty() ? std::string() : _LoadedMission;
+    picks.Mission = Room().MissionFile.empty() ? std::string() : _LoadedMission;
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     const auto names =
         [&manager](const std::array<uint32_t, TeamSlots>& players, std::array<std::string, TeamSlots>& into)
@@ -970,9 +975,9 @@ auto MCSessionScreen::Picks() const -> MCRoomPicks
         }
     };
 
-    names(Team1Players, picks.Team1);
-    names(Team2Players, picks.Team2);
-    picks.TechBases = {Team1TechBase, Team2TechBase};
+    names(Room().Team1Players, picks.Team1);
+    names(Room().Team2Players, picks.Team2);
+    picks.TechBases = {Room().Team1TechBase, Room().Team2TechBase};
     picks.Points = {ReadPoints(*Team1RPText), ReadPoints(*Team2RPText)};
     return picks;
 }
@@ -998,7 +1003,7 @@ auto MCSessionScreen::PlaceByName(const MCRoomPicks& picks) -> void
 
         for (size_t slot = 0; slot < TeamSlots; ++slot)
         {
-            const std::array<uint32_t, TeamSlots>& players = team == 1 ? Team1Players : Team2Players;
+            const std::array<uint32_t, TeamSlots>& players = team == 1 ? Room().Team1Players : Room().Team2Players;
 
             if (names[slot].empty() || players[slot] != NoPlayer)
             {
@@ -1012,8 +1017,8 @@ auto MCSessionScreen::PlaceByName(const MCRoomPicks& picks) -> void
                                                     {
                                                         return player != nullptr && player->Name == names[slot] &&
                                                                NameOf(player->Id) != nullptr &&
-                                                               FindSlot(Team1Players, player->Id) < 0 &&
-                                                               FindSlot(Team2Players, player->Id) < 0;
+                                                               FindSlot(Room().Team1Players, player->Id) < 0 &&
+                                                               FindSlot(Room().Team2Players, player->Id) < 0;
                                                     });
 
             if (named != inRoom.end())
@@ -1151,7 +1156,7 @@ auto MCSessionScreen::NameOf(uint32_t playerId) -> std::shared_ptr<MCPlayerNameO
 
 auto MCSessionScreen::LayOutUnassigned(uint32_t skipId, size_t names, bool skipEmpty) -> void
 {
-    NumUnassigned = 0;
+    Room().NumUnassigned = 0;
 
     for (size_t index = 0; index < names; ++index)
     {
@@ -1163,13 +1168,13 @@ auto MCSessionScreen::LayOutUnassigned(uint32_t skipId, size_t names, bool skipE
             continue;
         }
 
-        if (FindSlot(Team1Players, id) >= 0 || FindSlot(Team2Players, id) >= 0)
+        if (FindSlot(Room().Team1Players, id) >= 0 || FindSlot(Room().Team2Players, id) >= 0)
         {
             continue;
         }
 
-        nameObject.MoveTo(0xb, NumUnassigned * UnassignedRow + UnassignedTop, false);
-        NumUnassigned++;
+        nameObject.MoveTo(0xb, Room().NumUnassigned * UnassignedRow + UnassignedTop, false);
+        Room().NumUnassigned++;
     }
 }
 
@@ -1191,28 +1196,28 @@ auto MCSessionScreen::AssignPlayer(uint32_t playerId, int8_t team, int8_t slot, 
         if (remote)
         {
             // Filling the screen: the player starts unassigned.
-            NumUnassigned++;
+            Room().NumUnassigned++;
             CheckGoodToGo();
             return;
         }
 
-        int32_t index = FindSlot(Team1Players, playerId);
+        int32_t index = FindSlot(Room().Team1Players, playerId);
         uint32_t groupID = MultiPlayer()->InnerSphereGroupID;
-        std::span<uint32_t> players = Team1Players;
+        std::span<uint32_t> players = Room().Team1Players;
 
         if (index < 0)
         {
-            index = FindSlot(Team2Players, playerId);
+            index = FindSlot(Room().Team2Players, playerId);
             groupID = MultiPlayer()->ClanGroupID;
-            players = Team2Players;
+            players = Room().Team2Players;
         }
 
         if (index >= 0)
         {
-            nameObject->MoveTo(0xb, NumUnassigned * UnassignedRow + UnassignedTop, false);
+            nameObject->MoveTo(0xb, Room().NumUnassigned * UnassignedRow + UnassignedTop, false);
             players[static_cast<size_t>(index)] = NoPlayer;
             MultiPlayer()->SessionManager->RemovePlayerFromGroup(groupID, playerId);
-            NumUnassigned++;
+            Room().NumUnassigned++;
         }
         else
         {
@@ -1223,7 +1228,7 @@ auto MCSessionScreen::AssignPlayer(uint32_t playerId, int8_t team, int8_t slot, 
     }
     else if (team == 1 || team == 2)
     {
-        std::array<uint32_t, TeamSlots>& teamPlayers = team == 1 ? Team1Players : Team2Players;
+        std::array<uint32_t, TeamSlots>& teamPlayers = team == 1 ? Room().Team1Players : Room().Team2Players;
         const auto slotIndex = static_cast<size_t>(slot);
 
         if (teamPlayers[slotIndex] != NoPlayer)
@@ -1231,19 +1236,19 @@ auto MCSessionScreen::AssignPlayer(uint32_t playerId, int8_t team, int8_t slot, 
             AssignPlayer(teamPlayers[slotIndex], 0, 0, false);
         }
 
-        if (const int32_t index = FindSlot(Team1Players, playerId); index >= 0)
+        if (const int32_t index = FindSlot(Room().Team1Players, playerId); index >= 0)
         {
-            Team1Players[static_cast<size_t>(index)] = NoPlayer;
+            Room().Team1Players[static_cast<size_t>(index)] = NoPlayer;
             MultiPlayer()->SessionManager->RemovePlayerFromGroup(MultiPlayer()->InnerSphereGroupID, playerId);
         }
-        else if (const int32_t team2Index = FindSlot(Team2Players, playerId); team2Index >= 0)
+        else if (const int32_t team2Index = FindSlot(Room().Team2Players, playerId); team2Index >= 0)
         {
-            Team2Players[static_cast<size_t>(team2Index)] = NoPlayer;
+            Room().Team2Players[static_cast<size_t>(team2Index)] = NoPlayer;
             MultiPlayer()->SessionManager->RemovePlayerFromGroup(MultiPlayer()->ClanGroupID, playerId);
         }
         else
         {
-            LayOutUnassigned(playerId, static_cast<size_t>(NumPlayers), false);
+            LayOutUnassigned(playerId, static_cast<size_t>(Room().NumPlayers), false);
         }
 
         teamPlayers[slotIndex] = playerId;
@@ -1296,20 +1301,20 @@ auto MCSessionScreen::RemovePlayer(uint32_t playerId) -> void
     }
 
     // Each game takes it off its own screen (its own place-keeping times it out), so nothing is sent.
-    if (const int32_t slot = FindSlot(Team1Players, playerId); slot >= 0)
+    if (const int32_t slot = FindSlot(Room().Team1Players, playerId); slot >= 0)
     {
-        Team1Players[static_cast<size_t>(slot)] = NoPlayer;
+        Room().Team1Players[static_cast<size_t>(slot)] = NoPlayer;
         MultiPlayer()->SessionManager->RemovePlayerFromGroup(MultiPlayer()->InnerSphereGroupID, playerId);
     }
-    else if (const int32_t team2Slot = FindSlot(Team2Players, playerId); team2Slot >= 0)
+    else if (const int32_t team2Slot = FindSlot(Room().Team2Players, playerId); team2Slot >= 0)
     {
-        Team2Players[static_cast<size_t>(team2Slot)] = NoPlayer;
+        Room().Team2Players[static_cast<size_t>(team2Slot)] = NoPlayer;
         MultiPlayer()->SessionManager->RemovePlayerFromGroup(MultiPlayer()->ClanGroupID, playerId);
     }
 
     nameObject->ShowGuiWindow(false);
     nameObject->SetPlayerId(NoPlayer);
-    NumPlayers = std::max(NumPlayers - 1, 0);
+    Room().NumPlayers = std::max(Room().NumPlayers - 1, 0);
     LayOutUnassigned(NoPlayer, MaxPlayers, true);
     _ShownReady.erase(playerId);
     _SeenSince.erase(playerId);
@@ -1394,12 +1399,12 @@ auto MCSessionScreen::ClearMap() -> void
 
 auto MCSessionScreen::SetMissionName(std::string_view name) -> void
 {
-    MissionName = name;
+    Room().MissionName = name;
 }
 
 auto MCSessionScreen::SetMapName(std::string_view name) -> void
 {
-    MapName = name;
+    Room().MapName = name;
 }
 
 auto MCSessionScreen::SomeoneCheckedIn() -> void
@@ -1736,9 +1741,9 @@ auto MCSessionScreen::LoadMission(std::string_view fileName) -> void
             if (MultiPlayer()->IsHost != 0)
             {
                 // Ask everyone whether they have the file, and wait for the answers.
-                MissionFile = path;
+                Room().MissionFile = path;
                 _LoadedMission = fileName;
-                MultiPlayer()->SendFileInquiry(MissionFile.data());
+                MultiPlayer()->SendFileInquiry(Room().MissionFile.data());
                 // The server has it already.
                 const uint32_t serverId = MultiPlayer()->SessionManager->ServerID;
 
@@ -1791,7 +1796,7 @@ auto MCSessionScreen::CancelMission() -> void
     SetMissionName({});
     SetMapName({});
     SetMap({});
-    MissionFile.clear();
+    Room().MissionFile.clear();
     _LoadedMission.clear();
     _MissionLocked = false;
     MissionLabel.clear();
@@ -1808,10 +1813,10 @@ auto MCSessionScreen::CancelMission() -> void
 auto MCSessionScreen::PublishMatchState() const -> void
 {
     MPMatchState& match = MultiPlayer()->Match;
-    match.Team1Players = Team1Players;
-    match.Team2Players = Team2Players;
-    match.Team1TechBase = Team1TechBase;
-    match.Team2TechBase = Team2TechBase;
+    match.Team1Players = Room().Team1Players;
+    match.Team2Players = Room().Team2Players;
+    match.Team1TechBase = Room().Team1TechBase;
+    match.Team2TechBase = Room().Team2TechBase;
     // As the mech bay read the typed points before: the text's buffer.
     match.Team1Points = std::atoi(Team1RPText->Buffer.c_str());
     match.Team2Points = std::atoi(Team2RPText->Buffer.c_str());
@@ -1830,15 +1835,15 @@ auto MCSessionScreen::CheckGoodToGo() -> void
                                                    [&](const auto& name)
                                                    {
                                                        return name != nullptr && MCLobbyUpdate::Away(name->PlayerId) &&
-                                                              FindSlot(Team1Players, name->PlayerId) < 0 &&
-                                                              FindSlot(Team2Players, name->PlayerId) < 0;
+                                                              FindSlot(Room().Team1Players, name->PlayerId) < 0 &&
+                                                              FindSlot(Room().Team2Players, name->PlayerId) < 0;
                                                    }));
     const std::optional<std::vector<uint32_t>> homeTeam = MultiPlayer()->PlayersOnHomeTeam();
     const std::optional<std::vector<uint32_t>> enemyTeam = MultiPlayer()->PlayersOnEnemyTeam();
 
-    const bool goodToGo = NumUnassigned == awayUnpicked && !MissionFile.empty() && homeTeam.has_value() &&
-                          filled(*homeTeam) && enemyTeam.has_value() && filled(*enemyTeam) && filled(Team1Players) &&
-                          filled(Team2Players) && AllShown();
+    const bool goodToGo = Room().NumUnassigned == awayUnpicked && !Room().MissionFile.empty() && homeTeam.has_value() &&
+                          filled(*homeTeam) && enemyTeam.has_value() && filled(*enemyTeam) &&
+                          filled(Room().Team1Players) && filled(Room().Team2Players) && AllShown();
 
     // Port-only: while a guest away updating has its place kept, its line is in the update's line's place, and START
     // asks before it starts without it.
@@ -1863,13 +1868,13 @@ auto MCSessionScreen::SetTeamTechBase(int8_t team, int8_t techBase) -> void
 
     if (team == 1)
     {
-        Team1TechBase = techBase;
+        Room().Team1TechBase = techBase;
         isButton = Team1ISButton.Lock();
         clanButton = Team1ClanButton.Lock();
     }
     else if (team == 2)
     {
-        Team2TechBase = techBase;
+        Room().Team2TechBase = techBase;
         isButton = Team2ISButton.Lock();
         clanButton = Team2ClanButton.Lock();
     }

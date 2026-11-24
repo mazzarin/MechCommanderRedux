@@ -785,6 +785,7 @@
     <ClInclude Include="logistics\MCRepairScreen.h" />
     <ClInclude Include="logistics\MCReportsNotice.h" />
     <ClInclude Include="logistics\MCReusableDialog.h" />
+    <ClInclude Include="logistics\MCRoomModel.h" />
     <ClInclude Include="logistics\MCSessionScreen.h" />
     <ClInclude Include="logistics\MCSmuti.h" />
     <ClInclude Include="logistics\MCSplashScreen.h" />

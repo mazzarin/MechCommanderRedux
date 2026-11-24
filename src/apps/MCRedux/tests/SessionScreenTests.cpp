@@ -800,13 +800,13 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     REQUIRE(SettleUntil([&] { return cal.MissionsLoaded() == 1 && ann.MissionsLoaded() == 2 && !dialog.IsShowing(); }));
     CHECK_EQ(ann.SessionScreens(), 2);
     CHECK_EQ(ann.MissionsLoaded(), 2);
-    CHECK(room.Team1Players[0] == hostId);
-    CHECK(room.Team2Players[0] == ann.Id());
-    CHECK_EQ(room.Team1TechBase, 1);
-    CHECK_EQ(room.Team2TechBase, 1);
+    CHECK(MCSessionScreen::Room().Team1Players[0] == hostId);
+    CHECK(MCSessionScreen::Room().Team2Players[0] == ann.Id());
+    CHECK_EQ(MCSessionScreen::Room().Team1TechBase, 1);
+    CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
     CHECK_EQ(std::string(room.Team1RPText->Text()), "12000");
     CHECK_EQ(std::string(room.Team2RPText->Text()), "9000");
-    CHECK(!room.MissionFile.empty());
+    CHECK(!MCSessionScreen::Room().MissionFile.empty());
     SaveShot("room 0 a player joined", ScreenHash());
 
     // CAL unpicked holds START; on team 2 it lights.
@@ -820,8 +820,8 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     Settle();
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     CHECK(!dialog.IsShowing());
-    CHECK(room.Team2Players[0] == MCSessionScreen::NoPlayer);
-    CHECK(room.Team2Players[1] == cal.Id());
+    CHECK(MCSessionScreen::Room().Team2Players[0] == MCSessionScreen::NoPlayer);
+    CHECK(MCSessionScreen::Room().Team2Players[1] == cal.Id());
     CHECK(!room.StartButton->Disabled);
     CHECK(openToPlayers());
     SaveShot("room 1 a player left", ScreenHash());
@@ -851,8 +851,8 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     dan.Leave();
     REQUIRE(SettleUntil([&] { return !dialog.IsShowing() && cal.MissionsLoaded() == calMissions + 1; }));
     CHECK(!MCTestGuest::RoomShows(dan.Id()));
-    CHECK(!room.MissionFile.empty());
-    CHECK(room.Team2Players[1] == cal.Id());
+    CHECK(!MCSessionScreen::Room().MissionFile.empty());
+    CHECK(MCSessionScreen::Room().Team2Players[1] == cal.Id());
     CHECK(!room.StartButton->Disabled);
 
     // START closes the room.
@@ -1014,7 +1014,7 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can
     REQUIRE(dan.Join(*manager.DirectPlay, JoinHostAddress));
     CHECK(dan.Refusal().empty());
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()) && sentTime(dan, MCTimeOfDay::Night, false); }));
-    CHECK(room.Team2Players[0] == ann.Id());
+    CHECK(MCSessionScreen::Room().Team2Players[0] == ann.Id());
     CHECK_EQ(list.HeldReason(ArtilleryRow), std::string("TELL ANN AND DAN TO UPGRADE."));
 }
 
@@ -1112,7 +1112,8 @@ namespace
         room.AssignPlayer(cat, 2, 1, false);
         room.SetTeamTechBase(2, 1);
         room.LoadMission(RolloverMission);
-        REQUIRE(SettleLong([&] { return !GlobalLog()->MessageDialog->IsShowing() && !room.MissionFile.empty(); }));
+        REQUIRE(SettleLong(
+            [&] { return !GlobalLog()->MessageDialog->IsShowing() && !MCSessionScreen::Room().MissionFile.empty(); }));
         room.SetTeam1RP(12000);
         room.SetTeam2RP(9000);
         Settle();
@@ -1219,14 +1220,15 @@ TEST_CASE_ISOLATED(
     REQUIRE(SettleLong(
         [&]
         {
-            return room.Team2Players[0] == ann && room.Team2Players[1] == cat.Id() &&
-                   std::string(room.Team1RPText->Text()) == "12000" && !room.MissionName.empty();
+            return MCSessionScreen::Room().Team2Players[0] == ann &&
+                   MCSessionScreen::Room().Team2Players[1] == cat.Id() &&
+                   std::string(room.Team1RPText->Text()) == "12000" && !MCSessionScreen::Room().MissionName.empty();
         }));
-    const std::string missionName = room.MissionName;
+    const std::string missionName = MCSessionScreen::Room().MissionName;
     const std::shared_ptr<MCFidpPlayer> host = PlayerNamed("BOB");
     REQUIRE(host != nullptr);
     const uint32_t bobId = host->Id;
-    CHECK(room.Team1Players[0] == bobId);
+    CHECK(MCSessionScreen::Room().Team1Players[0] == bobId);
     CHECK(!MultiPlayer()->IsHost);
     const int32_t catScreens = cat.SessionScreens();
     bob.Seen();
@@ -1240,14 +1242,14 @@ TEST_CASE_ISOLATED(
     CHECK(manager.GetPlayer(bobId) == nullptr);
     CHECK(MCSameGuid(manager.CurrentSession()->SessionDesc.guidInstance, instance));
     CHECK(MCTestGuest::RoomShows(cat.Id()));
-    CHECK(room.Team1Players[0] == MCSessionScreen::NoPlayer);
-    CHECK(room.Team2Players[0] == ann);
-    CHECK(room.Team2Players[1] == cat.Id());
-    CHECK_EQ(room.Team2TechBase, 1);
+    CHECK(MCSessionScreen::Room().Team1Players[0] == MCSessionScreen::NoPlayer);
+    CHECK(MCSessionScreen::Room().Team2Players[0] == ann);
+    CHECK(MCSessionScreen::Room().Team2Players[1] == cat.Id());
+    CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
     CHECK_EQ(std::string(room.Team1RPText->Text()), "12000");
     CHECK_EQ(std::string(room.Team2RPText->Text()), "9000");
-    CHECK(!room.MissionFile.empty());
-    CHECK_EQ(room.MissionName, missionName);
+    CHECK(!MCSessionScreen::Room().MissionFile.empty());
+    CHECK_EQ(MCSessionScreen::Room().MissionName, missionName);
     CHECK(ChatSays("BOB has left the game."));
     CHECK(ChatSays("is now the server."));
 

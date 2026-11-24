@@ -344,9 +344,9 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     CHECK_EQ(manager.CurrentSession()->SessionDesc.dwMaxPlayers, 4u);
     CHECK_EQ(manager.GetPlayers(nullptr).size(), 1u);
     CHECK(MultiPlayer()->IsHost);
-    CHECK(again.Team1Players[0] == manager.MyPlayerID);
-    CHECK(!again.MissionFile.empty());
-    CHECK_EQ(again.Team2TechBase, 1);
+    CHECK(MCSessionScreen::Room().Team1Players[0] == manager.MyPlayerID);
+    CHECK(!MCSessionScreen::Room().MissionFile.empty());
+    CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
     CHECK_EQ(std::string(again.Team1RPText->Text()), std::to_string(Team1Points));
     CHECK_EQ(std::string(again.Team2RPText->Text()), std::to_string(Team2Points));
     CHECK_EQ(again.StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
@@ -356,12 +356,13 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     // ANN's game joins again: shown the room, back on team 2's second slot, her place no longer kept.
     Guest annAgain("ANN", MCMatchRule::Supported);
     REQUIRE(annAgain.Join(*manager.DirectPlay, address));
-    REQUIRE(
-        SettleUntil([&] { return MCTestGuest::RoomShows(annAgain.Id()) && again.Team2Players[1] == annAgain.Id(); }));
+    REQUIRE(SettleUntil(
+        [&]
+        { return MCTestGuest::RoomShows(annAgain.Id()) && MCSessionScreen::Room().Team2Players[1] == annAgain.Id(); }));
     Settle();
     CHECK(again.StartWaits.empty());
     CHECK(MCLobbyUpdate::StartQuestion().empty());
-    CHECK(again.Team1Players[0] == manager.MyPlayerID);
+    CHECK(MCSessionScreen::Room().Team1Players[0] == manager.MyPlayerID);
     SaveShot("rematch 1 guest back", ScreenHash());
 }
 

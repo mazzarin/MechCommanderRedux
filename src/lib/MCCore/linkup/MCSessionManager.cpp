@@ -666,7 +666,7 @@ void MCSessionManager::TendInternet()
 
     if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
     {
-        room.Mission = GlobalLog()->SessionScreen->MissionName;
+        room.Mission = GlobalLog()->Room.MissionName;
     }
 
     for (const std::shared_ptr<MCFidpPlayer>& player : Players)

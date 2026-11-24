@@ -875,10 +875,10 @@ TEST_CASE_ISOLATED("game: INTERNET hosts a game into its room, its EXIT comes ba
     // (The host is alone, so the file check is done at once, its message closing itself.)
     roomScreen.LoadMission("ARENA");
     REQUIRE(SettleUntil([] { return DialogText().empty(); }));
-    REQUIRE(!roomScreen.MissionName.empty());
+    REQUIRE(!MCSessionScreen::Room().MissionName.empty());
     REQUIRE(SettleUntil([&] { return service.Room()->at("mission") != ""; }));
     CHECK(service.Room()->at("mission") ==
-          MCServiceName(roomScreen.MissionName, MCServiceMissionMost, std::string_view()));
+          MCServiceName(MCSessionScreen::Room().MissionName, MCServiceMissionMost, std::string_view()));
     SaveShot("internet 6 room", ScreenHash());
 
     // The room's EXIT: the internet games again, the game and its socket gone, the player's name kept.
@@ -1226,7 +1226,7 @@ TEST_CASE_ISOLATED("game: an internet host's REMATCH hosts its room again on the
     CHECK_EQ(manager.CurrentSession()->Name, gameName);
     // The room back on the list out of battle, as its guests can join it (the service turns joins to one in battle away).
     CHECK(service.Room()->at("battle") == false);
-    CHECK(!GlobalLog()->SessionScreen->MissionFile.empty());
+    CHECK(!GlobalLog()->Room.MissionFile.empty());
     CHECK(DialogText().empty());
     SaveShot("internet 14 rematch", ScreenHash());
 }

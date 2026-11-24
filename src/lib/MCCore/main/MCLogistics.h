@@ -8,6 +8,7 @@
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogObject.h"
 #include "logistics/MCLogPort.h"
+#include "logistics/MCRoomModel.h"
 #include "main/MCDropSlot.h"
 #include "main/MCInventoryList.h"
 #include "main/MCLogMechList.h"
@@ -698,6 +699,8 @@ public:
     /// <summary>Makes <paramref name="screen"/> the screen being shown.</summary>
     void SetCurrentScreen(MCLogObject& screen) { SetCurrentScreen(screen.WeakAs<MCLogObject>()); }
     MCGuiHandle<MCSessionScreen> SessionScreen;
+    /// <summary>Port-only (SPEC-menus.md's stage 4): the multiplayer room's state, which the room's screens view.</summary>
+    MCRoomModel Room;
     MCGuiHandle<MCSplashScreen> SerialScreen;
     /// <summary>The multiplayer connection screen (the one after the protocol choice).</summary>
     MCGuiHandle<MCSplashScreen> ConnectScreen;

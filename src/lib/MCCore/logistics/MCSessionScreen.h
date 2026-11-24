@@ -1,5 +1,7 @@
 #pragma once
 
+#include "logistics/MCRoomModel.h"
+
 #include "gui/MCGuiRef.h"
 #include "logistics/MCLogObject.h"
 #include "logistics/MCLogOptionList.h"
@@ -23,16 +25,16 @@ class MCSessionScreen : public MCLogObject
 {
 public:
     /// <summary>The most players in a session (a game rule: the name slots and the player lights).</summary>
-    static constexpr size_t MaxPlayers = 6;
+    static constexpr size_t MaxPlayers = MCRoomModel::MaxPlayers;
     /// <summary>The slots of a team (a game rule).</summary>
-    static constexpr size_t TeamSlots = 3;
+    static constexpr size_t TeamSlots = MCRoomModel::TeamSlots;
     /// <summary>A player id that stands for no player (an empty slot).</summary>
-    static constexpr uint32_t NoPlayer = 0xffffffff;
+    static constexpr uint32_t NoPlayer = MCRoomModel::NoPlayer;
 
     /// <summary>Makes the buttons, the RP spinners and texts, the tech base toggles and the six name slots.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
 
-    /// <summary>Forgets the drop targets, the mission and the map.</summary>
+    /// <summary>Forgets the drop targets and the map's picture.</summary>
     void OnDestroy() override;
 
     /// <summary>
@@ -221,30 +223,13 @@ public:
     MCGuiHandle<MCLogToolButton> Team2ISButton;
     /// <summary>Team 2's Clan tech base toggle.</summary>
     MCGuiHandle<MCLogToolButton> Team2ClanButton;
-    /// <summary>Team 1's tech base: 1 Inner Sphere, -1 Clan.</summary>
-    int8_t Team1TechBase = 1;
-    /// <summary>Team 2's tech base.</summary>
-    int8_t Team2TechBase = -1;
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): the room's state, which this screen views (logistics' room model,
+    /// <see cref="MCLogistics::Room"/>).
+    /// </summary>
+    static MCRoomModel& Room();
     /// <summary>The name slots, one per player (top to bottom in the unassigned list).</summary>
     std::array<MCGuiHandle<MCPlayerNameObject>, MaxPlayers> PlayerNames;
-    /// <summary>The number of players in the session.</summary>
-    int32_t NumPlayers = 0;
-    /// <summary>The number of players on no team.</summary>
-    int32_t NumUnassigned = 0;
-    /// <summary>Team 1's players by slot (<see cref="NoPlayer"/> = empty).</summary>
-    std::array<uint32_t, TeamSlots> Team1Players = {};
-    /// <summary>Team 2's players by slot.</summary>
-    std::array<uint32_t, TeamSlots> Team2Players = {};
-    /// <summary>Team 1's resource points last sent.</summary>
-    int32_t Team1RP = 0;
-    /// <summary>Team 2's resource points last sent.</summary>
-    int32_t Team2RP = 0;
-    /// <summary>The loaded mission's name.</summary>
-    std::string MissionName;
-    /// <summary>The loaded mission's file; empty = none.</summary>
-    std::string MissionFile;
-    /// <summary>The loaded mission's map name.</summary>
-    std::string MapName;
 
     /// <summary>
     /// Port: the loaded mission's map picture, drawn stretched over the map box, or null. (The original stretched each

@@ -28,6 +28,8 @@ namespace
         215, 216, 217, 218, 218, 219, 220, 220, 221, 222, 223, 223, 224, 225, 225, 226, 227, 228, 228, 229, 230, 230,
         231, 232, 232, 233, 234, 235, 235, 236, 237, 237, 238, 239, 239, 240, 241, 241, 242, 243, 244, 244, 245, 246,
         246, 247, 248, 248, 249, 250, 250, 251, 252, 252, 253, 254, 254, 255};
+    /// <summary>The most times GammaCorrectCurrentPalette puts the palette through the table (level 3).</summary>
+    constexpr int32_t MaxGammaPasses = 3;
 
     /// <summary>The palette entries Windows kept for itself (0..9 and 246..255) unless a movie played.</summary>
     constexpr int32_t FirstGameColor = 10;
@@ -74,9 +76,11 @@ auto MCGuiSystem::ShowPalette(int32_t first, int32_t count) -> void
 {
     if (_Display != nullptr && first >= 0 && first < 256 && count > 0)
     {
-        _Display->SetPalette(
-            first, std::span<const MCVfxRgb>(_LogicalPalette)
-                       .subspan(static_cast<size_t>(first), static_cast<size_t>(std::min(count, 256 - first))));
+        const size_t from = static_cast<size_t>(first);
+        const size_t entries = static_cast<size_t>(std::min(count, 256 - first));
+        _Display->SetPalette(first, std::span<const MCVfxRgb>(_LogicalPalette).subspan(from, entries),
+                             std::span<const MCVfxRgb>(CurrentPalette).subspan(from, entries),
+                             std::span<const uint8_t>(_Brightened).subspan(from, entries));
     }
 }
 
@@ -120,6 +124,7 @@ auto MCGuiSystem::OpenDisplay() -> void
     }
 
     _Display = std::move(*display);
+    _Display->SetBrightening(GammaColorTranslation);
     GWidth = _Display->Width();
     GHeight = _Display->Height();
     DisplayWidth = GWidth;
@@ -313,6 +318,7 @@ auto MCGuiSystem::TweakPalette(int32_t first, int32_t count, std::span<const MCV
         }
     }
 
+    std::fill(_Brightened.begin() + first, _Brightened.begin() + end, static_cast<uint8_t>(passes));
     ShowPalette(first, count);
 }
 
@@ -339,7 +345,9 @@ auto MCGuiSystem::GammaCorrectCurrentPalette(int32_t level) -> void
         _LogicalPalette[static_cast<size_t>(i)] = CurrentPalette[static_cast<size_t>(i)];
     }
 
-    for (int32_t pass = 0; pass < level && pass < 3; pass++)
+    const int32_t passes = std::clamp(level, 0, MaxGammaPasses);
+
+    for (int32_t pass = 0; pass < passes; pass++)
     {
         for (int32_t i = FirstGameColor; i < EndGameColor; i++)
         {
@@ -347,6 +355,7 @@ auto MCGuiSystem::GammaCorrectCurrentPalette(int32_t level) -> void
         }
     }
 
+    std::fill(_Brightened.begin() + FirstGameColor, _Brightened.begin() + EndGameColor, static_cast<uint8_t>(passes));
     ShowPalette(FirstGameColor, EndGameColor - FirstGameColor);
 }
 

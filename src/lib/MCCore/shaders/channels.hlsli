@@ -96,6 +96,19 @@ MC_CHANNEL uint UnseenIndex = 0x10;
 MC_CHANNEL float MaxCorrection = 4.0f;
 MC_CHANNEL float MadeWithFloor = 1.0f / 255.0f;
 
+// The palette texture's rows (MCVulkanRenderer's), 256 wide: the colours shown (gamma applied), the colours the HD art
+// pack was made from; port-only, the colours before the game's brightness (PREFS Brightness) with how many times it
+// brightened each in A (a byte, 0 to MaxBrightenings), and its curve, a value a column, brightened once (R), twice (G)
+// and three times (B). An HD colour is corrected before the brightness, then brightened by its own lightness
+// (BrightenedThrough), as the original's palette is: following a near-black entry's change, several times over, a
+// lighter HD colour would glow.
+MC_CHANNEL uint ShownRow = 0;
+MC_CHANNEL uint MadeWithRow = 1;
+MC_CHANNEL uint BeforeRow = 2;
+MC_CHANNEL uint BrighteningRow = 3;
+MC_CHANNEL uint PaletteRows = 4;
+MC_CHANNEL uint MaxBrightenings = 3;
+
 // The index target's alpha (the table above): its readers' thresholds, then the marks.
 MC_CHANNEL float GroundMark = 0.5f;
 MC_CHANNEL float CanopyMark = 0.125f;
@@ -190,6 +203,36 @@ MC_CHANNEL_FUNCTION bool RecolouringGreen(uint green, bool light)
 
 #ifdef __cplusplus
 } // namespace MCGpuChannels
+#else
+// Port-only: premultiplied colour `color` of coverage `a` brightened `times` times by the game's brightness's curve (the
+// palette texture `palette`'s BrighteningRow, read with `samp`), a channel at a time, between the curve's values.
+float3 BrightenedThrough(Texture2D<float4> palette, SamplerState samp, float3 color, float a, uint times)
+{
+    if (times == 0u || a <= 0.0)
+    {
+        return color;
+    }
+
+    uint width;
+    uint height;
+    palette.GetDimensions(width, height);
+    const uint channel = min(times, MaxBrightenings) - 1u;
+    const float3 at = saturate(color / a) * 255.0;
+    const int3 low = int3(floor(at));
+    const int3 high = min(low + 1, 255);
+    const float3 f = at - float3(low);
+    float3 brightened = float3(0.0, 0.0, 0.0);
+
+    [unroll] for (int c = 0; c < 3; c++)
+    {
+        const float row = ((float)BrighteningRow + 0.5) / (float)height;
+        const float from = palette.SampleLevel(samp, float2(((float)low[c] + 0.5) / (float)width, row), 0)[channel];
+        const float to = palette.SampleLevel(samp, float2(((float)high[c] + 0.5) / (float)width, row), 0)[channel];
+        brightened[c] = lerp(from, to, f[c]);
+    }
+
+    return brightened * a;
+}
 #endif
 
 #undef MC_CHANNEL

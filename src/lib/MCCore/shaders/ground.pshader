@@ -78,9 +78,6 @@ static const int2 GapSteps[GapWays] = {int2(1, 0),  int2(-1, 0), int2(0, 1),  in
                                        int2(1, 1), int2(-1, 1), int2(1, -1), int2(-1, -1)};
 // No pixel under a gap (GapFill).
 static const int2 NoPixel = int2(-1, -1);
-// The palette's rows (draw.pshader's Shown and MadeWith).
-static const uint ShownRow = 0;
-static const uint MadeWithRow = 1;
 
 // Port-only: the stands build (DRAW_STANDS 1: ground_stands.pshader), for the passes on a surface whose frame folds a
 // forest's index pass into its HD frame's draw, with the stands target (channels.hlsli): nothing stands on the kept
@@ -205,23 +202,31 @@ int2 GapFill(inout Output output, int2 kept, int2 size)
     return NoPixel;
 }
 
-// Port-only (SPEC-pan-water.md): palette entry `index`'s colour in row `row`.
-float3 PaletteAt(uint index, uint row)
+// Port-only (SPEC-pan-water.md): palette entry `index`'s texel in row `row`.
+float4 PaletteTexelAt(uint index, uint row)
 {
     uint width;
     uint height;
     paletteTex.GetDimensions(width, height);
-    return paletteTex.SampleLevel(paletteSampler, (float2(index, row) + 0.5) / float2(width, height), 0).rgb;
+    return paletteTex.SampleLevel(paletteSampler, (float2(index, row) + 0.5) / float2(width, height), 0);
+}
+
+// Port-only (SPEC-pan-water.md): palette entry `index`'s colour in row `row`.
+float3 PaletteAt(uint index, uint row)
+{
+    return PaletteTexelAt(index, row).rgb;
 }
 
 // Port-only (SPEC-pan-water.md): what kept share `share` of cycled entry `index` shows at step `step`: draw.pshader's
-// Corrected's scaling of the colour it was made from (channels.hlsli's kept ground), clipped as the target clips it.
+// Corrected's scaling of the colour it was made from (channels.hlsli's kept ground), before the game's brightness and
+// then brightened as Corrected brightens it, clipped as the target clips it.
 float3 CycledPart(float3 share, uint index, int step)
 {
     const uint source = (index - (uint)cycle.x + (uint)step) & 7u;
-    const float3 now = PaletteAt(cycleSources[source >> 2][source & 3u], ShownRow);
+    const float4 now = PaletteTexelAt(cycleSources[source >> 2][source & 3u], BeforeRow);
     const float3 then = max(PaletteAt(index, MadeWithRow), MadeWithFloor);
-    return min(share * clamp(now / then, 0.0, MaxCorrection), 1.0);
+    const float3 corrected = share * clamp(now.rgb / then, 0.0, MaxCorrection);
+    return min(BrightenedThrough(paletteTex, paletteSampler, corrected, 1.0, Byte(now.a)), 1.0);
 }
 
 // Port-only (SPEC-pan-water.md): `output`'s colours at kept pixel `kept` (its coverage as kept `covered`; `under` the

@@ -261,6 +261,18 @@ public:
     /// <summary>As the other overload, from packed r, g, b bytes (three per entry).</summary>
     void SetPalette(int first, std::span<const uint8_t> rgb);
 
+    /// <summary>
+    /// Port-only: as the first overload, with each entry's colour before the game's brightness
+    /// (<paramref name="before"/>) and how many times <see cref="SetBrightening"/>'s curve brightened it
+    /// (<paramref name="brightened"/>, 0 to 3), which HD colours take instead of following the entry's change
+    /// (MCFrame::BeforeColors). The other overloads set entries brightened none.
+    /// </summary>
+    void SetPalette(int first, std::span<const MCVfxRgb> entries, std::span<const MCVfxRgb> before,
+                    std::span<const uint8_t> brightened);
+
+    /// <summary>Port-only: the game's brightness's curve (one step, a value to a value), for HD colours.</summary>
+    void SetBrightening(std::span<const uint8_t, 256> curve);
+
     /// <summary>Reads the palette entries from <paramref name="first"/> into <paramref name="out"/> (as set, without
     /// gamma); those past entry 255 are left as they are.</summary>
     void GetPalette(int first, std::span<MCVfxRgb> out) const;
@@ -496,6 +508,9 @@ private:
     std::array<SDL_Color, 256> _ShownColors{};
     /// <summary>The palette's colours as shown, before the cycle.</summary>
     std::array<SDL_Color, 256> _PaletteColors{};
+    /// <summary>Port-only: MCFrame::BeforeColors and MCFrame::BrighteningColors.</summary>
+    std::array<SDL_Color, 256> _BeforeColors{};
+    std::array<SDL_Color, 256> _BrighteningColors{};
 
     int _Width = 0;
     int _Height = 0;
@@ -520,6 +535,21 @@ private:
 
     mutable std::mutex _PaletteLock;
     std::array<MCVfxRgb, 256> _Palette{};
+    /// <summary>Port-only: the entries before the game's brightness, and how many times it brightened each.</summary>
+    std::array<MCVfxRgb, 256> _Before{};
+    std::array<uint8_t, 256> _Brightened{};
+    /// <summary>Port-only: <see cref="SetBrightening"/>'s curve (none: each value itself).</summary>
+    std::array<uint8_t, 256> _BrighteningCurve = []
+    {
+        std::array<uint8_t, 256> identity{};
+
+        for (size_t i = 0; i < identity.size(); ++i)
+        {
+            identity[i] = static_cast<uint8_t>(i);
+        }
+
+        return identity;
+    }();
     bool _PaletteDirty = true;
     MCColorCycle _Cycle;
     bool _CycleDirty = false;

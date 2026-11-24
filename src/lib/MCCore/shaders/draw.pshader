@@ -81,9 +81,13 @@ SamplerState alphaSampler : register(s2, space2);
 // The tables' fits, one texel a table row (row = the table's row): the premultiplied colour and coverage.
 Texture2D<float4> fitTex : register(t3, space2);
 SamplerState fitSampler : register(s3, space2);
-// The palette, 256 x 2: row 0 as shown (gamma applied), row 1 the colours the HD art pack was made from.
+// The palette, 256 x PaletteRows (channels.hlsli): as shown (gamma applied), the colours the HD art pack was made from;
+// port-only, the colours before the game's brightness and its curve.
 Texture2D<float4> paletteTex : register(t4, space2);
 SamplerState paletteSampler : register(s4, space2);
+// Port-only: an entry of the game's own (10..245), which the brightness always reaches: how much an HD pixel without an
+// index (an effect's blended one) is brightened.
+static const uint GameEntry = 128u;
 // The HD colours (premultiplied): an HD art frame's (its scale times its indices' size; BC7 frames padded to whole
 // blocks), or the terrain's tiles at HdScale times their atlas places.
 Texture2D<float4> hdTex : register(t5, space2);
@@ -379,16 +383,41 @@ bool CycledEntry(uint index)
     return cycle.y >= 0 && index - (uint)cycle.x < WaterColors;
 }
 
-// The colour index shows, through the colour cycle.
-float3 Shown(uint index)
+// The entry whose colour index shows, through the colour cycle.
+uint ShownEntry(uint index)
 {
     if (CycledEntry(index))
     {
         const uint source = (index - (uint)cycle.x + (uint)cycle.y) & 7u;
-        index = cycleSources[source >> 2][source & 3u];
+        return cycleSources[source >> 2][source & 3u];
     }
 
-    return Fetch(paletteTex, paletteSampler, int2(index, 0)).rgb;
+    return index;
+}
+
+// The colour index shows, through the colour cycle.
+float3 Shown(uint index)
+{
+    return Fetch(paletteTex, paletteSampler, int2(ShownEntry(index), ShownRow)).rgb;
+}
+
+// Port-only: the colour index shows before the game's brightness (PREFS Brightness), through the colour cycle.
+float3 ShownBefore(uint index)
+{
+    return Fetch(paletteTex, paletteSampler, int2(ShownEntry(index), BeforeRow)).rgb;
+}
+
+// Port-only: how many times the game's brightness brightened the colour index shows (0 to 3).
+uint BrightenedTimes(uint index)
+{
+    return Byte(Fetch(paletteTex, paletteSampler, int2(ShownEntry(index), BeforeRow)).a);
+}
+
+// Port-only: premultiplied colour `color` of coverage `a` brightened `times` times by the game's brightness's curve
+// (channels.hlsli's BrightenedThrough).
+float3 Brightened(float3 color, float a, uint times)
+{
+    return BrightenedThrough(paletteTex, paletteSampler, color, a, times);
 }
 
 // Port-only (SPEC-pan-water.md): whether this is the kept ground's pass (cycle.w), whose glints target holds the weights.
@@ -453,7 +482,7 @@ float2 GridShift()
 // The colour the HD art pack's pictures were made from for an index.
 float3 MadeWith(uint index)
 {
-    return Fetch(paletteTex, paletteSampler, int2(index, 1)).rgb;
+    return Fetch(paletteTex, paletteSampler, int2(index, MadeWithRow)).rgb;
 }
 
 // Port-only (SPEC-pan-water.md): the share of the colour Shown gives `index` that follows a cycled entry, as the
@@ -465,19 +494,21 @@ float3 ShownShare(uint index)
 
 // An HD colour (premultiplied by a) made from original index `index`'s colour, as it shows now as index `shown` (the
 // same, or a table's): the same index takes each channel's change between the pack's colour and today's; another (a
-// paint scheme, the haze) takes its colour at the HD colour's brightness.
+// paint scheme, the haze) takes its colour at the HD colour's brightness. Port-only: both before the game's brightness,
+// which then brightens the result by its curve (Brightened) as it did the entry shown.
 float3 Corrected(float3 color, float a, uint index, uint shown)
 {
     const float3 then = MadeWith(index);
+    const uint times = BrightenedTimes(shown);
 
     if (shown == index)
     {
-        return color * clamp(Shown(index) / max(then, MadeWithFloor), 0.0, MaxCorrection);
+        return Brightened(color * clamp(ShownBefore(index) / max(then, MadeWithFloor), 0.0, MaxCorrection), a, times);
     }
 
     const float3 luma = float3(0.299, 0.587, 0.114);
     const float brightness = dot(color, luma) / max(a * dot(then, luma), 1.0 / 255.0);
-    return saturate(Shown(shown) * brightness) * a;
+    return Brightened(saturate(ShownBefore(shown) * brightness) * a, a, times);
 }
 
 // Port-only (SPEC-pan-water.md): the share of Corrected's colour that follows `shown` where that is a cycled entry, as
@@ -509,6 +540,7 @@ static const float TableFitFlat = 1e-4;
 
 // The change of colour table `row` makes, fitted a channel at a time over a sample of the palette (shown = k colour +
 // m, least squares), applied to premultiplied colour `color` of coverage `a` (light, without coverage, is only scaled).
+// Port-only: the palette before the game's brightness, which the caller brightens after (Brightened).
 float3 TableShift(uint row, float3 color, float a)
 {
     float3 sumX = float3(0.0, 0.0, 0.0);
@@ -519,8 +551,8 @@ float3 TableShift(uint row, float3 color, float a)
     for (uint i = 0; i < TableFitSamples; i++)
     {
         const uint index = TableFitFirst + i * TableFitStep;
-        const float3 x = Shown(index);
-        const float3 y = Shown(Table(row, index));
+        const float3 x = ShownBefore(index);
+        const float3 y = ShownBefore(Table(row, index));
         sumX += x;
         sumY += y;
         sumXX += x * x;
@@ -577,7 +609,8 @@ bool HazedWater(Input input, uint original)
 // shows the water's entries as over the mean the pack's colours were made from. So the water there is darkened as the
 // original's is on the whole, smoothly, rather than each of its pixels taking the ramp the table gives its entry (a
 // patchwork of the original's pixels), and its colour doesn't cycle, as the original's doesn't there (none of the
-// entries it gives cycles; composite.pshader's LivingWater moves its waves, dimmed).
+// entries it gives cycles; composite.pshader's LivingWater moves its waves, dimmed). Before the game's brightness, which
+// HdTerrainColour brightens after (Brightened).
 float3 WaterHaze(uint row)
 {
     float3 hazed = float3(0.0, 0.0, 0.0);
@@ -586,7 +619,7 @@ float3 WaterHaze(uint row)
     for (uint i = 0; i < WaterBlues + WaterColors; i++)
     {
         const uint entry = i < WaterBlues ? FirstWaterBlue + i : FirstWaterColor + (i - WaterBlues);
-        hazed += Shown(Table(row, entry));
+        hazed += ShownBefore(Table(row, entry));
         made += MadeWith(entry);
     }
 
@@ -617,7 +650,7 @@ float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
     if (HazedWater(input, original))
     {
         cycledShare = float3(0.0, 0.0, 0.0);
-        return saturate(hd * WaterHaze(input.op.z));
+        return Brightened(saturate(hd * WaterHaze(input.op.z)), 1.0, BrightenedTimes(FirstWaterColor));
     }
 
     if (KeptPass())
@@ -1634,6 +1667,12 @@ Output HdPixelAt(Input input, float2 shape)
         // A pixel without an index (an effect's blended one: smoke, dust) drawn through a table (the haze): the
         // table's change of colour, as near as one line a channel follows it.
         color.rgb = TableShift(input.op.z, color.rgb, color.a);
+    }
+
+    // Port-only: a pixel without an index brightened as the game's own entries are (a menu's picture shows as made).
+    if (!recolouredBetween && (input.op.x & HdAsMade) == 0)
+    {
+        color.rgb = Brightened(color.rgb, color.a, BrightenedTimes(GameEntry));
     }
 
 #if DRAW_STANDS

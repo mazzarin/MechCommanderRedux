@@ -1279,7 +1279,7 @@ auto MCVulkanPresenter::Prepare(const MCFrame& frame, bool read)
         return MCVulkanRenderer::SealedFrame();
     }
 
-    _Renderer->SetColors(frame.PaletteColors, frame.Cycle);
+    _Renderer->SetColors(frame.PaletteColors, frame.BeforeColors, frame.BrighteningColors, frame.Cycle);
 
     if (!read)
     {
@@ -2664,7 +2664,8 @@ std::expected<void, std::string> MCVulkanPresenter::Discard(const MCFrame& frame
     return RunUnshown(frame.Underlays,
                       [&]
                       {
-                          _Renderer->SetColors(frame.PaletteColors, frame.Cycle);
+                          _Renderer->SetColors(frame.PaletteColors, frame.BeforeColors, frame.BrighteningColors,
+                                               frame.Cycle);
                           PlaceUnderlays(frame);
                       });
 }

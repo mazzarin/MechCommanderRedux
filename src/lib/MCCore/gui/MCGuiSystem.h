@@ -302,6 +302,12 @@ private:
     bool _Stopping = false;
     /// <summary>The palette as shown: <see cref="CurrentPalette"/> through the gamma table.</summary>
     std::array<MCVfxRgb, 256> _LogicalPalette = {};
+    /// <summary>
+    /// Port-only: how many times the gamma table brightened each entry of <see cref="_LogicalPalette"/> (0 to 3; OB-159
+    /// gives entries set at different times different counts), so the HD colours take the same brightening
+    /// (MCDisplay::SetPalette).
+    /// </summary>
+    std::array<uint8_t, 256> _Brightened = {};
     /// <summary>The frame callbacks (their holders keep them).</summary>
     std::vector<std::weak_ptr<MCGuiCallback>> _Callbacks;
     /// <summary>

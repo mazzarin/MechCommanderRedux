@@ -41,8 +41,6 @@ namespace
     constexpr const char* PickedClass = "picked";
 
     using namespace MCMenusPictures;
-    // Overloaded below for the window's picture.
-    using MCMenusPictures::PictureHash;
 
     constexpr size_t PixelBytes = 4;
     constexpr uint8_t Opaque = 255;
@@ -51,24 +49,6 @@ namespace
     template <typename T> std::string WhyNot(const std::expected<T, std::string>& made)
     {
         return made.has_value() ? std::string() : made.error();
-    }
-
-    /// <summary>The FNV-1a hash of a window's picture as the display reads it.</summary>
-    uint32_t PictureHash(const MCDisplay::MCShownScreen& picture)
-    {
-        uint32_t hash = FnvBasis;
-        hash = (hash ^ static_cast<uint32_t>(picture.Width)) * FnvPrime;
-        hash = (hash ^ static_cast<uint32_t>(picture.Height)) * FnvPrime;
-
-        for (const SDL_Color& pixel : picture.Pixels)
-        {
-            for (const uint8_t channel : {pixel.r, pixel.g, pixel.b, pixel.a})
-            {
-                hash = (hash ^ channel) * FnvPrime;
-            }
-        }
-
-        return hash;
     }
 
     SDL_Event KeyEvent(uint32_t type, SDL_Keycode key, SDL_Keymod held)
@@ -1484,20 +1464,6 @@ TEST_CASE_ISOLATED("menus: the GPU's largest texture is the device's own, and a 
 
 namespace
 {
-    /// <summary>The window made <paramref name="width"/> x <paramref name="height"/> pixels (in points on a dense screen).</summary>
-    bool SetWindowPixels(MCDisplay& display, int width, int height)
-    {
-        SDL_Window& window = display.Window();
-        const float density = std::max(SDL_GetWindowPixelDensity(&window), 1.0f);
-        SDL_SetWindowSize(&window, static_cast<int>(std::lround(static_cast<float>(width) / density)),
-                          static_cast<int>(std::lround(static_cast<float>(height) / density)));
-        SDL_SyncWindow(&window);
-        int pixelWidth = 0;
-        int pixelHeight = 0;
-        SDL_GetWindowSizeInPixels(&window, &pixelWidth, &pixelHeight);
-        return pixelWidth == width && pixelHeight == height;
-    }
-
     /// <summary>The game's own menus' RmlUi started over the display, the probe shown on its menus' layer; stopped at the end.</summary>
     class MCGameProbe
     {

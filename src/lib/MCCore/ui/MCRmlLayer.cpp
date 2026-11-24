@@ -69,6 +69,9 @@ namespace
     constexpr const char* FocusVisible = "focus-visible";
     /// <summary>No modifier key held (RmlUi's modifiers are flags).</summary>
     constexpr int NoModifiers = 0;
+    /// <summary>A text box's button that Enter in it presses (its id), and the look's class of a button that's off.</summary>
+    constexpr const char* EnterAttribute = "data-enter";
+    constexpr const char* OffClass = "off";
 
     /// <summary>The window pixels a window point is (SDL's mouse events are in points).</summary>
     float PixelsPerPoint(SDL_WindowID id)
@@ -81,6 +84,23 @@ namespace
     int Pixel(float point, float density)
     {
         return static_cast<int>(std::floor(point * density));
+    }
+
+    /// <summary>
+    /// <paramref name="key"/> to the layer's top screen while it takes the keys first (MCRmlScreen::TakesKeys); whether
+    /// it used it. Pinned while it runs: what it does with the key can close it.
+    /// </summary>
+    bool GiveRawKey(const MCRmlLayer& layer, const SDL_KeyboardEvent& key)
+    {
+        const MCOptionalRef<MCRmlScreen> top = layer.Top();
+
+        if (!top.has_value() || !top->get().TakesKeys())
+        {
+            return false;
+        }
+
+        const std::shared_ptr<MCRmlScreen> screen = top->get().shared_from_this();
+        return screen->OnRawKey(key);
     }
 }
 
@@ -255,6 +275,12 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
         }
         case SDL_EVENT_KEY_DOWN:
         {
+            // A screen waiting for a key (CONTROLS' PRESS A KEY) has it first, whatever it is.
+            if (GiveRawKey(*this, event.key))
+            {
+                return true;
+            }
+
             const Rml::Input::KeyIdentifier key = KeyOf(event.key.key);
             const int held = ModifiersOf(event.key.mod);
 
@@ -279,9 +305,22 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
 
             const bool typing = Typing();
 
-            // Enter in a text box: done, on to the next control as Tab goes (what was typed is its value already).
+            // Enter in a text box: done, on to the next control as Tab goes (what was typed is its value already); in
+            // one whose data-enter names a button (SAVE GAME's NAME), that button pressed (port-only, stage 5).
             if (typing && (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER))
             {
+                if (Rml::Element* box = _Context.GetFocusElement(); box != nullptr && box->HasAttribute(EnterAttribute))
+                {
+                    const std::string pressed = box->GetAttribute<Rml::String>(EnterAttribute, "");
+
+                    if (Rml::Element* button = box->GetOwnerDocument()->GetElementById(pressed);
+                        button != nullptr && !button->IsClassSet(OffClass))
+                    {
+                        button->Click();
+                        return true;
+                    }
+                }
+
                 _Context.ProcessKeyDown(Rml::Input::KI_TAB, NoModifiers);
                 _Context.ProcessKeyUp(Rml::Input::KI_TAB, NoModifiers);
                 return true;
@@ -302,6 +341,12 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
         }
         case SDL_EVENT_KEY_UP:
         {
+            // A modifier let go alone is a binding too (CONTROLS' ALT).
+            if (GiveRawKey(*this, event.key))
+            {
+                return true;
+            }
+
             if (const Rml::Input::KeyIdentifier key = KeyOf(event.key.key); key != Rml::Input::KI_UNKNOWN)
             {
                 _Context.ProcessKeyUp(key, ModifiersOf(event.key.mod));

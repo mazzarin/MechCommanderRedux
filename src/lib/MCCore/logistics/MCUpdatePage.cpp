@@ -17,6 +17,7 @@
 #include "logistics/MCLogScrollList.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPrefsPage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCUpdater.h"
 #include "network/MCLobbyUpdate.h"
 #include "vfx/MCVfxFunctions.h"
@@ -1053,6 +1054,7 @@ namespace
 
     bool RestartOffered(MCStage stage)
     {
+        // Port-only (stage 6): the remade UPDATE asks the same (UpdateRestartOffered).
         // Only where what the game starts outlives it, and not for a setup waiting for the player's own start; in a
         // lobby's room, only when every game there can rejoin, before the match (network/MCLobbyUpdate.h).
         return stage == MCStage::Ready && MCUpdater::CanStartAgain() &&
@@ -1102,17 +1104,7 @@ namespace
     /// <summary>RESTART: the game quits so the update installs; in a lobby's room, it comes back to the room.</summary>
     void Restart()
     {
-        if (!MCLobbyUpdate::Restart())
-        {
-            // Port-only (SPEC-menus.md's "The intro movies"): the game starts itself again, so its next start skips the
-            // intro (network/MCIntroNote.h); a lobby's room's restart rejoins the room, with no intro.
-            if (const auto written = MCIntroNote::Write(MCFileSystem::UserRoot(), MCRejoinNote::Now()); !written)
-            {
-                SDL_Log("UPDATE: RESTART's intro note: %s", written.error().c_str());
-            }
-
-            MCUpdater::Answer(MCAnswer::Install);
-        }
+        RestartForUpdate();
     }
 
     /// <summary>SKIP: this version is never offered again, and the page closes.</summary>
@@ -1188,7 +1180,8 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     cinema->OverPicture = pictures.Up;
     cinema->DownPicture = pictures.Down;
     cinema->GrayPicture = pictures.Gray;
-    cinema->Callback().SetExec(ShowUpdatePage);
+    // Port-only (stage 6): the remade UPDATE, through the screens' flow (the old page when the menus' RmlUi can't start).
+    cinema->Callback().SetExec(MCUpdateScreen::OpenFromMenus);
     MenuButton = cinema;
 
     // The line under QUIT, in amber at its brightest.
@@ -1211,8 +1204,33 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
 
 std::string VersionLineText(std::string_view running)
 {
-    const std::string_view release = running.substr(0, running.find(BuildOpening));
+    const std::string_view release = ReleaseOf(running);
     return release.empty() ? std::string() : std::format(VersionLineFormat, release);
+}
+
+std::string_view ReleaseOf(std::string_view shown)
+{
+    return shown.substr(0, shown.find(BuildOpening));
+}
+
+bool UpdateRestartOffered()
+{
+    return RestartOffered(MCUpdater::Status().Stage);
+}
+
+void RestartForUpdate()
+{
+    if (!MCLobbyUpdate::Restart())
+    {
+        // Port-only (SPEC-menus.md's "The intro movies"): the game starts itself again, so its next start skips the
+        // intro (network/MCIntroNote.h); a lobby's room's restart rejoins the room, with no intro.
+        if (const auto written = MCIntroNote::Write(MCFileSystem::UserRoot(), MCRejoinNote::Now()); !written)
+        {
+            SDL_Log("UPDATE: RESTART's intro note: %s", written.error().c_str());
+        }
+
+        MCUpdater::Answer(MCAnswer::Install);
+    }
 }
 
 void AddVersionLine(MCGenericScreen& mainScreen)
@@ -1307,6 +1325,11 @@ void HideUpdatePage()
 
 bool UpdatePageShown()
 {
+    if (MCUpdateScreen::Shows())
+    {
+        return true;
+    }
+
     // A page on a screen that isn't showing (the session screen as the match starts) isn't.
     return std::ranges::any_of(LivePages(),
                                [](const MCUpdatePageView& view)

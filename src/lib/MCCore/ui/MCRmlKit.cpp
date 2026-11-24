@@ -19,6 +19,8 @@ namespace
     constexpr const char* TabClass = "tab";
     constexpr const char* NowClass = "now";
     constexpr const char* SwitchClass = "switch";
+    /// <summary>A switch Q and E step as tabs (a screen's groups: LOAD GAME's campaigns).</summary>
+    constexpr const char* TabsSwitchAttribute = "data-tabs";
     constexpr const char* OnClass = "on";
     constexpr const char* StepperClass = "stepper";
     constexpr const char* ArrowClass = "arrow";
@@ -342,6 +344,24 @@ bool MCRmlKit::StepTab(Rml::ElementDocument& document, int step)
         return true;
     }
 
+    // Port-only (stage 5): a screen without tabs whose groups are a switch's (LOAD GAME's ALL and campaigns, marked
+    // data-tabs) has Q and E step it, as tabs, round from its last to its first.
+    Rml::ElementList switches;
+    document.QuerySelectorAll(switches, std::format(".{}[{}]", SwitchClass, TabsSwitchAttribute));
+
+    for (Rml::Element* control : switches)
+    {
+        if (!control->IsVisible(true) || control->GetNumChildren() == 0)
+        {
+            continue;
+        }
+
+        const int count = control->GetNumChildren();
+        Play(TabSound);
+        Choose(*control, (std::max(Choice(*control), 0) + step + count) % count, true);
+        return true;
+    }
+
     return false;
 }
 
@@ -349,8 +369,11 @@ void MCRmlKit::OnClick(Rml::Event& event)
 {
     Rml::Element* target = event.GetTargetElement();
 
-    // Something off: its own sound, and the click goes no further (its screen never sees it).
-    if (Rml::Element* off = Up(target, OffClass); off != nullptr && Up(off, ButtonClass) == off)
+    // Something off (a button, or a held switch or stepper): its own sound, and the click goes no further (its screen
+    // never sees it).
+    if (Rml::Element* off = Up(target, OffClass);
+        off != nullptr &&
+        (Up(off, ButtonClass) == off || off->IsClassSet(SwitchClass) || off->IsClassSet(StepperClass)))
     {
         Play(OffClickSound);
         event.StopPropagation();
@@ -437,7 +460,8 @@ void MCRmlKit::OnKeyDown(Rml::Event& event)
     if ((key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT) &&
         (target->IsClassSet(SwitchClass) || target->IsClassSet(StepperClass)))
     {
-        if (!Step(*target, key == Rml::Input::KI_LEFT ? -1 : 1))
+        // A held one doesn't move.
+        if (target->IsClassSet(OffClass) || !Step(*target, key == Rml::Input::KI_LEFT ? -1 : 1))
         {
             Play(OffClickSound);
         }

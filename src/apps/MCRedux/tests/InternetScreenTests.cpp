@@ -3,6 +3,7 @@
 #include "MCInternetSpots.h"
 #include "MCMenusPictures.h"
 #include "MCTestGuest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "MCFakeUpdaterBackend.h"
@@ -25,6 +26,7 @@
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "gui/MCGuiStartup.h"
 #include "logistics/MCLogTextButton.h"
 #include "network/MCLobbyUpdate.h"
@@ -1125,19 +1127,24 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
     Settle();
     REQUIRE_EQ(DialogHeading(), "Needs version 0.7.0");
     PressDialogOk();
-    REQUIRE(SettleUntil([] { return UpdatePageShown(); }));
+    // Port-only (SPEC-menus.md's stage 6): the remade UPDATE over INTERNET, through the screens' flow.
+    REQUIRE(SettleUntil([] { return MCUpdateScreen::Shows() && !MCScreenChange::Running(); }));
+    CHECK(UpdatePageShown());
     CHECK(!OnInternet());
+    const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
+    REQUIRE(update != nullptr);
+    CHECK_EQ(MCRemadeTest::Words(*update, "place"), std::string("Internet"));
     MCUpdater::Answer(MCUpdater::MCAnswer::Install);
     MCUpdater::Ready();
     Settle();
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. RESTART TO INSTALL IT AND JOIN NEXT VERSION."));
-    const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(*GlobalLog()->MainScreen, "RESTART");
-    REQUIRE(restart != nullptr);
-    REQUIRE(restart->IsShowing());
-    SaveShot("internet 13 update to join", ScreenHash());
+    CHECK_EQ(MCRemadeTest::Words(*update, "status"),
+             std::string("Downloaded. Restart to install it and join Next version."));
+    REQUIRE(MCRemadeTest::Visible(*update, "act"));
+    CHECK_EQ(MCRemadeTest::Words(*update, "act"), std::string("Restart"));
+    SaveShownShot("internet 13 update to join");
 
     // RESTART: the update installs, and the new version joins the game, the menus' again once in.
-    ClickButton(*restart);
+    REQUIRE(MCRemadeTest::Press(*update, "act"));
     REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
     CHECK(updater.Log->Answers.back() == MCUpdater::MCAnswer::Install);
     constexpr uint64_t NextBuild = 900;

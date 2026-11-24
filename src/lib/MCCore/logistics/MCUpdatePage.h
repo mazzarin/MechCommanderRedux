@@ -49,6 +49,22 @@ void AddVersionLine(MCGenericScreen& mainScreen);
 /// </summary>
 std::string VersionLineText(std::string_view running);
 
+/// <summary>The release a version as shown names, without its build: "0.6.3" for "0.6.3 (899)".</summary>
+std::string_view ReleaseOf(std::string_view shown);
+
+/// <summary>
+/// Whether RESTART is offered for the update ready: only where what the game starts outlives it, not for a setup waiting
+/// for the player's own start, and in a lobby's room only when every game there can rejoin (the old page's and the remade
+/// UPDATE's, logistics/MCUpdateScreen.h).
+/// </summary>
+bool UpdateRestartOffered();
+
+/// <summary>
+/// RESTART: the game quits so the update installs, its next start skipping the intro (the note); in a lobby's room, it
+/// comes back to the room.
+/// </summary>
+void RestartForUpdate();
+
 /// <summary>UPDATE: the main menu's page shows (each screen that shows the page has its own, all showing the updater).</summary>
 void ShowUpdatePage();
 
@@ -81,7 +97,7 @@ void HideUpdatePage();
 /// <summary>Port-only (SPEC-menus.md's stage 3): every page hidden, nothing more (the flow's "update" hiding).</summary>
 void HideUpdatePageViews();
 
-/// <summary>Whether the UPDATE page is showing.</summary>
+/// <summary>Whether the UPDATE page is showing (or the remade UPDATE).</summary>
 bool UpdatePageShown();
 
 /// <summary>The page's status line now (what the update is doing).</summary>

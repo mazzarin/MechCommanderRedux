@@ -262,6 +262,9 @@
     <ClCompile Include="tests\PortTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\PrefsScreenTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\PresenterTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -275,6 +278,9 @@
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\RoomEndTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\SavesTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\ScenarioTests.cpp">
@@ -338,6 +344,9 @@
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\UpdaterTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\UpdateScreenTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\UploadSlotsTests.cpp">
@@ -465,6 +474,9 @@
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCTestShapes.h">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\RemadeScreens.h">
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\ScreenInput.h">

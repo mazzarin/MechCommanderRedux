@@ -234,45 +234,70 @@ void MCRmlScreen::Hide()
         if (_Layer.has_value())
         {
             Layer().Hidden(*this);
+            FocusBelow();
         }
 
         OnHide();
     }
 }
 
-bool MCRmlScreen::OnClick(const std::string& id, std::function<void()> act)
+void MCRmlScreen::FocusBelow()
+{
+    // RmlUi gives the keys' focus back to the document focused before, but only one in its focus history, and a kept
+    // screen shown again with the focus still in it (nothing shown since it hid) isn't put back in the history: a window
+    // over it then hid with the focus left in the window (SAVE GAME's NAME took no keys after the overwrite's question,
+    // LOAD GAME's list none after DELETE's). So the screen now on top takes it: where it had it, or where it opens with it.
+    Rml::Element* focus = Layer().Context().GetFocusElement();
+    const MCOptionalRef<MCRmlScreen> top = Layer().Top();
+
+    if (_Document == nullptr || focus == nullptr || focus->GetOwnerDocument() != _Document || !top.has_value() ||
+        top->get()._Document == nullptr)
+    {
+        return;
+    }
+
+    Rml::ElementDocument& below = *top->get()._Document;
+
+    if (Rml::Element* leaf = below.GetFocusLeafNode(); leaf != &below && leaf->IsVisible(true))
+    {
+        leaf->Focus(false);
+    }
+    else if (const MCOptionalRef<Rml::Element> first = top->get().FirstFocus(below); first.has_value())
+    {
+        first->get().Focus(false);
+    }
+    else
+    {
+        below.Focus(false);
+    }
+}
+
+bool MCRmlScreen::Listen(const std::string& id, Rml::EventId event, std::function<void(Rml::Event&)> act)
 {
     Rml::Element* element = _Document != nullptr ? _Document->GetElementById(id) : nullptr;
 
     if (element == nullptr)
     {
-        SDL_Log("Menus: %s has no element '%s' to click", _Path.c_str(), id.c_str());
+        SDL_Log("Menus: %s has no element '%s' to listen to", _Path.c_str(), id.c_str());
         return false;
     }
 
-    auto action = std::make_shared<MCAction>(weak_from_this(), [act = std::move(act)](Rml::Event&) { act(); });
-    element->AddEventListener(Rml::EventId::Click, action.get());
+    auto action = std::make_shared<MCAction>(weak_from_this(), std::move(act));
+    element->AddEventListener(event, action.get());
     _Listening.push_back(
-        MCListening{.Element = element, .Event = static_cast<int>(Rml::EventId::Click), .Action = std::move(action)});
+        MCListening{.Element = element, .Event = static_cast<int>(event), .Action = std::move(action)});
     return true;
+}
+
+bool MCRmlScreen::OnClick(const std::string& id, std::function<void()> act)
+{
+    return Listen(id, Rml::EventId::Click, [act = std::move(act)](Rml::Event&) { act(); });
 }
 
 bool MCRmlScreen::OnChange(const std::string& id, std::function<void(int value)> act)
 {
-    Rml::Element* element = _Document != nullptr ? _Document->GetElementById(id) : nullptr;
-
-    if (element == nullptr)
-    {
-        SDL_Log("Menus: %s has no element '%s' to change", _Path.c_str(), id.c_str());
-        return false;
-    }
-
-    auto action = std::make_shared<MCAction>(weak_from_this(), [act = std::move(act)](Rml::Event& event)
-                                             { act(event.GetParameter<int>("value", 0)); });
-    element->AddEventListener(Rml::EventId::Change, action.get());
-    _Listening.push_back(
-        MCListening{.Element = element, .Event = static_cast<int>(Rml::EventId::Change), .Action = std::move(action)});
-    return true;
+    return Listen(id, Rml::EventId::Change,
+                  [act = std::move(act)](Rml::Event& event) { act(event.GetParameter<int>("value", 0)); });
 }
 
 bool MCRmlScreen::OnKey(int /*key*/, int /*modifiers*/)

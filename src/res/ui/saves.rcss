@@ -1,0 +1,67 @@
+/* Port-only (SPEC-menus.md, stage 5): LOAD GAME's and SAVE GAME's places over the look (look.rcss), as the approved
+   frames have them (tools/menus-frames/frames/load.rcss): a panel over the painting, the saves list beside the picked
+   save's facts and its mission's map, the hint line along the window's foot. */
+
+/* The main menu's painting placed whole over the stone (until it's in, the stone alone). */
+.painting { decorator: image(art/main_menu.png cover center center); }
+
+#frame { padding-top: 90dp; }
+#load { height: 346dp; display: flex; flex-direction: column; }
+#load > * { flex: 0 0 auto; }
+#load > .grow { flex: 1 1 0; }
+
+/* Which saves: the look's switch, the shown campaign filled. */
+#which { margin-bottom: 8dp; }
+
+#body { align-items: stretch; }
+#saves { flex: 2 1 0; }
+#saves > * { flex: 0 0 auto; }
+#saves > .scroll-box { flex: 1 1 0; }
+#saves > .empty { flex: 1 1 0; }
+#pick { flex: 0 0 212dp; box-sizing: border-box; padding-left: 12dp; border-left: 1dp #2a3742; display: flex; flex-direction: column; }
+#pick > .column { flex: 1 1 0; }
+#pick > .column > * { flex: 0 0 auto; }
+.c-campaign { flex: 0 0 68dp; }
+.c-when { flex: 0 0 56dp; }
+.c-rp { flex: 0 0 52dp; }
+.c-saved { flex: 0 0 92dp; }
+
+/* A row's mission in white, the rest grey; the picked row's all white. A mission or name too long for its column
+   goes on to a second line, whole (a player's name of 31 letters, the longest missions at 4:3). */
+.list-row .cell { color: #a4b0bc; }
+.list-row .cell.grow, .list-row.picked .cell { color: #fcfcfc; }
+#saves .list-row { height: auto; min-height: 16dp; white-space: normal; }
+#saves .list-row .cell.grow { white-space: normal; word-break: break-word; }
+
+/* The picked save: its mission (on two lines when it's long), its campaign, its place in it, then its mission's map. */
+#pick-heading { white-space: normal; word-break: break-word; }
+#pick-campaign { margin-bottom: 8dp; }
+.fact { height: 16dp; display: flex; flex-direction: row; font-size: 11.63dp; line-height: 16dp; white-space: nowrap; }
+.fact .label { flex: 0 0 72dp; font-size: 9.51dp; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #7cd4ec; }
+#pick .savemap { flex: 1 1 0; margin-top: 8dp; }
+
+#foot { padding-top: 8dp; border-top: 1dp #2a3742; }
+#foot .name-label { line-height: 20dp; }
+#foot .field { width: 128dp; }
+
+#hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 40dp; }
+#hintbar .hints { margin-top: 14dp; }
+/* A window's own hint line over the screen's, in the well, so the screen's keys don't show through it. */
+.window-body #hintbar { background-color: #040404; }
+
+/* A 4:3 or 5:4 window: the campaign's column goes (the picked save names it) and the picked save's column narrows,
+   so the missions keep their room. */
+@media (max-aspect-ratio: 3/2) {
+    #saves .c-campaign { display: none; }
+    #pick { flex: 0 0 176dp; }
+}
+
+/* A window over the screen (DELETE's question, an overwrite's, a message): the question as its title, what it means
+   under it, the way back at the left and the answer at the right (the frames' dialog.rcss). */
+.dialog { width: 320dp; display: flex; flex-direction: column; }
+.dialog > * { flex: 0 0 auto; }
+.dialog .say { font-size: 11.63dp; line-height: 16dp; color: #dce4e4; }
+.dialog .say p { display: block; margin-bottom: 6dp; }
+.dialog .foot { margin-top: 10dp; padding-top: 8dp; border-top: 1dp #2a3742; gap: 8dp; }
+.dialog .foot > * { flex: 0 0 auto; }
+.dialog .foot > .grow { flex: 1 1 0; }

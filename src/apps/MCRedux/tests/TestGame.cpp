@@ -210,6 +210,33 @@ namespace MCTestGame
         return files;
     }
 
+    // The test user folder the game boots into (Boot): MCFileSystem::UserRoot() names it only once the game is up, and
+    // the game folder before.
+    KeepPrefs::KeepPrefs() : _Path(UserFolder() / PrefsFile)
+    {
+        std::ifstream file(_Path, std::ios::binary);
+        _Existed = file.is_open();
+        _Contents.assign(std::istreambuf_iterator<char>(file), {});
+    }
+
+    KeepPrefs::~KeepPrefs()
+    {
+        if (_Existed)
+        {
+            if (!(std::ofstream(_Path, std::ios::binary | std::ios::trunc) << _Contents))
+            {
+                std::cout << "  can't put back the prefs " << _Path.string() << "\n";
+            }
+
+            return;
+        }
+
+        if (std::error_code error; !std::filesystem::remove(_Path, error) && error)
+        {
+            std::cout << "  can't remove the prefs " << _Path.string() << ": " << error.message() << "\n";
+        }
+    }
+
     namespace
     {
         /// <summary>

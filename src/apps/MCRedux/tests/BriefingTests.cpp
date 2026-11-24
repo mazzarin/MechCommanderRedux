@@ -22,6 +22,8 @@
 #include "logistics/MCLogButton.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMechBriefBlock.h"
+#include "logistics/MCMenuScreens.h"
+#include "logistics/MCSavesMenu.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "logistics/MCPurMechList.h"
@@ -1411,27 +1413,20 @@ namespace
 {
     /// <summary>The logistics state of the repair screen, where the main menu's RETURN TO GAME goes back to.</summary>
     constexpr int32_t RepairScreenState = 4;
-    /// <summary>The asserts the load screen's listing makes for a save naming a mission the campaign hasn't: its
-    /// operation and its mission number, each missing from the master mission file.</summary>
-    constexpr int32_t UnlistedMissionAsserts = 2;
-
     /// <summary>
-    /// Loads save <paramref name="name"/> as a player does: the main menu's load screen, the save picked, LOAD pressed;
-    /// <paramref name="listingAsserts"/> the asserts listing the saves makes.
+    /// Loads save <paramref name="name"/> as a player does: the main menu's LOAD GAME (stage 5's), the save picked,
+    /// LOAD pressed.
     /// </summary>
-    void LoadFromScreen(std::string_view name, int32_t listingAsserts)
+    void LoadFromScreen(std::string_view name)
     {
-        {
-            MCTest::ExpectAssert listing("in master mission file", listingAsserts);
-            LoadScreen();
-            Settle();
-        }
-
-        MCFileScrollPane& pane = *GlobalLog()->LoadScreen->FilePane;
-        const auto file = std::ranges::find(pane.Files, name, &MCFileScrollPane::File::Name);
-        REQUIRE(file != pane.Files.end());
-        pane.SetSelectedFile(static_cast<int32_t>(file - pane.Files.begin()));
-        LoadGame();
+        REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+        Settle();
+        REQUIRE(MCSavesMenu::Screen().has_value());
+        MCSavesScreen& screen = MCSavesMenu::Screen()->get();
+        const auto save = std::ranges::find(screen.Saves(), name);
+        REQUIRE(save != screen.Saves().end());
+        screen.Pick(static_cast<int>(save - screen.Saves().begin()));
+        screen.PressMain();
         Settle();
     }
 }
@@ -1482,20 +1477,21 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         logistics->SetUpMainScreen(false);
         Settle();
         REQUIRE_EQ(logistics->PreviousState, RepairScreenState);
-        LoadFromScreen("p3refused", UnlistedMissionAsserts);
-        CHECK(logistics->CurrentScreen() == logistics->LoadScreen);
+        LoadFromScreen("p3refused");
+        REQUIRE(MCSavesMenu::Screen().has_value());
+        MCSavesScreen& loadGame = MCSavesMenu::Screen()->get();
+        CHECK(loadGame.Shown());
         CHECK_EQ(logistics->CurrentMission, -1);
-        MCReusableDialog& message = *logistics->MessageDialog;
-        REQUIRE(message.IsShowing());
-        CHECK_EQ(message.Text, RefusedSaveText);
-        MCGuiObject& ok = *message.OkButton;
-        Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
+        REQUIRE(loadGame.Dialog());
+        CHECK(loadGame.Dialog()->Shown());
+        CHECK_EQ(loadGame.Dialog()->Saying().Question, std::string(MCSavesMenu::RefusedText));
+        MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
         Settle();
-        CHECK(!message.IsShowing());
-        CHECK(logistics->CurrentScreen() == logistics->LoadScreen);
+        CHECK(!loadGame.Dialog()->Shown());
+        CHECK(loadGame.Shown());
 
         // Back on the main menu, neither goes anywhere.
-        Cancel();
+        MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
         Settle();
         REQUIRE(logistics->CurrentScreen() == logistics->MainScreen);
         ReturnToGame();
@@ -1506,9 +1502,9 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         CHECK(logistics->CurrentScreen() == logistics->MainScreen);
 
         // The next load fills the lists again and opens the campaign.
-        LoadFromScreen("p3good", UnlistedMissionAsserts);
+        LoadFromScreen("p3good");
         CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
-        CHECK(!message.IsShowing());
+        CHECK(!loadGame.Shown());
         CHECK_EQ(logistics->CurrentMission, goodMission);
         CHECK(!logistics->ForceMechList->Mechs.empty());
         CHECK(!logistics->AssignedWarriorList->Warriors.empty());
@@ -1540,7 +1536,7 @@ namespace
         REQUIRE_EQ(NumUnits(), units);
         REQUIRE_EQ(logistics->SaveCampaign(name), 0);
         logistics->MechList->Clear();
-        LoadFromScreen(name, 0);
+        LoadFromScreen(name);
         REQUIRE(logistics->CurrentScreen() == logistics->BriefingScreen);
     }
 

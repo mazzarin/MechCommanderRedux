@@ -46,6 +46,8 @@ namespace
 
     /// <summary>The UPDATE page's line for an update ready to join a game the INTERNET screen picked.</summary>
     constexpr std::string_view JoinAfterFormat = "DOWNLOADED. RESTART TO INSTALL IT AND JOIN {}.";
+    /// <summary>The remade UPDATE's, in sentence case (MCLobbyUpdate::JoinAfterLine).</summary>
+    constexpr std::string_view JoinAfterLineFormat = "Downloaded. Restart to install it and join {}.";
 
     /// <summary>The UPDATE page's line for an update ready in a room (MCLobbyUpdate::ReadyText).</summary>
     constexpr std::string_view AfterMatchText = "DOWNLOADED. IT WILL INSTALL AFTER THE MATCH.";
@@ -745,6 +747,13 @@ auto MCLobbyUpdate::ReadyText() -> std::string
     }
 
     return std::string(Others().empty() ? HostAloneRestartText : HostRestartText);
+}
+
+auto MCLobbyUpdate::JoinAfterLine() -> std::string
+{
+    return !InRoom() && JoinAfter.has_value() && MCUpdater::ExpectedBuild().has_value()
+               ? std::format(JoinAfterLineFormat, JoinAfter->Name)
+               : std::string();
 }
 
 auto MCLobbyUpdate::CanRestart() -> bool

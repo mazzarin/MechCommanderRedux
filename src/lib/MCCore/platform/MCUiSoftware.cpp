@@ -509,34 +509,39 @@ void MCUiTriangle(SDL_Surface& picture, const SDL_Rect& clip, std::span<const SD
             }
         }
 
-        uint8_t* pixel = static_cast<uint8_t*>(picture.pixels) + static_cast<ptrdiff_t>(walked.y + y) * picture.pitch +
-                         static_cast<ptrdiff_t>(walked.x + first) * static_cast<ptrdiff_t>(PixelBytes);
-
-        if (uniform)
+        // An empty row (first past last) has no pixel to point at: its pointer would be past the picture.
+        if (first <= last)
         {
-            for (int64_t x = first; x <= last; ++x, pixel += PixelBytes)
-            {
-                one.Over(pixel);
-            }
-        }
-        else if (first <= last)
-        {
-            const std::array<int64_t, TriangleCorners> w = {row[0] + across[0] * first, row[1] + across[1] * first,
-                                                            row[2] + across[2] * first};
-            std::array<MCStepped, PixelBytes> channels = {MCStepped(weighted(w, 0), weighted(across, 0), area),
-                                                          MCStepped(weighted(w, 1), weighted(across, 1), area),
-                                                          MCStepped(weighted(w, 2), weighted(across, 2), area),
-                                                          MCStepped(weighted(w, 3), weighted(across, 3), area)};
+            uint8_t* pixel = static_cast<uint8_t*>(picture.pixels) +
+                             static_cast<ptrdiff_t>(walked.y + y) * picture.pitch +
+                             static_cast<ptrdiff_t>(walked.x + first) * static_cast<ptrdiff_t>(PixelBytes);
 
-            for (int64_t x = first; x <= last; ++x, pixel += PixelBytes)
+            if (uniform)
             {
-                const MCStraight here(std::array<int64_t, PixelBytes>{channels[0].Value(), channels[1].Value(),
-                                                                      channels[2].Value(), channels[3].Value()});
-                here.Over(pixel);
-
-                for (MCStepped& channel : channels)
+                for (int64_t x = first; x <= last; ++x, pixel += PixelBytes)
                 {
-                    channel.Step();
+                    one.Over(pixel);
+                }
+            }
+            else
+            {
+                const std::array<int64_t, TriangleCorners> w = {row[0] + across[0] * first, row[1] + across[1] * first,
+                                                                row[2] + across[2] * first};
+                std::array<MCStepped, PixelBytes> channels = {MCStepped(weighted(w, 0), weighted(across, 0), area),
+                                                              MCStepped(weighted(w, 1), weighted(across, 1), area),
+                                                              MCStepped(weighted(w, 2), weighted(across, 2), area),
+                                                              MCStepped(weighted(w, 3), weighted(across, 3), area)};
+
+                for (int64_t x = first; x <= last; ++x, pixel += PixelBytes)
+                {
+                    const MCStraight here(std::array<int64_t, PixelBytes>{channels[0].Value(), channels[1].Value(),
+                                                                          channels[2].Value(), channels[3].Value()});
+                    here.Over(pixel);
+
+                    for (MCStepped& channel : channels)
+                    {
+                        channel.Step();
+                    }
                 }
             }
         }
@@ -828,6 +833,9 @@ std::expected<void, std::string> MCUiSoftware::MakePicture(int width, int height
 
     if (_White == nullptr || !SDL_UpdateTexture(_White.get(), nullptr, White.data(), PixelBytes))
     {
+        // The texture and the renderer draw into the surface: they go first.
+        _White.reset();
+        _Renderer.reset();
         _Surface.reset();
         return std::unexpected(SdlError(std::format("the {}x{} picture's renderer", width, height)));
     }

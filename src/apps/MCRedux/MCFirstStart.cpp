@@ -401,6 +401,7 @@ std::string MCFirstStart::ProblemText(const MCFailure& failure)
             return std::format(DiskFullText, MCUpdateWork::SizeText(failure.BytesShort));
         case MCFailureKind::NewerProgram:
             return std::string(NewerProgramText);
+        case MCFailureKind::Damaged:
         case MCFailureKind::Other:
             break;
     }

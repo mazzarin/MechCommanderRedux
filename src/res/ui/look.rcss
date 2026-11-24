@@ -206,6 +206,8 @@ span, em, strong { display: inline; }
 }
 .switch > div:last-child { margin-right: 0; }  /* the segments share their borders, inside the switch */
 .switch > .on { background-color: #045454; color: #fcfcfc; }
+/* The segments share their borders; the last one's right border is the switch's edge. */
+.switch > div:last-child { margin-right: 0; }
 .switch.small > div { height: 16dp; line-height: 14dp; padding: 0 8dp; }
 /* The chat (multiplayer): the newest line at its foot, as many above it as its room holds. A sender's name in their player's
    colour; a line only the team saw marked TEAM; the game's own lines in grey. Under them the line being typed, after
@@ -362,11 +364,14 @@ span, em, strong { display: inline; }
    arrows), followed by <div class="fade"/> while more lies below; the picked row .picked; Enter on a row picks it
    and presses the screen's .button.main.
    Tabs: <div class="tabs"><div class="tab now">A</div><div class="tab">B</div></div>; Q and E, or a click.
-   A switch: <div class="switch"><div class="on">ON</div><div>OFF</div></div>; Left and Right, or a click.
+   A switch: <div class="switch"><div class="on">ON</div><div>OFF</div></div>; Left and Right, or a click; one that
+   is a screen's groups (LOAD GAME's campaigns) marked data-tabs, and Q and E step it as tabs.
    A stepper: <div class="stepper" data-choices="LOW|MEDIUM|HIGH" data-choice="1"><div class="arrow">&lt;</div>
    <div class="step-value"/><div class="arrow">&gt;</div></div>; Left and Right, or its arrows.
+   A switch or stepper held (.off on it) refuses Left, Right and clicks with the refusal's sound, as a dim button does.
    A slider: <input type="range" class="slider" min="0" max="100" step="5" value="50"/>, its number the screen's.
-   A text box: <input type="text" class="field" value="..."/>; Enter leaves it.
+   A text box: <input type="text" class="field" value="..."/>; Enter leaves it, or with data-enter="save" presses
+   the button of that id (SAVE GAME's NAME and SAVE).
    A window: its own document, shown over the screen: <body class="window-body"><div class="veil"/>
    <div class="window-place"><div class="panel window">...</div></div></body>; Escape is its CANCEL, Enter its main.
    The hint line: <div class="hints row"><div class="mouse-hints grow"/><div class="keys"/></div>: the left what the

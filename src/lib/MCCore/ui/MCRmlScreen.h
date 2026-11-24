@@ -9,6 +9,8 @@ namespace Rml
     class Context;
     class Element;
     class ElementDocument;
+    class Event;
+    enum class EventId : uint16_t;
 }
 
 class MCRmlLayer;
@@ -114,6 +116,14 @@ public:
     /// </summary>
     virtual bool OnKey(int key, int modifiers);
 
+    /// <summary>
+    /// Whether the screen takes the keys first, as SDL sends them (<see cref="OnRawKey"/>), before RmlUi and the kit:
+    /// CONTROLS waiting for a key, where every key is the binding, Escape and the arrows too.
+    /// </summary>
+    virtual bool TakesKeys() const { return false; }
+    /// <summary>A key pressed or let go while the screen <see cref="TakesKeys"/>; whether it used it (else RmlUi has it).</summary>
+    virtual bool OnRawKey(const SDL_KeyboardEvent& /*key*/) { return false; }
+
 protected:
     /// <summary>The screen's models, made in its layer's context before its document is read (RmlUi binds them then).</summary>
     virtual void MakeModels(Rml::Context& /*context*/) {}
@@ -136,12 +146,19 @@ protected:
     bool OnClick(const std::string& id, std::function<void()> act);
     /// <summary>Calls <paramref name="act"/> with the element <paramref name="id"/>'s change event's value.</summary>
     bool OnChange(const std::string& id, std::function<void(int value)> act);
+    /// <summary>
+    /// Calls <paramref name="act"/> with each <paramref name="event"/> on the element <paramref name="id"/> or under it
+    /// (a list's clicks, a box's right-click); false without one. Taken off the element before the document closes.
+    /// </summary>
+    bool Listen(const std::string& id, Rml::EventId event, std::function<void(Rml::Event&)> act);
 
 private:
     friend class MCRmlLayer;
 
     /// <summary>Set by the layer as it makes the screen.</summary>
     void Attach(MCRmlLayer& layer) { _Layer = layer; }
+    /// <summary>Hidden with the keys' focus still in it: the focus given to the screen now on top.</summary>
+    void FocusBelow();
     /// <summary>The screen's steps (<see cref="Prepare"/>).</summary>
     void Read();
     void LayOut();

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCMainMenuModel.h"
 #include "ai/MCMoveGeometry.h"
+#include "gui/MCUpdateDisplay.h"
 #include "lib/MCFile.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
@@ -222,4 +223,7 @@ auto MCMainMenuModel::ToMainMenu() -> void
     WhackTimer = true;
     GlobalLog()->SetUpMainScreen(true);
     LoadingSolo = false;
+    // Swapped in place, outside a change of screen: the palette 1998's main menu sets goes in at once. No 1998 screen
+    // shows, and the next frame's palette fade would darken the remade menu to black (2.2 s on this Mac at 60 Hz).
+    ActivatePaletteNow();
 }

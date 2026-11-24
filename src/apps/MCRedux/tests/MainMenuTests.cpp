@@ -8,6 +8,7 @@
 #include "TestGame.h"
 #include "fakes/MCServiceScript.h"
 #include "gui/MCGuiGlobals.h"
+#include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCBriefingScreen.h"
@@ -343,7 +344,11 @@ TEST_CASE_ISOLATED("game: the main menu and its submenus draw the same on every 
     CHECK(!Visible(MCMainPanel::Campaigns, "load"));
     CHECK(!Visible(MCMainPanel::Campaigns, "new"));
     CheckFrames(*display, "main_menu_campaigns_new", {0xba9c6b15, 0x1608da25, 0x8088f727});
-    Click(MCMainPanel::Campaigns, "back");
+    // BACK swaps the main menu in at once: no palette waits for the next frame's fade (which would darken the remade
+    // menu to black for a second).
+    REQUIRE(MCRemadeTest::Press(Panel(MCMainPanel::Campaigns), "back"));
+    CHECK(GuiSystem().PendingPalette.empty());
+    RunWhileChanging();
     REQUIRE(OnMainMenu());
 
     // SOLO MISSIONS: the single missions by their briefings' names, what each starts with under it.

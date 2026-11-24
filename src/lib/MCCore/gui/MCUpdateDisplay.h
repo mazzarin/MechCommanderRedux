@@ -105,6 +105,12 @@ std::vector<std::function<void()>> IntoScreenPieces();
 /// not up, the GUI stopping), only <paramref name="work"/>, as before.
 /// </summary>
 void FadeOutWhile(const std::function<void()>& work);
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 7): the palette waiting (MCGuiSystem::ActivatePalette) put in now, with no fade:
+/// for a 1998 screen's palette set while a remade screen covers the window and no change of screen runs (the main
+/// menu's submenus' BACK, in place), where the next frame's fade would only darken the remade screen for a second.
+/// </summary>
+void ActivatePaletteNow();
 
 /// <summary>Starts the mouse timer.</summary>
 void MouseTimerInit();

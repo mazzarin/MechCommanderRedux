@@ -87,8 +87,9 @@
 // to the main menu's first frame (the tests' install has no intro movies), then each change from its press to its
 // first whole frame (a swap's line "change <name>: ...", a flow's change its own): CAMPAIGNS, SOLO MISSIONS and
 // MULTIPLAYER swapped in and BACK, QUIT's question and Escape, LOAD GAME and Escape, NEW CAMPAIGN into the briefing,
-// the briefing's MAIN MENU (between missions), RETURN TO GAME, the main menu again, SAVE GAME and Escape, the campaign
-// left, CONTINUE, the campaign left, SOLO MISSIONS' PLAY, the campaign left and ORIGINAL CINEMA. Not recorded.
+// the briefing's MAIN MENU (between missions), RETURN TO GAME, MAIN MENU again, SAVE GAME and Escape; then, as at a
+// start of the game with a save, CONTINUE and CAMPAIGNS' CONTINUE, each into its briefing and MAIN MENU back; SOLO
+// MISSIONS' PLAY, MAIN MENU back, and ORIGINAL CINEMA. Not recorded.
 
 namespace
 {
@@ -882,6 +883,19 @@ namespace
                logistics->BriefingScreen->IsShowing() && Settled();
     }
 
+    /// <summary>The save the main menu's walk makes for CONTINUE (in the tests' user folder, gone after).</summary>
+    constexpr std::string_view TimedSave = "Timed";
+
+    /// <summary>
+    /// The main menu as a start of the game finds it: no campaign loaded (CONTINUE, not RETURN TO GAME), shown a while.
+    /// </summary>
+    void AsGameStart(const MCRealTime& time)
+    {
+        GlobalLog()->CurrentMission = -1;
+        MCTestGuest::Panel(MCMainPanel::Main).Refresh();
+        RunPacedFor(time, SecondsAfter);
+    }
+
     /// <summary>Stage 7's main menu (--record-window-main 1; see the top of this file).</summary>
     void TimeMainMenu(const MCRealTime& time)
     {
@@ -921,37 +935,47 @@ namespace
         LetGo(time, SDL_SCANCODE_ESCAPE);
 
         // CAMPAIGNS' NEW CAMPAIGN (no save: its main button) into the briefing; the briefing's MAIN MENU, between
-        // missions; RETURN TO GAME; the main menu again and SAVE GAME, Escape back.
+        // missions; RETURN TO GAME; MAIN MENU again and SAVE GAME, Escape back.
         TimeChange(time, "main menu to campaigns again", PressOn(MCMainPanel::Main, "campaigns"),
                    PanelOnTop(MCMainPanel::Campaigns));
         FlowChange(time, PressOn(MCMainPanel::Campaigns, "main"));
         CHECK(BriefingShown());
         RunPacedFor(time, SecondsAfter);
         FlowChange(time, MCMenuScreens::LeaveCampaign);
-        RunPacedFor(time, SecondsAfter);
-        FlowChange(time, PressOn(MCMainPanel::Main, "campaigns"));
-        TimeChange(time, "campaigns' continue", PressOn(MCMainPanel::Campaigns, "main"), BriefingShown);
-        RunPacedFor(time, SecondsAfter);
-        FlowChange(time, [] { GlobalLog()->SetUpMainScreen(false); });
         CHECK(mainShown());
         RunPacedFor(time, SecondsAfter);
         FlowChange(time, PressOn(MCMainPanel::Main, "return"));
         CHECK(BriefingShown());
-        FlowChange(time, [] { GlobalLog()->SetUpMainScreen(false); });
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, MCMenuScreens::LeaveCampaign);
+        RunPacedFor(time, SecondsAfter);
         FlowChange(time, PressOn(MCMainPanel::Main, "save"));
         RunPacedFor(time, SecondsAfter);
         FlowChange(time, KeyDown(SDL_SCANCODE_ESCAPE));
         LetGo(time, SDL_SCANCODE_ESCAPE);
 
-        // The campaign left; CONTINUE; left again; SOLO MISSIONS' PLAY; left; ORIGINAL CINEMA (no movie: back).
-        FlowChange(time, MCMenuScreens::LeaveCampaign);
-        RunPacedFor(time, SecondsAfter);
+        // CONTINUE and CAMPAIGNS' CONTINUE, as at a start of the game with a save (the campaign saved, then no campaign
+        // loaded: CONTINUE isn't shown between missions), each into the save's briefing and MAIN MENU back.
+        REQUIRE_EQ(MCLogistics::SaveCampaign(std::string(TimedSave)), 0);
+        AsGameStart(time);
         FlowChange(time, PressOn(MCMainPanel::Main, "continue"));
         CHECK(BriefingShown());
+        RunPacedFor(time, SecondsAfter);
         FlowChange(time, MCMenuScreens::LeaveCampaign);
+        AsGameStart(time);
+        TimeChange(time, "main menu to campaigns, a save", PressOn(MCMainPanel::Main, "campaigns"),
+                   PanelOnTop(MCMainPanel::Campaigns));
+        RunPacedFor(time, SecondsAfter);
+        TimeChange(time, "campaigns' continue", PressOn(MCMainPanel::Campaigns, "main"), BriefingShown);
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, MCMenuScreens::LeaveCampaign);
+        RunPacedFor(time, SecondsAfter);
+
+        // SOLO MISSIONS' PLAY into its briefing, MAIN MENU back; ORIGINAL CINEMA (no movie: back).
         TimeChange(time, "main menu to solo again", PressOn(MCMainPanel::Main, "solo"), PanelOnTop(MCMainPanel::Solo));
         FlowChange(time, PressOn(MCMainPanel::Solo, "main"));
         CHECK(BriefingShown());
+        RunPacedFor(time, SecondsAfter);
         FlowChange(time, MCMenuScreens::LeaveCampaign);
         RunPacedFor(time, SecondsAfter);
         FlowChange(time, PressOn(MCMainPanel::Main, "cinema"));

@@ -6,6 +6,7 @@
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCBriefingText.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCMissionNames.h"
 #include "logistics/MCOperationVideo.h"
@@ -20,6 +21,7 @@
 #include "main/MCLogWarrior.h"
 #include "main/MCLogWarriorList.h"
 #include "main/MCLogistics.h"
+#include "main/MCMPPlayerLights.h"
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
 #include "sound/MCSoundSystem.h"
@@ -42,6 +44,17 @@ namespace
 {
     constexpr const char* ScreenDocument = "campaign.rml";
     constexpr const char* ScreenModel = "campaign";
+    /// <summary>
+    /// A match's chat's places (BRIEFING's under the orders, DEPLOY's under the groups, and each tab's column at 21:9): its
+    /// line's boxes and TEAM/ALL switches, kept as one.
+    /// </summary>
+    constexpr std::array<const char*, 4> SayIds = {"say-brief", "say-brief-side", "say-deploy", "say-deploy-side"};
+    constexpr std::array<const char*, 4> ToIds = {"to-brief", "to-brief-side", "to-deploy", "to-deploy-side"};
+    /// <summary>The chat's switch: TEAM, then ALL (the room's order).</summary>
+    constexpr int TeamChoice = 0;
+    constexpr int AllChoice = 1;
+    /// <summary>A player's light once they've pressed BEGIN MISSION (MCMPPlayerLights' status 2, 1998's blinking green).</summary>
+    constexpr int32_t ReadyLight = 2;
     constexpr const char* TabsId = "tabs";
     constexpr const char* MapId = "map";
     constexpr const char* DropId = "drop";
@@ -164,6 +177,28 @@ namespace
         return mission->Scenarios[static_cast<size_t>(mission->CurrentScenario)];
     }
 
+    /// <summary>Whether player <paramref name="id"/>'s light is green: BEGIN MISSION pressed.</summary>
+    bool LightReady(const MCLogistics& logistics, uint32_t id)
+    {
+        if (logistics.PlayerLights == nullptr)
+        {
+            return false;
+        }
+
+        const MCMPPlayerLights& lights = *logistics.PlayerLights;
+        const auto count = static_cast<size_t>(std::clamp(lights.NumPlayers, 0, MCMPPlayerLights::MaxPlayers));
+
+        for (size_t light = 0; light < count; ++light)
+        {
+            if (lights.PlayerIDs[light] == id)
+            {
+                return lights.PlayerStatus[light] == ReadyLight;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>The element <paramref name="id"/> of the screen's document; null with none.</summary>
     Rml::Element* ElementOf(const MCOptionalRef<Rml::ElementDocument>& document, const std::string& id)
     {
@@ -258,6 +293,14 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.List("groups", _Groups, std::pair{"name", &MCGroup::Name}, std::pair{"tons", &MCGroup::Tons},
                std::pair{"closed", &MCGroup::Closed}, std::pair{"cards", &MCGroup::Cards});
     model.List("ramp", _Ramp, std::pair{"height", &MCSegment::Height}, std::pair{"state", &MCSegment::State});
+    model.List("ours", _Ours, std::pair{"name", &MCBarPlayer::Name}, std::pair{"colour", &MCBarPlayer::Colour},
+               std::pair{"ready", &MCBarPlayer::Ready});
+    model.List("theirs", _Theirs, std::pair{"name", &MCBarPlayer::Name}, std::pair{"colour", &MCBarPlayer::Colour},
+               std::pair{"ready", &MCBarPlayer::Ready});
+    model.Value("readyCount", _ReadyCount);
+    model.Value("playerCount", _PlayerCount);
+    _Chat.Bind(model, "chat");
+    model.Value("say", _Say);
 }
 
 void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
@@ -266,6 +309,25 @@ void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
     OnClick("begin", [this] { PressBegin(); });
     OnClick("play", [this] { PlayVideo(); });
     OnChange(TabsId, [this](int tab) { ChooseTab(static_cast<MCTab>(tab)); });
+
+    // A match's chat: each place's line sent on Enter, its switch followed by the others.
+    for (const char* id : SayIds)
+    {
+        OnText(id,
+               [this](const std::string& typed, bool enter)
+               {
+                   if (enter)
+                   {
+                       SayTyped(typed);
+                   }
+               });
+    }
+
+    for (const char* id : ToIds)
+    {
+        OnChange(id, [this](int choice) { ChooseWhoReads(choice == TeamChoice); });
+    }
+
     _Events = std::make_unique<MCEvents>(*this);
     // DEPLOY's keys on a card before RmlUi's (Enter and Space click what has the focus); BRIEFING's Space plays the video.
     TakeKeysFirst();
@@ -293,6 +355,8 @@ void MCCampaignScreen::OnDestroy()
 void MCCampaignScreen::OnShow()
 {
     _LastFrame = RmlNow();
+    // The chat read afresh: it may have lines from the room, or from while a 1998 screen showed.
+    _Chat.Forget();
 }
 
 void MCCampaignScreen::OnHide()
@@ -333,6 +397,8 @@ void MCCampaignScreen::SetUp(MCTab tab)
     _Multiplayer = MultiPlayer() != nullptr;
     ReadBriefing();
     FillBar();
+    FillPlayers();
+    ChooseWhoReads(true);
     FillCards();
     FillWeight();
     _ShownOn = SegmentsOf(Weighed().Base);
@@ -415,6 +481,62 @@ bool MCCampaignScreen::FillBar()
     _Points = points;
     _Clock = clock;
     return true;
+}
+
+bool MCCampaignScreen::FillPlayers()
+{
+    std::vector<MCBarPlayer> ours;
+    std::vector<MCBarPlayer> theirs;
+    size_t ready = 0;
+    const std::vector<MCCampaignMenu::MCMatchPlayer> players = MCCampaignMenu::MatchPlayers();
+
+    for (const MCCampaignMenu::MCMatchPlayer& player : players)
+    {
+        (player.Ours ? ours : theirs)
+            .push_back(MCBarPlayer{.Name = player.Name, .Colour = player.Colour, .Ready = player.Ready});
+        ready += player.Ready ? 1 : 0;
+    }
+
+    std::string readyCount = std::to_string(ready);
+    std::string playerCount = std::to_string(players.size());
+
+    if (ours == _Ours && theirs == _Theirs && readyCount == _ReadyCount && playerCount == _PlayerCount)
+    {
+        return false;
+    }
+
+    _Ours = std::move(ours);
+    _Theirs = std::move(theirs);
+    _ReadyCount = std::move(readyCount);
+    _PlayerCount = std::move(playerCount);
+    return true;
+}
+
+void MCCampaignScreen::ChooseWhoReads(bool toTeam)
+{
+    _ToTeam = toTeam;
+    const int choice = toTeam ? TeamChoice : AllChoice;
+
+    // One place of the chat shows at a time (a tab's, or its column at 21:9): the others follow it.
+    for (const char* id : ToIds)
+    {
+        if (Rml::Element* to = ElementOf(Document(), id); to != nullptr && MCRmlKit::Choice(*to) != choice)
+        {
+            MCRmlKit::SetChoice(*to, choice);
+        }
+    }
+}
+
+void MCCampaignScreen::SayTyped(const std::string& typed)
+{
+    // As the room's chat says it: to the team or to all, sent to the room and put in the chat.
+    MCChatView::Say(typed, _ToTeam);
+    _Say.clear();
+
+    if (_Model != nullptr)
+    {
+        _Model->Changed("say");
+    }
 }
 
 MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int slot) const
@@ -1323,6 +1445,17 @@ void MCCampaignScreen::OnFrame()
     }
 
     bool changed = FillBar();
+
+    if (_Multiplayer)
+    {
+        changed = FillPlayers() || changed;
+
+        if (_Model != nullptr)
+        {
+            _Chat.Show(*_Model);
+        }
+    }
+
     const double now = RmlNow();
     // The deploy data as it stands: the moves made here, and a teammate's or a cheat's made elsewhere.
     uint64_t revision = MCDeploy::Revision() ^ static_cast<uint64_t>(CurDeployTonnage) ^
@@ -1372,6 +1505,37 @@ void MCCampaignScreen::OnFrame()
 }
 
 // MCCampaignMenu
+
+std::vector<MCCampaignMenu::MCMatchPlayer> MCCampaignMenu::MatchPlayers()
+{
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+    if (logistics == nullptr || MultiPlayer() == nullptr)
+    {
+        return {};
+    }
+
+    std::vector<MCRoomModel::MCPlayer> players = logistics->Room.Players();
+    const auto me = std::ranges::find(players, true, &MCRoomModel::MCPlayer::Me);
+    const int8_t team = me != players.end() ? me->Team : MCRoomModel::NoTeam;
+    // This game's team first, then the other, each by its slots (a player on no team last).
+    std::ranges::stable_sort(
+        players, {}, [team](const MCRoomModel::MCPlayer& player)
+        { return std::tuple(player.Team != team, player.Team == MCRoomModel::NoTeam, player.Team, player.Slot); });
+    std::vector<MCMatchPlayer> shown;
+
+    for (const MCRoomModel::MCPlayer& player : players)
+    {
+        shown.push_back(MCMatchPlayer{.Id = player.Id,
+                                      .Name = player.Name,
+                                      .Colour = MCChatView::ColourOf(player.Number),
+                                      .Me = player.Me,
+                                      .Ours = player.Team == team,
+                                      .Ready = LightReady(*logistics, player.Id)});
+    }
+
+    return shown;
+}
 
 bool& MCCampaignMenu::Remade()
 {
@@ -1439,6 +1603,12 @@ MCCampaignMenu::MCMissionRead MCCampaignMenu::ReadMission()
     MCMissionRead read{.Title = MCMissionNames::Mission(briefingFile, written.Mission),
                        .Briefing = MCBriefingText::Read(text)};
     const bool multiplayer = MultiPlayer() != nullptr;
+
+    // A match's side briefing: its starred title in sentence case (the app's names are the campaigns').
+    if (multiplayer)
+    {
+        read.Title = MCRmlDialogs::AsSentence(written.Mission);
+    }
 
     // A campaign's mission: its operation and number in it, as SAVE GAME names it.
     if (!multiplayer && !Solo && logistics != nullptr)

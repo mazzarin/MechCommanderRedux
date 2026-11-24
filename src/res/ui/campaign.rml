@@ -19,6 +19,12 @@
                     <div class="grow"></div>
                     <div class="eyebrow money-label" data-if="rp != ''">RP</div><div class="money points" data-if="rp != ''">{{rp}}</div><div class="money">{{clock}}</div>
                 </div>
+                <div class="players" data-if="mp">
+                    <div class="team" data-if="ours.size > 0"><div class="team-name">Your team</div><div class="player" data-for="p : ours"><div class="light" data-class-ready="p.ready"></div><span data-attr-class="p.colour">{{p.name}}</span></div></div>
+                    <div class="team" data-if="theirs.size > 0"><div class="team-name">Enemy</div><div class="player" data-for="p : theirs"><div class="light" data-class-ready="p.ready"></div><span data-attr-class="p.colour">{{p.name}}</span></div></div>
+                    <div class="grow"></div>
+                    <div class="count"><span class="cream">{{readyCount}}</span> of {{playerCount}} ready</div>
+                </div>
             </div>
         </div>
     </div>
@@ -56,7 +62,9 @@
                         <div class="button small" id="play" data-hint="Play">Play</div>
                         <div class="grow"></div>
                     </div>
+                    <div id="brief-foot" data-if="mp"><div class="chat foot"><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-brief" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-brief" maxlength="255" data-line="" data-value="say"/></div></div></div>
                 </div>
+                <div class="side-place" data-if="mp"><div class="chat side"><div class="row bottom head"><div class="heading caps grow">Chat</div></div><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-brief-side" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-brief-side" maxlength="255" data-line="" data-value="say"/></div></div></div>
             </div>
 
             <div class="row" id="deploy" data-if="tab == 3">
@@ -108,6 +116,8 @@
                         </div>
                     </div>
                     <div class="grow"></div>
+                    <div id="deploy-foot">
+                    <div class="foot-place" data-if="mp"><div class="chat foot"><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-deploy" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-deploy" maxlength="255" data-line="" data-value="say"/></div></div></div>
                     <div id="weight">
                         <div class="weight-read">
                             <div class="weight-now" data-class-more="weightMore" data-class-over="weightOver">{{weightNow}}</div>
@@ -119,6 +129,7 @@
                             <div class="ramp gauge"><div class="seg" data-for="s : ramp" data-style-height="s.height" data-class-on="s.state == 1" data-class-more="s.state == 2" data-class-over="s.state == 3"></div></div>
                             <div class="button main" id="begin" data-class-dark="!canBegin" data-hint="Begin mission">Begin mission</div>
                         </div>
+                    </div>
                     </div>
                     <div class="card-cell" data-for="c : carried"><div class="card unit dragged" data-class-refuse="c.refuse"
                          data-style-left="carriedLeft" data-style-top="carriedTop" data-hint="Drop into the slot">
@@ -133,6 +144,7 @@
                         <div class="why" data-if="c.why != ''">{{c.why}}</div>
                     </div></div>
                 </div>
+                <div class="side-place" data-if="mp"><div class="chat side"><div class="row bottom head"><div class="heading caps grow">Chat</div></div><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-deploy-side" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-deploy-side" maxlength="255" data-line="" data-value="say"/></div></div></div>
             </div>
         </div>
     </div>

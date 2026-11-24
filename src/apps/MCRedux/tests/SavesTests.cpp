@@ -101,6 +101,25 @@ TEST_CASE(
     CHECK_EQ(clans.Operation, std::string("SOLO"));
     CHECK_EQ(clans.Mission, std::string("DESTROY ALL ACES"));
 
+    // A match's side briefing (ccaldera.txt): no FEDCOM line, its title the starred line under the dispatch's head.
+    const MCMissionNames::MCWritten side = MCMissionNames::FromBriefing(
+        "%fm%fc1%c****CLASSIFIED****%n\r\n%fs%fc5%c----------%n\r\n%fc6%c***Caldera***%n%n\r\n%fc5%c----------%n\r\n"
+        "%fc4Kill them.  Kill them all.%n%n\r\n");
+    CHECK(side.Operation.empty());
+    CHECK_EQ(side.Mission, std::string("Caldera"));
+
+    // Most name their sender before the rule (isbrf0703.txt, isbrf0705rs.txt), the title perhaps on three lines.
+    const MCMissionNames::MCWritten arena = MCMissionNames::FromBriefing(
+        "%fm%fc1%c****CLASSIFIED****%n\r\n%fs%fc4%cCOMMAND DESIGNATION:GAMBIT/7PRDN3%n\r\n%fc5%c----------%n\r\n"
+        "%fc6%c*** ARENA COMBAT ***%n\r\n%fc21-Fight to the Death%n%n\r\n");
+    CHECK(arena.Operation.empty());
+    CHECK_EQ(arena.Mission, std::string("ARENA COMBAT"));
+    const MCMissionNames::MCWritten sheriff = MCMissionNames::FromBriefing(
+        "%fm%fc1%c****CLASSIFIED****%n\r\n%fs%fc4%cCOMMAND DESIGNATION:GAMBIT/7PRDN5%n\r\n%fc5%c----------%n\r\n"
+        "%fc6%c*** BIG BASE TANGO ***%n\r\n%c**  ROBIN HOOD AND  **%n\r\n%c**   THE SHERIFF    **%n\r\n"
+        "%fc5%c----------%n\r\n");
+    CHECK_EQ(sheriff.Mission, std::string("BIG BASE TANGO ROBIN HOOD AND THE SHERIFF"));
+
     // One without them names nothing.
     const MCMissionNames::MCWritten nothing = MCMissionNames::FromBriefing("Commander,\r\n***A TITLE***\r\n");
     CHECK(nothing.Operation.empty());

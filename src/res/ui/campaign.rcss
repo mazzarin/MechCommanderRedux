@@ -11,9 +11,10 @@
 /* Multiplayer: the bar's second row, the players (1998's lights, numbered P1 to P6, named only on the ticker under the
    pointer): by team, each a light, green once they've pressed BEGIN MISSION and a ring while they plan, and the name
    in its player's colour, as in the chat; at the right how many are ready (the mission starts when all are). */
-.mp #topbar { height: 62dp; }
+/* Port-only: a unit over the frame's 62 for the rule under the tabs' row, which would take it from the row. */
+.mp #topbar { height: 63dp; }
 .mp #topbar .tabs-row { border-bottom: 1dp #1e2a34; }
-.mp #page { padding-top: 74dp; }
+.mp #page { padding-top: 75dp; }
 .players { display: flex; flex-direction: row; align-items: center; height: 18dp; gap: 24dp; font-size: 9.51dp; line-height: 18dp; font-weight: 600; white-space: nowrap; }
 .players > * { flex: 0 0 auto; }
 .players > .grow { flex: 1 1 0; }
@@ -133,4 +134,18 @@
 @media (min-aspect-ratio: 2/1) {
     .split { flex-direction: row; gap: 16dp; }
     .split > * { flex: 1 1 0; }
+}
+/* A match's BRIEFING: the orders as long as they run, the chat taking the rest; at 21:9 a column of its own (each tab
+   has its chat's places, one showing at a time: campaign.rml). */
+.mp #orders > .scroll-box { flex: 0 1 auto; display: flex; flex-direction: column; }
+.mp #orders > .scroll-box > .scroller { position: relative; flex: 0 1 auto; }
+.mp #orders .fade { display: none; }
+#brief-foot { flex: 1 1 0; display: flex; flex-direction: row; align-items: stretch; margin-top: 8dp; padding-top: 8dp; border-top: 1dp #2a3742; }
+#brief-foot > .chat { flex: 1 1 0; }
+.side-place { display: none; }
+.side-place > .chat { flex: 1 1 0; }
+@media (min-aspect-ratio: 2/1) {
+    .mp #brief-foot { display: none; }
+    .mp #briefing > .side-place { display: flex; flex-direction: column; flex: 0 0 300dp; margin-left: 16dp; }
+    .mp #deploy > .side-place { display: flex; flex-direction: column; flex: 0 0 224dp; margin-left: 16dp; }
 }

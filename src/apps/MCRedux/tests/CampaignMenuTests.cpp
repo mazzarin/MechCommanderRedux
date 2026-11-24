@@ -9,17 +9,22 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCCampaignMenu.h"
+#include "logistics/MCChatView.h"
+#include "logistics/MCConnectMenu.h"
 #include "logistics/MCDeploy.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLoadingMenu.h"
+#include "logistics/MCLogChat.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCOperationVideo.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSavesMenu.h"
+#include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUnitLimits.h"
 #include "gui/MCUpdateDisplay.h"
@@ -29,13 +34,21 @@
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
+#include "linkup/MCFidpMessage.h"
+#include "linkup/MCFidpPlayer.h"
+#include "linkup/MCLinkupMessages.h"
 #include "linkup/MCSessionManager.h"
+#include "main/MCMPPlayerLights.h"
+#include "network/MCGameDataHash.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCMultiPlayerHandlers.h"
+#include "platform/MCDirectPlay.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "ui/MCRmlChecks.h"
 #include "ui/MCRmlDialog.h"
+#include "ui/MCRmlKit.h"
 #include "ui/MCRmlMenus.h"
 
 #include <RmlUi/Core/Context.h>
@@ -177,6 +190,44 @@ namespace
 
         return std::format("{} {}x{}: {:#010x}", what, window->Width, window->Height,
                            MCMenusPictures::PictureHash(*window));
+    }
+
+    /// <summary>The frames' window sizes' hashes of a picture (640x480, 1280x720, 1280x1024).</summary>
+    using MCFrameHashes = std::array<uint32_t, MCMenusPictures::FrameWindows.size()>;
+
+    /// <summary>
+    /// The window drawn as <paramref name="what"/> at each of the frames' sizes, RmlUi's clock moved past every motion
+    /// first, checked against <paramref name="hashes"/>.
+    /// </summary>
+    void DrawnEach(MCDisplay& display, double& clock, std::string_view what, const MCFrameHashes& hashes)
+    {
+        for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
+        {
+            const MCMenusPictures::MCWindowSize& size = MCMenusPictures::FrameWindows[i];
+            REQUIRE(MCMenusPictures::SetWindowPixels(display, size.Width, size.Height));
+            clock += SettleSeconds;
+            CHECK_EQ(DrawnWindow(what), std::format("{} {}x{}: {:#010x}", what, size.Width, size.Height, hashes[i]));
+        }
+    }
+
+    /// <summary>
+    /// At every window the players' reports name: every element inside the window, no two siblings overlapping, no text
+    /// spilling or cut (MCRmlChecks::BoxProblems); every text at least 8 units high, at its contrast (Illegible).
+    /// </summary>
+    void CheckLaidOut(MCRmlMenus& menus, std::string_view what)
+    {
+        for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
+        {
+            menus.SetWindow(window.Width, window.Height);
+            menus.Frame();
+            // The screen's frame at this size (a card carried by the keys follows the focus), laid out again.
+            menus.Menus().Tend();
+            menus.Frame();
+            const float unit = MCRmlMenus::MenusUnit(window.Width, window.Height);
+            const std::string where = std::format("{} {}x{}: ", what, window.Width, window.Height);
+            CHECK_EQ(where + MCRmlChecks::BoxProblems(menus.Menus().Context()), where);
+            CHECK_EQ(where + MCRmlChecks::Illegible(menus.Menus().Context(), unit), where);
+        }
     }
 
     /// <summary>The window's picture saved (with --shots) as <paramref name="name"/> at its size.</summary>
@@ -460,7 +511,7 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY draw the same on every machine")
     struct MCDrawn
     {
         std::string_view What;
-        std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes;
+        MCFrameHashes Hashes;
     };
 
     constexpr std::array<MCDrawn, 3> Drawn = {{
@@ -470,16 +521,7 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY draw the same on every machine")
     }};
 
     const auto drawEach = [&display, &clock](const MCDrawn& drawn)
-    {
-        for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
-        {
-            const MCMenusPictures::MCWindowSize& size = MCMenusPictures::FrameWindows[i];
-            REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
-            clock += SettleSeconds;
-            CHECK_EQ(DrawnWindow(drawn.What),
-                     std::format("{} {}x{}: {:#010x}", drawn.What, size.Width, size.Height, drawn.Hashes[i]));
-        }
-    };
+    { DrawnEach(*display, clock, drawn.What, drawn.Hashes); };
 
     drawEach(Drawn[0]);
     screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
@@ -520,21 +562,7 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY lay out and read at every window t
     REQUIRE(MCRmlMenus::Running().has_value());
     MCRmlMenus& menus = MCRmlMenus::Running()->get();
 
-    const auto checkEach = [&menus](std::string_view what)
-    {
-        for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
-        {
-            menus.SetWindow(window.Width, window.Height);
-            menus.Frame();
-            // The screen's frame at this size (a card carried by the keys follows the focus), laid out again.
-            menus.Menus().Tend();
-            menus.Frame();
-            const float unit = MCRmlMenus::MenusUnit(window.Width, window.Height);
-            const std::string where = std::format("{} {}x{}: ", what, window.Width, window.Height);
-            CHECK_EQ(where + MCRmlChecks::BoxProblems(menus.Menus().Context()), where);
-            CHECK_EQ(where + MCRmlChecks::Illegible(menus.Menus().Context(), unit), where);
-        }
-    };
+    const auto checkEach = [&menus](std::string_view what) { CheckLaidOut(menus, what); };
 
     ShowBriefing(screen, "xbrf0302.txt");
     REQUIRE_EQ(screen.Objectives().size(), size_t{6});
@@ -1116,4 +1144,202 @@ TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its f
     RunWhileChanging();
     REQUIRE(MCCampaignMenu::Shown());
     CHECK(Solo);
+}
+
+namespace
+{
+    /// <summary>The match's port, its own so the test runs beside the others (--jobs).</summary>
+    constexpr std::string_view MatchPort = "28962";
+    constexpr std::string_view MatchMission = "ARENA";
+    /// <summary>A player's light once they've pressed BEGIN MISSION (MCMPPlayerLights' status 2).</summary>
+    constexpr int32_t ReadyLight = 2;
+    /// <summary>The chat's switch: TEAM, then ALL.</summary>
+    constexpr int AllChoice = 1;
+
+    /// <summary>
+    /// A LAN match hosted as COMMANDER (team 1) with <paramref name="ann"/> (the tests' player, team 2), its mission's
+    /// file hers too, and the room's BEGIN PLANNING pressed: the match's remade briefing.
+    /// </summary>
+    MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann)
+    {
+        MCCampaignMenu::Remade() = true;
+        REQUIRE(MCTestGame::StartLogistics());
+        ConnectScreen();
+        MCTestGuest::Settle();
+        const std::string address = std::format("127.0.0.1:{}", MatchPort);
+        MCTestGuest::HostFromLan(address, "COMMANDER", "COMMANDER'S GAME", 4);
+        MCTestGuest::Settle();
+        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+        const uint32_t sameData = MCMissionDataHash(GamePath(SavePath, MatchMission, ".mpk"));
+        REQUIRE(sameData != 0);
+        REQUIRE(ann.Join(*manager.DirectPlay, address));
+        REQUIRE(
+            MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
+        REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
+        ann.AnswerFiles(sameData);
+        MCSessionScreen& room = *GlobalLog()->SessionScreen;
+        room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
+        room.AssignPlayer(ann.Id(), 2, 0, false);
+        room.LoadMission(MatchMission);
+        REQUIRE(
+            MCTestGuest::SettleUntil([&] { return ann.MissionsLoaded() == 1 && MCTestGuest::DialogText().empty(); }));
+        MCTestGuest::Settle();
+        const MCGuiHandle<MCRoomScreen> remade = RoomScreen();
+        REQUIRE(remade);
+        REQUIRE(remade->Seen().CanBegin);
+        remade->PressBegin();
+        REQUIRE(MCTestGuest::SettleUntil([] { return MCCampaignMenu::Shown(); }));
+        RunWhileChanging();
+        return Shown();
+    }
+
+    /// <summary>
+    /// The bar's clock hidden for the pictures: the game's clock moves a frame at a time, and the network's waits take
+    /// however many frames they take.
+    /// </summary>
+    void HideClock(const MCCampaignScreen& screen)
+    {
+        REQUIRE(screen.Document().has_value());
+        Rml::ElementList money;
+        screen.Document()->get().QuerySelectorAll(money, ".tabs-row .money");
+        REQUIRE(!money.empty());
+        money.back()->SetProperty("visibility", "hidden");
+    }
+
+    /// <summary>A line typed in the chat's box <paramref name="box"/> and sent with Enter, as a player does.</summary>
+    void TypeLine(const MCCampaignScreen& screen, const std::string& box, std::string_view line)
+    {
+        ElementOf(screen, box).Focus();
+        MCTestGuest::RealType(line);
+        MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+        MCTestGame::RunFrame(FlowFrame);
+    }
+}
+
+/// <summary>
+/// A match's remade briefing (briefing_b_mp, deploy_b_mp): the players in the bar's second row by team, this game's
+/// first, each a light and the name in the player's colour, and how many are ready of how many; the chat under the
+/// orders and under DEPLOY's groups, each line its sayer's name in their colour, a team's line marked; a line typed and
+/// sent with Enter goes to the team (TEAM, the switch's first), the box emptied; ALL chosen in one place holds in every
+/// other. The same on every machine at the frames' sizes, and laid out at every window the players' reports name.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team with their lights, and its chat")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    MCCampaignScreen& screen = PlanMatch(ann);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    const std::shared_ptr<MCFidpPlayer> me = manager.GetPlayer(manager.MyPlayerID);
+    const std::shared_ptr<MCFidpPlayer> her = manager.GetPlayer(ann.Id());
+    REQUIRE(me != nullptr);
+    REQUIRE(her != nullptr);
+    const std::string myColour = MCChatView::ColourOf(me->PlayerNumber);
+    const std::string herColour = MCChatView::ColourOf(her->PlayerNumber);
+
+    // Its title the side briefing's (isbrf0703.txt's "*** ARENA COMBAT ***"), in sentence case.
+    CHECK_EQ(screen.Title(), std::string("Arena combat"));
+
+    // The bar: COMMANDER's team, then ANN's, nobody ready; no video (a match has none).
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
+    CHECK(!screen.HasVideo());
+    CHECK_EQ(screen.OurTeam(), (std::vector<MCCampaignScreen::MCBarPlayer>{{.Name = "COMMANDER", .Colour = myColour}}));
+    CHECK_EQ(screen.OtherTeam(), (std::vector<MCCampaignScreen::MCBarPlayer>{{.Name = "ANN", .Colour = herColour}}));
+    CHECK_EQ(screen.ReadyCount(), std::string("0"));
+    CHECK_EQ(screen.PlayerCount(), std::string("2"));
+
+    // ANN's BEGIN MISSION (her light green): one of two ready.
+    GlobalLog()->PlayerLights->SetPlayerStatus(ann.Id(), ReadyLight);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(screen.OtherTeam(),
+             (std::vector<MCCampaignScreen::MCBarPlayer>{{.Name = "ANN", .Colour = herColour, .Ready = true}}));
+    CHECK_EQ(screen.ReadyCount(), std::string("1"));
+
+    // ANN's lines as the chat holds them (MCLogChat::ProcessChatString's): to all, then to her team.
+    const int32_t herChat = GlobalLog()->PlayerColors[static_cast<size_t>(her->PlayerNumber)];
+    GlobalLog()->Chat->AddLine(std::format("%fc{}ANN: %fc6Same map again?", herChat));
+    GlobalLog()->Chat->AddLine(std::format("%fc{}ANN: %fc4Jump jets on mine.", herChat));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(screen.ChatLines().size() >= 2);
+    const MCChatView::MCLine& toAll = screen.ChatLines()[screen.ChatLines().size() - 2];
+    CHECK_EQ(toAll, (MCChatView::MCLine{.Name = "ANN", .Colour = herColour, .Text = "Same map again?"}));
+    CHECK(screen.ChatLines().back().Team);
+
+    // The menus on the test's clock from here: the box's caret blinks on it.
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    double clock = 0.0;
+    menus.SetClock([&clock] { return clock; });
+
+    // Typed under the orders and sent with Enter: to the team, the box emptied.
+    CHECK(screen.ToTeam());
+    TypeLine(screen, "say-brief", "On my way");
+    REQUIRE(!screen.ChatLines().empty());
+    CHECK_EQ(screen.ChatLines().back(),
+             (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "On my way", .Team = true}));
+    CHECK_EQ(ElementOf(screen, "say-brief").GetAttribute<Rml::String>("value", "unread"), std::string());
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    REQUIRE(display->RendererKind() == MCRendererKind::Software);
+    HideClock(screen);
+    DrawnEach(*display, clock, "briefing_mp", {0xc96aed18, 0x80371cff, 0x89cac24d});
+    CheckLaidOut(menus, "briefing mp");
+
+    // DEPLOY: ALL chosen under the groups holds in every place; a line then goes to all.
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    Rml::Element& toDeploy = ElementOf(screen, "to-deploy");
+    REQUIRE(toDeploy.GetNumChildren() > AllChoice);
+    ClickOn(*toDeploy.GetChild(AllChoice));
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!screen.ToTeam());
+
+    for (const std::string id : {"to-brief", "to-brief-side", "to-deploy", "to-deploy-side"})
+    {
+        CHECK_EQ(MCRmlKit::Choice(ElementOf(screen, id)), AllChoice);
+    }
+
+    TypeLine(screen, "say-deploy", "Good luck, all.");
+    REQUIRE(!screen.ChatLines().empty());
+    CHECK_EQ(screen.ChatLines().back(),
+             (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "Good luck, all."}));
+    DrawnEach(*display, clock, "deploy_mp", {0xcb3f77ee, 0x26a6f614, 0x86ef4c2f});
+    CheckLaidOut(menus, "deploy mp");
+}
+
+/// <summary>
+/// A match's guest whose link to the host is lost on the remade briefing goes back to the LAN games it came from,
+/// saying so over them, the remade briefing gone (the room's end's way: network/MCRoomEnd.h).
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's remade briefing whose link is lost goes back to the LAN games, saying so")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    REQUIRE(MCCampaignMenu::Shown());
+    auto game = std::make_shared<MCMultiPlayer>();
+    MCGameContext::Current().SetMultiPlayer(game);
+    REQUIRE_EQ(game->Start(), 0);
+    game->SessionManager->CurrentConnection = MCNetProtocol::TcpIp;
+    IsMPlayerGame = true;
+
+    // The system's word (DPSYS_SESSIONLOST).
+    DPMSG_GENERIC lost{.dwType = DPSYS_SESSIONLOST};
+    MCFidpMessage message(0, sizeof(lost));
+    message.SetMessageBuffer(LinkupBytes(lost));
+    MultiPlayerSystemCallback(message);
+    RunWhileChanging();
+
+    CHECK(!MCCampaignMenu::Shown());
+    CHECK(MCTestGuest::OnLan());
+    CHECK_EQ(MCTestGuest::DialogText(), std::string("Lost the connection to the host's game."));
+    IsMPlayerGame = false;
 }

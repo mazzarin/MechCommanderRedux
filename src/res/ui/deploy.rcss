@@ -24,7 +24,7 @@
 .weight-row > .gauge { flex: 1 1 0; }
 
 /* BEGIN MISSION dark until the drop can go (1998's unlit launch button); pressed, Betty says why. */
-.button.main.dark, .button.main.dark:hover, .button.main.dark:active { background-color: #1e2a34; border-color: #1e2a34; color: #6c7a88; }
+.button.main.dark, .button.main.dark:hover, .button.main.dark:active { background-color: #1e2a34; border-color: #1e2a34; color: #a4b0bc; }
 
 /* READY AREA on the left, the drop on the right: a unit is dragged left to right, as the eye reads. READY AREA keeps one
    width and scrolls, two cards a row; the drop's three groups stand as columns of four, the weight and BEGIN MISSION
@@ -49,4 +49,32 @@
    so the drop's groups keep a card's width (136 units and the scroll bar's room). */
 @media (max-aspect-ratio: 3/2) {
     #ready { flex: 0 0 148dp; }
+}
+/* A match's DEPLOY: under the groups the chat (its room kept, this being a social game) and beside it the weight, a
+   column: the number, the meter, BEGIN MISSION under it. At 21:9 the chat a column of its own, READY AREA three cards a
+   row, and the weight along the drop's foot as in single player. */
+.mp #drop > .grow { display: none; }
+.mp #deploy-foot { flex: 1 1 0; display: flex; flex-direction: row; align-items: stretch; gap: 16dp; padding-top: 8dp; border-top: 1dp #2a3742; margin-top: 8dp; }
+.mp #deploy-foot > .foot-place { flex: 1 1 0; display: flex; flex-direction: column; }
+.foot-place > .chat { flex: 1 1 0; }
+.mp #deploy-foot > #weight { flex: 0 0 200dp; display: block; align-self: flex-end; padding-top: 0dp; border-top-width: 0dp; }  /* at the foot, as tall as it is: the number, the meter, BEGIN MISSION */
+.mp #deploy-foot .weight-row { flex-direction: column; align-items: stretch; gap: 8dp; }
+.mp #deploy-foot .weight-row > .gauge { flex: 0 0 auto; }
+.mp #deploy-foot .weight-row > .button { text-align: center; }
+@media (max-aspect-ratio: 17/10) {
+    .mp #deploy-foot > #weight { flex-basis: 184dp; }
+}
+/* Port-only: 4:3 and 5:4, the weight's column room for the ramp's sixty segments in whole pixels at 640x480. */
+@media (max-aspect-ratio: 3/2) {
+    .mp #deploy-foot > #weight { flex-basis: 248dp; }
+}
+@media (min-aspect-ratio: 2/1) {
+    .mp #ready { flex: 0 0 426dp; }
+    .mp #drop > .grow { display: block; }
+    .mp #deploy-foot { flex: 0 0 auto; display: block; padding-top: 0dp; border-top-width: 0dp; margin-top: 0dp; }
+    .mp #deploy-foot > .foot-place { display: none; }
+    .mp #deploy-foot > #weight { display: block; padding-top: 10dp; border-top-width: 1dp; }
+    .mp #deploy-foot .weight-row { flex-direction: row; align-items: flex-end; gap: 16dp; }
+    .mp #deploy-foot .weight-row > .gauge { flex: 1 1 0; }
+    .mp #deploy-foot .weight-row > .button { text-align: left; }
 }

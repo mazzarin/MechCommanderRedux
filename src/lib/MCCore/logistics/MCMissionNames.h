@@ -18,8 +18,17 @@ namespace MCMissionNames
         std::string Mission;
     };
 
-    /// <summary>The names <paramref name="text"/>, a briefing's text (its formatting codes and all), gives.</summary>
+    /// <summary>
+    /// The names <paramref name="text"/>, a briefing's text (its formatting codes and all), gives: its title the starred
+    /// lines under its dispatch mark, or, with none (a match's side briefing), those it opens with.
+    /// </summary>
     MCWritten FromBriefing(std::string_view text);
+
+    /// <summary>
+    /// The names <paramref name="text"/> gives, its title read under its dispatch mark (<paramref name="marked"/>) or
+    /// from its start.
+    /// </summary>
+    MCWritten FromBriefing(std::string_view text, bool marked);
 
     /// <summary>
     /// The data file's names read from <paramref name="file"/> (a JSON object with "operations" and "missions"), in

@@ -18,6 +18,8 @@ namespace
     /// Inner Sphere's, and the Clans' (two of the expansion's solo missions).
     /// </summary>
     constexpr std::array<std::string_view, 2> DispatchMarks = {"FEDCOM:", "STARCOM:"};
+    /// <summary>The dispatch's starred head over every briefing ("****CLASSIFIED****"), never its mission's title.</summary>
+    constexpr std::string_view ClassifiedHead = "CLASSIFIED";
     /// <summary>The most a data file may hold (it is a few kilobytes): a larger one isn't read.</summary>
     constexpr std::uintmax_t MostFileBytes = 1 << 20;
 
@@ -161,12 +163,35 @@ namespace
 
         return std::nullopt;
     }
+
+    /// <summary>
+    /// Whether <paramref name="plain"/> is a dispatch's sender line: its words, a colon, then a code with a slash
+    /// ("COMMAND DESIGNATION:GAMBIT/7PRDN3", a match's; the campaigns' FEDCOM line the same form).
+    /// </summary>
+    bool IsSenderLine(std::string_view plain)
+    {
+        const size_t colon = plain.find(':');
+        return colon != std::string_view::npos && colon > 0 && plain.find('/', colon) != std::string_view::npos;
+    }
 }
 
 auto MCMissionNames::FromBriefing(std::string_view text) -> MCWritten
 {
+    MCWritten written = FromBriefing(text, true);
+
+    // Port-only (stage 8): a match's side briefing has no dispatch head; its starred lines open it.
+    if (written.Operation.empty())
+    {
+        written = FromBriefing(text, false);
+    }
+
+    return written;
+}
+
+auto MCMissionNames::FromBriefing(std::string_view text, bool marked) -> MCWritten
+{
     MCWritten written;
-    bool afterFedcom = false;
+    bool afterFedcom = !marked;
     std::vector<std::string> title;
 
     for (size_t start = 0; start <= text.size();)
@@ -190,12 +215,23 @@ auto MCMissionNames::FromBriefing(std::string_view text) -> MCWritten
 
         if (std::optional<std::string> words = Starred(visible); words.has_value())
         {
-            title.push_back(std::move(*words));
+            // Read from the start (a match's side briefing), its head comes first.
+            if (*words != ClassifiedHead)
+            {
+                title.push_back(std::move(*words));
+            }
+
             continue;
         }
 
-        // Before the title only the rule between them (dashes) or a blank line; after it, the title has ended.
+        // Before the title only the rule between them (dashes), a blank line or, read from the start, the sender's line;
+        // after it, the title has ended.
         const std::string_view plain = Trimmed(visible);
+
+        if (title.empty() && !marked && IsSenderLine(plain))
+        {
+            continue;
+        }
 
         if (!title.empty() || plain.find_first_not_of('-') != std::string_view::npos)
         {

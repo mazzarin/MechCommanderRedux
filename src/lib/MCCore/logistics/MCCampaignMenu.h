@@ -10,6 +10,7 @@
 // (logistics/MCMenuScreens) shows while this does.
 
 #include "logistics/MCBriefingText.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCDeploy.h"
 #include "ui/MCRmlScreen.h"
 
@@ -25,6 +26,18 @@ class MCRmlModel;
 class MCCampaignScreen final : public MCRmlScreen
 {
 public:
+    /// <summary>A match's player in the bar's second row: the name in their colour, and their light.</summary>
+    struct MCBarPlayer
+    {
+        std::string Name;
+        /// <summary>The name's colour class (the chat's: MCChatView::ColourOf).</summary>
+        std::string Colour;
+        /// <summary>BEGIN MISSION pressed: the light green (a ring while they plan).</summary>
+        bool Ready = false;
+
+        bool operator==(const MCBarPlayer&) const = default;
+    };
+
     /// <summary>The bar's tabs, in their order.</summary>
     enum class MCTab : uint8_t
     {
@@ -128,6 +141,14 @@ public:
     const std::string& WeightNow() const { return _WeightNow; }
     const std::string& WeightFree() const { return _WeightFree; }
     bool CanBegin() const { return _CanBegin; }
+    /// <summary>A match's players in the bar: this game's team, the other team, how many are ready of how many.</summary>
+    const std::vector<MCBarPlayer>& OurTeam() const { return _Ours; }
+    const std::vector<MCBarPlayer>& OtherTeam() const { return _Theirs; }
+    const std::string& ReadyCount() const { return _ReadyCount; }
+    const std::string& PlayerCount() const { return _PlayerCount; }
+    /// <summary>A match's chat as shown, and whether the line typed goes to the team (TEAM) or to all (ALL).</summary>
+    const std::vector<MCChatView::MCLine>& ChatLines() const { return _Chat.Lines(); }
+    bool ToTeam() const { return _ToTeam; }
     /// <summary>The unit carried, by the mouse or the keys; none while none is.</summary>
     std::shared_ptr<MCLogPart> Carried() const { return _Carry.has_value() ? _Carry->Part.lock() : nullptr; }
 
@@ -233,6 +254,12 @@ private:
     void PlaceCarried();
     /// <summary>The ramp's lit and cyan lengths moved along to the weight's (its timings); whether a segment changed.</summary>
     bool StepRamp(double now);
+    /// <summary>A match's players in the bar, read again; whether they changed.</summary>
+    bool FillPlayers();
+    /// <summary>TEAM (true) or ALL chosen in one of the chat's places, the others following.</summary>
+    void ChooseWhoReads(bool toTeam);
+    /// <summary>The line typed sent on Enter, as the room's chat sends it, the boxes emptied.</summary>
+    void SayTyped(const std::string& typed);
     /// <summary>A press, release or move of the mouse over the document.</summary>
     void OnMouse(Rml::Event& event);
 
@@ -281,10 +308,37 @@ private:
     bool _CanBegin = false;
     /// <summary>A unit carried by the keys: the empty slots take the focus.</summary>
     bool _KeysCarry = false;
+    std::vector<MCBarPlayer> _Ours;
+    std::vector<MCBarPlayer> _Theirs;
+    std::string _ReadyCount;
+    std::string _PlayerCount;
+    /// <summary>A match's chat as the document binds it (stage 4's, the room's too).</summary>
+    MCChatView _Chat;
+    /// <summary>The line being typed, one in all the chat's places (each box's value).</summary>
+    std::string _Say;
+    bool _ToTeam = true;
 };
 
 namespace MCCampaignMenu
 {
+    /// <summary>A match's player as the screens before the battle show them (the bar's second row, the loading screen).</summary>
+    struct MCMatchPlayer
+    {
+        uint32_t Id = 0;
+        std::string Name;
+        /// <summary>The name's colour class (the chat's: MCChatView::ColourOf).</summary>
+        std::string Colour;
+        /// <summary>This game's own player.</summary>
+        bool Me = false;
+        /// <summary>On this game's player's team.</summary>
+        bool Ours = false;
+        /// <summary>BEGIN MISSION pressed (the players' lights green).</summary>
+        bool Ready = false;
+    };
+
+    /// <summary>A match's players, this game's team first, each team by its slots; none outside a match.</summary>
+    std::vector<MCMatchPlayer> MatchPlayers();
+
     /// <summary>
     /// Port-only, for the tests: whether the campaign's screens are the remade ones (on in the game; the tests that
     /// click the 1998 briefing turn it off until step 2 records them again).

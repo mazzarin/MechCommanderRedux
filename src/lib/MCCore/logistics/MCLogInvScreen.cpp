@@ -25,6 +25,7 @@
 #include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCUnitLimits.h"
 #include "logistics/MCPurProfile.h"
+#include "logistics/MCStore.h"
 #include "main/MCLogistics.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -148,8 +149,7 @@ namespace
         MCListSource<MCLogInventoryItem> source;
         source.Items = []() -> const std::vector<std::shared_ptr<MCLogInventoryItem>>&
         { return GlobalLog()->PurchaseComponents->Items; };
-        source.Filter = [](const MCLogInventoryItem& item)
-        { return item.SortOrder >= 0 && item.SortOrder < MCLogInvScreen::StoreSortOrders; };
+        source.Filter = [](const MCLogInventoryItem& item) { return MCStore::Lists(item); };
         source.Sort = [](const MCLogInventoryItem& first, const MCLogInventoryItem& second)
         { return first.SortOrder < second.SortOrder; };
         source.MakeRow = [](MCListView& list, std::shared_ptr<MCLogInventoryItem> item)
@@ -367,34 +367,19 @@ auto MCLogInvScreen::CreateMechInvBlock() -> void
 {
     // The original also painted every mech's row into a new tab picture (making the diagrams it lacked); the list
     // draws the rows now, and each row makes its diagram.
-    int32_t index = 0;
-
-    for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->MechList->Mechs)
-    {
-        mech->ListIndex = index++;
-    }
+    GlobalLog()->NumberMechs();
 }
 
 auto MCLogInvScreen::CreateVhclInvBlock() -> void
 {
     // As CreateMechInvBlock: the list draws the rows, each row makes its diagram.
-    int32_t index = 0;
-
-    for (const std::shared_ptr<MCLogVehicle>& vehicle : GlobalLog()->VehicleList->Vehicles)
-    {
-        vehicle->ListIndex = index++;
-    }
+    GlobalLog()->NumberVehicles();
 }
 
 auto MCLogInvScreen::CreatePilotInvBlock() -> void
 {
     // The original also painted every pilot's row into a new tab picture; the list draws the rows now.
-    int32_t index = 0;
-
-    for (const std::shared_ptr<MCLogWarrior>& warrior : GlobalLog()->WarriorList->Warriors)
-    {
-        warrior->ListIndex = index++;
-    }
+    GlobalLog()->NumberPilots();
 }
 
 auto MCLogInvScreen::DrawBlankInvInfoBlock(int32_t tab) -> void
@@ -564,7 +549,7 @@ auto MCLogInvScreen::ShowDetails(MCInvInfoBox::Kind kind, std::function<void(MCL
 
 auto MCLogInvScreen::ShowComponentInfo(const MCLogInventoryItem& item, bool repairItem) -> void
 {
-    MCComponentTexts texts = MCCompInventoryBlock::Texts(item.MasterID);
+    MCStore::MCComponentTexts texts = MCStore::ComponentTexts(item.MasterID);
     Info.InfoKind = repairItem ? MCInvInfoBox::Kind::RepairItem : MCInvInfoBox::Kind::Component;
     Info.Source.reset();
     Info.Details = nullptr;

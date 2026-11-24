@@ -14,6 +14,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMissionLogisticsBridge.h"
@@ -463,7 +464,7 @@ auto MCLogistics::HandleChatMessage(uint32_t playerID, std::span<const uint8_t> 
             RepairScreen->ChatBlinking = true;
         }
 
-        briefing.ChatBlinking = true;
+        MCChatView::SetUnread(true);
         SoundSystem()->PlayInterfaceSample(0x14);
     }
 

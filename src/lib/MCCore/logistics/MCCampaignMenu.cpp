@@ -11,7 +11,6 @@
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCMissionNames.h"
 #include "logistics/MCOperationVideo.h"
-#include "logistics/MCRepairScreen.h"
 #include "logistics/MCSaves.h"
 #include "logistics/MCSmuti.h"
 #include "logistics/MCUnitLimits.h"

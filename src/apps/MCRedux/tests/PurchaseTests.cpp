@@ -857,52 +857,6 @@ TEST_CASE("logistics: internal structure repair goes to the most damaged locatio
     }
 }
 
-TEST_CASE("game: the repair bay lists weapons by damage, lowest first")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    ShopFixture shop;
-    // Three weapons with different damage, in the inventory in id order.
-    std::vector<int32_t> ids;
-
-    for (int32_t id = 0; id < NumMasterComponents() && ids.size() < 3; ++id)
-    {
-        const MCComponentForm form = MasterComponentList[id].Form;
-        const bool newDamage = std::ranges::none_of(
-            ids, [id](int32_t other) { return MasterComponentList[other].Damage == MasterComponentList[id].Damage; });
-
-        if (IsWeapon(form) && newDamage)
-        {
-            ids.push_back(id);
-        }
-    }
-
-    REQUIRE_EQ(ids.size(), size_t{3});
-    MCInventoryList inventory;
-
-    for (int32_t id : ids)
-    {
-        inventory.AddItem(static_cast<uint8_t>(id), inventory.CreateStat(0, 0, 0, 1, 0xff), false);
-    }
-
-    std::vector<int32_t> entries = {0, 1, 2};
-    std::vector<int32_t> hits = {10, 20, 30};
-    MCMechRepairBlock::SortByDamage(entries, hits, inventory);
-    auto damage = [&inventory](int32_t entry)
-    { return MasterComponentList[inventory.GetMasterIDFromIndex(entry)].Damage; };
-    CHECK(damage(entries[0]) < damage(entries[1]));
-    CHECK(damage(entries[1]) < damage(entries[2]));
-
-    // Each damage figure stays with its entry.
-    for (size_t i = 0; i < entries.size(); ++i)
-    {
-        CHECK_EQ(hits[i], 10 * (entries[i] + 1));
-    }
-}
-
 namespace
 {
     /// <summary>Runs the logistics screens for two seconds: a screen change or a dialog settles.</summary>

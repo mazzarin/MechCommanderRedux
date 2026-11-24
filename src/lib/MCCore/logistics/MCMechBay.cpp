@@ -21,6 +21,9 @@ namespace
     /// <summary>The most units the force holds before the one just assigned to it is turned back (a game rule).</summary>
     constexpr int32_t ForceUnits = 0xf;
 
+    /// <summary>A weapon's long range: the last of its ranges (MCMasterComponent::WeaponRange).</summary>
+    constexpr size_t LongRangeIndex = 3;
+
     /// <summary>The armour or internal structure knob for <paramref name="current"/> points of <paramref name="maximum"/>.</summary>
     int32_t KnobFor(int32_t current, int32_t maximum)
     {
@@ -625,6 +628,86 @@ float MCMechBay::FittedTons(uint8_t masterID)
     }
 
     return tonnage;
+}
+
+std::optional<MCMechBay::MCFitList> MCMechBay::FitListOf(uint8_t masterID)
+{
+    const MCMasterComponent& component = MasterComponentList[masterID];
+
+    if (IsWeapon(component.Form))
+    {
+        const float range = component.WeaponRange[LongRangeIndex];
+        return range < ShortRangeUnder    ? MCFitList::ShortRange
+               : range < MediumRangeUnder ? MCFitList::MediumRange
+                                          : MCFitList::LongRange;
+    }
+
+    return IsEquipment(component.Form) ? std::optional(MCFitList::Equipment) : std::nullopt;
+}
+
+std::vector<size_t> MCMechBay::DamageOrder(std::span<const float> damages)
+{
+    std::vector<size_t> order(damages.size());
+    std::iota(order.begin(), order.end(), size_t{0});
+
+    // The original's exchange sort: each place swaps in every later one of lower damage, as it is found.
+    for (size_t i = 0; i + 1 < order.size(); ++i)
+    {
+        for (size_t j = i + 1; j < order.size(); ++j)
+        {
+            if (damages[order[j]] < damages[order[i]])
+            {
+                std::swap(order[i], order[j]);
+            }
+        }
+    }
+
+    return order;
+}
+
+std::vector<MCMechBay::MCFittedCopy> MCMechBay::FittedCopies(const MCLogMech& mech)
+{
+    constexpr size_t Lists = static_cast<size_t>(MCFitList::Equipment) + 1;
+    std::array<std::vector<MCFittedCopy>, Lists> lists;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : mech.Inventory->Items)
+    {
+        if (const std::optional<MCFitList> list = FitListOf(item->MasterID); list.has_value())
+        {
+            for (const std::shared_ptr<MCLogInventoryStat>& copy : item->Stats)
+            {
+                lists[static_cast<size_t>(*list)].push_back({.Item = item, .Copy = copy});
+            }
+        }
+    }
+
+    std::vector<MCFittedCopy> copies;
+
+    for (size_t list = 0; list < Lists; ++list)
+    {
+        const std::vector<MCFittedCopy>& listed = lists[list];
+
+        if (list == static_cast<size_t>(MCFitList::Equipment))
+        {
+            copies.insert(copies.end(), listed.begin(), listed.end());
+            continue;
+        }
+
+        std::vector<float> damages;
+        damages.reserve(listed.size());
+
+        for (const MCFittedCopy& copy : listed)
+        {
+            damages.push_back(MasterComponentList[copy.Item->MasterID].Damage);
+        }
+
+        for (const size_t at : DamageOrder(damages))
+        {
+            copies.push_back(listed[at]);
+        }
+    }
+
+    return copies;
 }
 
 MCMechBay::MCFit MCMechBay::WhyNotFit(uint8_t masterID, float tonnage, MCOptionalRef<const MCLogMech> selected)

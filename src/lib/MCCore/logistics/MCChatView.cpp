@@ -57,6 +57,9 @@ namespace
         return plain;
     }
 
+    /// <summary>The chat's unseen mark (MCChatView::Unread).</summary>
+    bool UnreadLines = false;
+
     /// <summary>The player number whose chat colour is the code's digit <paramref name="digit"/>; none for another.</summary>
     std::optional<int32_t> NumberOfColour(char digit)
     {
@@ -214,4 +217,14 @@ std::string MCChatView::AsUtf8(std::string_view bytes)
     }
 
     return text;
+}
+
+bool MCChatView::Unread()
+{
+    return UnreadLines;
+}
+
+void MCChatView::SetUnread(bool unread)
+{
+    UnreadLines = unread;
 }

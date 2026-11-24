@@ -32,6 +32,7 @@
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCUnitLimits.h"
 #include "gui/MCUpdateDisplay.h"
 #include "main/MCGameContext.h"
@@ -1592,7 +1593,7 @@ TEST_CASE_ISOLATED(
     MCTestGame::RunFrame(FlowFrame);
     CHECK(tabs.LabUnit() != nullptr);
     CHECK(!tabs.Repairs());
-    DrawnEach(*display, clock, "mechbay_mp", {0xaa7d0d3a, 0x8e8fe251, 0x9e3df686});
+    DrawnEach(*display, clock, "mechbay_mp", {0x9dc6402a, 0x22850a91, 0x67f1f8e6});
     CheckLaidOut(menus, "mechbay mp");
 }
 
@@ -1762,7 +1763,7 @@ namespace
 
         for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->PurchaseComponents->Items)
         {
-            if (item->SortOrder >= 0 && item->SortOrder < MCLogInvScreen::StoreSortOrders)
+            if (item->SortOrder >= 0 && item->SortOrder < MCStore::SortOrders)
             {
                 parts.push_back(item);
             }
@@ -2224,6 +2225,105 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY fits and takes out parts and moves MechW
 }
 
 /// <summary>
+/// The 'MECH BAY lists a 'Mech's fitted parts in 1998's order (its weapon list's, MCMechBay::FittedCopies): the
+/// short-, medium- and long-range weapons, each by damage, lowest first, then the equipment, each copy's damage on its
+/// own row. Two weapons the inventory lists the other way round (by master id, the higher first) show the lower damage
+/// first.
+/// </summary>
+TEST_CASE_ISOLATED("game: the 'MECH BAY lists a 'Mech's weapons as 1998's, by range, each by damage, lowest first")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogMech> mech = GlobalLog()->ForceMechList->Mechs.front();
+    const std::vector<std::shared_ptr<MCLogInventoryItem>>& items = mech->Inventory->Items;
+    const auto damage = [](uint8_t masterID) { return MasterComponentList[masterID].Damage; };
+    const auto carried = [&items](uint8_t masterID)
+    { return std::ranges::contains(items, masterID, &MCLogInventoryItem::MasterID); };
+
+    // Two weapons of one range the 'Mech doesn't carry, the one of the higher master id the more damaging.
+    std::optional<std::pair<uint8_t, uint8_t>> pair;
+
+    for (int32_t higher = NumMasterComponents() - 1; higher > 0 && !pair.has_value(); --higher)
+    {
+        for (int32_t lower = higher - 1; lower >= 0 && !pair.has_value(); --lower)
+        {
+            const auto first = static_cast<uint8_t>(higher);
+            const auto second = static_cast<uint8_t>(lower);
+
+            if (IsWeapon(ComponentForm(first)) && MCMechBay::FitListOf(first) == MCMechBay::FitListOf(second) &&
+                !carried(first) && !carried(second) && damage(second) < damage(first))
+            {
+                pair = {first, second};
+            }
+        }
+    }
+
+    REQUIRE(pair.has_value());
+    const auto [first, second] = *pair;
+    mech->CurTonnage += MCMechBay::FittedTons(first) + MCMechBay::FittedTons(second);
+    REQUIRE(MCMechBay::Fit(*mech, second));
+    REQUIRE(MCMechBay::Fit(*mech, first));
+    const auto itemOf = [&items](uint8_t masterID)
+    { return *std::ranges::find(items, masterID, &MCLogInventoryItem::MasterID); };
+    const auto inventoryAt = [&items](const std::shared_ptr<MCLogInventoryItem>& item)
+    { return std::ranges::find(items, item) - items.begin(); };
+    REQUIRE(inventoryAt(itemOf(first)) < inventoryAt(itemOf(second)));
+    REQUIRE_EQ(itemOf(second)->Stats.size(), size_t{1});
+    itemOf(second)->Stats.front()->Hits = 1;
+
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.LabUnit() == mech);
+
+    // The rows are the fitted copies in their order; by list, each weapon list by damage, lowest first.
+    const std::vector<MCLogisticsTabs::MCFitRow>& rows = tabs.FittedRows();
+    const std::vector<MCMechBay::MCFittedCopy> copies = MCMechBay::FittedCopies(*mech);
+    REQUIRE_EQ(rows.size(), copies.size());
+
+    for (size_t at = 0; at < rows.size(); ++at)
+    {
+        CHECK_EQ(rows[at].Name, copies[at].Item->Name);
+        CHECK_EQ(rows[at].State.empty(), copies[at].Copy->Hits == 0);
+
+        if (at == 0)
+        {
+            continue;
+        }
+
+        const uint8_t before = copies[at - 1].Item->MasterID;
+        const uint8_t now = copies[at].Item->MasterID;
+        const MCMechBay::MCFitList beforeList = *MCMechBay::FitListOf(before);
+        const MCMechBay::MCFitList nowList = *MCMechBay::FitListOf(now);
+        CHECK(beforeList <= nowList);
+
+        if (beforeList == nowList && nowList != MCMechBay::MCFitList::Equipment)
+        {
+            CHECK(damage(before) <= damage(now));
+        }
+    }
+
+    // The two: the lower damage first, its copy's damage on its row.
+    const auto rowOf = [&copies](uint8_t masterID)
+    {
+        return std::ranges::find_if(copies, [masterID](const MCMechBay::MCFittedCopy& copy)
+                                    { return copy.Item->MasterID == masterID; }) -
+               copies.begin();
+    };
+
+    REQUIRE(rowOf(first) < static_cast<ptrdiff_t>(rows.size()));
+    REQUIRE(rowOf(second) < static_cast<ptrdiff_t>(rows.size()));
+    CHECK(rowOf(second) < rowOf(first));
+    CHECK(!rows[static_cast<size_t>(rowOf(second))].State.empty());
+    CHECK(rows[static_cast<size_t>(rowOf(first))].State.empty());
+}
+
+/// <summary>
 /// PURCHASING (the store's 'Mechs, the first picked; its parts, the first in stock picked; the buy window) and the 'MECH
 /// BAY (the force's first 'Mech; then arrived damaged and its armour partly repaired) on the software renderer, the whole
 /// window at 640x480, 1280x720 and 1280x1024, the hashes recorded: the Mac's and Windows' alike with the game's data.
@@ -2260,11 +2360,11 @@ TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every ma
     tabs.DealCancel();
 
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
-    DrawnEach(*display, clock, "mechbay", {0x8570a0be, 0x98de763e, 0x8f1fc6c4});
+    DrawnEach(*display, clock, "mechbay", {0xdb26dbda, 0xfaaf559a, 0xf39fa44c});
     ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
-    DrawnEach(*display, clock, "mechbay_repair", {0xbb439dcf, 0x63998ccf, 0xf638b836});
+    DrawnEach(*display, clock, "mechbay_repair", {0x77d88343, 0x40f271bb, 0x0156003e});
 }
 
 /// <summary>
@@ -2523,19 +2623,19 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
         {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
          0x05132518},
         {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
-         0x006eb27a},
-        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0x2000735e},
-        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0xc3814ea4},
-        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x89f08e75},
-        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0x4e8afb07},
-        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x2d96d96c},
-        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0xfd7c1a9b},
+         0x9b2dd3b6},
+        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xfcf5e4da},
+        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0xc9dafb74},
+        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x541512e5},
+        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0xe7f809b7},
+        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x58cef3fc},
+        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x758f023a},
         {"repair_mount_laser",
          [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
-         0xd3f61456},
+         0x15507a15},
         {"repair_pilots_tab", [&]
-         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x9b41154f},
-        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xe569e428},
+         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x8fcc8ae6},
+        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xd06ab36d},
         {"repair_vehicles_tab",
          [&]
          {
@@ -2544,22 +2644,22 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              ClickOn(ElementOf(screen, UnitCardId(tabs, logistics->VehicleList->Vehicles.back())));
          },
          0xe4b3d927},
-        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x5477cc17},
-        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x5477cc17},
+        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x2bdb6eef},
+        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x2bdb6eef},
         {"repair_mech_into_force",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0xac96e015},
-        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0xac96e015},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0x68899c65},
+        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0x68899c65},
         {"repair_mech_out",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "spare-head")); }, 0x60067a53},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "spare-head")); }, 0x3846584b},
         {"repair_weapon_list_scroll",
          [&]
          {
              Hover(ElementOf(screen, "fit0"));
              MCScreenInput::RealWheel(-1);
          },
-         0xb55f0b9f},
+         0xe8ecf3e7},
         {"repair_first_mech_out", [&] { DragTo(ElementOf(screen, "force0"), ElementOf(screen, "spare-head")); },
-         0x3333de7e},
+         0x8bdc4d42},
         {"briefing_after_repair",
          [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xaf7f1bc1},
         {"deploy_after_repair", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Deploy)); },
@@ -2577,7 +2677,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x47ed73fdu);
+    CHECK_EQ(frames, 0x842929d5u);
 }
 
 /// <summary>

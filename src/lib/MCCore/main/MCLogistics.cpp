@@ -24,6 +24,7 @@
 #include "logistics/MCGameList.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogButton.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogPort.h"
@@ -90,6 +91,7 @@ std::type_identity_t<int> InDemo{};
 bool Solo = false;
 int32_t LastLogisticsMissionState = 0;
 std::string HoldString;
+int32_t ResourceDisplayState = 0;
 
 namespace
 {
@@ -370,6 +372,8 @@ auto MCLogistics::Start() -> void
             RepairScreen = screen.WeakAs<MCRepairScreen>();
             screen.Init();
         });
+    // The chat's unseen mark starts clear, as the 1998 briefing's, made here, did.
+    MCChatView::SetUnread(false);
     ScreenWindow()->CreateChild<MCBriefingScreen>(
         [this](MCBriefingScreen& screen)
         {
@@ -1150,7 +1154,7 @@ auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
 
         MCGameContext::Current().SetMultiPlayer(nullptr);
         MCBriefingScreen& briefing = *BriefingScreen;
-        briefing.ChatBlinking = false;
+        MCChatView::SetUnread(false);
 
         if (briefing.ChatTimerOn != 0)
         {
@@ -1349,7 +1353,7 @@ auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
 
     if (MultiPlayer() != nullptr)
     {
-        if (briefing.ChatBlinking == 0)
+        if (!MCChatView::Unread())
         {
             if (PurchaseScreen->ChatBlinking != 0)
             {
@@ -1460,8 +1464,7 @@ auto MCLogistics::DrawScreenChrome(MCLogObject& screen, const MCPane& target) ->
                 face->CopyTo(target, 2, top, false);
             }
 
-            const bool blinking =
-                button == 1 && chrome.has_value() && chrome->get().BlinkLit && BriefingScreen->ChatBlinking != 0;
+            const bool blinking = button == 1 && chrome.has_value() && chrome->get().BlinkLit && MCChatView::Unread();
 
             if (button != own && ((chrome.has_value() && chrome->get().HoveredButton == button) || blinking))
             {
@@ -1699,7 +1702,7 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 
         ShowLightsOn(briefing, 100);
 
-        if (briefing.ChatBlinking != 0 && briefing.ChatTimerOn == 0)
+        if (MCChatView::Unread() && briefing.ChatTimerOn == 0)
         {
             GuiSystem().AddTimer(briefing.weak_from_this(), 5, 500, 0, 0, false);
             briefing.ChatTimerOn = true;
@@ -1838,7 +1841,7 @@ auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
 
     if (MultiPlayer() != nullptr)
     {
-        if (briefing.ChatBlinking == 0)
+        if (!MCChatView::Unread())
         {
             if (repair.ChatBlinking != 0)
             {
@@ -2081,6 +2084,13 @@ auto MCLogistics::ReIndexInventory() const -> int32_t
     }
 
     return row;
+}
+
+auto ResourceFigureText() -> std::string
+{
+    // States 1 and 2 showed the logistics heap's free memory and largest free block; the heap is gone, so they show
+    // nothing (the original left the text unset for another state).
+    return ResourceDisplayState == 0 ? std::format("{}", ResourcePoints) : std::string();
 }
 
 auto MyGetUserName() -> std::optional<std::string>

@@ -5,8 +5,9 @@
 // and the remade 'MECH BAY (logistics/MCLogisticsTabs) call: the repair knobs (armour, internal structure, the engine: where
 // the mech arrived is the floor, a knob moved back refunds), REPAIR ALL (the engine, then structure, then armour, as
 // far as the resource points go), the refit (each damaged part swapped for a spare, what has none stripped), what
-// fits in a mech and why not, a part fitted, taken out and put back, a MechWarrior boarding and leaving, a unit joining
-// and leaving the force. The sounds, the words and the screens' rows are the caller's.
+// fits in a mech and why not, a part fitted, taken out and put back, the order a mech's fitted parts are listed in, a
+// MechWarrior boarding and leaving, a unit joining and leaving the force. The sounds, the words and the screens' rows
+// are the caller's.
 
 #include "main/MCLogMech.h"
 
@@ -138,6 +139,48 @@ namespace MCMechBay
 
     /// <summary>What a part weighs fitted, with its ammunition.</summary>
     float FittedTons(uint8_t masterID);
+
+    /// <summary>
+    /// A weapon's long range under this is short range, under <see cref="MediumRangeUnder"/> medium, else long (the
+    /// original's lists, range words and colours).
+    /// </summary>
+    inline constexpr float ShortRangeUnder = 76.0f;
+    inline constexpr float MediumRangeUnder = 151.0f;
+
+    /// <summary>The lists of a mech's fitted parts, in the order the 'MECH BAY shows them (1998's weapon list's).</summary>
+    enum class MCFitList : uint8_t
+    {
+        ShortRange,
+        MediumRange,
+        LongRange,
+        Equipment
+    };
+
+    /// <summary>
+    /// The list the part <paramref name="masterID"/> is in: a weapon's by its long range (<see cref="ShortRangeUnder"/>,
+    /// <see cref="MediumRangeUnder"/>), equipment's; none for the rest (ammunition, the engine), which no list shows.
+    /// </summary>
+    std::optional<MCFitList> FitListOf(uint8_t masterID);
+
+    /// <summary>
+    /// The order a weapon list shows weapons of <paramref name="damages"/> in, each as its index: by damage, lowest first,
+    /// as the original's exchange sort (not stable: weapons of equal damage can change places).
+    /// </summary>
+    std::vector<size_t> DamageOrder(std::span<const float> damages);
+
+    /// <summary>A copy of a weapon or piece of equipment fitted in a mech: its item, and that copy's record.</summary>
+    struct MCFittedCopy
+    {
+        std::shared_ptr<MCLogInventoryItem> Item;
+        std::shared_ptr<MCLogInventoryStat> Copy;
+    };
+
+    /// <summary>
+    /// <paramref name="mech"/>'s fitted weapons and equipment, a copy each, in 1998's order (MCMechRepairBlock's weapon
+    /// list): the short-, medium- and long-range weapons, each list by damage (<see cref="DamageOrder"/>), then the
+    /// equipment in the inventory's order. Each copy keeps its own record (its damage, its item number).
+    /// </summary>
+    std::vector<MCFittedCopy> FittedCopies(const MCLogMech& mech);
 
     /// <summary>
     /// Why the part <paramref name="masterID"/> (<paramref name="tonnage"/> fitted) can't go into

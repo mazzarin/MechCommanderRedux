@@ -4,7 +4,8 @@
 // inventory blocks), in one place both the 1998 purchase screen's blocks and the remade PURCHASING
 // (logistics/MCPurchasing) call: what a thing costs and pays back, how many may be bought, why one can't be, and the
 // purchases and sales themselves (the force's lists, the store's stock and the resource points changed as the
-// original's confirmed dialogs did). The sounds, the words and the screens' rows are the caller's.
+// original's confirmed dialogs did); which parts the store lists, and a part's texts. The sounds, the words and the
+// screens' rows are the caller's.
 
 class MCLogMech;
 class MCLogVehicle;
@@ -32,6 +33,37 @@ namespace MCStore
         /// <summary>Port-only: the unit is in the force; only a spare sells (the original's inventory alone sold).</summary>
         InForce
     };
+
+    /// <summary>The store lists the parts whose sort order (their place in <c>objsort.rsp</c>) is under this.</summary>
+    inline constexpr int32_t SortOrders = 50;
+
+    /// <summary>
+    /// Whether the store lists <paramref name="part"/>: its sort order 0 to 49 (the original numbered the store's rows
+    /// over these only).
+    /// </summary>
+    bool Lists(const MCLogInventoryItem& part);
+
+    /// <summary>The parts for sale the store lists (<see cref="Lists"/>), in their sort order.</summary>
+    std::vector<std::shared_ptr<MCLogInventoryItem>> ListedParts();
+
+    /// <summary>The texts a part's row and details show, worked out from the master component.</summary>
+    struct MCComponentTexts
+    {
+        /// <summary>The range: "%.1f m", a short/medium/long word for weapons, "N/A" for probes.</summary>
+        std::string Range;
+        /// <summary>The weight ("%.1f tons").</summary>
+        std::string Weight;
+        /// <summary>The recycle time ("%.2f s"), or "N/A".</summary>
+        std::string Recycle;
+        /// <summary>The damage ("%.2f", tripled for one weapon kind), or "N/A".</summary>
+        std::string Damage;
+    };
+
+    /// <summary>
+    /// The texts of master component <paramref name="masterID"/> (the original's inventory block worked them out in its
+    /// init).
+    /// </summary>
+    MCComponentTexts ComponentTexts(uint8_t masterID);
 
     /// <summary>
     /// What a sale pays for something worth <paramref name="value"/>: half in a campaign, all of it in a match or a solo

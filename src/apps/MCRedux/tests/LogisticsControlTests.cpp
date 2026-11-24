@@ -37,6 +37,7 @@
 #include "logistics/MCUnitLimits.h"
 #include "logistics/MCPurProfile.h"
 #include "main/MCGameContext.h"
+#include "main/MCLogistics.h"
 
 // The logistics screens' controls (P3-log-1): the ports and the base object, the text formatter, the ticker, text
 // fields, scrolling text, the game list, the slider, the save list's sort, ini-built screens, the purchase dialog and

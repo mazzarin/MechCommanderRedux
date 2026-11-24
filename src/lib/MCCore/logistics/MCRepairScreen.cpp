@@ -33,8 +33,6 @@
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCBriefingScreen.h"
 
-int32_t ResourceDisplayState = 0;
-
 namespace
 {
     /// <summary>The sample the screen's tabs and buttons play.</summary>
@@ -456,11 +454,4 @@ auto MCRepairScreen::Display() -> void
 {
     // The figure and the clock are drawn by the screens each frame (MCLogistics::DrawScreenChrome).
     MCLogObject::Display();
-}
-
-auto ResourceFigureText() -> std::string
-{
-    // States 1 and 2 showed the logistics heap's free memory and largest free block; the heap is gone, so they show
-    // nothing (the original left the text unset for another state).
-    return ResourceDisplayState == 0 ? std::format("{}", ResourcePoints) : std::string();
 }

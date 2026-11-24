@@ -1,8 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCBriefingText.h"
-#include "logistics/MCCompInventoryBlock.h"
-#include "logistics/MCLogInvScreen.h"
 #include "logistics/MCLogObject.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCMatchMaps.h"
@@ -188,7 +186,7 @@ namespace
     /// <summary>A part's line under its name: its range (a weapon's) and its tons as fitted.</summary>
     std::string PartWhat(uint8_t masterID)
     {
-        const MCComponentTexts texts = MCCompInventoryBlock::Texts(masterID);
+        const MCStore::MCComponentTexts texts = MCStore::ComponentTexts(masterID);
         const bool weapon = IsWeapon(ComponentForm(masterID));
         return std::format(WhatFormat, weapon ? texts.Range : std::string(EquipmentWord), texts.Weight);
     }
@@ -716,19 +714,7 @@ void MCLogisticsTabs::FillStore()
         }
         case MCKind::Components:
         {
-            std::vector<std::shared_ptr<MCLogInventoryItem>> parts;
-
-            for (const std::shared_ptr<MCLogInventoryItem>& item : logistics.PurchaseComponents->Items)
-            {
-                if (item->SortOrder >= 0 && item->SortOrder < MCLogInvScreen::StoreSortOrders)
-                {
-                    parts.push_back(item);
-                }
-            }
-
-            std::ranges::stable_sort(parts, {}, &MCLogInventoryItem::SortOrder);
-
-            for (const std::shared_ptr<MCLogInventoryItem>& item : parts)
+            for (const std::shared_ptr<MCLogInventoryItem>& item : MCStore::ListedParts())
             {
                 add(MCGood{.Picture = PartPicture(*item),
                            .Who = MasterComponentList[item->MasterID].Name,
@@ -962,7 +948,7 @@ void MCLogisticsTabs::FillDetails()
     else if (const std::shared_ptr<MCLogInventoryItem> part = thing.Part.lock(); part != nullptr)
     {
         const MCMasterComponent& component = MasterComponentList[part->MasterID];
-        const MCComponentTexts texts = MCCompInventoryBlock::Texts(part->MasterID);
+        const MCStore::MCComponentTexts texts = MCStore::ComponentTexts(part->MasterID);
         _InfoName = component.Name;
         _InfoWhat = PartWhat(part->MasterID);
         _InfoPicture = PartPicture(*part);
@@ -1171,26 +1157,17 @@ void MCLogisticsTabs::FillLab()
         return;
     }
 
-    for (const std::shared_ptr<MCLogInventoryItem>& item : mech.Inventory->Items)
+    // In 1998's order: the short-, medium- and long-range weapons, each by damage, lowest first, then the equipment.
+    for (const MCMechBay::MCFittedCopy& fitted : MCMechBay::FittedCopies(mech))
     {
-        const MCComponentForm form = ComponentForm(item->MasterID);
-
-        if (!IsWeapon(form) && !IsEquipment(form))
-        {
-            continue;
-        }
-
-        const MCComponentTexts texts = MCCompInventoryBlock::Texts(item->MasterID);
-
-        for (const std::shared_ptr<MCLogInventoryStat>& stat : item->Stats)
-        {
-            _Fits.push_back({.Range = IsWeapon(form) ? texts.Range : std::string(EquipmentWord),
-                             .Name = item->Name,
-                             .Tons = std::format(TonsFormat, MCMechBay::FittedTons(item->MasterID)),
-                             .State = stat->Hits != 0 ? std::string(DamagedWord) : std::string()});
-            _FitThings.push_back(
-                MCThing{.Part = item, .ItemNum = static_cast<uint8_t>(stat->ItemNum), .Place = MCPlace::Fitted});
-        }
+        const MCLogInventoryItem& item = *fitted.Item;
+        const bool weapon = IsWeapon(ComponentForm(item.MasterID));
+        _Fits.push_back({.Range = weapon ? MCStore::ComponentTexts(item.MasterID).Range : std::string(EquipmentWord),
+                         .Name = item.Name,
+                         .Tons = std::format(TonsFormat, MCMechBay::FittedTons(item.MasterID)),
+                         .State = fitted.Copy->Hits != 0 ? std::string(DamagedWord) : std::string()});
+        _FitThings.push_back(MCThing{
+            .Part = fitted.Item, .ItemNum = static_cast<uint8_t>(fitted.Copy->ItemNum), .Place = MCPlace::Fitted});
     }
 
     _CanRefit = MCMechBay::ItemsDamaged(mech);
@@ -1761,11 +1738,11 @@ void MCLogisticsTabs::IntoForce(MCLogPart& unit)
 
     if (unit.PartType == 1)
     {
-        MCLogInvScreen::CreateMechInvBlock();
+        GlobalLog()->NumberMechs();
     }
     else
     {
-        MCLogInvScreen::CreateVhclInvBlock();
+        GlobalLog()->NumberVehicles();
     }
 }
 
@@ -1780,15 +1757,15 @@ void MCLogisticsTabs::OutOfForce(MCLogPart& unit)
 
         if (MCMechBay::LeaveForce(mech))
         {
-            MCLogInvScreen::CreatePilotInvBlock();
+            GlobalLog()->NumberPilots();
         }
 
-        MCLogInvScreen::CreateMechInvBlock();
+        GlobalLog()->NumberMechs();
         return;
     }
 
     MCMechBay::LeaveForce(static_cast<MCLogVehicle&>(unit));
-    MCLogInvScreen::CreateVhclInvBlock();
+    GlobalLog()->NumberVehicles();
 }
 
 void MCLogisticsTabs::FitPart(MCLogInventoryItem& part)
@@ -1804,23 +1781,20 @@ void MCLogisticsTabs::FitPart(MCLogInventoryItem& part)
         return;
     }
 
-    // 1998's pick-up takes one copy off the row; its drop on the 'Mech fits it, or gives it back.
+    // 1998's pick-up takes one copy off the row (the last one's row goes); its drop on the 'Mech fits it, or gives it
+    // back.
     PlayLogSound(PickedSound);
 
-    if (--part.Count != 0)
+    if (--part.Count == 0)
     {
-        MCLogInvScreen::RefreshComponentRows(part);
-    }
-    else
-    {
-        MCLogInvScreen::CreateCompInvBlock();
+        GlobalLog()->ReIndexInventory();
     }
 
     if (!MCMechBay::Fit(*mech, part.MasterID))
     {
         ShowLogMessage(TooHeavyMessage);
         ++part.Count;
-        MCLogInvScreen::CreateCompInvBlock();
+        GlobalLog()->ReIndexInventory();
         PlayLogSound(RefusedSound);
         return;
     }
@@ -1848,21 +1822,14 @@ void MCLogisticsTabs::TakeOutPart(size_t fitted)
         return;
     }
 
-    // Into the component inventory (a damaged part is thrown away).
+    // Into the component inventory (a damaged part is thrown away): a spare back from none gets its row again.
     MCMechBay::OutOfDrop(*mech);
     PlayLogSound(PlacedSound);
     std::shared_ptr<MCLogInventoryItem> spare;
 
-    switch (MCMechBay::ToSpares(*taken, spare))
+    if (MCMechBay::ToSpares(*taken, spare) == MCMechBay::MCSpareRow::Listed)
     {
-        case MCMechBay::MCSpareRow::Counted:
-            MCLogInvScreen::RefreshComponentRows(*spare);
-            break;
-        case MCMechBay::MCSpareRow::Listed:
-            MCLogInvScreen::CreateCompInvBlock();
-            break;
-        case MCMechBay::MCSpareRow::Thrown:
-            break;
+        GlobalLog()->ReIndexInventory();
     }
 }
 
@@ -1880,7 +1847,7 @@ void MCLogisticsTabs::BoardPilot(MCLogWarrior& warrior)
     PlayLogSound(PickedSound);
     MCMechBay::Assign(warrior);
     MCMechBay::Board(warrior, *mech, mech->SlotIndex);
-    MCLogInvScreen::CreatePilotInvBlock();
+    GlobalLog()->NumberPilots();
     SoundSystem()->PlayPilotSpeech(warrior.PilotAudio, PilotSpeech);
 }
 
@@ -1898,7 +1865,7 @@ void MCLogisticsTabs::PilotLeaves()
 
     if (const std::shared_ptr<MCLogWarrior> pilot = MCMechBay::PilotOut(*mech); pilot != nullptr)
     {
-        MCLogInvScreen::CreatePilotInvBlock();
+        GlobalLog()->NumberPilots();
         SoundSystem()->PlayPilotSpeech(pilot->PilotAudio, PilotSpeech);
     }
 }
@@ -1971,13 +1938,7 @@ void MCLogisticsTabs::RefitAll()
     PlayLogSound(PickedSound);
     std::vector<std::shared_ptr<MCLogInventoryItem>> used;
     const std::string missing = MCMechBay::Refit(*mech, used);
-
-    for (const std::shared_ptr<MCLogInventoryItem>& spare : used)
-    {
-        MCLogInvScreen::RefreshComponentRows(*spare);
-    }
-
-    MCLogInvScreen::CreateCompInvBlock();
+    GlobalLog()->ReIndexInventory();
 
     if (!missing.empty())
     {
@@ -1994,7 +1955,7 @@ void MCLogisticsTabs::RefitAll()
                 if (const std::shared_ptr<MCLogMech> stripped = weak.lock(); stripped != nullptr)
                 {
                     MCMechBay::StripUnrepaired(*stripped);
-                    MCLogInvScreen::CreateCompInvBlock();
+                    GlobalLog()->ReIndexInventory();
                 }
             }});
         PlayLogSound(RefusedSound);
@@ -2206,13 +2167,13 @@ void MCLogisticsTabs::DealConfirm()
     if (const std::shared_ptr<MCPurMech> purMech = thing.StoreMech.lock(); purMech != nullptr)
     {
         MCStore::BuyMechs(*purMech, deal.Count, deal.Each);
-        MCLogInvScreen::CreateMechInvBlock();
+        GlobalLog()->NumberMechs();
         CheckNumUnits();
     }
     else if (const std::shared_ptr<MCPurPilotData> pilot = thing.StorePilot.lock(); pilot != nullptr)
     {
         MCStore::HirePilot(*pilot, deal.Each);
-        MCLogInvScreen::CreatePilotInvBlock();
+        GlobalLog()->NumberPilots();
         SoundSystem()->PlayPilotSpeech(pilot->PilotAudio, PilotSpeech);
 
         if (_Picked.has_value() && _Picked->Same(thing))
@@ -2223,7 +2184,7 @@ void MCLogisticsTabs::DealConfirm()
     else if (const std::shared_ptr<MCPurVehicle> purVehicle = thing.StoreVehicle.lock(); purVehicle != nullptr)
     {
         MCStore::BuyVehicles(*purVehicle, deal.Count, deal.Each);
-        MCLogInvScreen::CreateVhclInvBlock();
+        GlobalLog()->NumberVehicles();
         CheckNumUnits();
     }
     else if (const std::shared_ptr<MCLogInventoryItem> part = thing.Part.lock(); part != nullptr)
@@ -2232,22 +2193,15 @@ void MCLogisticsTabs::DealConfirm()
         {
             std::shared_ptr<MCLogInventoryItem> spare;
 
+            // A spare new, or back from none, gets its row; a counted one keeps its own.
             if (MCStore::BuyParts(*part, deal.Count, deal.Each, spare) == MCStore::MCPartRow::Listed)
             {
-                MCLogInvScreen::CreateCompInvBlock();
-            }
-            else if (spare != nullptr)
-            {
-                MCLogInvScreen::RefreshComponentRows(*spare);
+                GlobalLog()->ReIndexInventory();
             }
         }
         else if (MCStore::SellParts(*part, deal.Count, deal.Each))
         {
-            MCLogInvScreen::CreateCompInvBlock();
-        }
-        else
-        {
-            MCLogInvScreen::RefreshComponentRows(*part);
+            GlobalLog()->ReIndexInventory();
         }
     }
     else if (const std::shared_ptr<MCLogWarrior> warrior = thing.Warrior.lock(); warrior != nullptr)
@@ -2256,20 +2210,20 @@ void MCLogisticsTabs::DealConfirm()
         SoundSystem()->PlayPilotSpeech(warrior->PilotAudio, PilotSpeech);
         MCMechBay::Assign(*warrior);
         MCStore::FirePilot(*warrior, deal.Each);
-        MCLogInvScreen::CreatePilotInvBlock();
+        GlobalLog()->NumberPilots();
     }
     else if (const std::shared_ptr<MCLogPart> unit = thing.Unit.lock(); unit != nullptr)
     {
         if (unit->PartType == 1)
         {
             MCStore::SellMech(static_cast<MCLogMech&>(*unit), deal.Each);
-            MCLogInvScreen::CreateCompInvBlock();
-            MCLogInvScreen::CreateMechInvBlock();
+            GlobalLog()->ReIndexInventory();
+            GlobalLog()->NumberMechs();
         }
         else
         {
             MCStore::SellVehicle(static_cast<MCLogVehicle&>(*unit), deal.Each);
-            MCLogInvScreen::CreateVhclInvBlock();
+            GlobalLog()->NumberVehicles();
         }
     }
 

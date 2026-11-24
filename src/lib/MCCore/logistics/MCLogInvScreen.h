@@ -84,8 +84,6 @@ public:
     static constexpr int32_t UnitBlockHeight = 0x70;
     /// <summary>The height of an inventory block.</summary>
     static constexpr int32_t InvBlockHeight = 0x2b;
-    /// <summary>The store lists the components whose sort order is under this.</summary>
-    static constexpr int32_t StoreSortOrders = 50;
 
     /// <summary>Forgets the screen (see <see cref="ForgetInfoSource"/>).</summary>
     ~MCLogInvScreen() override;
@@ -121,13 +119,13 @@ public:
     /// <summary>Every row the store shows takes its state again.</summary>
     static void RefreshStoreRows();
 
-    /// <summary>Numbers the mechs' inventory rows (their <c>ListIndex</c>, the order of the mech list).</summary>
+    /// <summary>Numbers the mechs' inventory rows (MCLogistics::NumberMechs).</summary>
     static void CreateMechInvBlock();
 
-    /// <summary>Numbers the vehicles' inventory rows (their <c>ListIndex</c>, the order of the vehicle list).</summary>
+    /// <summary>Numbers the vehicles' inventory rows (MCLogistics::NumberVehicles).</summary>
     static void CreateVhclInvBlock();
 
-    /// <summary>Numbers the pilots' inventory rows (their <c>ListIndex</c>, the order of the pilot list).</summary>
+    /// <summary>Numbers the pilots' inventory rows (MCLogistics::NumberPilots).</summary>
     static void CreatePilotInvBlock();
 
     /// <summary>

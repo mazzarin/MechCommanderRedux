@@ -143,8 +143,6 @@ public:
     std::vector<int32_t> UndeployedMechs;
     /// <summary>Set when the operation movie should (re)start; cleared once it has.</summary>
     bool PlayMovie = false;
-    /// <summary>Set while the chat button blinks (timer 5; multiplayer).</summary>
-    bool ChatBlinking = false;
     /// <summary>The chat button's blink phase.</summary>
     bool ChatBlinkOn = false;
     /// <summary>Set while the chat blink timer (id 5) runs (started by <c>Logistics::setUpBriefingScreen</c>).</summary>

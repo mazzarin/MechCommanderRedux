@@ -146,7 +146,8 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
             const std::shared_ptr<MCLogInvScreen> screen =
                 CurrentScreen() == RepairScreen ? std::static_pointer_cast<MCLogInvScreen>(RepairScreen.Lock())
                                                 : PurchaseScreen.Lock();
-            MCLogInvScreen::CreateCompInvBlock();
+            // The rows numbered again; the 1998 screen's component tab shows them (each row refreshed).
+            ReIndexInventory();
             screen->SetUpCompInv(true, true);
             break;
         }

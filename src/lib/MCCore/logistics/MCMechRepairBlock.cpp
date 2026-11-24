@@ -1415,30 +1415,22 @@ auto MCMechRepairBlock::SetWeaponLists() -> void
     LongRangeWeapons.clear();
     Equipment.clear();
 
-    // One entry per copy, the item's position in the inventory; weapons go by long range: under 76 short, under 151
-    // medium, else long. The copies' damage, by list.
+    // One entry per copy, the item's position in the inventory, in its list (MCMechBay::FitListOf: weapons by long
+    // range, then equipment). The copies' damage, by list.
     std::array<std::vector<int32_t>, 4> hits;
     int32_t index = 0;
 
     for (const std::shared_ptr<MCLogInventoryItem>& item : Mech()->Inventory->Items)
     {
         const int32_t position = index++;
-        const MCMasterComponent& component = MasterComponentList[item->MasterID];
-        size_t list = 0;
+        const std::optional<MCMechBay::MCFitList> fitList = MCMechBay::FitListOf(item->MasterID);
 
-        if (IsWeapon(component.Form))
-        {
-            list = component.WeaponRange[3] < 76.0f ? 0 : component.WeaponRange[3] < 151.0f ? 1 : 2;
-        }
-        else if (IsEquipment(component.Form))
-        {
-            list = 3;
-        }
-        else
+        if (!fitList.has_value())
         {
             continue;
         }
 
+        const auto list = static_cast<size_t>(*fitList);
         std::vector<int32_t>& entries =
             std::array{&ShortRangeWeapons, &MediumRangeWeapons, &LongRangeWeapons, &Equipment}[list][0];
 
@@ -1468,20 +1460,23 @@ auto MCMechRepairBlock::SetWeaponLists() -> void
 auto MCMechRepairBlock::SortByDamage(std::span<int32_t> entries, std::span<int32_t> hits, MCInventoryList& inventory)
     -> void
 {
-    // An exchange sort by damage, lowest first; the hits follow their entries.
-    auto damage = [&inventory](int32_t entry)
-    { return MasterComponentList[inventory.GetMasterIDFromIndex(entry)].Damage; };
+    // 1998's order by damage (MCMechBay::DamageOrder); the hits follow their entries.
+    std::vector<float> damages;
+    damages.reserve(entries.size());
 
-    for (size_t i = 0; i + 1 < entries.size(); ++i)
+    for (const int32_t entry : entries)
     {
-        for (size_t j = i + 1; j < entries.size(); ++j)
-        {
-            if (damage(entries[j]) < damage(entries[i]))
-            {
-                std::swap(entries[i], entries[j]);
-                std::swap(hits[i], hits[j]);
-            }
-        }
+        damages.push_back(MasterComponentList[inventory.GetMasterIDFromIndex(entry)].Damage);
+    }
+
+    const std::vector<int32_t> unsortedEntries(entries.begin(), entries.end());
+    const std::vector<int32_t> unsortedHits(hits.begin(), hits.end());
+    const std::vector<size_t> order = MCMechBay::DamageOrder(damages);
+
+    for (size_t at = 0; at < order.size(); ++at)
+    {
+        entries[at] = unsortedEntries[order[at]];
+        hits[at] = unsortedHits[order[at]];
     }
 }
 

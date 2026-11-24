@@ -76,13 +76,13 @@ namespace MCBenchmark
     /// <summary>
     /// Port-only, for test runs (-briefingbench &lt;seconds&gt;; SPEC-memory.md's "From the briefing": does the hold change
     /// what the player sees on the logistics screens?): arms the logistics tour: from the main menu a new campaign, then
-    /// as a player goes through mission 1's logistics (its briefing's tabs, a mech put in the lance and taken out, the
-    /// mech lab and another mech shown in it, the store's tabs, the briefing again and Launch), each step up for
-    /// <paramref name="word"/>'s seconds (1 to MostStepSeconds) with its frames tallied, the clicks sent as the player's
-    /// input reaches the screens; then the wait from Launch to the mission's first frame. The summary (each step's p99,
-    /// worst and late frames, what the hold held) goes to benchmarks.txt and the frame log, then the game ends. HD's
-    /// looks at their defaults; the player's input held off, Escape stopping it. A bad number, or a step it can't do,
-    /// ends the game (exit code 1).
+    /// as a player goes through mission 1's logistics on the campaign's screen (BRIEFING, DEPLOY with a mech put in the
+    /// drop and taken out, the 'MECH BAY and another mech shown in its lab, its MechWarriors, PURCHASING's kinds,
+    /// BRIEFING again and Launch), each step up for <paramref name="word"/>'s seconds (1 to MostStepSeconds) with its
+    /// frames tallied, each the screen's own action as its button calls it; then the wait from Launch (BEGIN MISSION) to
+    /// the mission's first frame. The summary (each step's p99, worst and late frames, what the hold held) goes to
+    /// benchmarks.txt and the frame log, then the game ends. HD's looks at their defaults; the player's input held off,
+    /// Escape stopping it. A bad number, or a step it can't do, ends the game (exit code 1).
     /// </summary>
     void ArmBriefing(std::string_view word);
 

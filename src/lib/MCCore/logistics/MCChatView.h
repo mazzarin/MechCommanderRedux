@@ -3,7 +3,7 @@
 // Port-only (SPEC-menus.md's stage 4, the room's chat; stage 8's briefing views it too): the chat (logistics/MCLogChat)
 // as the remade screens show it, and what they say to it. Each line with its sayer's name in their colour (the chat's
 // SMUTI colour codes read), the game's own lines (a join, a leave, the code) grey, a line to a team marked; what's typed
-// sent as the 1998 chat box (MCLogChatInput) sent it.
+// sent as the 1998 chat box (MCLogChatInput) sent it; whether a line came that the player hasn't seen.
 
 #include <cstdint>
 #include <string>
@@ -64,6 +64,18 @@ public:
 
     /// <summary>A line's bytes as the chat holds them, in UTF-8 for the remade screens (0xbf-0xfd the code points).</summary>
     static std::string AsUtf8(std::string_view bytes);
+
+    /// <summary>
+    /// Whether a match's chat has a line the player hasn't seen: one came while the chat wasn't open, and it hasn't been
+    /// opened since (1998's CHAT button blinked on the briefing, PURCHASING and the 'MECH BAY while it had).
+    /// </summary>
+    static bool Unread();
+
+    /// <summary>
+    /// The unseen mark set (a line came with the chat closed) or cleared (the chat opened; logistics started, or left
+    /// for the main menu).
+    /// </summary>
+    static void SetUnread(bool unread);
 
 private:
     std::string _Name;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <SDL3/SDL_events.h>
+
 #include "gui/MCGuiRef.h"
 #include "gui/MCScreenChange.h"
 #include "lib/MCOptionalRef.h"

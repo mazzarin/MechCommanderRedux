@@ -296,7 +296,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER offers INTERNET, with how many are online,
     ConnectScreen();
     REQUIRE(SettleUntil(
         [] { return OnAccess() && MCTestGuest::Panel(MCMainPanel::Multiplayer).OnlineLine() == "37 players online"; }));
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     CHECK(asked == CountUrl);
     SaveShownShot("internet 0 access");
 
@@ -780,12 +780,12 @@ TEST_CASE_ISOLATED("game: INTERNET hosts a game into its room, its EXIT comes ba
     // A mission picked: the list shows it.
     MCSessionScreen& roomScreen = *GlobalLog()->SessionScreen;
     // (The host is alone, so the file check is done at once, its message closing itself.)
-    roomScreen.LoadMission("ARENA");
+    GlobalLog()->Room.LoadMission("ARENA");
     REQUIRE(SettleUntil([] { return DialogText().empty(); }));
-    REQUIRE(!MCSessionScreen::Room().MissionName.empty());
+    REQUIRE(!GlobalLog()->Room.MissionName.empty());
     REQUIRE(SettleUntil([&] { return service.Room()->at("mission") != ""; }));
     CHECK(service.Room()->at("mission") ==
-          MCServiceName(MCSessionScreen::Room().MissionName, MCServiceMissionMost, std::string_view()));
+          MCServiceName(GlobalLog()->Room.MissionName, MCServiceMissionMost, std::string_view()));
     SaveShot("internet 6 room", ScreenHash());
 
     // The room's EXIT: the internet games again, the game and its socket gone, the player's name kept.
@@ -945,7 +945,7 @@ TEST_CASE_ISOLATED("game: a host's new version comes back to its internet game's
     const MCServicesScope scope(list, service);
     constexpr std::string_view GameName = "Commander's game";
     REQUIRE(StartFromNote(HostNote(GameName)));
-    REQUIRE(SettleUntil([] { return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen; }));
+    REQUIRE(SettleUntil([] { return MCMenuScreens::Top() == MCMenuScreens::Room(); }));
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     CHECK(manager.HostedInternetCode() == std::optional<std::string>(MCFakeGames::GameCode));
     CHECK(!service.HostPlaceKept());
@@ -1105,7 +1105,7 @@ TEST_CASE_ISOLATED("game: an internet host's REMATCH hosts its room again on the
     const std::string gameName = HostFrom(screen);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     REQUIRE(SettleUntil([&] { return service.Room().has_value(); }));
-    GlobalLog()->SessionScreen->LoadMission("ARENA");
+    GlobalLog()->Room.LoadMission("ARENA");
     REQUIRE(SettleUntil([] { return DialogText().empty(); }));
     // The match's session, kept: the rematch's room is another (a host's session has no instance of its own here).
     const std::shared_ptr<MCFidpSession> firstRoom = manager.CurrentSession();
@@ -1125,7 +1125,7 @@ TEST_CASE_ISOLATED("game: an internet host's REMATCH hosts its room again on the
     REQUIRE(SettleUntil(
         [&]
         {
-            return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen && manager.CurrentSession() != nullptr &&
+            return MCMenuScreens::Top() == MCMenuScreens::Room() && manager.CurrentSession() != nullptr &&
                    manager.CurrentSession() != firstRoom;
         }));
     Settle();

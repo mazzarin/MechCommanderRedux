@@ -24,13 +24,14 @@
 #include "logistics/MCGameList.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogButton.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogPort.h"
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCLogChatInput.h"
@@ -90,6 +91,7 @@ std::type_identity_t<int> InDemo{};
 bool Solo = false;
 int32_t LastLogisticsMissionState = 0;
 std::string HoldString;
+int32_t ResourceDisplayState = 0;
 
 namespace
 {
@@ -370,6 +372,8 @@ auto MCLogistics::Start() -> void
             RepairScreen = screen.WeakAs<MCRepairScreen>();
             screen.Init();
         });
+    // The chat's unseen mark starts clear, as the 1998 briefing's, made here, did.
+    MCChatView::SetUnread(false);
     ScreenWindow()->CreateChild<MCBriefingScreen>(
         [this](MCBriefingScreen& screen)
         {
@@ -674,11 +678,84 @@ auto MCLogistics::ReuseArt(std::shared_ptr<MCLogisticsArt> art) -> void
     _ReusedArt = std::move(art);
 }
 
+namespace
+{
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9, step 2): the flow's top screen (MCMenuScreens::Top) for the 1998 screen
+    /// <paramref name="shown"/> made <paramref name="logistics"/>' screen; none for a screen the flow has no place for.
+    /// </summary>
+    void NoteTopOf(const MCLogistics& logistics, const std::shared_ptr<MCLogObject>& shown)
+    {
+        using MCMenuScreens::MCCampaignPage;
+
+        if (shown == nullptr)
+        {
+            MCMenuScreens::NoteTop(MCScreenFlow::NoScreen);
+        }
+        else if (logistics.MainScreen.Is(*shown))
+        {
+            MCMenuScreens::NoteTop(MCMenuScreens::Main());
+        }
+        else if (logistics.ConnectScreen.Is(*shown))
+        {
+            MCMenuScreens::NoteTop(MCMenuScreens::ReadyRoom());
+        }
+        else if (logistics.LoadScreen.Is(*shown))
+        {
+            const MCSplashScreen& load = *logistics.LoadScreen;
+            const bool picksMission = load.FilePane != nullptr && load.FilePane->Multiplayer;
+            MCMenuScreens::NoteTop(picksMission ? MCMenuScreens::MissionPick() : MCMenuScreens::Load());
+        }
+        else if (logistics.SaveScreen.Is(*shown))
+        {
+            MCMenuScreens::NoteTop(MCMenuScreens::Save());
+        }
+        else if (logistics.PrefScreen.Is(*shown))
+        {
+            MCMenuScreens::NoteTop(MCMenuScreens::Preferences());
+        }
+        else if (logistics.SessionScreen.Is(*shown))
+        {
+            MCMenuScreens::NoteTop(MCMenuScreens::Room());
+        }
+        else if (logistics.BriefingScreen.Is(*shown))
+        {
+            MCMenuScreens::NoteTop(MCMenuScreens::Campaign(), MCCampaignPage::Briefing);
+        }
+        else if (logistics.PurchaseScreen.Is(*shown))
+        {
+            MCMenuScreens::NoteTop(MCMenuScreens::Campaign(), MCCampaignPage::Purchasing);
+        }
+        else if (logistics.RepairScreen.Is(*shown))
+        {
+            MCMenuScreens::NoteTop(MCMenuScreens::Campaign(), MCCampaignPage::MechBay);
+        }
+        else
+        {
+            MCMenuScreens::NoteTop(MCScreenFlow::NoScreen);
+        }
+    }
+}
+
+auto MCLogistics::HideScreen() const -> void
+{
+    if (const std::shared_ptr<MCLogObject> shown = CurrentScreen(); shown != nullptr)
+    {
+        shown->ShowGuiWindow(false);
+    }
+}
+
 auto MCLogistics::SetCurrentScreen(std::weak_ptr<MCLogObject> screen) -> void
 {
     const std::shared_ptr<MCLogObject> before = _CurrentScreen.lock();
     const std::shared_ptr<MCLogObject> after = screen.lock();
     _CurrentScreen = std::move(screen);
+
+    // Port-only (SPEC-menus.md's stage 9, step 2): the flow's top follows the 1998 screen shown, until they go.
+    if (GlobalLog().get() == this)
+    {
+        NoteTopOf(*this, after);
+    }
 
     // Port-only (SPEC-menus.md, the remade screens): an old screen come up goes over the remade ones, which hide (one
     // made logistics' screen is shown just after).
@@ -1122,16 +1199,18 @@ auto MCLogistics::ShowLogScreen(bool show, bool redraw) const -> void
     CurrentScreen()->ShowGuiWindow(show && !underRemade);
 }
 
+auto MCLogistics::ShowInPlace(std::weak_ptr<MCLogObject> screen) -> std::shared_ptr<MCLogObject>
+{
+    std::shared_ptr<MCLogObject> previous = CurrentScreen();
+    HideScreen();
+    SetCurrentScreen(std::move(screen));
+    return previous;
+}
+
 auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
 {
     NoteScreen("main");
-
-    if (CurrentScreen() != nullptr)
-    {
-        ShowLogScreen(false, false);
-    }
-
-    SetCurrentScreen(MainScreen);
+    ShowInPlace(MainScreen);
 
     if (!fromMenu)
     {
@@ -1140,7 +1219,13 @@ auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
 
     LogisticsState = 1;
     ShowLogScreen(true, true);
+    LeaveMatchAtMainMenu();
+    ClearChat();
+    return 0;
+}
 
+auto MCLogistics::LeaveMatchAtMainMenu() -> void
+{
     if (MultiPlayer() != nullptr)
     {
         if (MultiplayerInitialized)
@@ -1150,7 +1235,7 @@ auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
 
         MCGameContext::Current().SetMultiPlayer(nullptr);
         MCBriefingScreen& briefing = *BriefingScreen;
-        briefing.ChatBlinking = false;
+        MCChatView::SetUnread(false);
 
         if (briefing.ChatTimerOn != 0)
         {
@@ -1174,9 +1259,6 @@ auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
             PurchaseDialog->ShowGuiWindow(false);
         }
     }
-
-    ClearChat();
-    return 0;
 }
 
 auto MCLogistics::ClearChat() -> void
@@ -1349,7 +1431,7 @@ auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
 
     if (MultiPlayer() != nullptr)
     {
-        if (briefing.ChatBlinking == 0)
+        if (!MCChatView::Unread())
         {
             if (PurchaseScreen->ChatBlinking != 0)
             {
@@ -1366,16 +1448,9 @@ auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
         }
     }
 
-    const std::shared_ptr<MCLogObject> previous = CurrentScreen();
-
-    if (previous != nullptr)
-    {
-        ShowLogScreen(false, false);
-    }
-
+    const std::shared_ptr<MCLogObject> previous = ShowInPlace(PurchaseScreen);
     MCPurchaseScreen& screen = *PurchaseScreen;
     ShowTickerOn(screen);
-    SetCurrentScreen(PurchaseScreen);
     LogisticsState = 2;
     screen.DrawBackground();
     DrawScreenButtons();
@@ -1460,8 +1535,7 @@ auto MCLogistics::DrawScreenChrome(MCLogObject& screen, const MCPane& target) ->
                 face->CopyTo(target, 2, top, false);
             }
 
-            const bool blinking =
-                button == 1 && chrome.has_value() && chrome->get().BlinkLit && BriefingScreen->ChatBlinking != 0;
+            const bool blinking = button == 1 && chrome.has_value() && chrome->get().BlinkLit && MCChatView::Unread();
 
             if (button != own && ((chrome.has_value() && chrome->get().HoveredButton == button) || blinking))
             {
@@ -1663,19 +1737,12 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
     NoteScreen("briefing");
     MakeLineArtAhead();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
-    const std::shared_ptr<MCLogObject> previous = CurrentScreen();
-
-    if (previous != nullptr)
-    {
-        ShowLogScreen(false, false);
-    }
-
+    const std::shared_ptr<MCLogObject> previous = ShowInPlace(BriefingScreen);
     MCBriefingScreen& briefing = *BriefingScreen;
     ShowTickerOn(briefing);
 
     // The original blanked the local player's empty drop slots here (the screen draws them each frame), then the box
     // area under them (the box is shown again below).
-    SetCurrentScreen(BriefingScreen);
     LogisticsState = 3;
     ShowLogScreen(true, previous != RepairScreen && previous != PurchaseScreen);
     briefing.MovieStarted = false;
@@ -1699,7 +1766,7 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 
         ShowLightsOn(briefing, 100);
 
-        if (briefing.ChatBlinking != 0 && briefing.ChatTimerOn == 0)
+        if (MCChatView::Unread() && briefing.ChatTimerOn == 0)
         {
             GuiSystem().AddTimer(briefing.weak_from_this(), 5, 500, 0, 0, false);
             briefing.ChatTimerOn = true;
@@ -1806,7 +1873,7 @@ auto MCLogistics::ReadySessionScreen() -> void
         DestroyMultiplayer();
     }
 
-    SessionScreen->Activate(false);
+    Room.Activate(false);
 
     // Port (Redux HD): an internet game's host passes its code on to its players.
     if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
@@ -1821,8 +1888,7 @@ auto MCLogistics::ReadySessionScreen() -> void
 auto MCLogistics::ShowSessionScreen() -> void
 {
     NoteScreen("session");
-    CurrentScreen()->ShowGuiWindow(false);
-    SetCurrentScreen(SessionScreen);
+    ShowInPlace(SessionScreen);
     ShowLogScreen(true, true);
     LogisticsState = 8;
 }
@@ -1838,7 +1904,7 @@ auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
 
     if (MultiPlayer() != nullptr)
     {
-        if (briefing.ChatBlinking == 0)
+        if (!MCChatView::Unread())
         {
             if (repair.ChatBlinking != 0)
             {
@@ -1853,15 +1919,8 @@ auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
         }
     }
 
-    const std::shared_ptr<MCLogObject> previous = CurrentScreen();
-
-    if (previous != nullptr)
-    {
-        ShowLogScreen(false, false);
-    }
-
+    const std::shared_ptr<MCLogObject> previous = ShowInPlace(RepairScreen);
     ShowTickerOn(repair);
-    SetCurrentScreen(RepairScreen);
     LogisticsState = 4;
     repair.DrawBackground();
     DrawScreenButtons();
@@ -2081,6 +2140,13 @@ auto MCLogistics::ReIndexInventory() const -> int32_t
     }
 
     return row;
+}
+
+auto ResourceFigureText() -> std::string
+{
+    // States 1 and 2 showed the logistics heap's free memory and largest free block; the heap is gone, so they show
+    // nothing (the original left the text unset for another state).
+    return ResourceDisplayState == 0 ? std::format("{}", ResourcePoints) : std::string();
 }
 
 auto MyGetUserName() -> std::optional<std::string>

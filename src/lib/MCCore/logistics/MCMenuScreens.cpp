@@ -10,7 +10,7 @@
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogDialogButton.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCPrefsScreen.h"
@@ -75,10 +75,7 @@ namespace
     {
         if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
         {
-            if (const std::shared_ptr<MCLogObject> shown = logistics->CurrentScreen(); shown != nullptr)
-            {
-                shown->ShowGuiWindow(false);
-            }
+            logistics->HideScreen();
         }
     }
 
@@ -151,6 +148,11 @@ namespace
 
     MCIds Ids;
     bool Registered = false;
+    /// <summary>The flow's top screen and the campaign's page on it (<see cref="MCMenuScreens::Top"/>).</summary>
+    MCScreenId TopId = MCScreenFlow::NoScreen;
+    MCMenuScreens::MCCampaignPage TopOn = MCMenuScreens::MCCampaignPage::Briefing;
+    /// <summary>The main menu's logistics state (LogisticsState).</summary>
+    constexpr int32_t MainMenuState = 1;
     /// <summary>The room readied at a network's word and a change to show it under way (<see cref="MCMenuScreens::OpenRoom"/>).</summary>
     bool RoomShowing = false;
 
@@ -199,22 +201,14 @@ auto MCMenuScreens::Register() -> void
     // Port-only (SPEC-menus.md's stage 4): the remade room (logistics/MCRoomScreen) shows in the 1998 room's place, which
     // stays logistics' screen, hidden.
     Ids.Room = MCScreenFlow::Register(OldScreen(
-        "room",
-        []
-        {
-            const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-            const std::shared_ptr<MCLogObject> shown = logistics != nullptr ? logistics->CurrentScreen() : nullptr;
-            return (shown != nullptr && logistics->SessionScreen.Is(*shown) && RoomScreenShown()) ||
-                   Showing(&MCLogistics::SessionScreen);
-        },
+        "room", [] { return (Top() == Room() && RoomScreenShown()) || Showing(&MCLogistics::SessionScreen); },
         []
         {
             // Port-only (stage 4): back from a screen over the room (stage 6's UPDATE), the room as it stands: its
             // set-up would start it afresh.
             const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-            const std::shared_ptr<MCLogObject> shown = logistics->CurrentScreen();
 
-            if (shown != nullptr && logistics->SessionScreen.Is(*shown))
+            if (Top() == Room())
             {
                 logistics->SessionScreen->ShowGuiWindow(true);
                 return;
@@ -231,7 +225,7 @@ auto MCMenuScreens::Register() -> void
                 return;
             }
 
-            LeaveRoom();
+            MCRoomEnd::Leave();
         }));
     Ids.MissionPick = MCScreenFlow::Register(OldScreen(
         "mission pick", [] { return ShowingLoad(true, false); }, [] { GlobalLog()->SetUpSessionScreen(); },
@@ -357,6 +351,60 @@ auto MCMenuScreens::Campaign() -> MCScreenId
 auto MCMenuScreens::ReadyRoom() -> MCScreenId
 {
     return TheIds().ReadyRoom;
+}
+
+auto MCMenuScreens::Top() -> MCScreenId
+{
+    return GlobalLog() != nullptr ? TopId : MCScreenFlow::NoScreen;
+}
+
+auto MCMenuScreens::TopPage() -> MCCampaignPage
+{
+    return TopOn;
+}
+
+auto MCMenuScreens::CampaignOn(MCCampaignPage page) -> bool
+{
+    return Top() == Campaign() && TopOn == page;
+}
+
+auto MCMenuScreens::NoteTop(MCScreenId id, MCCampaignPage page) -> void
+{
+    TopId = id;
+    TopOn = page;
+}
+
+auto MCMenuScreens::ShowBack(MCScreenId id, MCBackWay way) -> void
+{
+    MCLogistics& logistics = *GlobalLog();
+
+    if (way == MCBackWay::InPlace)
+    {
+        logistics.HideScreen();
+    }
+
+    if (id == Solo())
+    {
+        // Port-only (stage 7): the remade SOLO MISSIONS, in the main menu's panel; the main menu where it can't show.
+        if (!MCMainMenuScreens::ShowNow(MCMainPanel::Solo))
+        {
+            logistics.SetUpMainScreen(true);
+        }
+
+        return;
+    }
+
+    if (id == Campaign())
+    {
+        logistics.SetUpBriefingScreen(false);
+        logistics.ShowLogScreen(true, false);
+        return;
+    }
+
+    logistics.SetCurrentScreen(logistics.MainScreen);
+    logistics.LogisticsState = MainMenuState;
+    const bool show = way != MCBackWay::Hidden;
+    logistics.ShowLogScreen(show, show);
 }
 
 auto MCMenuScreens::GamesStack(bool internet, bool room) -> std::vector<MCScreenId>
@@ -486,7 +534,7 @@ auto MCMenuScreens::OpenRoom(std::string name) -> void
     MCLogistics& logistics = *GlobalLog();
 
     // Shown already (the host's word to show it again), or dark already (a change's own work): set up at once.
-    if (logistics.CurrentScreen() == logistics.SessionScreen || MCScreenChange::InPiece())
+    if (Top() == Room() || MCScreenChange::InPiece())
     {
         RoomShowing = false;
         logistics.SetUpSessionScreen();
@@ -495,11 +543,12 @@ auto MCMenuScreens::OpenRoom(std::string name) -> void
     }
 
     const bool pending = RoomShowPending();
-    const std::shared_ptr<MCLogObject> before = logistics.CurrentScreen();
+    const MCScreenId before = Top();
+    const MCCampaignPage beforePage = TopPage();
     PrepareRoom();
 
     // Its set-up gave the room up (too few players: the main menu, as the original's) or a change shows it already.
-    if (logistics.CurrentScreen() != before || pending)
+    if (Top() != before || TopPage() != beforePage || pending)
     {
         RoomShowing = pending;
         return;

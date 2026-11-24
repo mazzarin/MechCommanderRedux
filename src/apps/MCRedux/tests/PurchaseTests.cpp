@@ -30,7 +30,7 @@
 #include "logistics/MCVehicleInventoryBlock.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCGamePaths.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "main/MCGameContext.h"
 #include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
@@ -212,14 +212,13 @@ namespace
 TEST_CASE("logistics: the session screen lists player ids in order, empty slots last")
 {
     const std::array<uint32_t, 3> ids = {0x30, 0x10, 0x20};
-    const auto sorted = MCSessionScreen::SortedPlayerIds(ids);
-    const uint32_t none = MCSessionScreen::NoPlayer;
-    CHECK(sorted == (std::array<uint32_t, MCSessionScreen::MaxPlayers>{0x10, 0x20, 0x30, none, none, none}));
+    const auto sorted = MCRoomModel::SortedPlayerIds(ids);
+    const uint32_t none = MCRoomModel::NoPlayer;
+    CHECK(sorted == (std::array<uint32_t, MCRoomModel::MaxPlayers>{0x10, 0x20, 0x30, none, none, none}));
 
     // A full session.
     const std::array<uint32_t, 6> full = {6, 5, 4, 3, 2, 1};
-    CHECK(MCSessionScreen::SortedPlayerIds(full) ==
-          (std::array<uint32_t, MCSessionScreen::MaxPlayers>{1, 2, 3, 4, 5, 6}));
+    CHECK(MCRoomModel::SortedPlayerIds(full) == (std::array<uint32_t, MCRoomModel::MaxPlayers>{1, 2, 3, 4, 5, 6}));
 }
 
 TEST_CASE("logistics: a unit sells for half its value in the campaign, all of it in a single mission")
@@ -855,52 +854,6 @@ TEST_CASE("logistics: internal structure repair goes to the most damaged locatio
     for (const auto& location : mech.Internals)
     {
         CHECK_EQ(location.CurArmor, location.MaxArmor);
-    }
-}
-
-TEST_CASE("game: the repair bay lists weapons by damage, lowest first")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    ShopFixture shop;
-    // Three weapons with different damage, in the inventory in id order.
-    std::vector<int32_t> ids;
-
-    for (int32_t id = 0; id < NumMasterComponents() && ids.size() < 3; ++id)
-    {
-        const MCComponentForm form = MasterComponentList[id].Form;
-        const bool newDamage = std::ranges::none_of(
-            ids, [id](int32_t other) { return MasterComponentList[other].Damage == MasterComponentList[id].Damage; });
-
-        if (IsWeapon(form) && newDamage)
-        {
-            ids.push_back(id);
-        }
-    }
-
-    REQUIRE_EQ(ids.size(), size_t{3});
-    MCInventoryList inventory;
-
-    for (int32_t id : ids)
-    {
-        inventory.AddItem(static_cast<uint8_t>(id), inventory.CreateStat(0, 0, 0, 1, 0xff), false);
-    }
-
-    std::vector<int32_t> entries = {0, 1, 2};
-    std::vector<int32_t> hits = {10, 20, 30};
-    MCMechRepairBlock::SortByDamage(entries, hits, inventory);
-    auto damage = [&inventory](int32_t entry)
-    { return MasterComponentList[inventory.GetMasterIDFromIndex(entry)].Damage; };
-    CHECK(damage(entries[0]) < damage(entries[1]));
-    CHECK(damage(entries[1]) < damage(entries[2]));
-
-    // Each damage figure stays with its entry.
-    for (size_t i = 0; i < entries.size(); ++i)
-    {
-        CHECK_EQ(hits[i], 10 * (entries[i] + 1));
     }
 }
 

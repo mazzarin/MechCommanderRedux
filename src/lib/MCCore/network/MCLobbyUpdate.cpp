@@ -2,6 +2,7 @@
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCMenuScreens.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCRoomEnd.h"
 #include "ui/MCRmlFlow.h"
 #include "gui/MCGuiStartup.h"
 #include "linkup/MCFidpPlayer.h"
@@ -185,15 +186,13 @@ namespace
     }
 
     /// <summary>
-    /// The places kept changed: the session screen's line names whom the room waits for (MCSessionScreen::CheckGoodToGo).
+    /// The places kept changed: the session screen's line names whom the room waits for (MCRoomModel::CheckGoodToGo).
     /// </summary>
     void PlacesChanged()
     {
-        if (const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-            logistics != nullptr && logistics->SessionScreen != nullptr &&
-            logistics->SessionScreen->StartButton != nullptr)
+        if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr && logistics->Room.Made())
         {
-            logistics->SessionScreen->CheckGoodToGo();
+            logistics->Room.CheckGoodToGo();
         }
     }
 
@@ -221,10 +220,9 @@ namespace
 
         for (const MCComing& coming : Coming)
         {
-            if (MCLobbyUpdate::Away(coming.Id) && GlobalLog()->SessionScreen != nullptr &&
-                GlobalLog()->SessionScreen->StartButton != nullptr)
+            if (MCLobbyUpdate::Away(coming.Id) && GlobalLog()->Room.Made())
             {
-                GlobalLog()->SessionScreen->RemovePlayer(coming.Id);
+                GlobalLog()->Room.RemovePlayer(coming.Id);
             }
         }
 
@@ -398,7 +396,7 @@ namespace
                              []
                              {
                                  MCLogistics& logistics = *GlobalLog();
-                                 logistics.CurrentScreen()->ShowGuiWindow(false);
+                                 logistics.HideScreen();
                                  logistics.SetCurrentScreen(logistics.ConnectScreen);
                                  logistics.LogisticsState = WaitingState;
                                  logistics.ShowLogScreen(true, true);
@@ -441,7 +439,7 @@ namespace
         }
         else
         {
-            GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+            GlobalLog()->HideScreen();
             ShowInternetScreen();
         }
 
@@ -463,7 +461,7 @@ namespace
     {
         if (LobbyLaunchArgs.Active)
         {
-            ShowOkDialog(*GlobalLog()->Message, text, CancelToMPlayer);
+            ShowOkDialog(*GlobalLog()->Message, text, MCRoomEnd::LeaveForLauncher);
             return;
         }
 
@@ -629,9 +627,9 @@ namespace
                 CloseRoomAgain();
             }
 
-            if (!stayed && GlobalLog()->SessionScreen != nullptr && GlobalLog()->SessionScreen->StartButton != nullptr)
+            if (!stayed && GlobalLog()->Room.Made())
             {
-                GlobalLog()->SessionScreen->RemovePlayer(gone.Id);
+                GlobalLog()->Room.RemovePlayer(gone.Id);
             }
 
             PlacesChanged();
@@ -1122,7 +1120,7 @@ auto MCLobbyUpdate::PlayerJoined(uint32_t playerId) -> void
     SDL_Log("Lobby updates: %s is back from its update", player->Name.c_str());
     Coming.erase(coming);
 
-    // The session screen shows it the room as it shows any player who joins (MCSessionScreen::WatchRoom).
+    // The session screen shows it the room as it shows any player who joins (MCRoomModel::WatchRoom).
     if (game->IsHost && Coming.empty())
     {
         CloseRoomAgain();

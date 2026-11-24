@@ -2,10 +2,12 @@
 #include "logistics/MCStore.h"
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCLogRows.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCUnitLimits.h"
+#include "main/MCGameStrings.h"
 #include "main/MCInventoryList.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
@@ -55,6 +57,89 @@ namespace
         SDL_Log("MCStore: a sold %s (%s) was in neither the force nor the spares",
                 part.PartType == 1 ? "mech" : "vehicle", part.FileName.c_str());
     }
+
+    /// <summary>The game's strings a part's texts read, and the buffer the original read them into.</summary>
+    constexpr uint32_t ShortRangeString = 0x55;
+    constexpr uint32_t MediumRangeString = 0x50;
+    constexpr uint32_t LongRangeString = 0x6d;
+    constexpr uint32_t TonsString = 0x6e;
+    constexpr uint32_t NotApplicableString = 0x6c;
+    constexpr int StringBuffer = 0xfe;
+    /// <summary>The weapons whose damage the texts show tripled (their WeaponFlags), and by how much.</summary>
+    constexpr uint8_t TripledWeaponFlags = 4;
+    constexpr double DamageTripled = 3.0;
+
+    /// <summary>The range word of a weapon in <paramref name="list"/>.</summary>
+    uint32_t RangeWord(MCMechBay::MCFitList list)
+    {
+        return list == MCMechBay::MCFitList::ShortRange    ? ShortRangeString
+               : list == MCMechBay::MCFitList::MediumRange ? MediumRangeString
+                                                           : LongRangeString;
+    }
+}
+
+bool MCStore::Lists(const MCLogInventoryItem& part)
+{
+    return part.SortOrder >= 0 && part.SortOrder < SortOrders;
+}
+
+std::vector<std::shared_ptr<MCLogInventoryItem>> MCStore::ListedParts()
+{
+    std::vector<std::shared_ptr<MCLogInventoryItem>> parts;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->PurchaseComponents->Items)
+    {
+        if (Lists(*item))
+        {
+            parts.push_back(item);
+        }
+    }
+
+    std::ranges::stable_sort(parts, {}, &MCLogInventoryItem::SortOrder);
+    return parts;
+}
+
+MCStore::MCComponentTexts MCStore::ComponentTexts(uint8_t masterID)
+{
+    const MCMasterComponent& component = MasterComponentList[masterID];
+    const MCComponentForm form = component.Form;
+    MCComponentTexts texts;
+    texts.Weight = std::format("{:.1f} {}", MCMechBay::FittedTons(masterID), LoadGameString(TonsString, StringBuffer));
+
+    if (IsWeapon(form))
+    {
+        // Weapons: the long range as a word, damage and recycle time.
+        texts.Range = LoadGameString(RangeWord(*MCMechBay::FitListOf(masterID)), StringBuffer);
+        double damage = component.Damage;
+
+        if (component.WeaponFlags == TripledWeaponFlags)
+        {
+            damage *= DamageTripled;
+        }
+
+        texts.Damage = std::format("{:.2f}", damage);
+        texts.Recycle = std::format("{:.2f} s", component.RecycleTime);
+        return texts;
+    }
+
+    std::string notApplicable = LoadGameString(NotApplicableString, StringBuffer);
+
+    if (form == MCComponentForm::Probe)
+    {
+        texts.Range = notApplicable;
+    }
+    else
+    {
+        // Original behaviour (OB-078): other equipment than ECM and sensors formats the item pointer's bits as the
+        // range; for a heap address that is a denormal, so it read "0.0 m".
+        const float shown =
+            form == MCComponentForm::Ecm || form == MCComponentForm::Sensor ? component.RangeOrHeat : 0.0f;
+        texts.Range = std::format("{:.1f} m", shown);
+    }
+
+    texts.Damage = notApplicable;
+    texts.Recycle = std::move(notApplicable);
+    return texts;
 }
 
 int32_t MCStore::SalePrice(int32_t value)

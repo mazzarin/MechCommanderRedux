@@ -9,31 +9,26 @@
 #include "fakes/MCManualClock.h"
 #include "gui/MCGuiCallback.h"
 #include "gui/MCGuiGlobals.h"
+#include "gui/MCGuiSmackerWindow.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "gui/MCUpdateDisplay.h"
 #include "main/MCGameContext.h"
 #include "main/MCHdSettings.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCChooseMapWindow.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGamesScreen.h"
-#include "logistics/MCLoadSaveMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCPauseScreen.h"
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSavesMenu.h"
-#include "logistics/MCSessionScreen.h"
 #include "logistics/MCSettingsModel.h"
-#include "logistics/MCSplashScreen.h"
-#include "logistics/MCUpdatePage.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
@@ -77,11 +72,11 @@
 // and the message's OK back to the briefing, LOAD GAME opened, its LOAD into the briefing, LOAD GAME opened again and
 // Escape back to the main menu. It ends there: --record-window-landings is left out with it.
 //
-// Port-only (SPEC-menus.md's stage 8): --record-window-campaign 1 has the remade BRIEFING and DEPLOY in place of the
-// 1998 briefing: NEW CAMPAIGN to the briefing, then its tabs timed as steps (below: DEPLOY, BRIEFING, the 1998
-// PURCHASING and its BRIEFING button back), the first unit sent to the drop, BEGIN MISSION pressed on DEPLOY to the
-// loading screen as designed and the battlefield (recorded), and the results' DONE to the next briefing (recorded). It
-// ends there: --record-window-landings and --record-window-saves are left out with it.
+// Port-only (SPEC-menus.md's stage 8): --record-window-campaign 1 times the remade campaign screen's tabs: NEW CAMPAIGN
+// to the briefing, then its tabs timed as steps (below: DEPLOY, BRIEFING, PURCHASING and BRIEFING again), the first
+// unit sent to the drop, BEGIN MISSION pressed on DEPLOY to the loading screen as designed and the battlefield
+// (recorded), and the results' DONE to the next briefing (recorded). It ends there: --record-window-landings and
+// --record-window-saves are left out with it.
 //
 // Port-only (SPEC-menus.md's stage 3): --record-window-games 1 times INTERNET's and LAN's changes and windows instead of
 // the mission's, through a scripted games list and a stand-in service (tests/MCInternetSpots.h): MULTIPLAYER ACCESS's
@@ -898,12 +893,11 @@ namespace
         return [panel, id] { CHECK(MCRemadeTest::Press(MCTestGuest::Panel(panel), id)); };
     }
 
-    /// <summary>The old briefing shown, the change that showed it over.</summary>
+    /// <summary>The remade briefing shown (the flow's top the campaign's BRIEFING), the change that showed it over.</summary>
     bool BriefingShown()
     {
-        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        return logistics != nullptr && logistics->CurrentScreen() == logistics->BriefingScreen &&
-               logistics->BriefingScreen->IsShowing() && Settled();
+        return MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing) && MCCampaignMenu::Shown() &&
+               Settled();
     }
 
     /// <summary>The save the main menu's walk makes for CONTINUE (in the tests' user folder, gone after).</summary>
@@ -1053,7 +1047,7 @@ namespace
     void DeployFirstMech()
     {
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        REQUIRE(logistics->CurrentScreen() == logistics->BriefingScreen);
+        REQUIRE(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
         std::shared_ptr<MCLogMech> mech;
         REQUIRE_EQ(logistics->ForceMechList->GetMechInfo(0, mech), 0);
         logistics->DeploySlots[0][0].Unit = 0;
@@ -1171,7 +1165,7 @@ namespace
     {
         using MCTab = MCCampaignScreen::MCTab;
         const auto shown = [] { return MCCampaignMenu::Shown() && MCCampaignMenu::Ready(); };
-        TimeStep(time, "new-campaign", [] { NewCampaign(); }, shown);
+        TimeStep(time, "new-campaign", [] { MCMainMenuModel::NewCampaign(MCSaves::MCCampaign::Original); }, shown);
         REQUIRE(MCCampaignMenu::Screen().has_value());
         MCCampaignScreen& screen = MCCampaignMenu::Screen()->get();
         const auto onTab = [&screen, shown](MCTab tab)
@@ -1179,9 +1173,8 @@ namespace
         const auto choose = [&screen](MCTab tab) { return [&screen, tab] { screen.ChooseTab(tab); }; };
         TimeStep(time, "deploy-tab", choose(MCTab::Deploy), onTab(MCTab::Deploy));
         TimeStep(time, "briefing-tab", choose(MCTab::Briefing), onTab(MCTab::Briefing));
-        TimeStep(time, "purchasing", choose(MCTab::Purchasing), []
-                 { return GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen && !MCCampaignMenu::Shown(); });
-        TimeStep(time, "purchasing-back", [] { GlobalLog()->SetUpBriefingScreen(true); }, onTab(MCTab::Briefing));
+        TimeStep(time, "purchasing", choose(MCTab::Purchasing), onTab(MCTab::Purchasing));
+        TimeStep(time, "purchasing-back", choose(MCTab::Briefing), onTab(MCTab::Briefing));
         screen.ChooseTab(MCTab::Deploy);
         screen.SendReady(0, std::nullopt);
         REQUIRE(MCDeploy::CanBegin());
@@ -1248,8 +1241,16 @@ namespace
             [] { return OnInternet() && !MCRmlDialogs::Shown(); });
         internet.PickKey("W8ZE");
         TimeStep(time, "join-newer", [&internet] { internet.PressJoin(); }, dialogShown);
-        TimeStep(time, "update", [] { MCRmlDialogs::Dialog()->PressMain(); }, [] { return UpdatePageShown(); });
-        TimeStep(time, "update-back", [] { HideUpdatePage(); }, OnInternet);
+        TimeStep(time, "update", [] { MCRmlDialogs::Dialog()->PressMain(); }, [] { return MCUpdateScreen::Shows(); });
+        TimeStep(
+            time, "update-back",
+            []
+            {
+                const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
+                REQUIRE(update != nullptr);
+                CHECK(MCRemadeTest::Press(*update, "back"));
+            },
+            OnInternet);
 
         // BACK, then LAN and its BACK.
         TimeStep(time, "internet-back", [&internet] { internet.Back(); }, OnAccess);
@@ -1322,9 +1323,8 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         updater.emplace();
     }
 
-    // --record-window-campaign: the remade campaign screens (the 1998 ones otherwise, until stage 9 removes them).
+    // --record-window-campaign: the remade campaign screen's tabs timed.
     const bool campaign = MCTest::Option("record-window-campaign").has_value();
-    MCCampaignMenu::Remade() = campaign;
     // --record-window-main: the boot to the first frame that shows the main menu whole.
     const Clock::time_point booting = Clock::now();
     std::optional<double> bootToMenuMs;
@@ -1396,13 +1396,13 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     }
     else
     {
-        NewCampaign();
+        MCMainMenuModel::NewCampaign(MCSaves::MCCampaign::Original);
         RunPaced(time, Settled, MostChangeSeconds);
         RunPacedFor(time, SecondsBefore);
         DeployFirstMech();
     }
 
-    // BEGIN MISSION (MCBriefingScreen::Launch, or the remade DEPLOY's) to the battlefield's first seconds.
+    // BEGIN MISSION (the remade DEPLOY's, or its request as MCDeploy::Begin makes it) to the battlefield's first seconds.
     const std::string into = RecordPart(
         folder / "into-mission", width, height,
         [&time, battleSeconds, campaign]
@@ -1467,11 +1467,7 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         std::cout << std::format("{}:\n{}  the flow's stack: {}\n", name, report, MCScreenFlow::StackText());
     };
 
-    const auto shows = [](auto MCLogistics::* screen)
-    {
-        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        return logistics != nullptr && logistics->CurrentScreen() == logistics.get()->*screen;
-    };
+    const auto briefingShows = [] { return MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing); };
 
     const auto savesShown = [](MCSavesScreen::MCMode mode)
     {
@@ -1510,13 +1506,12 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
                 RunPacedFor(time, SecondsBefore);
                 PressKey(SDL_SCANCODE_RETURN);
             },
-            [&] { return shows(&MCLogistics::BriefingScreen); });
+            briefingShows);
 
         // LOAD GAME: opened, its LOAD (the save just written, the newest) into its briefing.
         toMain("to-main-again");
         openSaves("load-game", MCSavesScreen::MCMode::Load);
-        recordLanding(
-            "loaded", [] { PressKey(SDL_SCANCODE_RETURN); }, [&] { return shows(&MCLogistics::BriefingScreen); });
+        recordLanding("loaded", [] { PressKey(SDL_SCANCODE_RETURN); }, briefingShows);
 
         // LOAD GAME opened again, Escape back to the main menu.
         toMain("to-main-last");
@@ -1557,7 +1552,7 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
 
     // A loss: REPLAY MISSION's briefing, the main menu under it.
     playToResults(Lost, false, false);
-    recordLanding("replay-mission", leaveResults, [&] { return shows(&MCLogistics::BriefingScreen); });
+    recordLanding("replay-mission", leaveResults, briefingShows);
 
     // A quick-start mission won: SOLO MISSIONS, the main menu under it; Escape goes back to the main menu.
     playToResults(Won, true, false);
@@ -1568,7 +1563,7 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         [&] { return MCMainMenuScreens::Shown(MCMainPanel::Main); });
 
     // The campaign's last mission won (the first, marked last): its end movies (skipped), then the main menu.
-    NewCampaign();
+    MCMainMenuModel::NewCampaign(MCSaves::MCCampaign::Original);
     REQUIRE(RunPaced(time, Settled, MostChangeSeconds));
     playToResults(Won, false, true);
     Clock::time_point skipped = Clock::now();

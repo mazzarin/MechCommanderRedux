@@ -2,7 +2,7 @@
 
 // Port-only (SPEC-menus.md's stage 4, CHOOSE MAP): the maps a room can play, the game's room packets
 // (data/savegame/*.mpk, and the user folder's): each one's name, its file, the points each team starts with, its time
-// limit and its description, read as the room reads the one it loads (MCSessionScreen::LoadMission).
+// limit and its description, read as the room reads the one it loads (MCRoomModel::LoadMission).
 
 #include <cstdint>
 #include <optional>

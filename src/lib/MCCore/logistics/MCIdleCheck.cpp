@@ -4,9 +4,11 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCSessionScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCRoomEnd.h"
 #include "network/MCMultiPlayer.h"
 
 namespace
@@ -47,7 +49,7 @@ namespace
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         return game != nullptr && game->SessionManager != nullptr && game->SessionManager->Internet != nullptr &&
                game->SessionManager->CurrentSession() != nullptr && logistics != nullptr &&
-               logistics->CurrentScreen() == logistics->SessionScreen && !MCLobbyUpdate::MatchUnderWay();
+               MCMenuScreens::Top() == MCMenuScreens::Room() && !MCLobbyUpdate::MatchUnderWay();
     }
 
     /// <summary>The question is over: its message closes, if it still shows.</summary>
@@ -71,11 +73,11 @@ namespace
         // A lobby's game goes back to its lobby, as its room's EXIT does.
         if (LaunchedFromLobby)
         {
-            CancelToMPlayer();
+            MCRoomEnd::LeaveForLauncher();
             return;
         }
 
-        LeaveRoom(std::string(LeftText));
+        MCRoomEnd::Leave(std::string(LeftText));
     }
 }
 

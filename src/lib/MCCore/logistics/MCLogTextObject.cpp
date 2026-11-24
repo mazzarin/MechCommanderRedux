@@ -4,7 +4,7 @@
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "logistics/MCFileScrollPane.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace

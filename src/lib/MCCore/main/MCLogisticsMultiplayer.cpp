@@ -13,7 +13,8 @@
 #include "logistics/MCBriefingBox.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMissionLogisticsBridge.h"
@@ -442,28 +443,29 @@ auto MCLogistics::HandleChatMessage(uint32_t playerID, std::span<const uint8_t> 
 {
     // Blink the chat button of the screen being shown (unless the briefing is on its operation tab, where the chat
     // is open), and play the chat sound.
-    const std::shared_ptr<MCLogObject> shown = CurrentScreen();
+    using MCMenuScreens::MCCampaignPage;
     MCBriefingScreen& briefing = *BriefingScreen;
+    const bool onBriefing = MCMenuScreens::CampaignOn(MCCampaignPage::Briefing);
 
-    if (shown != BriefingScreen || briefing.CurrentTab != 1)
+    if (!onBriefing || briefing.CurrentTab != 1)
     {
-        if (shown == BriefingScreen && briefing.ChatTimerOn == 0)
+        if (onBriefing && briefing.ChatTimerOn == 0)
         {
             GuiSystem().AddTimer(briefing.weak_from_this(), 5, 0xfa, 0, 0, false);
             briefing.ChatTimerOn = true;
         }
-        else if (shown == PurchaseScreen && PurchaseScreen->ChatBlinking == 0)
+        else if (MCMenuScreens::CampaignOn(MCCampaignPage::Purchasing) && PurchaseScreen->ChatBlinking == 0)
         {
             GuiSystem().AddTimer(PurchaseScreen, 7, 0xfa, 0, 0, false);
             PurchaseScreen->ChatBlinking = true;
         }
-        else if (shown == RepairScreen && RepairScreen->ChatBlinking == 0)
+        else if (MCMenuScreens::CampaignOn(MCCampaignPage::MechBay) && RepairScreen->ChatBlinking == 0)
         {
             GuiSystem().AddTimer(RepairScreen, 8, 0xfa, 0, 0, false);
             RepairScreen->ChatBlinking = true;
         }
 
-        briefing.ChatBlinking = true;
+        MCChatView::SetUnread(true);
         SoundSystem()->PlayInterfaceSample(0x14);
     }
 

@@ -10,7 +10,7 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "logistics/MCCampaignMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCBriefingScreen.h"
 #include "gui/MCUpdateDisplay.h"
 #include "logistics/MCPurMechList.h"

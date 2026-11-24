@@ -104,12 +104,3 @@ private:
     /// <summary>The selected vehicle, if any.</summary>
     std::weak_ptr<MCLogVehicle> _SelectedVehicle;
 };
-
-/// <summary>Which resource figure the screens show (0: the resource points; 1 and 2 were the logistics heap's).</summary>
-extern int32_t ResourceDisplayState;
-
-/// <summary>
-/// Port: the resource figure the screens show (<see cref="ResourceDisplayState"/>: the resource points, or the
-/// logistics heap's total or largest free block, gone with the heap: empty).
-/// </summary>
-std::string ResourceFigureText();

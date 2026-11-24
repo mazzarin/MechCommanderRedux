@@ -19,7 +19,7 @@
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCConnectMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "platform/MCFileSystem.h"

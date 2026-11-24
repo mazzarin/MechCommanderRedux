@@ -3,15 +3,22 @@
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
+#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMissionNames.h"
+#include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
 #include "platform/MCFileSystem.h"
+#include "sound/MCSoundSystem.h"
 
 namespace
 {
+    /// <summary>A save's load result before its job has run (LoadCampaign's are 0 or its errors).</summary>
+    constexpr int32_t NotLoaded = -1;
+    /// <summary>The briefing's music, on once a save is loaded (MCMission's BriefingTrack).</summary>
+    constexpr int32_t BriefingMusic = 0x16;
     constexpr std::string_view SaveExtension = ".sav";
     /// <summary>Port-only (stage 7): a single mission's file, and its campaign's master file's name before its own.</summary>
     constexpr std::string_view SoloExtension = ".sol";
@@ -779,4 +786,34 @@ SDL_Time MCSaves::Now() const
     }
 
     return now;
+}
+
+MCSavedGameLoad MCSaves::LoadSavedGameAhead(std::string_view name, bool campaign)
+{
+    MCSavedGameLoad load{.Result = std::make_shared<int32_t>(NotLoaded)};
+    load.Job.push_back({.Run = [campaign]
+                        {
+                            GlobalLog()->BriefingScreen->HideBriefing();
+                            Solo = !campaign;
+                            LastLogisticsMissionState = 0;
+                        }});
+    std::ranges::move(GlobalLog()->LoadCampaignPieces(name, campaign ? ".sav" : ".sol", false, true, load.Result),
+                      std::back_inserter(load.Job));
+    return load;
+}
+
+bool MCSaves::ShowSavedGame(int32_t result)
+{
+    SoundSystem()->StopDigitalMusic();
+
+    if (result != 0)
+    {
+        return false;
+    }
+
+    // Original behaviour: the save screen is the one hidden, not the load screen shown.
+    GlobalLog()->SaveScreen->ShowGuiWindow(false);
+    GlobalLog()->SetUpBriefingScreen(false);
+    SoundSystem()->PlayDigitalMusic(BriefingMusic, true);
+    return true;
 }

@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCCampaignMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCQuestionWindow.h"
 #include "logistics/MCSavesMenu.h"
@@ -142,14 +142,14 @@ namespace
     void MainScreenUnder()
     {
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        const std::shared_ptr<MCLogObject> shown = logistics != nullptr ? logistics->CurrentScreen() : nullptr;
+        const MCScreenFlow::MCScreenId top = MCMenuScreens::Top();
 
-        if (shown == nullptr || !logistics->MainScreen || logistics->MainScreen.Is(*shown))
+        if (top == MCScreenFlow::NoScreen || !logistics->MainScreen || top == MCMenuScreens::Main())
         {
             return;
         }
 
-        shown->ShowGuiWindow(false);
+        logistics->HideScreen();
         logistics->SetCurrentScreen(logistics->MainScreen);
     }
 

@@ -901,7 +901,7 @@ void MCSessionManager::TendInternet()
                        .Max = static_cast<int32_t>(session->SessionDesc.dwMaxPlayers),
                        .Battle = GameStarted || _SessionLocked};
 
-    if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
+    if (GlobalLog() != nullptr && GlobalLog()->Room.Made())
     {
         room.Mission = GlobalLog()->Room.MissionName;
     }

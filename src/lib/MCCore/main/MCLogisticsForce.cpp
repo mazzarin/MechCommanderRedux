@@ -163,6 +163,17 @@ namespace
         }
     }
 
+    /// <summary>Gives every element's inventory row its place in <paramref name="list"/>, listed or not.</summary>
+    template <typename T> void NumberRows(const std::vector<std::shared_ptr<T>>& list)
+    {
+        int32_t index = 0;
+
+        for (const std::shared_ptr<T>& element : list)
+        {
+            element->ListIndex = index++;
+        }
+    }
+
     /// <summary>The front of <paramref name="list"/> (where each assigned unit goes, in front of the one before it).</summary>
     template <typename T> auto Front(std::vector<std::shared_ptr<T>>& list, const T&)
     {
@@ -234,6 +245,21 @@ auto MCLogistics::ReorderWarriors() const -> void
         });
     RenumberRows(WarriorList->Warriors);
     RenumberRows(AssignedWarriorList->Warriors);
+}
+
+auto MCLogistics::NumberMechs() const -> void
+{
+    NumberRows(MechList->Mechs);
+}
+
+auto MCLogistics::NumberVehicles() const -> void
+{
+    NumberRows(VehicleList->Vehicles);
+}
+
+auto MCLogistics::NumberPilots() const -> void
+{
+    NumberRows(WarriorList->Warriors);
 }
 
 auto MCLogistics::ShiftPilots(int32_t from, int32_t amount) const -> void

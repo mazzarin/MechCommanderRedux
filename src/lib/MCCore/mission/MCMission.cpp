@@ -565,9 +565,7 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
 
             if (!fromMenus)
             {
-                GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
-                GlobalLog()->LogisticsState = 1;
-                GlobalLog()->ShowLogScreen(false, false);
+                MCMenuScreens::ShowBack(MCMenuScreens::Main(), MCMenuScreens::MCBackWay::Hidden);
             }
         }
         else
@@ -757,7 +755,7 @@ auto MCMission::Run() -> int32_t
                     break;
                 }
 
-                const bool onMainScreen = Logistics->CurrentScreen() == Logistics->MainScreen;
+                const bool onMainScreen = MCMenuScreens::Top() == MCMenuScreens::Main();
 
                 if (onMainScreen && _PlayingLogisticsMusic != 1)
                 {
@@ -985,8 +983,7 @@ auto MCMission::Run() -> int32_t
     // whole frame (the logistics' state shows it, MCLogistics::ShowLogScreen).
     if (toLogistics && fromMovie && GuiSystem().CanChangeScreen() && !MCScreenChange::Running())
     {
-        const std::shared_ptr<MCLogObject> shown = Logistics != nullptr ? Logistics->CurrentScreen() : nullptr;
-        const bool toMainMenu = shown != nullptr && Logistics->MainScreen.Is(*shown);
+        const bool toMainMenu = Logistics != nullptr && MCMenuScreens::Top() == MCMenuScreens::Main();
         std::vector<MCScreenChange::MCPiece> job;
         std::vector<MCScreenChange::MCPiece> dark;
 
@@ -1666,10 +1663,7 @@ auto MCMission::ShowLoadingScreen() -> void
     // in its place, in the menus' frame.
     if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
     {
-        if (const std::shared_ptr<MCLogObject> screen = logistics->CurrentScreen(); screen != nullptr)
-        {
-            screen->ShowGuiWindow(false);
-        }
+        logistics->HideScreen();
     }
 
     // Port-only (SPEC-menus.md's stage 8): the remade BRIEFING and DEPLOY too, and the loading screen as designed shown
@@ -1725,15 +1719,18 @@ auto MCMission::EndToMainMenu() -> void
     GameOver = false;
     CurrentMovie = -1;
     ResetFullScreenDisplay();
-    MCLogistics& logistics = Logistics != nullptr ? *Logistics : StartLogistics();
+
+    if (Logistics == nullptr)
+    {
+        StartLogistics();
+    }
+
     LastLogisticsMissionState = 0;
     State = MCMissionState::Logistics;
     NextState = MCMissionState::Logistics;
     _PlayingLogisticsMusic = 0;
     MCScreenFlow::Land({MCMenuScreens::Main()});
-    logistics.SetCurrentScreen(logistics.MainScreen);
-    logistics.LogisticsState = 1;
-    logistics.ShowLogScreen(true, true);
+    MCMenuScreens::ShowBack(MCMenuScreens::Main(), MCMenuScreens::MCBackWay::Shown);
     MCScreenFlow::Noted();
 
     if (GuiSystem().CanChangeScreen() && !MCScreenChange::Running())
@@ -1811,19 +1808,11 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
             // MISSIONS, where it was picked, the main menu under it.
             return [this]
             {
-                MCLogistics& logistics = StartLogistics();
+                StartLogistics();
                 LastLogisticsMissionState = 0;
                 State = MCMissionState::Logistics;
                 MCScreenFlow::Land({MCMenuScreens::Main(), MCMenuScreens::Solo()});
-                logistics.CurrentScreen()->ShowGuiWindow(false);
-
-                // Port-only (stage 7): the remade SOLO MISSIONS, in the main menu's panel; the main menu where it
-                // can't show.
-                if (!MCMainMenuScreens::ShowNow(MCMainPanel::Solo))
-                {
-                    logistics.SetUpMainScreen(true);
-                }
-
+                MCMenuScreens::ShowBack(MCMenuScreens::Solo(), MCMenuScreens::MCBackWay::InPlace);
                 MCScreenFlow::Noted();
                 Solo = false;
             };
@@ -1852,8 +1841,7 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
             logistics.LoadCampaign(startName, extension, true, false);
             // Port-only (SPEC-menus.md's stage 2): its briefing again (REPLAY MISSION), the main menu under it.
             MCScreenFlow::Land({MCMenuScreens::Main(), MCMenuScreens::Campaign()});
-            logistics.SetUpBriefingScreen(false);
-            logistics.ShowLogScreen(true, false);
+            MCMenuScreens::ShowBack(MCMenuScreens::Campaign(), MCMenuScreens::MCBackWay::Shown);
             MCScreenFlow::Noted();
         };
     }
@@ -1903,8 +1891,7 @@ auto MCMission::BackToLogistics() -> void
         const MCFrameLog::Scope part("menus.briefing");
         // Port-only (SPEC-menus.md's stage 2): NEXT MISSION's briefing, or REPLAY MISSION's, the main menu under it.
         MCScreenFlow::Land({MCMenuScreens::Main(), MCMenuScreens::Campaign()});
-        logistics.SetUpBriefingScreen(false);
-        logistics.ShowLogScreen(true, false);
+        MCMenuScreens::ShowBack(MCMenuScreens::Campaign(), MCMenuScreens::MCBackWay::Shown);
         MCScreenFlow::Noted();
         return;
     }
@@ -1912,10 +1899,7 @@ auto MCMission::BackToLogistics() -> void
     LastLogisticsMissionState = 0;
     MultiPlayer()->ChatCallback = LogisticsChatCallback;
     State = MCMissionState::Logistics;
-    logistics.CurrentScreen()->ShowGuiWindow(false);
-    logistics.SetCurrentScreen(logistics.MainScreen);
-    logistics.LogisticsState = 1;
-    logistics.ShowLogScreen(true, true);
+    MCMenuScreens::ShowBack(MCMenuScreens::Main(), MCMenuScreens::MCBackWay::InPlace);
     MCScreenFlow::Land({MCMenuScreens::Main()});
     MCScreenFlow::Noted();
 

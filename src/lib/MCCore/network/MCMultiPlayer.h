@@ -799,7 +799,7 @@ public:
     std::string PlayerName;
     /// <summary>Per player number: checked in (the DPID on a scripted server).</summary>
     std::array<int32_t, MaxLinkupPlayers> PlayerCheckedIn{};
-    /// <summary>Per player number: set by message 45 (SessionScreen::SomeoneCheckedIn).</summary>
+    /// <summary>Per player number: set by message 45 (MCRoomModel::SomeoneCheckedIn).</summary>
     std::array<int32_t, MaxLinkupPlayers> PlayerSessionCheckIn{};
     /// <summary>Port: the rules each player's build plays by (its rules message), by player id.</summary>
     std::map<uint32_t, uint32_t> PlayerRules;

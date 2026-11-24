@@ -110,7 +110,7 @@ bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOpt
 
 /// <summary>
 /// What the mech bay needs of a match: who is on each team, the tech bases and each team's resource point pool. The
-/// session screen fills it as the match starts (<see cref="MCSessionScreen::PublishMatchState"/>); a configured match
+/// session screen fills it as the match starts (<see cref="MCRoomModel::PublishMatchState"/>); a configured match
 /// fills it from the configuration. Nothing reads the session screen's widgets after this.
 /// </summary>
 struct MPMatchState

@@ -11,19 +11,6 @@ struct MCLogInventoryItem;
 /// </summary>
 inline constexpr std::array<uint8_t, 5> RestrictedComps = {15, 37, 38, 42, 43};
 
-/// <summary>The texts a component's row and info box show, worked out from the master component.</summary>
-struct MCComponentTexts
-{
-    /// <summary>The range: "%.1f m", a short/medium/long word for weapons, "N/A" for probes.</summary>
-    std::string Range;
-    /// <summary>The weight ("%.1f tons").</summary>
-    std::string Weight;
-    /// <summary>The recycle time ("%.2f s"), or "N/A".</summary>
-    std::string Recycle;
-    /// <summary>The damage ("%.2f", tripled for one weapon kind), or "N/A".</summary>
-    std::string Damage;
-};
-
 /// <summary>
 /// A stack of an owned component (weapon, ammo, equipment): its row in the inventory list (a row of
 /// <see cref="MCListView"/>).
@@ -34,11 +21,6 @@ class MCCompInventoryBlock : public MCInventoryBlock
 public:
     /// <summary>Shows <paramref name="item"/>; builds its icon.</summary>
     void Init(std::shared_ptr<MCLogInventoryItem> item);
-
-    /// <summary>
-    /// The texts of master component <paramref name="masterID"/> (the original's block worked them out in its init).
-    /// </summary>
-    static MCComponentTexts Texts(uint8_t masterID);
 
     /// <summary>Tonnage of master component <paramref name="masterID"/>, plus its ammo's for a weapon that uses ammo.</summary>
     static float MountTonnage(uint8_t masterID);

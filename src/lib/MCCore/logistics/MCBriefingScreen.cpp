@@ -13,9 +13,10 @@
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingBox.h"
 #include "logistics/MCDeploy.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogRows.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
@@ -125,7 +126,6 @@ auto MCBriefingScreen::Init() -> void
     CurDeployTonnage = 0;
     PlayMovie = false;
     MCDeploy::SetLocked(false);
-    ChatBlinking = false;
     ChatBlinkOn = false;
     ChatTimerOn = false;
     const int32_t result = MCLogObject::Init(0, 0, 0x280, 0x1e0);
@@ -918,11 +918,11 @@ auto MCBriefingScreen::SetUpOperation() -> void
         // Multiplayer: the tab is the chat, which stops every chat button blinking.
         MovieOver = -1;
 
-        if (ChatBlinking)
+        if (MCChatView::Unread())
         {
             GuiSystem().RemoveTimer(*this, ChatBlinkTimer);
             ChatTimerOn = false;
-            ChatBlinking = false;
+            MCChatView::SetUnread(false);
         }
 
         if (GlobalLog()->PurchaseScreen->ChatBlinking)

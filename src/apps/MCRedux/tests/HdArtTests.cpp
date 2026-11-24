@@ -2,6 +2,7 @@
 #include "MCFakeUpdaterBackend.h"
 #include "MCHdMovieFixture.h"
 #include "MCInternetSpots.h"
+#include "RemadeScreens.h"
 #include "MCTestGuest.h"
 #include "fakes/MCNullAudioDevice.h"
 #include "MCTest.h"
@@ -42,6 +43,14 @@
 #include "logistics/MCBriefingScreen.h"
 #include "main/MCInventoryList.h"
 #include "logistics/MCCampaignMenu.h"
+#include "logistics/MCDeploy.h"
+#include "logistics/MCLogisticsTabs.h"
+#include "logistics/MCMatchOptionsWindow.h"
+#include "logistics/MCMenuScreens.h"
+#include "logistics/MCPrefsScreen.h"
+#include "logistics/MCSettingsModel.h"
+#include "logistics/MCStore.h"
+#include "main/MCLogPart.h"
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLogTextObject.h"
@@ -129,7 +138,7 @@
 #include "main/MCGameStrings.h"
 #include "logistics/MCPurProfile.h"
 #include "lib/MCFile.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
@@ -13189,14 +13198,27 @@ namespace
                           const std::filesystem::path& folder, int32_t frames);
 
     /// <summary>
-    /// Shows the screens --sharp-menus' first round leaves out, each through <paramref name="shoot"/> (named): the other
-    /// inventory tabs of the mech bay and the purchase screen, the briefing's operation tab, the main menu in a campaign, the save and single-mission load screens, the exit question, the multiplayer screens (the
-    /// connection menu, the serial and modem screens, the IPX/TCP question, the LAN games, hosting's ready room and
-    /// session screen, its MATCH OPTIONS tab too), the expansion's briefing, then a mission launched from the briefing (its loading screen),
-    /// paused, the tactical map's info, objectives and salvage pages, the preferences' CONTROLS panel where the build
-    /// has one, the results and debriefing, and logistics after the mission.
+    /// Shows the screens --sharp-menus' first round leaves out, each through <paramref name="shoot"/> (named): the 'MECH
+    /// BAY's MechWarriors, the main menu in a campaign, SAVE GAME, SOLO MISSIONS, QUIT's question, the preferences'
+    /// CONTROLS, the multiplayer screens (MULTIPLAYER, INTERNET and its HOST GAME, the LAN games and theirs, the room and
+    /// its MATCH OPTIONS), the expansion's briefing, then a mission begun from DEPLOY (its loading screen), paused, the
+    /// tactical map's info, objectives and salvage pages, the results and debriefing, and the campaign after the mission.
     /// </summary>
     void TourScreens(const std::function<void(const std::string&)>& shoot, AuditDetail& detail);
+
+    /// <summary>The flow's screen <paramref name="id"/> opened over the one shown, as its button opens it; its change over.</summary>
+    void OpenThroughFlow(MCScreenFlow::MCScreenId id)
+    {
+        REQUIRE(MCScreenFlow::Open(id));
+        REQUIRE(MCTestGame::FinishChanges());
+    }
+
+    /// <summary>The flow's way back one screen (Escape's), its change over.</summary>
+    void BackThroughFlow()
+    {
+        REQUIRE(MCScreenFlow::Back());
+        REQUIRE(MCTestGame::FinishChanges());
+    }
 
     /// <summary>
     /// Port-only (SPEC-menus.md, stage 2): the remade menus' probe screen over the screen shown, on the game's own
@@ -13442,11 +13464,7 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     std::filesystem::create_directories(folder);
     // Two seconds settle a screen change's wipe.
     constexpr int32_t SettleFrames = 30;
-    // The purchase screen's tabs (MCLogistics::CurrentInvTab), and the stock its store is given to show.
-    constexpr int32_t MechTab = 0;
-    constexpr int32_t PilotTab = 1;
-    constexpr int32_t ComponentTab = 2;
-    constexpr int32_t VehicleTab = 3;
+    // The stock the store is given to show.
     constexpr int32_t StockShown = 2;
     // With --hd-audit-menus 1, every screen's draws are tallied as --hd-audit tallies a battle's.
     const bool audit = MCTest::Option("hd-audit-menus").has_value();
@@ -13487,73 +13505,57 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     };
 
     shoot("main_menu");
-    ShowPreferences();
+    // The remade screens as their buttons open them, through the flow (SPEC-menus.md): PREFERENCES and LOAD GAME from
+    // the main menu, each back the way Escape goes.
+    OpenThroughFlow(MCMenuScreens::Preferences());
     shoot("preferences");
-    CancelPrefs();
-    LoadScreen();
+    BackThroughFlow();
+    OpenThroughFlow(MCMenuScreens::Load());
     shoot("load");
-    Cancel();
+    BackThroughFlow();
     AuditLabel = "to briefing";
-    NewCampaign();
+    MCMainMenuModel::NewCampaign(MCSaves::MCCampaign::Original);
     REQUIRE(MCTestGame::FinishChanges());
     shoot("briefing");
-    GlobalLog()->BriefingScreen->SetUpMission();
-    shoot("briefing_mission");
-    // A screen change's slide pictured part way (its SlideShot'th present).
-    constexpr int32_t SlideShot = 2;
-    int32_t slidePresents = -1;
-    std::string slideName;
-    MCTestGame::OnPresent = [&]
-    {
-        if (slidePresents >= 0 && ++slidePresents == SlideShot)
-        {
-            const std::filesystem::path path =
-                folder / std::format("{}_slide_{}.png", slideName, original ? "original" : "sharp");
-            REQUIRE(MCInput::Display()->SaveShownScreenshot(path).has_value());
-            std::cout << std::format("  {} slide: {}\n", slideName, path.string());
-        }
-    };
-
-    const auto slide = [&](std::string name, const std::function<void()>& change)
+    // The campaign screen's tabs, as its buttons choose them.
+    using MCTab = MCCampaignScreen::MCTab;
+    using MCKind = MCLogisticsTabs::MCKind;
+    REQUIRE(MCCampaignMenu::Screen().has_value());
+    MCCampaignScreen& campaign = MCCampaignMenu::Screen()->get();
+    MCLogisticsTabs& tabs = campaign.Logistics();
+    const auto onTab = [&](const std::string& name, MCTab tab)
     {
         AuditLabel = "to " + name;
-        slideName = std::move(name);
-        slidePresents = 0;
-        change();
-        slidePresents = -1;
+        campaign.ChooseTab(tab);
+        shoot(name);
     };
 
-    slide("purchase", [] { GlobalLog()->SetUpPurchaseScreen(true); });
-    shoot("purchase");
-    // The store's vehicles, then both in stock (a new campaign's store has none: its rows show the sold-out outlines).
-    GlobalLog()->CurrentInvTab = VehicleTab;
-    GlobalLog()->SetUpPurchaseScreen(false);
+    onTab("deploy", MCTab::Deploy);
+    onTab("purchase", MCTab::Purchasing);
+    // The store's vehicles, then in stock (a new campaign's store has none: its cards show sold out).
+    tabs.ChooseKind(MCKind::Vehicles);
     shoot("purchase_vehicles");
     MCTestGame::StockStore(StockShown);
-    // One of the first vehicle bought (the inventory list shows it, with its diagram).
-    MCVehiclePurchaseBlock::OnBuyConfirmed(*GlobalLog()->PurVehicleList->Vehicles.front(), 1, 1);
+    // One of the first vehicle bought (the force lists it), the store read again as its kind shows.
+    MCStore::BuyVehicles(*GlobalLog()->PurVehicleList->Vehicles.front(), 1, 1);
+    tabs.ChooseKind(MCKind::Vehicles);
     shoot("purchase_vehicles_stocked");
-    GlobalLog()->CurrentInvTab = PilotTab;
-    GlobalLog()->SetUpPurchaseScreen(false);
+    tabs.ChooseKind(MCKind::MechWarriors);
     shoot("purchase_pilots");
-    GlobalLog()->CurrentInvTab = ComponentTab;
-    GlobalLog()->SetUpPurchaseScreen(false);
+    tabs.ChooseKind(MCKind::Components);
     shoot("purchase_components");
-    GlobalLog()->CurrentInvTab = MechTab;
-    GlobalLog()->SetUpPurchaseScreen(false);
-    MCMechPurchaseBlock::OnBuyConfirmed(*GlobalLog()->PurMechList->Mechs.front(), 1, 1);
+    MCStore::BuyMechs(*GlobalLog()->PurMechList->Mechs.front(), 1, 1);
+    tabs.ChooseKind(MCKind::Mechs);
     shoot("purchase_stocked");
-    slide("repair", [] { GlobalLog()->SetUpRepairScreen(true); });
-    shoot("repair");
-    slide("briefing", [] { GlobalLog()->SetUpBriefingScreen(true); });
-    shoot("briefing_again");
-    MCTestGame::OnPresent = nullptr;
+    onTab("repair", MCTab::MechBay);
+    onTab("briefing_again", MCTab::Briefing);
 
-    // With --hd-audit-menus or --sharp-menus-tour 1, the remade menus' probe screen and every other screen too.
+    // With --hd-audit-menus or --sharp-menus-tour 1, every other screen too, then the remade menus' probe screen (last:
+    // it stops the menus' RmlUi, the remade screens with it).
     if (audit || MCTest::Option("sharp-menus-tour").has_value())
     {
-        ShootProbe(folder, original);
         TourScreens(shoot, detail);
+        ShootProbe(folder, original);
     }
 
     // The tables are written with the pack still set: they say whether it has each picture drawn from the original.
@@ -15658,36 +15660,6 @@ namespace
         return done();
     }
 
-    /// <summary>Closes the logistics message dialog without its callback (a question shown only to be pictured).</summary>
-    void DismissMessage()
-    {
-        MCMenuDialog& dialog = *GlobalLog()->Message;
-        dialog.Callback = nullptr;
-        dialog.Deactivate(0);
-    }
-
-#if MC_AUDIT_CONTROLS
-    /// <summary>The text button showing <paramref name="label"/> under <paramref name="parent"/> (at any depth), or null.</summary>
-    std::shared_ptr<MCLogTextButton> FindAuditTextButton(const MCGuiObject& parent, std::string_view label)
-    {
-        for (const std::shared_ptr<MCGuiObject>& child : parent.Children())
-        {
-            if (auto button = std::dynamic_pointer_cast<MCLogTextButton>(child);
-                button != nullptr && button->Label() == label)
-            {
-                return button;
-            }
-
-            if (std::shared_ptr<MCLogTextButton> found = FindAuditTextButton(*child, label); found != nullptr)
-            {
-                return found;
-            }
-        }
-
-        return nullptr;
-    }
-#endif
-
     /// <summary>
     /// The multiplayer screens: MULTIPLAYER ACCESS and INTERNET CONNECTION through a scripted games service (its count,
     /// and a list of every kind of game: tests/MCInternetSpots.h), then the LAN games, hosting a LAN game on the loopback
@@ -15783,42 +15755,46 @@ namespace
         lan.Host({.GameName = "Audit game", .MaxPlayers = 6});
         RunFrames(ClickFrames);
         shoot("mp_session");
-        GlobalLog()->SessionScreen->ShowTab(MCSessionTab::Options);
-        shoot("mp_session_match_options");
+
+        // The room's MATCH OPTIONS window, as its VIEW OPTIONS opens it, and its DONE.
+        if (ShowMatchOptionsWindow())
+        {
+            shoot("mp_session_match_options");
+            MatchOptionsWindow()->PressDone();
+        }
+
         DoExit();
         shoot("main_menu_after_mp");
     }
 
     /// <summary>
-    /// Mission 1 of a new campaign launched from its briefing (the first mech deployed, as a player drags it), through
-    /// the loading screen to the mission; whether it came up.
+    /// Mission 1 of a new campaign begun from DEPLOY (READY AREA's first mech sent to the drop, as a player's right button
+    /// sends it), through the loading screen to the mission; whether it came up.
     /// </summary>
     bool LaunchFromBriefing(AuditDetail& detail)
     {
         constexpr int32_t SettleFrames = 30;
         constexpr int32_t LoadFrames = 600;
-        constexpr int32_t LaunchX = 0x230;
-        constexpr int32_t LaunchY = 0x152;
-        NewCampaign();
-        RunFrames(SettleFrames);
-        MCBriefingScreen& briefing = *GlobalLog()->BriefingScreen;
+        constexpr int32_t MechPart = 1;
+        MCMainMenuModel::NewCampaign(MCSaves::MCCampaign::Original);
+        REQUIRE(MCTestGame::FinishChanges());
+        REQUIRE(MCCampaignMenu::Screen().has_value());
+        MCCampaignScreen& campaign = MCCampaignMenu::Screen()->get();
+        campaign.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+        // READY AREA's first card, a mech (MCCampaignScreen::FillCards lists these units, in this order).
+        const std::vector<std::shared_ptr<MCLogPart>> ready = MCDeploy::ReadyUnits();
 
-        // The deploy pane's first unit, a mech.
-        if (briefing.DeployUnits.empty() || briefing.DeployUnits.front()->PartType != 1)
+        if (ready.empty() || ready.front() == nullptr || ready.front()->PartType != MechPart)
         {
-            std::cout << "  the briefing has no mech to deploy\n";
+            std::cout << "  DEPLOY has no mech to send\n";
             return false;
         }
 
-        const auto mech = std::static_pointer_cast<MCLogMech>(briefing.DeployUnits.front());
-        MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
-        const RECT& slot = briefing.SlotRects[0];
-        MCMechBriefBlock& block = *briefing.BlockOf(*mech);
-        MCScreenInput::Drag(block.GlobalX() + block.Width() / 2, block.GlobalY() + block.Height() / 2,
-                            (slot.left + slot.right) / 2, (slot.top + slot.bottom) / 2);
+        MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(ready.front()->CurTonnage);
+        campaign.SendReady(0, std::nullopt);
         RunFrames(SettleFrames);
         detail.Screen = "loading";
-        MCScreenInput::RealClick(LaunchX, LaunchY);
+        campaign.PressBegin();
         return RunUntil([] { return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario; },
                         LoadFrames);
     }
@@ -15833,51 +15809,41 @@ namespace
         constexpr uint32_t ScenarioWon = 4;
         constexpr int32_t LogisticsFrames = 3000;
 
-        // The inventory tabs the first round leaves out, and the briefing's operation tab.
-        GlobalLog()->RepairScreen->SetUpPilotInv(true, true);
+        // The 'MECH BAY's MechWarriors (the first round shows its parts).
+        REQUIRE(MCCampaignMenu::Screen().has_value());
+        MCCampaignScreen& campaign = MCCampaignMenu::Screen()->get();
+        campaign.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+        campaign.Logistics().ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
         shoot("repair_pilots");
-        GlobalLog()->RepairScreen->SetUpVhclInv(true, true);
-        shoot("repair_vehicles");
-        GlobalLog()->SetUpPurchaseScreen(true);
-        GlobalLog()->PurchaseScreen->SetUpPilotInv(true, true);
-        shoot("purchase_pilots");
-        GlobalLog()->PurchaseScreen->SetUpCompInv(true, true);
-        shoot("purchase_components");
-        GlobalLog()->PurchaseScreen->SetUpVhclInv(true, true);
-        shoot("purchase_vehicles");
-        GlobalLog()->SetUpBriefingScreen(true);
-        GlobalLog()->BriefingScreen->SetUpOperation();
-        shoot("briefing_operation");
-        GlobalLog()->BriefingScreen->SetUpMission();
+        campaign.ChooseTab(MCCampaignScreen::MCTab::Briefing);
 
-        // The main menu in a campaign, and what it opens.
-        Cancel();
+        // The main menu in a campaign (the briefing's MAIN MENU), and what it opens: SAVE GAME, SOLO MISSIONS, QUIT's
+        // question (Escape on it is its CANCEL), the preferences' CONTROLS.
+        MCMenuScreens::LeaveCampaign();
+        REQUIRE(MCTestGame::FinishChanges());
         shoot("main_menu_campaign");
-        SaveScreen();
+        OpenThroughFlow(MCMenuScreens::Save());
         shoot("save");
-        Cancel();
-        SoloLoadScreen();
+        BackThroughFlow();
+        MCMainMenuScreens::SwapTo(MCMainPanel::Solo);
         shoot("load_solo");
-        Cancel();
-        CheckExit();
+        MCMainMenuScreens::SwapBack(MCMainPanel::Solo);
+        REQUIRE(MCTestGame::FinishChanges());
+        MCMenuScreens::AskQuit();
         shoot("exit_question");
-        DismissMessage();
-#if MC_AUDIT_CONTROLS
+        MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
         detail.Screen = "controls";
-        ShowPreferences();
+        OpenThroughFlow(MCMenuScreens::Preferences());
 
-        if (const std::shared_ptr<MCLogTextButton> controls = FindAuditTextButton(*GlobalLog()->PrefScreen, "CONTROLS");
-            controls != nullptr)
+        if (const std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OnTop<MCPrefsScreen>(); prefs != nullptr)
         {
-            MCScreenInput::RealClick(controls->GlobalX() + controls->Width() / 2,
-                                     controls->GlobalY() + controls->Height() / 2);
+            prefs->ShowSection(MCSettingsModel::MCSection::Controls);
             shoot("controls");
         }
 
-        CancelPrefs();
-#endif
+        BackThroughFlow();
         TourMultiplayer(shoot);
-        NewMcxCampaign();
+        MCMainMenuModel::NewCampaign(MCSaves::MCCampaign::Expansion);
         REQUIRE(MCTestGame::FinishChanges());
         shoot("briefing_expansion");
 
@@ -15950,8 +15916,8 @@ namespace
         if (!RunUntil(
                 []
                 {
-                    return Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
-                           GlobalLog()->CurrentScreen() != nullptr && GuiSystem().SmackerWindow == nullptr;
+                    return Mission()->State == MCMissionState::Logistics &&
+                           MCMenuScreens::Top() != MCScreenFlow::NoScreen && GuiSystem().SmackerWindow == nullptr;
                 },
                 LogisticsFrames))
         {
@@ -15960,8 +15926,13 @@ namespace
         }
 
         shoot("logistics_after_mission");
-        GlobalLog()->SetUpPurchaseScreen(true);
-        shoot("purchase_after_mission");
+
+        // The next briefing's PURCHASING.
+        if (MCCampaignMenu::Screen().has_value())
+        {
+            MCCampaignMenu::Screen()->get().ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+            shoot("purchase_after_mission");
+        }
     }
 }
 

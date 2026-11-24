@@ -4,7 +4,7 @@
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCInternetMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCSplashScreen.h"
@@ -1118,16 +1118,11 @@ void ShowGamesNow(MCGamesWhere where)
 
     if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
     {
-        const std::shared_ptr<MCLogObject> shown = logistics->CurrentScreen();
-
-        if (shown != nullptr)
-        {
-            shown->ShowGuiWindow(false);
-        }
+        logistics->HideScreen();
 
         // The remade screens stand over the main menu, hidden: logistics' screen, so that an old one shown from them
         // (the room) is a change of screen, which hides them (MCLogistics::SetCurrentScreen).
-        if (logistics->MainScreen && (shown == nullptr || !logistics->MainScreen.Is(*shown)))
+        if (logistics->MainScreen && MCMenuScreens::Top() != MCMenuScreens::Main())
         {
             logistics->SetCurrentScreen(logistics->MainScreen);
         }
@@ -1152,6 +1147,17 @@ void ShowInternetScreen()
 void ShowLanScreen()
 {
     ShowGamesNow(MCGamesWhere::Lan);
+}
+
+void DoTheTcpThang()
+{
+    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
+    {
+        MultiPlayer()->SessionManager->ConnectTcp(const_cast<char*>(""));
+    }
+
+    // Port-only (SPEC-menus.md's stage 3): the remade LAN screen, shown at once.
+    ShowLanScreen();
 }
 
 void ReleaseGamesScreens()

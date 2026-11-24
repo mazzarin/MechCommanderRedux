@@ -3,6 +3,7 @@
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -43,8 +44,8 @@ namespace
     /// </summary>
     bool OnNoticeScreen(MCLogistics& logistics)
     {
-        return (logistics.LogisticsState == MainMenuState && logistics.CurrentScreen() == logistics.MainScreen) ||
-               (logistics.LogisticsState == SessionState && logistics.CurrentScreen() == logistics.SessionScreen);
+        return (logistics.LogisticsState == MainMenuState && MCMenuScreens::Top() == MCMenuScreens::Main()) ||
+               (logistics.LogisticsState == SessionState && MCMenuScreens::Top() == MCMenuScreens::Room());
     }
 
     /// <summary>The player's answer, kept in PREFS at once.</summary>

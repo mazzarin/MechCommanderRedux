@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "main/MCMissionGlobals.h"
+#include "logistics/MCMenuScreens.h"
 #include "network/MCMultiPlayer.h"
 #include "ui/MCRmlDialog.h"
 #include "network/MCLobbyUpdate.h"
@@ -1111,20 +1112,22 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
         // no longer counts for START.
         MCLobbyUpdate::PlayerLeft(playerID);
 
-        if ((GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen ||
-             GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen) &&
+        // The room, or its mission pick (the 1998 load screen, either way).
+        const MCScreenFlow::MCScreenId top = MCMenuScreens::Top();
+
+        if ((top == MCMenuScreens::Room() || top == MCMenuScreens::MissionPick() || top == MCMenuScreens::Load()) &&
             !MCLobbyUpdate::LeftToUpdate(playerID))
         {
             // Port-only (the personal build): the room goes on without the player, who is taken off every game's
             // screen (the host's chat said it left); a host left alone waits for others. The original ended the room
             // for everyone ("... has left the game").
-            GlobalLog()->SessionScreen->RemovePlayer(playerID);
+            GlobalLog()->Room.RemovePlayer(playerID);
 
             // Port-only (Redux HD): the room's host gone, its session rolled over to this game (MCDirectPlay.h): the
             // room is this game's now, as everyone picked it.
-            if (IsHost && !wasHost && GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen)
+            if (IsHost && !wasHost && MCMenuScreens::Top() == MCMenuScreens::Room())
             {
-                GlobalLog()->SessionScreen->TakeOverRoom();
+                GlobalLog()->Room.TakeOverRoom();
             }
         }
 

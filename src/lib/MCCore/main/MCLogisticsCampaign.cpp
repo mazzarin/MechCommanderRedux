@@ -1166,11 +1166,12 @@ auto MCLogistics::ReadCampaignBlocks(MCCampaignReading& reading) -> int32_t
     MCPacketFile& packetFile = reading.PacketFile;
 
     packetFile.Close();
+    // The spares' rows numbered, then the 1998 'MECH BAY's lists shown on them (its mech tab).
+    NumberMechs();
+    NumberPilots();
+    ReIndexInventory();
+    NumberVehicles();
     MCLogInvScreen& screen = *RepairScreen;
-    MCLogInvScreen::CreateMechInvBlock();
-    screen.CreatePilotInvBlock();
-    MCLogInvScreen::CreateCompInvBlock();
-    MCLogInvScreen::CreateVhclInvBlock();
     screen.SetUpMechInv(true, true);
     screen.CreateVehiclePane();
     return 0;

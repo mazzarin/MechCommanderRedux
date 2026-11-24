@@ -13,7 +13,7 @@
 #include "gui/MCGuiTimerManager.h"
 #include "lib/MCFatal.h"
 #include "logistics/MCCompPurchaseBlock.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurchaseScreen.h"

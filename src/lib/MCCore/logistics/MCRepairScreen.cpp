@@ -7,7 +7,7 @@
 #include "gui/MCScrollPane.h"
 #include "lib/MCFatal.h"
 #include "logistics/MCTicker.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCLogToolButton.h"
 #include "logistics/MCLogChatInput.h"
@@ -32,8 +32,6 @@
 #include "platform/MCInput.h"
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCBriefingScreen.h"
-
-int32_t ResourceDisplayState = 0;
 
 namespace
 {
@@ -456,11 +454,4 @@ auto MCRepairScreen::Display() -> void
 {
     // The figure and the clock are drawn by the screens each frame (MCLogistics::DrawScreenChrome).
     MCLogObject::Display();
-}
-
-auto ResourceFigureText() -> std::string
-{
-    // States 1 and 2 showed the logistics heap's free memory and largest free block; the heap is gone, so they show
-    // nothing (the original left the text unset for another state).
-    return ResourceDisplayState == 0 ? std::format("{}", ResourcePoints) : std::string();
 }

@@ -726,7 +726,7 @@ void MCSavesScreen::Load(const std::string& name)
     const std::weak_ptr<MCRmlScreen> self = weak_from_this();
     // The save loaded live from the press, a step a frame (after the briefing's document); the briefing set up once dark.
     LoadingSolo = false;
-    MCSavedGameLoad load = LoadSavedGameAhead(name, true);
+    MCSavedGameLoad load = MCSaves::LoadSavedGameAhead(name, true);
     std::vector<MCScreenChange::MCPiece> job = MCCampaignMenu::Ahead();
     std::ranges::move(load.Job, std::back_inserter(job));
     MCScreenFlow::Change(
@@ -743,7 +743,7 @@ void MCSavesScreen::Load(const std::string& name)
             auto& saves = static_cast<MCSavesScreen&>(*screen);
             saves.Hide();
 
-            if (ShowSavedGame(*result))
+            if (MCSaves::ShowSavedGame(*result))
             {
                 return;
             }

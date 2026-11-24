@@ -72,7 +72,7 @@ namespace
     {
         MCTestGuest::HostFromLan(std::format("127.0.0.1:{}", port), "COMMANDER", "COMMANDER'S GAME", 4);
         Settle();
-        REQUIRE(OnScreen(GlobalLog()->SessionScreen));
+        REQUIRE(OnScreen(MCMenuScreens::Room()));
     }
 
     /// <summary>How the host leaves its remade room: LEAVE clicked, or Escape pressed.</summary>
@@ -249,7 +249,7 @@ TEST_CASE_ISOLATED("game: a launcher's guest whose host closes the room says so 
     Host bob;
     REQUIRE(bob.Open(Port, "BOB", "BOB'S GAME"));
     REQUIRE(MCTestGame::StartLobby(std::format("-join 127.0.0.1 -port {} -player ANN", Port)));
-    REQUIRE(SettleUntil([] { return InSession() && OnScreen(GlobalLog()->SessionScreen); }));
+    REQUIRE(SettleUntil([] { return InSession() && OnScreen(MCMenuScreens::Room()); }));
 
     bob.SendRoomEnds(MultiPlayer()->SessionManager->MyPlayerID, std::to_underlying(MCRoomEnd::MCHow::Closed));
     REQUIRE(SettleUntil([] { return !InSession(); }));
@@ -282,7 +282,7 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host starts a mission it can't load 
     bob.SendPrepareScenario(ann);
     Settle();
     CHECK(InSession());
-    CHECK(OnScreen(GlobalLog()->SessionScreen));
+    CHECK(OnScreen(MCMenuScreens::Room()));
     CHECK(Scenario() == nullptr);
 
     // BOB puts ANN on the first team.
@@ -432,10 +432,9 @@ TEST_CASE_ISOLATED("game: a LAN host's Escape leaves its remade room at once, no
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
     ann.AnswerFiles(sameData);
-    MCSessionScreen& room = *GlobalLog()->SessionScreen;
-    room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
-    room.AssignPlayer(ann.Id(), 2, 0, false);
-    room.LoadMission(Mission);
+    GlobalLog()->Room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
+    GlobalLog()->Room.AssignPlayer(ann.Id(), 2, 0, false);
+    GlobalLog()->Room.LoadMission(Mission);
     REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && DialogText().empty(); }));
     Settle();
     const MCGuiHandle<MCRoomScreen> remade = RoomScreen();
@@ -526,7 +525,7 @@ TEST_CASE_ISOLATED("game: a launcher host's LEAVE tells its guests the room clos
 
     constexpr std::string_view Port = "28973";
     REQUIRE(MCTestGame::StartLobby(std::format("-host -port {} -player BOB", Port)));
-    REQUIRE(SettleUntil([] { return InSession() && OnScreen(GlobalLog()->SessionScreen); }));
+    REQUIRE(SettleUntil([] { return InSession() && OnScreen(MCMenuScreens::Room()); }));
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     Guest ann("ANN", MCMatchRule::Supported);
     REQUIRE(ann.Join(*manager.DirectPlay, std::format("127.0.0.1:{}", Port)));
@@ -610,26 +609,27 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     // The match's session, kept: the rematch's room is another (a host's session has no instance of its own here).
     const std::shared_ptr<MCFidpSession> firstRoom = manager.CurrentSession();
+    const uint32_t firstHost = manager.MyPlayerID;
     const uint32_t sameData = MCMissionDataHash(GamePath(SavePath, Mission, ".mpk"));
     REQUIRE(sameData != 0);
 
     // ANN joins and is picked for team 2's second slot; the host takes team 1, Inner Sphere for team 2, a mission and
     // the points.
     Guest ann("ANN", MCMatchRule::Supported);
+    ann.RecordAll();
     REQUIRE(ann.Join(*manager.DirectPlay, address));
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
     ann.AnswerFiles(sameData);
-    MCSessionScreen& room = *GlobalLog()->SessionScreen;
-    room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
-    room.AssignPlayer(ann.Id(), 2, 1, false);
-    room.SetTeamTechBase(2, 1);
-    room.LoadMission(Mission);
+    GlobalLog()->Room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
+    GlobalLog()->Room.AssignPlayer(ann.Id(), 2, 1, false);
+    GlobalLog()->Room.SetTeamTechBase(2, 1);
+    GlobalLog()->Room.LoadMission(Mission);
     REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && DialogText().empty(); }));
-    room.SetTeam1RP(Team1Points);
-    room.SetTeam2RP(Team2Points);
+    GlobalLog()->Room.SetTeam1RP(Team1Points);
+    GlobalLog()->Room.SetTeam2RP(Team2Points);
     Settle();
-    REQUIRE(!room.StartButton->Disabled);
+    REQUIRE(GlobalLog()->Room.CanStart);
 
     // The match starts (its hook alone: the test's guest plays no match) and ends; the results' REMATCH: ANN's game is
     // told, and the host waits for it to leave.
@@ -643,34 +643,47 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
 
     // The room again: a new session, the host alone on team 1 with the match's picks, ANN's place kept.
     REQUIRE(SettleUntil(
-        [&] { return OnScreen(GlobalLog()->SessionScreen) && InSession() && manager.CurrentSession() != firstRoom; }));
+        [&] { return OnScreen(MCMenuScreens::Room()) && InSession() && manager.CurrentSession() != firstRoom; }));
     Settle();
-    MCSessionScreen& again = *GlobalLog()->SessionScreen;
     CHECK(!MCRoomEnd::Rematching());
     CHECK_EQ(manager.CurrentSession()->Name, std::string("COMMANDER'S GAME"));
     CHECK_EQ(manager.CurrentSession()->SessionDesc.dwMaxPlayers, 4u);
     CHECK_EQ(manager.GetPlayers(nullptr).size(), 1u);
     CHECK(MultiPlayer()->IsHost);
-    CHECK(MCSessionScreen::Room().Team1Players[0] == manager.MyPlayerID);
-    CHECK(!MCSessionScreen::Room().MissionFile.empty());
-    CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
-    CHECK_EQ(std::string(again.Team1RPText->Text()), std::to_string(Team1Points));
-    CHECK_EQ(std::string(again.Team2RPText->Text()), std::to_string(Team2Points));
-    CHECK_EQ(MCSessionScreen::Room().StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
+    CHECK(GlobalLog()->Room.Team1Players[0] == manager.MyPlayerID);
+    CHECK(!GlobalLog()->Room.MissionFile.empty());
+    CHECK_EQ(GlobalLog()->Room.Team2TechBase, 1);
+    CHECK_EQ(GlobalLog()->Room.PointsText[0], std::to_string(Team1Points));
+    CHECK_EQ(GlobalLog()->Room.PointsText[1], std::to_string(Team2Points));
+    CHECK_EQ(GlobalLog()->Room.StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
     CHECK_EQ(MCLobbyUpdate::StartQuestion(), std::string("ANN isn't back yet. Start without ANN?"));
     SaveShot("rematch 0 room again", ScreenHash());
 
     // ANN's game joins again: shown the room, back on team 2's second slot, her place no longer kept.
     Guest annAgain("ANN", MCMatchRule::Supported);
+    annAgain.RecordAll();
     REQUIRE(annAgain.Join(*manager.DirectPlay, address));
     REQUIRE(SettleUntil(
-        [&]
-        { return MCTestGuest::RoomShows(annAgain.Id()) && MCSessionScreen::Room().Team2Players[1] == annAgain.Id(); }));
+        [&] { return MCTestGuest::RoomShows(annAgain.Id()) && GlobalLog()->Room.Team2Players[1] == annAgain.Id(); }));
     Settle();
-    CHECK(MCSessionScreen::Room().StartWaits.empty());
+    CHECK(GlobalLog()->Room.StartWaits.empty());
     CHECK(MCLobbyUpdate::StartQuestion().empty());
-    CHECK(MCSessionScreen::Room().Team1Players[0] == manager.MyPlayerID);
+    CHECK(GlobalLog()->Room.Team1Players[0] == manager.MyPlayerID);
     SaveShot("rematch 1 guest back", ScreenHash());
+
+    // The room's messages (SPEC-menus.md's stage 9, step 2): what ANN's game was sent in the match's room and in the
+    // rematch's, in the same order and bytes as the 1998 session screen sent them (recorded from it before the room's
+    // logic left it; the same in every run).
+    const std::array firstIds = {MCTestGuest::MCNamedId{firstHost, "HOST"}, MCTestGuest::MCNamedId{ann.Id(), "ANN"}};
+    const std::array againIds = {MCTestGuest::MCNamedId{manager.MyPlayerID, "HOST"},
+                                 MCTestGuest::MCNamedId{annAgain.Id(), "ANN"}};
+    constexpr std::array<uint16_t, 24> FirstTypes = {2,  3, 3,  3,  50, 16, 42, 49, 44, 44, 7,  7,
+                                                     41, 7, 41, 37, 43, 43, 39, 43, 43, 43, 43, 55};
+    constexpr uint64_t FirstDigest = 0x30456649f7b68be4ull;
+    constexpr std::array<uint16_t, 15> AgainTypes = {2, 3, 3, 3, 50, 16, 42, 49, 41, 7, 41, 44, 44, 43, 43};
+    constexpr uint64_t AgainDigest = 0xfb63ead0c2553026ull;
+    MCTestGuest::CheckRecorded(ann, firstIds, firstHost, ann.Instance(), FirstTypes, FirstDigest);
+    MCTestGuest::CheckRecorded(annAgain, againIds, manager.MyPlayerID, annAgain.Instance(), AgainTypes, AgainDigest);
 }
 
 /// <summary>
@@ -723,7 +736,7 @@ TEST_CASE_ISOLATED("game: a host's REMATCH from its match's results hosts the ro
     REQUIRE(SettleUntil(
         [&]
         {
-            return GlobalLog() != nullptr && OnScreen(GlobalLog()->SessionScreen) && InSession() &&
+            return GlobalLog() != nullptr && OnScreen(MCMenuScreens::Room()) && InSession() &&
                    manager.CurrentSession() != matchRoom;
         }));
     Settle();
@@ -798,7 +811,7 @@ TEST_CASE_ISOLATED("game: a host's REMATCH clicked on its match's remade results
     REQUIRE(SettleUntil(
         [&]
         {
-            return GlobalLog() != nullptr && OnScreen(GlobalLog()->SessionScreen) && InSession() &&
+            return GlobalLog() != nullptr && OnScreen(MCMenuScreens::Room()) && InSession() &&
                    manager.CurrentSession() != matchRoom;
         }));
     Settle();
@@ -843,7 +856,7 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host has a rematch joins its room ag
     bob.reset();
     Host again;
     REQUIRE(again.Open(Port, "BOB", "BOB'S GAME"));
-    REQUIRE(SettleUntil([] { return InSession() && OnScreen(GlobalLog()->SessionScreen); }));
+    REQUIRE(SettleUntil([] { return InSession() && OnScreen(MCMenuScreens::Room()); }));
     CHECK(DialogText().empty());
     REQUIRE(SettleUntil([&] { return !again.Joined().empty(); }));
     CHECK_EQ(MultiPlayer()->SessionManager->MyPlayer()->Name, std::string("ANN"));

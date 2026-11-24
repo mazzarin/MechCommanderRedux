@@ -311,6 +311,12 @@ public:
     int32_t SetUpMainScreen(bool fromMenu);
 
     /// <summary>
+    /// Port-only (stage 9, step 2): the main menu's multiplayer teardown (SetUpMainScreen's logic): the match's
+    /// logistics and game let go, the chat's blinks stopped, the purchase dialog hidden.
+    /// </summary>
+    void LeaveMatchAtMainMenu();
+
+    /// <summary>
     /// Reads the campaign's purchase file <paramref name="purchaseFile"/>: the costs, the campaign briefing, the
     /// current mission's purchase file, cinema and operation; then sets up the shop from <paramref name="file"/>.
     /// </summary>
@@ -545,6 +551,21 @@ public:
     /// <summary>Renumbers the component inventory's rows.</summary>
     int32_t ReIndexInventory() const;
 
+    /// <summary>
+    /// Numbers the spare mechs' rows (their <c>ListIndex</c>: the order of the mech list), as the original's
+    /// CreateMechInvBlock did after each change to the list.
+    /// </summary>
+    void NumberMechs() const;
+
+    /// <summary>Numbers the spare vehicles' rows (their <c>ListIndex</c>: the order of the vehicle list).</summary>
+    void NumberVehicles() const;
+
+    /// <summary>
+    /// Numbers the spare MechWarriors' rows (their <c>ListIndex</c>: the order of the pilot list), which a MechWarrior's
+    /// assignment and dismissal move the others' by.
+    /// </summary>
+    void NumberPilots() const;
+
     /// <summary>Handles a multiplayer "deploy force" message: adds the other player's mech or vehicle to its drop slot.</summary>
     void HandleDeployForceMessage(uint32_t playerID, std::span<const uint8_t> message);
 
@@ -735,6 +756,15 @@ public:
 
     /// <summary>Makes <paramref name="screen"/> the screen being shown.</summary>
     void SetCurrentScreen(MCLogObject& screen) { SetCurrentScreen(screen.WeakAs<MCLogObject>()); }
+
+    /// <summary>Port-only (stage 9, step 2): the 1998 screen being shown hidden (under the remade ones), if any.</summary>
+    void HideScreen() const;
+
+    /// <summary>
+    /// Port-only (stage 9, step 2): the 1998 screens' part of a set-up: the screen shown hidden and
+    /// <paramref name="screen"/> made the screen being shown; the one shown before.
+    /// </summary>
+    std::shared_ptr<MCLogObject> ShowInPlace(std::weak_ptr<MCLogObject> screen);
     MCGuiHandle<MCSessionScreen> SessionScreen;
     /// <summary>Port-only (SPEC-menus.md's stage 4): the multiplayer room's state, which the room's screens view.</summary>
     MCRoomModel Room;
@@ -932,6 +962,7 @@ extern std::string HoldString;
 extern std::array<bool, 7> LogCheatActive;
 /// <summary>The multiplayer players' colors (gamesys.fit's mPlayerColors).</summary>
 extern std::array<int32_t, 6> MultiPlayerColors;
+
 /// <summary>How many characters of a cheat code have been typed.</summary>
 extern int32_t LogCurCheatChar;
 /// <summary>Nonzero in the demo version.</summary>
@@ -941,3 +972,12 @@ extern int InDemo;
 /// half.
 /// </summary>
 extern bool Solo;
+
+/// <summary>Which resource figure the screens show (0: the resource points; 1 and 2 were the logistics heap's).</summary>
+extern int32_t ResourceDisplayState;
+
+/// <summary>
+/// Port: the resource figure the screens show (<see cref="ResourceDisplayState"/>: the resource points, or the
+/// logistics heap's total or largest free block, gone with the heap: empty).
+/// </summary>
+std::string ResourceFigureText();

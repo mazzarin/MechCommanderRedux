@@ -25,12 +25,6 @@ namespace
     /// <summary>The component rows' drag.</summary>
     MCDragState CompDrag;
 
-    /// <summary>The string table index of the range word of a weapon with long range <paramref name="range"/>.</summary>
-    uint32_t RangeWord(float range)
-    {
-        return range < 76.0f ? 0x55 : range < 151.0f ? 0x50 : 0x6d;
-    }
-
     /// <summary>
     /// Mounts the dragged component on <paramref name="mech"/> (the one selected on the repair screen): undeploys it,
     /// and when it has the free tonnage adds the component (and a weapon's ammo) to its inventory.
@@ -59,49 +53,6 @@ namespace
 auto MCCompInventoryBlock::MountTonnage(uint8_t masterID) -> float
 {
     return MCMechBay::FittedTons(masterID);
-}
-
-auto MCCompInventoryBlock::Texts(uint8_t masterID) -> MCComponentTexts
-{
-    const MCMasterComponent& component = MasterComponentList[masterID];
-    const MCComponentForm form = component.Form;
-    MCComponentTexts texts;
-    texts.Weight = std::format("{:.1f} {}", MountTonnage(masterID), LoadGameString(0x6e, 0xfe));
-
-    if (IsWeapon(form))
-    {
-        // Weapons: the long range as a word, damage and recycle time.
-        texts.Range = LoadGameString(RangeWord(component.WeaponRange[3]), 0xfe);
-        double damage = component.Damage;
-
-        if (component.WeaponFlags == 4)
-        {
-            damage *= 3.0;
-        }
-
-        texts.Damage = std::format("{:.2f}", damage);
-        texts.Recycle = std::format("{:.2f} s", component.RecycleTime);
-        return texts;
-    }
-
-    std::string notApplicable = LoadGameString(0x6c, 0xfe);
-
-    if (form == MCComponentForm::Probe)
-    {
-        texts.Range = notApplicable;
-    }
-    else
-    {
-        // Original behaviour (OB-078): other equipment than ECM and sensors formats the item pointer's bits as the
-        // range; for a heap address that is a denormal, so it read "0.0 m".
-        const float shown =
-            form == MCComponentForm::Ecm || form == MCComponentForm::Sensor ? component.RangeOrHeat : 0.0f;
-        texts.Range = std::format("{:.1f} m", shown);
-    }
-
-    texts.Damage = notApplicable;
-    texts.Recycle = std::move(notApplicable);
-    return texts;
 }
 
 auto MCCompInventoryBlock::Init(std::shared_ptr<MCLogInventoryItem> newItem) -> void

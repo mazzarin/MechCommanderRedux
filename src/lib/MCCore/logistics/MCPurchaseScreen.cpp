@@ -5,7 +5,7 @@
 #include "gui/MCScrollPane.h"
 #include "lib/MCFatal.h"
 #include "main/MCGamePaths.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUnitLimits.h"

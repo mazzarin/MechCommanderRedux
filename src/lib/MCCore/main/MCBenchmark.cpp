@@ -2,18 +2,17 @@
 #include "main/MCBenchmark.h"
 #include "camera/MCCamera.h"
 #include "gui/MCGuiCallback.h"
-#include "gui/MCGuiEvent.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiInput.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCVector3D.h"
 #include "logistics/MCBriefingScreen.h"
-#include "logistics/MCMainMenu.h"
-#include "logistics/MCMechBriefBlock.h"
-#include "logistics/MCMechRepairBlock.h"
-#include "logistics/MCPurchaseScreen.h"
-#include "logistics/MCRepairScreen.h"
+#include "logistics/MCCampaignMenu.h"
+#include "logistics/MCDeploy.h"
+#include "logistics/MCLogisticsTabs.h"
+#include "logistics/MCMainMenuModel.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCHdSettings.h"
@@ -125,8 +124,8 @@ namespace
     };
 
     /// <summary>
-    /// A logistics tour (MCBenchmark::ArmBriefing): a new campaign's first briefing, its tabs and lance, the mech lab,
-    /// the store, back to the briefing and Launch.
+    /// A logistics tour (MCBenchmark::ArmBriefing): a new campaign's first briefing on the campaign's screen, its drop,
+    /// the 'MECH BAY, PURCHASING, back to BRIEFING and Launch.
     /// </summary>
     struct MCBriefingRun
     {
@@ -136,12 +135,10 @@ namespace
         /// <summary>The step now, an index into the tour's steps.</summary>
         size_t Step = 0;
         std::chrono::steady_clock::time_point StepStart;
-        /// <summary>The mouse events the step has still to send, one a frame.</summary>
-        std::deque<MCGuiEvent> Pending;
         /// <summary>The mech the tour puts in the lance (and takes off it again).</summary>
         std::weak_ptr<MCLogMech> Added;
         std::vector<MCStepResult> Results;
-        /// <summary>From Launch's click to the mission's first frame (seconds).</summary>
+        /// <summary>From Launch's press to the mission's first frame (seconds).</summary>
         double LaunchSeconds = 0.0;
         bool InputHeld = false;
         bool Stopped = false;
@@ -553,12 +550,6 @@ namespace
     constexpr double BytesPerMb = 1024.0 * 1024.0;
     /// <summary>A part's type when it's a mech (MCLogPart::PartType).</summary>
     constexpr int32_t MechPartType = 1;
-    /// <summary>A mouse event's left button, held.</summary>
-    constexpr uint8_t LeftHeld = 0xff;
-    /// <summary>Where on a row a click lands: past its picture's left edge, as the tests click the inventory's.</summary>
-    constexpr int32_t RowClickX = 40;
-    /// <summary>The briefing screen's launch button, its middle.</summary>
-    constexpr POINT LaunchButton{0x230, 0x152};
     /// <summary>The longest Launch may take to the mission's first frame before the run fails.</summary>
     constexpr double MostLaunchSeconds = 120.0;
 
@@ -572,200 +563,120 @@ namespace
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     }
 
-    POINT Middle(MCGuiObject& object)
-    {
-        return {object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2};
-    }
-
-    MCGuiEvent MouseEvent(int32_t type, POINT at)
-    {
-        MCGuiEvent event;
-        event.Clear();
-        event.Type = static_cast<uint8_t>(type);
-        event.X = at.x;
-        event.Y = at.y;
-        event.LeftButton = type == MCGuiEventType::LeftButtonDown ? LeftHeld : 0;
-        return event;
-    }
-
     /// <summary>
-    /// A tour's mouse event, sent as the player's input reaches the screens: the held cursor put at its place first, so
-    /// the frame's own mouse check sees no move of its own.
+    /// The first mech of READY AREA that fits the drop, sent to its first open slot (the right button's send, as a player
+    /// puts one in: its briefing shows, its art read from then, MCHdArt::HoldMechAhead); DEPLOY shown first.
     /// </summary>
-    void SendMouse(MCGuiEvent event)
+    std::string AddMech(MCBriefingRun& run, MCCampaignScreen& screen)
     {
-        MCInput::SetCursorPos(event.X, event.Y);
-        MouseScreenX = event.X;
-        MouseScreenY = event.Y;
-        OldMouseX = event.X;
-        OldMouseY = event.Y;
-        DispatchGuiEvent(event);
-    }
+        screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+        // READY AREA's cards are these units, in this order (MCCampaignScreen::FillCards; nothing is carried).
+        const std::vector<std::shared_ptr<MCLogPart>> ready = MCDeploy::ReadyUnits();
 
-    /// <summary>A click at <paramref name="at"/>, one event a frame: the mouse there, the button down, then up.</summary>
-    void QueueClick(MCBriefingRun& run, bool right, POINT at)
-    {
-        run.Pending.push_back(MouseEvent(MCGuiEventType::MouseMove, at));
-        run.Pending.push_back(MouseEvent(right ? MCGuiEventType::RightButtonDown : MCGuiEventType::LeftButtonDown, at));
-        run.Pending.push_back(MouseEvent(right ? MCGuiEventType::RightButtonUp : MCGuiEventType::LeftButtonUp, at));
-    }
-
-    MCBriefingScreen& Briefing()
-    {
-        return *GlobalLog()->BriefingScreen;
-    }
-
-    /// <summary>
-    /// The first mech of the deploy list that fits the lance, right-clicked into the first free slot (as a player puts one
-    /// in: its briefing shows, its art read from then, MCHdArt::HoldMechAhead).
-    /// </summary>
-    std::string AddMech(MCBriefingRun& run)
-    {
-        MCBriefingScreen& screen = Briefing();
-        screen.SetUpDeploy();
-
-        for (const std::shared_ptr<MCLogPart>& unit : screen.DeployUnits)
+        for (size_t card = 0; card < ready.size(); ++card)
         {
-            if (unit == nullptr || unit->PartType != MechPartType)
+            const std::shared_ptr<MCLogPart>& unit = ready[card];
+
+            if (unit == nullptr || unit->PartType != MechPartType || !MCDeploy::Fits(*unit))
             {
                 continue;
             }
 
-            const auto mech = std::static_pointer_cast<MCLogMech>(unit);
-            const std::shared_ptr<MCMechBriefBlock> block = screen.BlockOf(*mech);
+            run.Added = std::static_pointer_cast<MCLogMech>(unit);
+            screen.SendReady(card, std::nullopt);
+            return MCDeploy::SlotOf(*unit).has_value() ? std::string() : "the mech that fits stayed in READY AREA";
+        }
 
-            if (mech->Deployed == 0 && MCBriefingScreen::FitsTonnage(*mech) && block != nullptr)
+        return "no mech in READY AREA fits the drop";
+    }
+
+    /// <summary>The mech AddMech put in, sent back out of its slot to READY AREA.</summary>
+    std::string RemoveMech(MCBriefingRun& run, MCCampaignScreen& screen)
+    {
+        const std::shared_ptr<MCLogMech> mech = run.Added.lock();
+        const std::optional<size_t> slot = mech != nullptr ? MCDeploy::SlotOf(*mech) : std::nullopt;
+
+        if (!slot.has_value())
+        {
+            return "the mech put in isn't in the drop";
+        }
+
+        screen.SendBack(*slot);
+        return MCDeploy::SlotOf(*mech).has_value() ? "the mech put in stayed in the drop" : std::string();
+    }
+
+    /// <summary>In the 'MECH BAY, another 'Mech of the force than the one in the lab picked: its first show there.</summary>
+    std::string ShowAnotherMech(MCBriefingRun&, MCCampaignScreen& screen)
+    {
+        MCLogisticsTabs& tabs = screen.Logistics();
+        const std::shared_ptr<MCLogPart> shown = tabs.LabUnit();
+
+        for (size_t card = 0; card < tabs.ForceCards().size(); ++card)
+        {
+            const std::shared_ptr<MCLogPart> unit = tabs.UnitAt(MCLogisticsTabs::MCPlace::Force, card);
+
+            if (unit != nullptr && unit->PartType == MechPartType && unit != shown)
             {
-                run.Added = mech;
-                QueueClick(run, true, Middle(*block));
+                tabs.Pick(MCLogisticsTabs::MCPlace::Force, card);
                 return {};
             }
         }
 
-        return "no mech in the deploy list fits the lance";
+        return "the 'MECH BAY lists no other mech";
     }
 
-    /// <summary>The mech AddMech put in, right-clicked out of its slot back to the deploy list.</summary>
-    std::string RemoveMech(MCBriefingRun& run)
+    /// <summary>The campaign screen's tab <typeparamref name="Tab"/> chosen, as its button chooses it.</summary>
+    template <MCCampaignScreen::MCTab Tab> std::string ShowTab(MCBriefingRun&, MCCampaignScreen& screen)
     {
-        const std::shared_ptr<MCLogMech> mech = run.Added.lock();
-        const std::shared_ptr<MCMechBriefBlock> block = mech != nullptr ? Briefing().BlockOf(*mech) : nullptr;
-
-        if (mech == nullptr || mech->Deployed == 0 || block == nullptr)
-        {
-            return "the mech put in isn't in the lance";
-        }
-
-        QueueClick(run, true, Middle(*block));
+        screen.ChooseTab(Tab);
         return {};
     }
 
-    /// <summary>
-    /// In the mech lab, a click on another mech of the force than the one shown (its row in the unit pane): its first
-    /// show there.
-    /// </summary>
-    std::string ShowAnotherMech(MCBriefingRun& run)
+    /// <summary>PURCHASING's kind <typeparamref name="Kind"/> chosen (what the store lists).</summary>
+    template <MCLogisticsTabs::MCKind Kind> std::string ShowKind(MCBriefingRun&, MCCampaignScreen& screen)
     {
-        MCRepairScreen& lab = *GlobalLog()->RepairScreen;
-        const std::shared_ptr<MCLogMech> shown = lab.SelectedMech();
+        screen.Logistics().ChooseKind(Kind);
+        return {};
+    }
 
-        for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
-        {
-            const std::shared_ptr<MCMechRepairBlock> row =
-                mech != nullptr && mech != shown ? lab.RowOf(*mech) : nullptr;
-
-            if (row != nullptr)
-            {
-                QueueClick(run, false, POINT{row->GlobalX() + RowClickX, row->GlobalY() + row->Height() / 2});
-                return {};
-            }
-        }
-
-        return "the mech lab lists no other mech";
+    /// <summary>The 'MECH BAY's INVENTORY on its MechWarriors.</summary>
+    std::string ShowBayPilots(MCBriefingRun&, MCCampaignScreen& screen)
+    {
+        screen.Logistics().ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+        return {};
     }
 
     /// <summary>A step of the tour: its name, and what it does as it starts (what stopped it, or nothing).</summary>
     struct MCTourStep
     {
         std::string_view Name;
-        std::string (*Start)(MCBriefingRun& run);
+        std::string (*Start)(MCBriefingRun& run, MCCampaignScreen& screen);
     };
 
     /// <summary>
-    /// The tour, as a player goes through mission 1's logistics: the briefing (shown by the new campaign), its tabs, a
-    /// mech put in the lance and taken out, the mech lab and another mech in it, its pilots, the store's tabs, the
-    /// briefing again with a mech in the lance for Launch.
+    /// The tour, as a player goes through mission 1's logistics on the campaign's screen (MCCampaignMenu): BRIEFING
+    /// (shown by the new campaign), DEPLOY, a mech put in the drop and taken out, the 'MECH BAY and another mech in its
+    /// lab, its MechWarriors, PURCHASING and its kinds, BRIEFING again, a mech put in for Launch. Each is the screen's
+    /// own action, as its button or card calls it.
     /// </summary>
-    constexpr std::array<MCTourStep, 15> TourSteps{{
-        {"briefing", [](MCBriefingRun&) { return std::string(); }},
-        {"mission tab",
-         [](MCBriefingRun&)
-         {
-             Briefing().SetUpMission();
-             return std::string();
-         }},
-        {"operation tab",
-         [](MCBriefingRun&)
-         {
-             Briefing().SetUpOperation();
-             return std::string();
-         }},
-        {"deploy tab",
-         [](MCBriefingRun&)
-         {
-             Briefing().SetUpDeploy();
-             return std::string();
-         }},
+    constexpr std::array<MCTourStep, 13> TourSteps{{
+        {"briefing", [](MCBriefingRun&, MCCampaignScreen&) { return std::string(); }},
+        {"deploy", ShowTab<MCCampaignScreen::MCTab::Deploy>},
         {"a mech put in", AddMech},
         {"the mech taken out", RemoveMech},
-        {"mech lab",
-         [](MCBriefingRun&)
-         {
-             GlobalLog()->SetUpRepairScreen(true);
-             return std::string();
-         }},
+        {"mech bay", ShowTab<MCCampaignScreen::MCTab::MechBay>},
         {"another mech shown", ShowAnotherMech},
-        {"mech lab's pilots",
-         [](MCBriefingRun&)
-         {
-             GlobalLog()->RepairScreen->SetUpPilotInv(true, true);
-             return std::string();
-         }},
-        {"store",
-         [](MCBriefingRun&)
-         {
-             GlobalLog()->SetUpPurchaseScreen(true);
-             return std::string();
-         }},
-        {"store's vehicles",
-         [](MCBriefingRun&)
-         {
-             GlobalLog()->PurchaseScreen->SetUpVehiclePurchase();
-             return std::string();
-         }},
-        {"store's pilots",
-         [](MCBriefingRun&)
-         {
-             GlobalLog()->PurchaseScreen->SetUpPilotPurchase();
-             return std::string();
-         }},
-        {"store's mechs",
-         [](MCBriefingRun&)
-         {
-             GlobalLog()->PurchaseScreen->SetUpMechPurchase();
-             return std::string();
-         }},
-        {"briefing again",
-         [](MCBriefingRun&)
-         {
-             GlobalLog()->SetUpBriefingScreen(true);
-             return std::string();
-         }},
+        {"mech bay's MechWarriors", ShowBayPilots},
+        {"purchasing", ShowTab<MCCampaignScreen::MCTab::Purchasing>},
+        {"purchasing's vehicles", ShowKind<MCLogisticsTabs::MCKind::Vehicles>},
+        {"purchasing's MechWarriors", ShowKind<MCLogisticsTabs::MCKind::MechWarriors>},
+        {"purchasing's mechs", ShowKind<MCLogisticsTabs::MCKind::Mechs>},
+        {"briefing again", ShowTab<MCCampaignScreen::MCTab::Briefing>},
         {"a mech put in for Launch", AddMech},
     }};
 
     /// <summary>
-    /// A step's line: "mech lab: p99 9.1 ms, worst 31.0 ms, 2 late, held 1630 MB, on the GPU 812 of 1490 MB (fits)".
+    /// A step's line: "mech bay: p99 9.1 ms, worst 31.0 ms, 2 late, held 1630 MB, on the GPU 812 of 1490 MB (fits)".
     /// </summary>
     std::string StepText(const MCStepResult& step)
     {
@@ -804,8 +715,14 @@ namespace
     void StartStep(MCBriefingRun& run, size_t step)
     {
         run.Step = step;
+        const MCOptionalRef<MCCampaignScreen> screen = MCCampaignMenu::Screen();
 
-        if (const std::string stopped = TourSteps[step].Start(run); !stopped.empty())
+        if (!screen.has_value())
+        {
+            Fail(std::format("the logistics tour's {}: the campaign's screen isn't up", TourSteps[step].Name));
+        }
+
+        if (const std::string stopped = TourSteps[step].Start(run, *screen); !stopped.empty())
         {
             Fail(std::format("the logistics tour's {}: {}", TourSteps[step].Name, stopped));
         }
@@ -851,8 +768,8 @@ namespace
     }
 
     /// <summary>
-    /// The tour's frame: once the main menu shows, a new campaign; from its first briefing on, each step in turn for
-    /// StepSeconds (its mouse events one a frame), then Launch, until the mission's first frame.
+    /// The tour's frame: once the main menu shows, a new campaign; from its first briefing on the campaign's screen, each
+    /// step in turn for StepSeconds, then Launch (BEGIN MISSION), until the mission's first frame.
     /// </summary>
     void BriefingFrame()
     {
@@ -873,22 +790,6 @@ namespace
                 }
             },
             TourName);
-
-        if (!run.Pending.empty())
-        {
-            const MCGuiEvent event = run.Pending.front();
-            run.Pending.pop_front();
-
-            // Launch's wait timed from its button's press, which asks for the mission (MCBriefingScreen::Launch): it
-            // loads at that frame's end, before the release is sent.
-            if (run.Phase == MCBriefingPhase::Launching && event.Type == MCGuiEventType::LeftButtonDown)
-            {
-                run.StepStart = std::chrono::steady_clock::now();
-            }
-
-            SendMouse(event);
-            return;
-        }
 
         if (run.Phase == MCBriefingPhase::Launching)
         {
@@ -918,7 +819,7 @@ namespace
         {
             case MCBriefingPhase::Menu:
             {
-                if (logistics->CurrentScreen() == logistics->MainScreen)
+                if (MCMenuScreens::Top() == MCMenuScreens::Main())
                 {
                     MCFrameLog::Note("benchmark: a new campaign");
                     NewCampaign();
@@ -929,7 +830,7 @@ namespace
             }
             case MCBriefingPhase::Opening:
             {
-                if (logistics->CurrentScreen() == logistics->BriefingScreen)
+                if (MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing) && MCCampaignMenu::Ready())
                 {
                     run.Phase = MCBriefingPhase::Steps;
                     StartStep(run, 0);
@@ -952,13 +853,21 @@ namespace
                     break;
                 }
 
-                // Launch: the button clicked, the wait timed from its click to the mission's first frame.
-                QueueClick(run, false, LaunchButton);
+                // Launch: BEGIN MISSION pressed (it asks for the mission, which loads at a frame's end), the wait timed
+                // from the press to the mission's first frame.
+                const MCOptionalRef<MCCampaignScreen> screen = MCCampaignMenu::Screen();
+
+                if (!screen.has_value())
+                {
+                    Fail("the campaign's screen went before Launch");
+                }
+
                 MCFrameLog::Note("benchmark: Launch");
                 MCHdArt::TraceNote("benchmark: Launch");
                 MCFrameLog::StartTally();
                 run.StepStart = std::chrono::steady_clock::now();
                 run.Phase = MCBriefingPhase::Launching;
+                screen->get().PressBegin();
                 break;
             }
             case MCBriefingPhase::Launching:

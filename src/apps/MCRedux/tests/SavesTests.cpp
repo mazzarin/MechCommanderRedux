@@ -9,7 +9,7 @@
 #include "gui/MCScreenFlow.h"
 #include "lib/MCFile.h"
 #include "logistics/MCBriefingScreen.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCSavesMenu.h"
@@ -410,7 +410,7 @@ TEST_CASE_ISOLATED("game: LOAD GAME lists the saves, picks the newest and loads 
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     RunWhileChanging();
     CHECK(!screen.Shown());
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main"));
 
     // LOAD the game's own save (Down to the second row, then Enter): its briefing, the stack the main menu and the
@@ -424,7 +424,7 @@ TEST_CASE_ISOLATED("game: LOAD GAME lists the saves, picks the newest and loads 
     MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
     RunWhileChanging();
     CHECK(!screen.Shown());
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK_EQ(GlobalLog()->CurrentMission, 0);
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
 }
@@ -689,7 +689,7 @@ TEST_CASE_ISOLATED("game: SAVE GAME saves under the name typed, asks before writ
     RunWhileChanging();
     CHECK(!screen.Dialog()->Shown());
     CHECK(!screen.Shown());
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
 
     // Again: the next free name; the save picked fills the box, and SAVE asks before writing over it.
@@ -734,7 +734,7 @@ TEST_CASE_ISOLATED("game: SAVE GAME saves under the name typed, asks before writ
     // OK at once (not waiting): the campaign.
     MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
     RunWhileChanging();
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
 
     // A name no file can have, then a full disk: each says why, and SAVE GAME stays.
     MCMenuScreens::LeaveCampaign();
@@ -865,7 +865,7 @@ TEST_CASE_ISOLATED("game: LOAD GAME's DELETE asks first, then deletes the save a
     RunWhileChanging();
     CHECK(FileExists(GamePath(SavePath, before, ".sav")));
     CHECK_EQ(MCSaves::Game().All().size(), size_t{1});
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
 }
 
 namespace
@@ -978,7 +978,7 @@ TEST_CASE_ISOLATED("game: LOAD GAME and SAVE GAME work from the mouse")
     CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::SavedText));
     ClickOn(ElementOf(*screen.Dialog(), "answer"));
     RunWhileChanging();
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
 
     // LOAD GAME's LOAD: the briefing the save stands at.
@@ -989,6 +989,6 @@ TEST_CASE_ISOLATED("game: LOAD GAME and SAVE GAME work from the mouse")
     ClickOn(ElementOf(screen, "main"));
     RunWhileChanging();
     CHECK(!screen.Shown());
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
 }

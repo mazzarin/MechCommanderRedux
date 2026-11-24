@@ -3,6 +3,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCBenchmark.h"
@@ -54,10 +55,11 @@ namespace
     {
         if (MultiPlayer() == nullptr)
         {
-            return logistics.LogisticsState == BriefingState && logistics.CurrentScreen() == logistics.BriefingScreen;
+            return logistics.LogisticsState == BriefingState &&
+                   MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing);
         }
 
-        return logistics.LogisticsState == SessionState && logistics.CurrentScreen() == logistics.SessionScreen &&
+        return logistics.LogisticsState == SessionState && MCMenuScreens::Top() == MCMenuScreens::Room() &&
                !MCLobbyUpdate::MatchUnderWay();
     }
 

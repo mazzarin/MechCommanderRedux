@@ -149,6 +149,7 @@
 #include "main/MCLogMech.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
+#include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "MCVersion.h"
@@ -15923,16 +15924,14 @@ namespace
         ScenarioResult = ScenarioWon;
         detail.Screen = "results";
 
-        if (!RunUntil([] { return Mission()->State == MCMissionState::Results && Mission()->ResultsScreen != nullptr; },
+        if (!RunUntil([] { return Mission()->State == MCMissionState::Results && Mission()->ResultsUp(); },
                       ResultsFrames))
         {
             std::cout << "  the results screen never came up\n";
             return;
         }
 
-        for (int32_t step = 0;
-             step < ResultsSteps && Mission()->ResultsScreen != nullptr && !Mission()->ResultsScreen->Finished();
-             ++step)
+        for (int32_t step = 0; step < ResultsSteps && Mission()->ResultsUp() && !Mission()->ResultsFinished(); ++step)
         {
             MouseTicks += TicksPerFrame;
             MCTestGame::RunFrame(FrameSeconds);
@@ -21726,6 +21725,9 @@ TEST_CASE_ISOLATED(
 /// </summary>
 TEST_CASE_ISOLATED("game: the results screen's HD pictures are kept from the interface's start to the mission's end")
 {
+    // The 1998 results screen's (made as the mission loads), kept until step 2 of stage 9.
+    MCResultsMenu::Remade() = false;
+
     if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
     {
         return;
@@ -21888,6 +21890,9 @@ TEST_CASE_ISOLATED("game: the results screen's first frame shows its HD pictures
     {
         return;
     }
+
+    // The 1998 results screen's, kept until step 2 of stage 9.
+    MCResultsMenu::Remade() = false;
 
     if (StartScaledUp(MCGpuDrawing::On) == nullptr)
     {

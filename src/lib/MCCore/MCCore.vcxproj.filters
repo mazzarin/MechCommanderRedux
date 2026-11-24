@@ -889,6 +889,9 @@
     <ClCompile Include="mission\MCMission.cpp">
       <Filter>mission</Filter>
     </ClCompile>
+    <ClCompile Include="mission\MCMissionEnd.cpp">
+      <Filter>mission</Filter>
+    </ClCompile>
     <ClCompile Include="mission\MCMissionResults.cpp">
       <Filter>mission</Filter>
     </ClCompile>
@@ -896,6 +899,12 @@
       <Filter>mission</Filter>
     </ClCompile>
     <ClCompile Include="mission\MCNightLights.cpp">
+      <Filter>mission</Filter>
+    </ClCompile>
+    <ClCompile Include="mission\MCResultsMenu.cpp">
+      <Filter>mission</Filter>
+    </ClCompile>
+    <ClCompile Include="mission\MCResultsReads.cpp">
       <Filter>mission</Filter>
     </ClCompile>
     <ClCompile Include="mission\MCScenario.cpp">
@@ -2487,6 +2496,9 @@
     <ClInclude Include="mission\MCMission.h">
       <Filter>mission</Filter>
     </ClInclude>
+    <ClInclude Include="mission\MCMissionEnd.h">
+      <Filter>mission</Filter>
+    </ClInclude>
     <ClInclude Include="mission\MCMissionResults.h">
       <Filter>mission</Filter>
     </ClInclude>
@@ -2497,6 +2509,12 @@
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCRematchLetters.h">
+      <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="mission\MCResultsMenu.h">
+      <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="mission\MCResultsReads.h">
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCScenario.h">

@@ -672,7 +672,7 @@ namespace MCTestGame
         }
 
         REQUIRE(Mission()->State == MCMissionState::Results);
-        REQUIRE(Mission()->ResultsScreen != nullptr);
+        REQUIRE(Mission()->ResultsUp());
         return true;
     }
 

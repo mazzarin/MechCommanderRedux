@@ -3,6 +3,7 @@
 #include "gui/MCGuiButton.h"
 #include "gui/MCGuiRef.h"
 #include "gui/MCGuiSystem.h"
+#include "mission/MCMissionEnd.h"
 #include "mission/MCMissionResults.h"
 
 class MCGuiPort;
@@ -43,29 +44,12 @@ MCRematchFaces RematchFaces();
 /// </summary>
 MCGuiHandle<MCGuiButton> AddRematchButton(MCGuiObject& parent, int32_t xPos, int32_t yPos);
 
-/// <summary>The steps the single-player results screen counts through, each drawn a line at a time.</summary>
-enum class MCResultsStep : int32_t
-{
-    /// <summary>The resource points count up.</summary>
-    ResourcePoints,
-    /// <summary>The kill and loss statistics.</summary>
-    Statistics,
-    /// <summary>The primary objectives.</summary>
-    PrimaryObjectives,
-    /// <summary>The secondary objectives, then the tonnage bonus.</summary>
-    SecondaryObjectives,
-    /// <summary>The pilots.</summary>
-    Pilots,
-    /// <summary>The debriefing text comes up.</summary>
-    Debriefing,
-    /// <summary>Everything is shown.</summary>
-    Done
-};
-
 /// <summary>
 /// The mission results screen: resource points, kill statistics, objectives and pilots, each shown a step at a time
-/// (timed with <see cref="_NextDrawTime"/>; Escape skips the animation), then the "move on" button. What it shows is
-/// worked out once by <see cref="Activate"/> (<see cref="MCMissionResults"/>); <see cref="Draw"/> draws it each frame.
+/// (<see cref="MCResultsCount"/>; Escape skips the animation), then the "move on" button. What it shows is worked out
+/// once by <see cref="Activate"/> (<see cref="MCMissionResults"/>, through mission/MCMissionEnd as the remade results);
+/// <see cref="Draw"/> draws it each frame. Port-only (SPEC-menus.md's stage 9): made only where the remade results
+/// (mission/MCResultsMenu) can't show.
 /// </summary>
 class MCMissionResultsScreen : public MCGuiObject
 {
@@ -123,22 +107,9 @@ public:
     size_t KeepPicturesForEnd();
 
     /// <summary>Port-only: whether every step is shown (the debriefing text is up).</summary>
-    bool Finished() const { return _Step == MCResultsStep::Done; }
+    bool Finished() const { return _Count.Finished(); }
 
 private:
-    /// <summary>Counts the resource points up, one step per call.</summary>
-    void StepResourcePoints();
-    /// <summary>Steps to the next kill/loss statistic.</summary>
-    void StepStatistics();
-    /// <summary>Steps to the next objective (and the tonnage bonus after the secondary ones).</summary>
-    void StepObjectives();
-    /// <summary>Steps to the next pilot, taking the picture of the pilot's icon.</summary>
-    void StepPilots();
-    /// <summary>Shows the debriefing text.</summary>
-    void StepDebriefing();
-    /// <summary>On to the next step's first item.</summary>
-    void AdvanceStep();
-
     /// <summary>The resource point box, once the count has started.</summary>
     void DrawResourcePoints();
     /// <summary>The statistics the steps have reached.</summary>
@@ -153,25 +124,10 @@ private:
     void DrawMPSummary();
     /// <summary>The home side's primary objectives in a multiplayer game.</summary>
     void DrawMPObjectives();
-    /// <summary>Whether the tonnage bonus is listed after the secondary objectives.</summary>
-    static bool ShowsTonnageBonus();
-
-    /// <summary>A commander's line on the multiplayer screen, as <see cref="Activate"/> found it.</summary>
-    struct CommanderLine
-    {
-        /// <summary>The place (1-6) by kills.</summary>
-        int32_t Place = 0;
-        /// <summary>The player's name (kept: the session may be left before the screen closes).</summary>
-        std::string Name;
-        int32_t Score = 0;
-    };
-
     /// <summary>What the screen shows.</summary>
     MCMissionResults _Results;
-    /// <summary>Which part of the screen the steps have reached.</summary>
-    MCResultsStep _Step = MCResultsStep::ResourcePoints;
-    /// <summary>The item within the current step (objective, statistic, pilot).</summary>
-    int32_t _StepIndex = 0;
+    /// <summary>The count, a step at a time.</summary>
+    MCResultsCount _Count;
     /// <summary>
     /// The debriefing text box: the screen's own, showing the tactical map's salvage text as it was when the screen
     /// came up (the original borrowed the map's box).
@@ -199,12 +155,6 @@ private:
     MCGuiHandle<MCGuiObject> _ScrollUpButton;
     /// <summary>The scroll-down button's pressed image.</summary>
     MCGuiHandle<MCGuiObject> _ScrollDownButton;
-    /// <summary><c>MouseTicks</c> at which the next step is due; 0 when the steps are finished.</summary>
-    uint32_t _NextDrawTime = 0;
-    /// <summary>Set by Escape: the remaining steps are shown at once, without sounds.</summary>
-    bool _SkipAnimation = false;
-    /// <summary>The resource points the count shows; -1 before the count starts.</summary>
-    int32_t _ShownResourcePoints = -1;
     /// <summary>
     /// Each pilot line's icon, taken when the line comes up (multiplayer: in <see cref="Activate"/>); none when the
     /// pilot has no icon.
@@ -215,10 +165,7 @@ private:
     /// <summary>Which side the multiplayer pilot list shows.</summary>
     bool _MpShowHomeSide = true;
     /// <summary>The multiplayer commanders by kills.</summary>
-    std::vector<CommanderLine> _CommanderLines;
+    std::vector<MCMissionEnd::MCCommanderLine> _CommanderLines;
     /// <summary>The multiplayer game's length, "mm:ss".</summary>
     std::string _TimeText;
 };
-
-/// <summary>Ticks between two steps of the results screen (20).</summary>
-extern uint32_t ResultsStepTicks;

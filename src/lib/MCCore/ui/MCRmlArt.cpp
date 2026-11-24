@@ -5,6 +5,7 @@
 #include "main/MCLogVehicle.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
+#include "mission/MCMission.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCShapeFile.h"
@@ -364,13 +365,33 @@ namespace
         return *state < 0 ? Unhurt : static_cast<char>(FirstFade + *state);
     }
 
+    /// <summary>
+    /// The icon shapes the outlines are drawn from: logistics', or in a mission the art it kept from logistics
+    /// (MCMission::KeptLogisticsArt: the results' salvage and best pilot); none without either.
+    /// </summary>
+    std::shared_ptr<const MCLogisticsArtFiles> IconShapes()
+    {
+        if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
+        {
+            return {logistics, logistics.get()};
+        }
+
+        if (const std::shared_ptr<MCMission> mission = Mission();
+            mission != nullptr && mission->KeptLogisticsArt != nullptr)
+        {
+            return {mission->KeptLogisticsArt, &mission->KeptLogisticsArt->Files};
+        }
+
+        return nullptr;
+    }
+
     /// <summary>The outline a <c>unit:</c> source names, drawn as 1998's tile draws it, in the logistics' colours.</summary>
     std::expected<MCRmlRecorder::MCLoaded, std::string> LoadUnit(std::string_view source)
     {
         const std::string_view rest = source.substr(MCRmlArt::UnitScheme.size());
         const size_t kindEnd = rest.find('/');
         const size_t indexEnd = kindEnd == std::string_view::npos ? kindEnd : rest.find('/', kindEnd + 1);
-        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        const std::shared_ptr<const MCLogisticsArtFiles> logistics = IconShapes();
 
         if (indexEnd == std::string_view::npos || logistics == nullptr)
         {

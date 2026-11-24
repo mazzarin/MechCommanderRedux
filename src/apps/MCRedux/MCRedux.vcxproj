@@ -126,6 +126,21 @@
     <CopyFileToFolders Include="..\..\res\ui\match_options.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\results.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\tick.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\cross.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\tick.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\cross.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\pause.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>

@@ -473,7 +473,7 @@ TEST_CASE_ISOLATED("game: a match's guest whose session is lost at the results k
     RunFrames(30);
 
     CHECK(Mission()->State == MCMissionState::Results);
-    CHECK(Mission()->ResultsScreen != nullptr);
+    CHECK(Mission()->ResultsUp());
     CHECK(Scenario() != nullptr);
     CHECK(HomeTeam() != nullptr);
     CHECK(game.SessionManager->CurrentSession() == nullptr);

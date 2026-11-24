@@ -1,0 +1,99 @@
+<rml>
+<head>
+    <title>Results</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="campaign.rcss"/>
+    <link type="text/rcss" href="battle.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "The results"; the style frames' results.rml, results_lost.rml and results_mp.rml): over
+     the whole battlefield as it ended, at the mission's interface size (mission/MCResultsMenu fills it). Single player:
+     the mission's name, MISSION SUCCESSFUL or MISSION FAILED and the RP earned; the battle's five numbers; the objectives
+     and the salvage at the left; every pilot who dropped at the right, a row each; each counted up a step at a time;
+     NEXT MISSION or REPLAY MISSION. A match's: its numbers for the player's team, the commanders by kills, the best
+     pilot, every pilot by kills; REMATCH (the host's) and DONE. -->
+<body class="over-battle" data-model="results">
+    <div class="veil light"></div>
+    <div class="stage16">
+        <div id="results" class="content">
+            <div class="panel glass">
+                <div class="titlebar row bottom">
+                    <div class="grow"><div class="eyebrow" data-if="eyebrow != ''">{{eyebrow}}</div>
+                        <div class="title caps">{{title}}</div></div>
+                    <div class="earned" data-if="earned != ''"><div class="eyebrow">RP earned</div><div class="title">{{earned}}</div></div>
+                    <div class="data grey caps" data-if="match">Match time <span class="white">{{time}}</span></div>
+                </div>
+                <div class="battle"><div class="fig" data-for="f : figures"><div class="n">{{f.n}}</div><div class="what">{{f.what}}</div></div></div>
+                <div class="result-body" data-if="!match">
+                    <div class="outcome">
+                        <div class="eyebrow">Objectives</div>
+                        <div data-for="o : objectives">
+                            <div class="obj-head" data-if="o.head != ''" data-visible="o.shown">{{o.head}}</div>
+                            <div class="obj" data-attr-class="'obj ' + o.state" data-visible="o.shown">
+                                <img class="mark" src="art/tick.png" data-if="o.state == 'done'"/>
+                                <img class="mark" src="art/cross.png" data-if="o.state == 'failed'"/>
+                                <div class="mark" data-if="o.state == 'open'"></div>
+                                <div class="grow">{{o.name}}</div><div class="rp">{{o.points}}</div>
+                            </div>
+                        </div>
+                        <div class="eyebrow section" data-visible="salvageShown">Salvage</div>
+                        <div class="salvage-row" data-for="s : salvage" data-visible="salvageShown">
+                            <div class="pic" data-style-decorator="s.picture"></div><div class="grow">{{s.name}}</div><div class="t">{{s.note}}</div>
+                        </div>
+                        <div class="none" data-if="noSalvage">{{noSalvageText}}</div>
+                    </div>
+                    <div class="grow column">
+                        <div class="pilot-head"><div class="p-name" style="padding-left: 21dp;">Pilot</div><div class="p-mech">'Mech</div><div class="p-kills">Kills</div><div class="p-rank">Rank</div><div class="p-skill">Gunnery</div><div class="p-skill">Piloting</div><div class="p-skill">Jumping</div><div class="p-skill">Sensors</div></div>
+                        <div class="pilot-row" data-for="p : pilots" data-class-gone="p.gone" data-visible="p.shown">
+                            <div class="face" data-style-decorator="p.face"></div>
+                            <div class="p-name">{{p.name}}<span class="p-status" data-attr-class="'p-status ' + p.statusColour" data-if="p.status != ''">{{p.status}}</span></div>
+                            <div class="p-mech">{{p.mech}}</div>
+                            <div class="p-kills">{{p.kills}}</div>
+                            <div class="p-rank" data-class-cream="p.promoted">{{p.rank}}</div>
+                            <div class="p-skill" data-for="k : p.skills">
+                                <div class="v">{{k.value}} <span class="cream" data-if="k.gain != ''">{{k.gain}}</span></div>
+                                <div class="meter thin"><div class="meter-fill" data-style-width="k.fill + '%'"></div><div class="meter-gain" data-if="k.gained > 0" data-style-left="k.fill + '%'" data-style-width="k.gained + '%'"></div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="result-body" data-if="match">
+                    <div class="outcome">
+                        <div class="eyebrow">Commanders by kills</div>
+                        <div class="place" data-for="c : places"><div class="at">{{c.at}}</div><div class="grow" data-attr-class="'grow ' + c.colour">{{c.name}}</div><div class="side">{{c.side}}</div><div class="n">{{c.kills}}</div></div>
+                        <div data-if="best">
+                            <div class="eyebrow section best-head">Best pilot</div>
+                            <div class="best">
+                                <div class="card unit grow">
+                                    <div class="pics">
+                                        <div class="gauges"><div class="health"><div class="pip" data-class-lost="bestHealth &lt; 1"></div><div class="pip" data-class-lost="bestHealth &lt; 2"></div><div class="pip" data-class-lost="bestHealth &lt; 3"></div><div class="pip" data-class-lost="bestHealth &lt; 4"></div><div class="pip" data-class-lost="bestHealth &lt; 5"></div><div class="pip" data-class-lost="bestHealth &lt; 6"></div></div></div>
+                                        <div class="imgs"><div class="pic" data-style-decorator="bestMech"></div><div class="pic" data-style-decorator="bestFace"></div></div>
+                                    </div>
+                                    <div class="facts"><div class="who">{{bestWho}}</div><div class="what">{{bestWhat}}</div><div class="t">{{bestTons}}</div></div>
+                                </div>
+                                <div class="best-lines"><div class="data caps">{{bestKills}}</div><div class="data grey">{{bestSide}}<span data-if="bestCommander != ''">, <span data-attr-class="bestColour">{{bestCommander}}</span></span></div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="grow column">
+                        <div class="list-head row"><div class="cell grow">Pilot</div><div class="cell c-mech">'Mech</div><div class="cell c-who">Commander</div><div class="cell c-n">Kills</div></div>
+                        <div class="scroll-box grow">
+                            <div class="scroller">
+                                <div class="list-row row" data-for="r : list"><div class="cell grow">{{r.name}}</div><div class="cell c-mech grey">{{r.mech}}</div><div class="cell c-who" data-attr-class="'cell c-who ' + r.whoColour">{{r.who}}</div><div class="cell c-n">{{r.kills}}</div></div>
+                            </div>
+                            <div class="fade"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="foot row"><div class="grow"></div><div class="button" id="rematch" data-if="rematch">Rematch</div><div class="button main" id="move-on" data-first>{{moveOn}}</div></div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar">
+        <div class="stage16">
+            <div class="content">
+                <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

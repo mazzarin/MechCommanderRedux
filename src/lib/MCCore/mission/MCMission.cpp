@@ -61,6 +61,7 @@
 #include "main/MCMissionGlobals.h"
 #include "main/MCGameStrings.h"
 #include "mission/MCMissionResultsScreen.h"
+#include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCRoomEnd.h"
@@ -794,7 +795,7 @@ auto MCMission::Run() -> int32_t
                 // Port-only (SPEC-menus.md, "A pause menu"): a pause still up as the mission ends goes first.
                 MCPauseScreen::MissionEnding();
                 Scenario()->SetupBonus();
-                ResultsScreen->Activate();
+                ShowResults();
                 State = MCMissionState::Results;
                 _PlayingLogisticsMusic = 0;
             }
@@ -1109,14 +1110,15 @@ auto MCMission::LoadScenario(std::string_view name) -> void
 
     SoundSystem()->PlayBettySample(0x13);
     EndScenarioRequested = 0;
-    // A child of the screen window, hidden until the scenario ends (Activate shows it).
-    ResultsScreen = ScreenWindow()->CreateChild<MCMissionResultsScreen>(
-        [this](MCMissionResultsScreen& screen)
-        {
-            ResultsScreen = screen.WeakAs<MCMissionResultsScreen>();
-            screen.Init();
-            screen.ShowGuiWindow(false);
-        });
+    // Port-only (SPEC-menus.md's stage 9): the remade results' names for the mission, read while logistics is here;
+    // the 1998 results screen made only where the remade ones can't show.
+    MCResultsMenu::BeforeMission();
+    ResultsScreen.reset();
+
+    if (!MCResultsMenu::Wanted())
+    {
+        MakeOldResults();
+    }
 
     if (GlobalGameSegment == 0)
     {
@@ -1397,16 +1399,66 @@ auto MCMission::WayBackAhead(bool hold) const -> std::vector<MCScreenChange::MCP
     return pieces;
 }
 
-auto MCMission::CloseResultsScreen() -> void
+auto MCMission::ResultsUp() const -> bool
 {
-    if (ResultsScreen == nullptr)
+    return ResultsScreen != nullptr || MCResultsMenu::Up();
+}
+
+auto MCMission::ResultsFinished() const -> bool
+{
+    return ResultsScreen != nullptr ? ResultsScreen->Finished() : MCResultsMenu::Finished();
+}
+
+auto MCMission::ShowResults() -> void
+{
+    if (ResultsScreen == nullptr && MCResultsMenu::Show())
     {
         return;
     }
 
-    CloseGuiObject(ResultsScreen);
-    ResultsScreen.reset();
+    // The 1998 screen where the remade results can't show (the menus' RmlUi or the document didn't start).
+    if (ResultsScreen == nullptr)
+    {
+        SDL_Log("Mission: the remade results can't show; the 1998 results screen shows");
+        MakeOldResults();
+    }
+
+    ResultsScreen->Activate();
+}
+
+auto MCMission::MakeOldResults() -> void
+{
+    // A child of the screen window, hidden until the scenario ends (Activate shows it).
+    ResultsScreen = ScreenWindow()->CreateChild<MCMissionResultsScreen>(
+        [this](MCMissionResultsScreen& screen)
+        {
+            ResultsScreen = screen.WeakAs<MCMissionResultsScreen>();
+            screen.Init();
+            screen.ShowGuiWindow(false);
+        });
+}
+
+auto MCMission::TakeDownResults() -> void
+{
+    MCResultsMenu::Close();
+
+    if (ResultsScreen != nullptr)
+    {
+        CloseGuiObject(ResultsScreen);
+        ResultsScreen.reset();
+    }
+
     GuiSystem().CursorHidden = false;
+}
+
+auto MCMission::CloseResultsScreen() -> void
+{
+    if (!ResultsUp())
+    {
+        return;
+    }
+
+    TakeDownResults();
 
     // The original's results screen did the rest in its destroy: end the scenario and pick the next state.
     if (Scenario() == nullptr)
@@ -1470,7 +1522,7 @@ auto MCMission::LeaveResults() -> void
     // From the press, while the results fade out live, the files the way back looks for are read ahead, the next
     // briefing's map and the menus' pictures; the mission's held art is kept for the battlefield under them until the
     // scenario ends, once dark. Called off, what was read ahead goes.
-    if (ResultsScreen == nullptr || Scenario() == nullptr || EndsAtResults() || !GuiSystem().CanChangeScreen() ||
+    if (!ResultsUp() || Scenario() == nullptr || EndsAtResults() || !GuiSystem().CanChangeScreen() ||
         !MCScreenChange::Start({.Name = std::string(OutOfTheMissionChange),
                                 .Job = WayBackAhead(false),
                                 .FadeOut = MCScreenChange::MCFadeOut::AtPress,
@@ -1489,9 +1541,7 @@ auto MCMission::ResultsClosing() -> std::vector<MCScreenChange::MCPiece>
     pieces.push_back({.Part = "change.scenario ended",
                       .Run = [this]
                       {
-                          CloseGuiObject(ResultsScreen);
-                          ResultsScreen.reset();
-                          GuiSystem().CursorHidden = false;
+                          TakeDownResults();
 
                           if (Scenario() == nullptr)
                           {

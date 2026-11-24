@@ -31,6 +31,7 @@
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
+#include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "gui/MCUpdateDisplay.h"
 #include "object/MCForces.h"
@@ -518,6 +519,8 @@ namespace
 {
     void ResultsScreenFrames(bool gpu)
     {
+        // The 1998 results screen's frames (the remade results' are ResultsMenuTests'), kept until step 2 of stage 9.
+        MCResultsMenu::Remade() = false;
         RequestDrawing(gpu);
         REQUIRE(MCTestGame::StartMission(1));
 

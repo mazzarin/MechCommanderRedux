@@ -189,6 +189,8 @@
     <ClCompile Include="logistics\MCArtWords.cpp" />
     <ClCompile Include="logistics\MCBriefingBox.cpp" />
     <ClCompile Include="logistics\MCBriefingScreen.cpp" />
+    <ClCompile Include="logistics\MCBriefingText.cpp" />
+    <ClCompile Include="logistics\MCCampaignMenu.cpp" />
     <ClCompile Include="logistics\MCCompInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCCompPurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCConnectMenu.cpp" />
@@ -729,6 +731,8 @@
     <ClInclude Include="logistics\MCArtWords.h" />
     <ClInclude Include="logistics\MCBriefingBox.h" />
     <ClInclude Include="logistics\MCBriefingScreen.h" />
+    <ClInclude Include="logistics\MCBriefingText.h" />
+    <ClInclude Include="logistics\MCCampaignMenu.h" />
     <ClInclude Include="logistics\MCCompInventoryBlock.h" />
     <ClInclude Include="logistics\MCCompPurchaseBlock.h" />
     <ClInclude Include="logistics\MCConnectMenu.h" />

@@ -66,19 +66,6 @@ namespace
     /// <summary>The screen's preparation's read, which the list's filling follows.</summary>
     constexpr std::string_view ReadPart = "menus.read";
 
-    std::string PointsText(uint32_t points)
-    {
-        constexpr size_t Group = 3;
-        std::string digits = std::to_string(points);
-
-        for (size_t at = digits.size(); at > Group; at -= Group)
-        {
-            digits.insert(at - Group, 1, ThousandsMark);
-        }
-
-        return digits;
-    }
-
     std::string_view WhenText(MCSaves::MCWhen when)
     {
         switch (when)
@@ -468,7 +455,7 @@ void MCSavesScreen::Fill(std::optional<std::string> keep)
             .Mission = save.Read && save.When != MCSaves::MCWhen::Named ? save.MissionName : save.Name,
             .Campaign = save.Read ? std::string(MCSaves::CampaignShortName(save.Campaign)) : std::string(),
             .When = save.Read ? std::string(WhenText(save.When)) : std::string(),
-            .Points = save.Read ? PointsText(save.ResourcePoints) : std::string(),
+            .Points = save.Read ? MCSavesMenu::PointsText(save.ResourcePoints) : std::string(),
             .Date = MCSaves::Game().DateText(save.Saved),
         });
     }
@@ -519,7 +506,7 @@ void MCSavesScreen::ShowPick()
     _PickOperation = read ? std::format("{}{}{}", shown->Operation, OperationDot, shown->OperationName) : std::string();
     _PickMission = read ? std::to_string(shown->Mission) : std::string();
     _PickSaved = read ? std::string(SavedText(shown->When)) : std::string();
-    _PickPoints = read ? PointsText(shown->ResourcePoints) : std::string();
+    _PickPoints = read ? MCSavesMenu::PointsText(shown->ResourcePoints) : std::string();
     _PickDate = !shown.has_value()     ? std::string()
                 : _PickEyebrow.empty() ? MCSaves::Game().DateText(shown->Saved)
                                        : std::string("Now");
@@ -807,6 +794,19 @@ void MCSavesScreen::OnDestroy()
 }
 
 // MCSavesMenu
+
+std::string MCSavesMenu::PointsText(uint32_t points)
+{
+    constexpr size_t Group = 3;
+    std::string digits = std::to_string(points);
+
+    for (size_t at = digits.size(); at > Group; at -= Group)
+    {
+        digits.insert(at - Group, 1, ThousandsMark);
+    }
+
+    return digits;
+}
 
 MCScreenFlow::MCScreenKind MCSavesMenu::Kind(MCSavesScreen::MCMode mode)
 {

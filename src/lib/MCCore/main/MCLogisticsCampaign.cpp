@@ -973,6 +973,7 @@ auto MCLogistics::GetCurrentMission() -> void
     const int32_t paneWidth = briefing.MissionPane->Width();
     // The texts below are read into the briefing path's buffer, as the original did: a missing one leaves the path.
     std::string text = GamePath(MissionPath, briefingFile);
+    BriefingTextPath = text;
     const int32_t height = std::max(GuiSystem().TextFormatter.ProcessFile(text, std::nullopt, paneWidth - 0x11), 0xbf);
     {
         // The port draws the text in place (MissionTextPort), formatted as the formatter stands now; the formatting

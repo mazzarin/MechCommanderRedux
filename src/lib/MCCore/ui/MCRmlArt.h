@@ -2,6 +2,7 @@
 
 #include "ui/MCRmlRecorder.h"
 
+class MCLogPart;
 class MCRmlFiles;
 
 /// <summary>
@@ -26,6 +27,16 @@ namespace MCRmlArt
     /// <c>art:</c>'s pictures are, with the pack's HD copy (found by its pixels, as the briefing finds it) on HD.
     /// </summary>
     inline constexpr std::string_view MapScheme = "map:";
+    /// <summary>
+    /// Port-only (stage 8): a unit's outline as 1998's READY AREA tile draws it, each location coloured for its damage:
+    /// <c>unit:mech/&lt;name index&gt;/&lt;states&gt;</c> or <c>unit:vehicle/...</c>, a state a location (0 to 3 its damage's
+    /// fade, <c>-</c> unhurt, <c>x</c> none), from the logistics' icon shapes in the logistics' colours
+    /// (<see cref="UnitSource"/> makes it).
+    /// </summary>
+    inline constexpr std::string_view UnitScheme = "unit:";
+
+    /// <summary>The <c>unit:</c> source of <paramref name="part"/>'s outline as it stands.</summary>
+    std::string UnitSource(const MCLogPart& part);
 
     /// <summary>
     /// The picture <paramref name="source"/> names, with its HD copy when <paramref name="hd"/> and the pack has one;

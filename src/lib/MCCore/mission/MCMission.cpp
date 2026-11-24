@@ -1563,6 +1563,8 @@ auto MCMission::ShowLoadingScreen() -> void
         }
     }
 
+    // Port-only (SPEC-menus.md's stage 8): the remade BRIEFING and DEPLOY too.
+    MCRmlFlow::OldScreenShown();
     HoldLoadingShape();
     LoadingScreenUp = true;
     State = MCMissionState::StartScenario;

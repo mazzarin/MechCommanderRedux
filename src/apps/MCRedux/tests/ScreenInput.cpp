@@ -164,6 +164,38 @@ namespace MCScreenInput
         MCTestGame::RunFrame(1.0f / 15.0f);
     }
 
+    /// <summary>The window's points a pixel (SDL's events are in points).</summary>
+    static float PointsPerPixel()
+    {
+        const float density = SDL_GetWindowPixelDensity(&MCInput::Display()->Window());
+        return density > 0.0f ? 1.0f / density : 1.0f;
+    }
+
+    void PixelMove(float x, float y, float frame)
+    {
+        SDL_Event motion{};
+        motion.type = SDL_EVENT_MOUSE_MOTION;
+        motion.motion.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
+        motion.motion.x = x * PointsPerPixel();
+        motion.motion.y = y * PointsPerPixel();
+        MCInput::HandleEvent(motion);
+        MCTestGame::RunFrame(frame);
+    }
+
+    void PixelButton(uint8_t button, bool down, float x, float y, float frame)
+    {
+        SDL_Event press{};
+        press.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+        press.button.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
+        press.button.button = button;
+        press.button.down = down;
+        press.button.clicks = 1;
+        press.button.x = x * PointsPerPixel();
+        press.button.y = y * PointsPerPixel();
+        MCInput::HandleEvent(press);
+        MCTestGame::RunFrame(frame);
+    }
+
     void RealClick(int32_t x, int32_t y)
     {
         RealMove(x, y);

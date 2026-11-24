@@ -14,10 +14,14 @@
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCMasterComponent.h"
+#include "platform/MCInput.h"
 #include "sprite/MCHdArt.h"
 
 namespace
 {
+    /// <summary>The keys held with the right button to send a unit to group 1, 2 or 3, and the held bit of their state.</summary>
+    constexpr std::array<int32_t, MCDeploy::Groups> GroupKeys = {'1', '2', '3'};
+    constexpr int32_t KeyHeld = 0x8000;
     /// <summary>The original's strings: a unit too heavy, a damaged engine, a destroyed location, the units' limit.</summary>
     constexpr uint32_t TooHeavyString = 0x4c;
     constexpr uint32_t EngineDamagedString = 0x35d;
@@ -381,6 +385,58 @@ auto MCDeploy::CantDrop(const MCLogPart& part) -> MCRefusal
     return MCRefusal::None;
 }
 
+auto MCDeploy::Lift(MCLogPart& part) -> MCRefusal
+{
+    if (part.LocalPart == 0)
+    {
+        return MCRefusal::NotOwn;
+    }
+
+    if (Logistics().BriefingScreen->ButtonsLocked)
+    {
+        return MCRefusal::Locked;
+    }
+
+    if (const MCRefusal refusal = CantDrop(part); refusal != MCRefusal::None)
+    {
+        return refusal;
+    }
+
+    TheRevision++;
+    part.Deployed = true;
+
+    if (const std::shared_ptr<MCLogMech> mech = AsMech(part); mech != nullptr)
+    {
+        Logistics().AssignedWarriorList->SetDeployed(mech->PilotIndex, true);
+    }
+
+    return MCRefusal::None;
+}
+
+auto MCDeploy::Unlift(MCLogPart& part) -> void
+{
+    TheRevision++;
+    part.Deployed = false;
+
+    if (const std::shared_ptr<MCLogMech> mech = AsMech(part); mech != nullptr)
+    {
+        Logistics().AssignedWarriorList->SetDeployed(mech->PilotIndex, false);
+    }
+}
+
+auto MCDeploy::HeldGroup() -> std::optional<size_t>
+{
+    for (size_t group = 0; group < GroupKeys.size(); group++)
+    {
+        if ((MCInput::GetAsyncKeyState(GroupKeys[group]) & KeyHeld) != 0)
+        {
+            return group;
+        }
+    }
+
+    return std::nullopt;
+}
+
 auto MCDeploy::RefusalString(MCRefusal refusal) -> std::optional<uint32_t>
 {
     switch (refusal)
@@ -394,6 +450,7 @@ auto MCDeploy::RefusalString(MCRefusal refusal) -> std::optional<uint32_t>
         case MCRefusal::None:
         case MCRefusal::NoSlot:
         case MCRefusal::NotOwn:
+        case MCRefusal::Locked:
             break;
     }
 

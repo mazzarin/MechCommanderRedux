@@ -1,0 +1,52 @@
+/* Port-only (SPEC-menus.md, stage 8): the game's copy of tools/menus-frames/frames/deploy.rcss, with DEPLOY's own rules
+   (the frames' style blocks). DEPLOY's drop weight (with campaign.rcss): the groups along the top of the drop, the weight along its foot with
+   BEGIN MISSION, as 1998 sets its bar beside the launch button. The mission's map and objectives are BRIEFING's alone.
+   The meter is look.rcss's ramp at its full 52 units. */
+
+/* A group's head: its name, then its tons while it has a slot of the player's (1998's "FORCE GROUP 1 0 T."), beside
+   the name so it can't be read as the next group's. */
+.group-head { display: flex; flex-direction: row; align-items: flex-end; white-space: nowrap; }
+.group-head > * { flex: 0 0 auto; }
+.group-head .tons { margin-left: 8dp; font-size: 9.51dp; line-height: 12dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+
+/* The weight at the drop's foot: the number large over the meter, BEGIN MISSION beside the meter. */
+#weight { padding-top: 10dp; border-top: 1dp #2a3742; }
+.weight-read { display: flex; flex-direction: row; align-items: flex-end; margin-bottom: 8dp; white-space: nowrap; }
+.weight-read > * { flex: 0 0 auto; }
+.weight-read > .grow { flex: 1 1 0; }
+.weight-now { font-size: 21.14dp; line-height: 24dp; font-weight: 700; letter-spacing: 0.02em; color: #fcfcb8; }
+.weight-now.more { color: #7cd4ec; }
+.weight-now.over, .weight-free.over { color: #f26b55; }
+.weight-of, .weight-free { font-size: 9.51dp; line-height: 14dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+.weight-of { margin-left: 6dp; }
+.weight-row { display: flex; flex-direction: row; align-items: flex-end; gap: 16dp; }
+.weight-row > * { flex: 0 0 auto; }
+.weight-row > .gauge { flex: 1 1 0; }
+
+/* BEGIN MISSION dark until the drop can go (1998's unlit launch button); pressed, Betty says why. */
+.button.main.dark, .button.main.dark:hover, .button.main.dark:active { background-color: #1e2a34; border-color: #1e2a34; color: #6c7a88; }
+
+/* READY AREA on the left, the drop on the right: a unit is dragged left to right, as the eye reads. READY AREA keeps one
+   width and scrolls, two cards a row; the drop's three groups stand as columns of four, the weight and BEGIN MISSION
+   along its foot. */
+#ready { flex: 0 0 288dp; display: flex; flex-direction: column; }
+#ready > * { flex: 0 0 auto; }
+#ready > .scroll-box { flex: 1 1 0; }
+.ready-grid { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4dp; }
+.ready-grid > .card-cell { flex: 0 0 136dp; }  /* a card's cell (campaign.rml's lists repeat a cell holding the card) */
+#drop { flex: 1 1 0; display: flex; flex-direction: column; margin-left: 16dp; position: relative; }
+#drop > * { flex: 0 0 auto; }
+#drop > .grow { flex: 1 1 0; }
+.groups { display: flex; flex-direction: row; gap: 8dp; margin-top: 4dp; }
+.groups > .group { flex: 1 1 0; display: flex; flex-direction: column; gap: 4dp; }
+.groups > .group > * { flex: 0 0 auto; }
+.groups .eyebrow.closed { color: #a4b0bc; }  /* a group with no slot of the player's */
+/* 21:9: READY AREA four cards a row, all eighteen in view. */
+@media (min-aspect-ratio: 2/1) {
+    #ready { flex: 0 0 566dp; }
+}
+/* Port-only (the frames are 16:10 and wider): 4:3 and 5:4, a third narrower than 16:9, READY AREA one card a row,
+   so the drop's groups keep a card's width (136 units and the scroll bar's room). */
+@media (max-aspect-ratio: 3/2) {
+    #ready { flex: 0 0 148dp; }
+}

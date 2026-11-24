@@ -498,6 +498,12 @@
     <ClCompile Include="logistics\MCBriefingScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCBriefingText.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCCampaignMenu.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCCompInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2036,6 +2042,12 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCBriefingScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCBriefingText.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCCampaignMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCCompInventoryBlock.h">

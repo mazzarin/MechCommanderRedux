@@ -183,6 +183,9 @@ namespace MCSavesMenu
     /// <summary>The flow's kind for LOAD GAME (<paramref name="mode"/> Load, named "load") or SAVE GAME ("save").</summary>
     MCScreenFlow::MCScreenKind Kind(MCSavesScreen::MCMode mode);
 
+    /// <summary>RP as the menus write it, in thousands ("12,400").</summary>
+    std::string PointsText(uint32_t points);
+
     /// <summary>The screen, while the game's menus have it (made by the first kind's Prepare).</summary>
     MCOptionalRef<MCSavesScreen> Screen();
 

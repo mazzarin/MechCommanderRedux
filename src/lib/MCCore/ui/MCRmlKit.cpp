@@ -44,6 +44,17 @@ namespace
     constexpr char ChoicesSeparator = '|';
     /// <summary>What a click on an element does with the mouse's left button, for the hint line.</summary>
     constexpr const char* HintAttribute = "data-hint";
+    /// <summary>
+    /// Port-only (stage 8): what its right button does (DEPLOY's send), and with 1, 2 or 3 held (the send to that group).
+    /// </summary>
+    constexpr const char* RightHintAttribute = "data-hint-right";
+    constexpr const char* GroupHintAttribute = "data-hint-group";
+    constexpr std::string_view GroupKeys =
+        "<span class=\"key\">1</span><span class=\"key\">2</span><span class=\"key\">3</span>";
+    constexpr std::string_view MouseLeft = "<span class=\"mouse left\"><span class=\"buttons\"></span><span "
+                                           "class=\"split\"></span><span class=\"press\"></span></span>";
+    constexpr std::string_view MouseRight = "<span class=\"mouse right\"><span class=\"buttons\"></span><span "
+                                            "class=\"split\"></span><span class=\"press\"></span></span>";
     /// <summary>The change event's parameter (RmlUi's own for its form controls).</summary>
     constexpr const char* ValueParameter = "value";
     /// <summary>How far a scrolled list may be from its foot and still be at it (RmlUi's layout is floats).</summary>
@@ -562,19 +573,38 @@ void MCRmlKit::Update(Rml::Context& context)
         Rml::ElementList hints;
         document->GetElementsByClassName(hints, HintsClass);
         std::string hint;
+        std::string right;
+        std::string group;
 
         for (Rml::Element* under = hover; under != nullptr && under->GetOwnerDocument() == document && hint.empty();
              under = under->GetParentNode())
         {
             hint = under->GetAttribute<Rml::String>(HintAttribute, "");
+            right = under->GetAttribute<Rml::String>(RightHintAttribute, "");
+            group = under->GetAttribute<Rml::String>(GroupHintAttribute, "");
         }
 
-        const std::string rml =
-            hint.empty()
-                ? std::string()
-                : std::format("<span class=\"mouse left\"><span class=\"buttons\"></span><span class=\"split\">"
-                              "</span><span class=\"press\"></span></span>{}",
-                              hint);
+        // The right button's first (as DEPLOY's frames: the send, the send to a group, then the drag), each a hint.
+        std::string rml;
+
+        if (!right.empty())
+        {
+            rml += std::format("<span class=\"hint\">{}{}</span>", MouseRight, right);
+        }
+
+        if (!group.empty())
+        {
+            rml += std::format("<span class=\"hint\">{}{}{}</span>", GroupKeys, MouseRight, group);
+        }
+
+        if (!hint.empty())
+        {
+            rml += rml.empty() ? std::format("{}{}", MouseLeft, hint)
+                               : std::format("<span class=\"hint\">{}{}</span>", MouseLeft, hint);
+        }
+
+        // The hint shown is kept by all it says.
+        hint = std::format("{}|{}|{}", right, group, hint);
 
         for (Rml::Element* line : hints)
         {

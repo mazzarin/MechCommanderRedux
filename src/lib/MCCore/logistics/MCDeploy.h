@@ -71,6 +71,8 @@ namespace MCDeploy
         LocationDestroyed,
         /// <summary>Another player's unit (a match's teammate's), which the player can't move.</summary>
         NotOwn,
+        /// <summary>A match's BEGIN MISSION pressed (the briefing's buttons locked): nothing moves.</summary>
+        Locked,
     };
 
     /// <summary>
@@ -78,6 +80,19 @@ namespace MCDeploy
     /// engine or a destroyed location, another player's unit; <see cref="MCRefusal::None"/> when it can.
     /// </summary>
     MCRefusal CantDrop(const MCLogPart& part);
+
+    /// <summary>
+    /// The original's pick-up from READY AREA (MCMechBriefBlock::PickUp): why <paramref name="part"/> can't be carried
+    /// (<see cref="CantDrop"/>, or the buttons locked); else it and its pilot marked in the drop while carried, as the
+    /// original marked them, which a place (<see cref="Place"/>, <see cref="Send"/>) keeps and <see cref="Unlift"/> undoes.
+    /// </summary>
+    MCRefusal Lift(MCLogPart& part);
+
+    /// <summary>A lifted unit put nowhere: back in READY AREA, it and its pilot out of the drop (the original's drop).</summary>
+    void Unlift(MCLogPart& part);
+
+    /// <summary>The group whose key is held (1, 2 or 3), for the right button's send to it; none with none held.</summary>
+    std::optional<size_t> HeldGroup();
 
     /// <summary>The original's string saying <paramref name="refusal"/> (0x4c, 0x35d, 0x364); none for the others.</summary>
     std::optional<uint32_t> RefusalString(MCRefusal refusal);

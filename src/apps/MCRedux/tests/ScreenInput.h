@@ -58,6 +58,15 @@ namespace MCScreenInput
     void RealButton(bool down);
 
     /// <summary>
+    /// Port-only (SPEC-menus.md's stage 8): the mouse moved to (<paramref name="x"/>, <paramref name="y"/>) in the
+    /// window's pixels (the remade screens' coordinates), an SDL motion event, then a frame of <paramref name="frame"/>.
+    /// </summary>
+    void PixelMove(float x, float y, float frame);
+
+    /// <summary>The mouse's button <paramref name="button"/> (SDL's) pressed or let go at (<paramref name="x"/>, <paramref name="y"/>).</summary>
+    void PixelButton(uint8_t button, bool down, float x, float y, float frame);
+
+    /// <summary>
     /// Moves the mouse to (<paramref name="x"/>, <paramref name="y"/>) and clicks there with SDL events, one frame
     /// held: what a player's click sends through CheckMouse.
     /// </summary>

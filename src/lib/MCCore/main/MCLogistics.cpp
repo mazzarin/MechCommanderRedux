@@ -15,6 +15,7 @@
 #include "ai/MCMoveGeometry.h"
 #include "logistics/MCBriefingBox.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCInternetMenu.h"
@@ -1651,6 +1652,22 @@ auto MCLogistics::ShowTickerOn(MCLogObject& screen, bool shuffle) -> void
 
 auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 {
+    // Port-only (SPEC-menus.md's stage 8): the remade BRIEFING and DEPLOY (logistics/MCCampaignMenu) over the 1998
+    // briefing, which is set up as ever and hidden under them. The 1998 PURCHASING's and 'MECH BAY's BRIEFING button
+    // comes back to the tab left on, through a change of screen in place of the slide.
+    const bool remade = MCCampaignMenu::Wanted();
+
+    if (remade && animate)
+    {
+        MCCampaignMenu::ComeBack();
+
+        if (!MCScreenChange::InPiece() && !MCScreenChange::Dark())
+        {
+            MCScreenFlow::Change("briefing", [] { GlobalLog()->SetUpBriefingScreen(false); });
+            return 0;
+        }
+    }
+
     NoteScreen("briefing");
     MakeLineArtAhead();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
@@ -1711,6 +1728,19 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
     else
     {
         briefing.HideBriefing();
+    }
+
+    if (remade)
+    {
+        briefing.ShowGuiWindow(false);
+
+        if (MCCampaignMenu::Show())
+        {
+            return 0;
+        }
+
+        // The remade screen can't show (the log says why): the 1998 briefing's.
+        briefing.ShowGuiWindow(true);
     }
 
     if (animate)

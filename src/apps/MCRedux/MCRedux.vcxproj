@@ -57,8 +57,14 @@
   <!-- Port-only (SPEC-menus.md): the remade menus' documents and style sheets, in a ui folder beside the program,
        where SDL's base path finds them (MCCore's ui\MCRmlSystem.h). -->
   <ItemGroup>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\closed.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\art\hd\main_menu.png">
       <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\closed.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\art\main_menu.png">
       <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
@@ -85,6 +91,15 @@
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\missions.json">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\campaign.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\campaign.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\deploy.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\saves.rcss">

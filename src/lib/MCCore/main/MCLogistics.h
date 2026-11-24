@@ -766,6 +766,11 @@ public:
     MCGuiHandle<MCRefitDialog> RefitDialog;
     /// <summary>The campaign's CampaignBriefing Filename (empty when it has none).</summary>
     std::string CampaignBriefingName;
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 8): the briefing text's file GetCurrentMission read (the mission's BriefingFile, a
+    /// match's side's), which the remade BRIEFING reads into its parts.
+    /// </summary>
+    std::string BriefingTextPath;
     /// <summary>The mission's OperationCinema: the briefing movie played in <c>data\movies\</c> (empty when it has none).</summary>
     std::string OperationCinema;
     /// <summary>Set when the mission file has a HammerDown1 block (or by the cheat): the drop tonnage limit is not enforced.</summary>

@@ -1,12 +1,15 @@
 #include "stdafx.h"
 #include "ui/MCRmlArt.h"
 #include "logistics/MCLogPort.h"
+#include "main/MCLogMech.h"
+#include "main/MCLogVehicle.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCShapeFile.h"
 #include "ui/MCRmlSystem.h"
+#include "vfx/MCVfxFunctions.h"
 
 namespace
 {
@@ -310,8 +313,138 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>1998's tile's outline: its size, a mech's locations and a vehicle's, and where a vehicle's sits in it.</summary>
+    constexpr int32_t OutlineWidth = 0x19;
+    constexpr int32_t OutlineHeight = 0x1e;
+    constexpr int32_t MechLocations = 8;
+    constexpr int32_t VehicleLocations = 5;
+    constexpr int32_t VehicleX = 0xb;
+    /// <summary>The outline's ground (left transparent), and the colours the logistics screens show it in.</summary>
+    constexpr uint8_t OutlineGround = 0xff;
+    constexpr std::string_view LogisticsColors = "logart/lsrupm05";
+    constexpr std::string_view MechKind = "mech";
+    constexpr std::string_view VehicleKind = "vehicle";
+    constexpr char Unhurt = '-';
+    constexpr char NoLocation = 'x';
+    constexpr char FirstFade = '0';
+
+    char StateMark(std::optional<int32_t> state)
+    {
+        if (!state.has_value())
+        {
+            return NoLocation;
+        }
+
+        return *state < 0 ? Unhurt : static_cast<char>(FirstFade + *state);
+    }
+
+    /// <summary>The outline a <c>unit:</c> source names, drawn as 1998's tile draws it, in the logistics' colours.</summary>
+    std::expected<MCRmlRecorder::MCLoaded, std::string> LoadUnit(std::string_view source)
+    {
+        const std::string_view rest = source.substr(MCRmlArt::UnitScheme.size());
+        const size_t kindEnd = rest.find('/');
+        const size_t indexEnd = kindEnd == std::string_view::npos ? kindEnd : rest.find('/', kindEnd + 1);
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+        if (indexEnd == std::string_view::npos || logistics == nullptr)
+        {
+            return std::unexpected(std::format("'{}' isn't a unit's outline the logistics can draw", source));
+        }
+
+        const std::string_view kind = rest.substr(0, kindEnd);
+        const std::string_view number = rest.substr(kindEnd + 1, indexEnd - kindEnd - 1);
+        const std::string_view states = rest.substr(indexEnd + 1);
+        size_t index = 0;
+        const auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), index);
+        const bool mech = kind == MechKind;
+        const size_t shapes = mech ? logistics->MechIconShapes.size() : logistics->VehicleIconShapes.size();
+
+        if (error != std::errc() || end != number.data() + number.size() || (!mech && kind != VehicleKind) ||
+            index >= shapes || states.size() != static_cast<size_t>(mech ? MechLocations : VehicleLocations))
+        {
+            return std::unexpected(std::format("'{}' isn't a unit's outline the logistics can draw", source));
+        }
+
+        const std::span<const uint8_t> table =
+            mech ? logistics->MechIconShapes[index].Bytes() : logistics->VehicleIconShapes[index].Bytes();
+        const std::expected<std::array<SDL_Color, 256>, std::string> colors = MCRmlArt::Colors(LogisticsColors);
+
+        if (table.empty() || !colors)
+        {
+            return std::unexpected(std::format("the outline {} can't be drawn: {}", source,
+                                               colors ? std::string("its shapes aren't loaded") : colors.error()));
+        }
+
+        MCLogPort port;
+        port.Init(OutlineWidth, OutlineHeight);
+        VfxPaneWipe(port.Frame(), OutlineGround);
+
+        for (size_t location = 0; location < states.size(); ++location)
+        {
+            const char mark = states[location];
+
+            if (mark == NoLocation)
+            {
+                continue;
+            }
+
+            const int32_t state = mark == Unhurt ? -1 : mark - FirstFade;
+            MCLogistics::DrawBodyLoc(table, static_cast<int32_t>(location), state, port, mech ? 0 : VehicleX, 0);
+        }
+
+        const std::span<const uint8_t> pixels = port.Pixels();
+        std::vector<uint8_t> rgba(pixels.size() * PixelBytes);
+
+        for (size_t i = 0; i < pixels.size(); ++i)
+        {
+            if (pixels[i] != OutlineGround)
+            {
+                const SDL_Color& color = (*colors)[pixels[i]];
+                rgba[i * PixelBytes] = color.r;
+                rgba[i * PixelBytes + 1] = color.g;
+                rgba[i * PixelBytes + 2] = color.b;
+                rgba[i * PixelBytes + 3] = Opaque;
+            }
+        }
+
+        return MCRmlRecorder::MCLoaded{
+            .Texture = MCRmlRecorder::MakeTexture(OutlineWidth, OutlineHeight, std::move(rgba), false),
+            .Width = OutlineWidth,
+            .Height = OutlineHeight,
+        };
+    }
+}
+
 namespace MCRmlArt
 {
+    std::string UnitSource(const MCLogPart& part)
+    {
+        std::string states;
+
+        if (part.PartType == 1)
+        {
+            const auto& mech = static_cast<const MCLogMech&>(part);
+
+            for (int32_t location = 0; location < MechLocations; ++location)
+            {
+                states += StateMark(MCLogistics::MechBodyLocState(mech, location));
+            }
+
+            return std::format("{}{}/{}/{}", UnitScheme, MechKind, mech.NameIndex, states);
+        }
+
+        const auto& vehicle = static_cast<const MCLogVehicle&>(part);
+
+        for (int32_t location = 0; location < VehicleLocations; ++location)
+        {
+            states += StateMark(MCLogistics::VehicleBodyLocState(vehicle, location));
+        }
+
+        return std::format("{}{}/{}/{}", UnitScheme, VehicleKind, vehicle.NameIndex, states);
+    }
+
     std::string HdPath(std::string_view path)
     {
         const std::filesystem::path file(path);
@@ -320,6 +453,11 @@ namespace MCRmlArt
 
     std::expected<MCRmlRecorder::MCLoaded, std::string> Load(std::string_view source, bool hd, const MCRmlFiles& files)
     {
+        if (source.starts_with(UnitScheme))
+        {
+            return LoadUnit(source);
+        }
+
         if (!source.starts_with(Scheme) && !source.starts_with(MapScheme))
         {
             return LoadAppArt(source, hd, files);

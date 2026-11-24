@@ -1,0 +1,130 @@
+/* Port-only (SPEC-menus.md, stage 8): the campaign's screens (BRIEFING, PURCHASING, the 'MECH BAY, DEPLOY), the game's
+   copy of tools/menus-frames/frames/campaign.rcss with its screens' own rules (the frames' style blocks) and the controls
+   live: the bar along the top, the cards. The night and the columns' heads are look.rcss's. */
+
+/* The bar: the way back, the screens as tabs, RP and the clock. */
+#topbar { position: absolute; left: 0; right: 0; top: 0; height: 44dp; }
+#topbar .content { padding-top: 16dp; }
+#topbar .row { height: 28dp; }
+.money { font-size: 11.63dp; line-height: 28dp; font-weight: 600; letter-spacing: 0.04em; color: #fcfcb8; white-space: nowrap; }
+
+/* Multiplayer: the bar's second row, the players (1998's lights, numbered P1 to P6, named only on the ticker under the
+   pointer): by team, each a light, green once they've pressed BEGIN MISSION and a ring while they plan, and the name
+   in its player's colour, as in the chat; at the right how many are ready (the mission starts when all are). */
+.mp #topbar { height: 62dp; }
+.mp #topbar .tabs-row { border-bottom: 1dp #1e2a34; }
+.mp #page { padding-top: 74dp; }
+.players { display: flex; flex-direction: row; align-items: center; height: 18dp; gap: 24dp; font-size: 9.51dp; line-height: 18dp; font-weight: 600; white-space: nowrap; }
+.players > * { flex: 0 0 auto; }
+.players > .grow { flex: 1 1 0; }
+.players .team { display: flex; flex-direction: row; align-items: center; gap: 12dp; }
+.players .team > * { flex: 0 0 auto; }
+.players .team-name { font-size: 8.75dp; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+.players .player { display: flex; flex-direction: row; align-items: center; gap: 4dp; }
+.players .player > * { flex: 0 0 auto; }
+.players .light { box-sizing: border-box; width: 6dp; height: 6dp; border-radius: 3dp; border: 1dp #6c7a88; }
+.players .light.ready { background-color: #00cc98; border-color: #00cc98; }
+.players .count { font-size: 8.75dp; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+
+/* The page under the bar: the margin all round. */
+#page { padding-top: 56dp; padding-bottom: 34dp; }
+
+/* The hint line along the foot of the night screens: what the thing under the pointer does at the left, the
+   screen's keys at the right; its words 15 to 26 units over the bottom, as on the paintings' glass bar. */
+.night #hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 34dp; }
+.night #hintbar .content { padding-top: 8dp; }
+#page > .row { flex: 1 1 0; align-items: stretch; }
+
+/* 2:1 and wider (21:9): the campaign's screens take the window less its margins (1115 units at 21:9), and each grows
+   its own part: DEPLOY's READY AREA, BRIEFING's objectives and orders side by side, the multiplayer chat a column. */
+@media (min-aspect-ratio: 2/1) {
+    .night .content { flex: 0 1 1115dp; }
+}
+
+/* An objective, numbered as its pin on the map (the pins' red). */
+.objective { margin-top: 4dp; font-size: 11.63dp; line-height: 15dp; }
+.objective .num { flex: 0 0 14dp; font-weight: 700; color: #f26b55; }
+.section { margin-top: 12dp; }
+.para { margin-top: 6dp; }
+.scroll { flex: 1 1 0; position: relative; overflow: hidden; padding-right: 10dp; }
+.scroll > * { flex: 0 0 auto; }
+.scroll .rail { position: absolute; right: 0; top: 12dp; bottom: 0; }
+/* A unit as a card, carrying what 1998's READY AREA tile does: over the mech's outline its condition (a bar, as long
+   as the mech's fighting state: green at half or more, yellow down to a fifth, red under), over the pilot their health
+   (six pips, a wound empties one), the outline coloured location by location for damage; beside them the callsign,
+   the mech and its tons. One row, 46 units tall, 136 wide in READY AREA (the mech's name whole beside the pictures).
+   Every card's lines: its name (a callsign in capitals, a thing in its own case), what it is (a unit's mech in its
+   own case; a thing's facts in capitals), its numbers in capitals (tons, a price in cream, a count). */
+.card { box-sizing: border-box; height: 46dp; padding: 4dp 5dp; background-color: #142029; display: flex; flex-direction: row; gap: 6dp; }
+.card > * { flex: 0 0 auto; }
+.card .pics { flex: 0 0 52dp; display: flex; flex-direction: column; }
+.card .pics > * { flex: 0 0 auto; }
+.card .gauges { display: flex; flex-direction: row; gap: 4dp; height: 3dp; margin-bottom: 2dp; }
+.card .condition { position: relative; width: 24dp; height: 3dp; background-color: #2a3742; }
+.card .condition > div { position: absolute; left: 0; top: 0; bottom: 0; }
+.card .condition .ok { background-color: #00cc98; }
+.card .condition .worn { background-color: #e8d44d; }
+.card .condition .bad { background-color: #f26b55; }
+.card .health { display: flex; flex-direction: row; gap: 1dp; width: 24dp; }
+.card .pip { box-sizing: border-box; flex: 0 0 3dp; height: 3dp; background-color: #f26b55; }
+.card .pip.lost { background-color: transparent; border: 1dp #6c7a88; }
+.card .imgs { display: flex; flex-direction: row; gap: 4dp; }
+.card .pic { width: 24dp; height: 32dp; flex: 0 0 auto; }
+.card .facts { flex: 1 1 0; }
+.card .who { font-size: 11.63dp; line-height: 14dp; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.card .what { font-size: 9.51dp; line-height: 12dp; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: #a4b0bc; white-space: nowrap; }
+.card .t { font-size: 9.51dp; line-height: 12dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #fcfcb8; white-space: nowrap; }
+.card.unit .what { text-transform: none; letter-spacing: 0.01em; }
+.card.hover { background-color: #1b2c38; }
+/* Chosen: card teal; its grey lines lighter there (#a4b0bc is 4.0:1 on it; this is 5.4). */
+.card.picked { background-color: #045454; }
+.card.picked .what, .card.picked .grey { color: #c4ccd4; }
+/* A drop slot: open and empty, a well a unit is dragged into; closed (the mission doesn't give it, or in multiplayer
+   it's a teammate's), striped and outlined, as 1998 covered it with a plate, and nothing more said. */
+.card.empty { background-color: #0f171e; }
+.card.closed { background-color: transparent; border: 1dp #1e2b36; decorator: image(art/closed.png cover left top); }
+/* A card out of reach (too dear, too heavy, picked up): dim, the reason in its last line. A card being dragged: lifted
+   off its list under the pointer, edged cyan; the slot it would drop into edged cyan too. One that can't go there
+   (too heavy for what's free: 1998 refuses it, says why and sounds Betty's warning): the card and the slot edged red,
+   the reason under the card. */
+.card.off .who, .card.off .what, .card.off .t, .card.off .row-t { color: #6c7a88; }
+.card.off .pics { opacity: 0.45; }
+.dragged { position: absolute; border: 1dp #7cd4ec; }
+.card.empty.target { border: 1dp #7cd4ec; }
+.dragged.refuse, .card.empty.refuse { border: 1dp #f26b55; }
+.dragged .why { position: absolute; left: -1dp; top: 100%; margin-top: 3dp; padding: 1dp 5dp; white-space: nowrap;
+                background-color: #0b1116; border: 1dp #f26b55; font-size: 9.51dp; line-height: 12dp; font-weight: 600;
+                letter-spacing: 0.06em; text-transform: uppercase; color: #f26b55; }
+
+/* ---- The game's (the frames' style blocks, and what the live controls add) ---- */
+
+.money-label { line-height: 28dp; }
+.money.points { margin-right: 16dp; }
+#mainmenu { margin-right: 12dp; }
+.tabs { display: flex; flex-direction: row; }
+.tab { cursor: pointer; }
+.fire-label { margin-right: 12dp; }
+/* The lists' fade into the night, not the panels' well. */
+.night .scroll-box > .fade { decorator: vertical-gradient(#0b111600 #0b1116ff); }
+/* A refused send's reason, in READY AREA's card's last line. */
+.card .why-line { color: #f26b55; }
+.card { tab-index: auto; nav: auto; focus: auto; }
+.card.closed, .card.empty { tab-index: none; }
+/* A unit carried by the keys: the arrows move it over the open slots too. */
+.keyscarry .card.empty { tab-index: auto; }
+.card.empty.target, .card.unit.target { border: 1dp #7cd4ec; }
+.card.refuse, .card.target.refuse { border: 1dp #f26b55; }  /* a slot refusing the unit held over it: red */
+.dragged { z-index: 10; width: 136dp; pointer-events: none; }
+
+/* BRIEFING: the map leads, the window's height less the bars; the orders beside it. The DEPLOY tab is the way on. */
+#map { flex: 0 0 404dp; }
+#orders { flex: 1 1 0; display: flex; flex-direction: column; margin-left: 16dp; }
+#orders > * { flex: 0 0 auto; }
+#orders > .scroll-box { flex: 1 1 0; }
+.split { display: flex; flex-direction: column; }
+.split > * { flex: 0 0 auto; }
+/* 21:9: the objectives and the orders side by side. */
+@media (min-aspect-ratio: 2/1) {
+    .split { flex-direction: row; gap: 16dp; }
+    .split > * { flex: 1 1 0; }
+}

@@ -43,6 +43,9 @@
     <ClCompile Include="tests\CameraTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\CampaignMenuTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ColorTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

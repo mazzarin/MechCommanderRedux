@@ -227,22 +227,7 @@ auto MCMechBriefBlock::Placed(MCDeploy::MCRefusal refusal) -> bool
 auto MCMechBriefBlock::DropInFreeSlot() -> bool
 {
     // Group 1, 2 or 3 with its key held; else any (MCDeploy::Send).
-    std::optional<size_t> group;
-
-    if ((MCInput::GetAsyncKeyState('1') & 0x8000) != 0)
-    {
-        group = 0;
-    }
-    else if ((MCInput::GetAsyncKeyState('2') & 0x8000) != 0)
-    {
-        group = 1;
-    }
-    else if ((MCInput::GetAsyncKeyState('3') & 0x8000) != 0)
-    {
-        group = 2;
-    }
-
-    return Placed(MCDeploy::Send(*Part(), group));
+    return Placed(MCDeploy::Send(*Part(), MCDeploy::HeldGroup()));
 }
 
 auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
@@ -314,15 +299,7 @@ auto MCMechBriefBlock::Drop(MCGuiEvent& event) -> void
 
     SoundSystem()->PlayInterfaceSample(sound);
 
-    if (mech != nullptr)
-    {
-        mech->Deployed = false;
-        GlobalLog()->AssignedWarriorList->SetDeployed(mech->PilotIndex, false);
-    }
-    else
-    {
-        vehicle->Deployed = false;
-    }
+    MCDeploy::Unlift(mech != nullptr ? static_cast<MCLogPart&>(*mech) : static_cast<MCLogPart&>(*vehicle));
 
     // Back in the pane (the original moved the block there): the pane's list shows the unit again.
     screen.SetUpDeploy();
@@ -379,28 +356,17 @@ auto MCMechBriefBlock::PickUp(MCGuiEvent& event) -> void
     }
     else
     {
-        // Out of the deploy pane (setUpDeploy rebuilds it without the block). A mech with a damaged engine or a
-        // destroyed location can't drop.
-        if (Mech() == nullptr)
+        // Out of the deploy pane (setUpDeploy rebuilds it without the block), marked in the drop while carried
+        // (MCDeploy::Lift). A mech with a damaged engine or a destroyed location can't drop.
+        if (const std::optional<uint32_t> refusal = MCDeploy::RefusalString(MCDeploy::Lift(*part)); refusal.has_value())
         {
-            vehicle->Deployed = true;
-        }
-        else
-        {
-            if (const std::optional<uint32_t> refusal = MCDeploy::RefusalString(MCDeploy::CantDrop(*Mech()));
-                refusal.has_value())
-            {
-                const std::string text = LoadGameString(*refusal, 0xfe);
-                GuiSystem().Release();
-                Drag.Left = false;
-                Drag.Right = false;
-                screen.SetUpDeploy();
-                ShowLogMessage(text);
-                return;
-            }
-
-            Mech()->Deployed = true;
-            GlobalLog()->AssignedWarriorList->SetDeployed(Mech()->PilotIndex, true);
+            const std::string text = LoadGameString(*refusal, 0xfe);
+            GuiSystem().Release();
+            Drag.Left = false;
+            Drag.Right = false;
+            screen.SetUpDeploy();
+            ShowLogMessage(text);
+            return;
         }
 
         screen.SetUpDeploy();

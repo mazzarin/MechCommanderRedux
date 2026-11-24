@@ -1,0 +1,142 @@
+<rml>
+<head>
+    <title>Campaign</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="campaign.rcss"/>
+    <link type="text/rcss" href="deploy.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, stage 8): the campaign's screens under one bar (logistics/MCCampaignMenu): BRIEFING to read
+     the mission (the map whole on the left; its title, objectives, fire support, orders and warnings on the right) and
+     DEPLOY to choose the force (READY AREA's cards left, two a row; the drop's three groups right, the weight and BEGIN
+     MISSION along its foot). PURCHASING and the 'MECH BAY are the 1998 screens until step 2. -->
+<body class="night" data-model="campaign" data-class-mp="mp" data-class-keyscarry="keysCarry">
+    <div id="topbar" class="bar">
+        <div class="stage16">
+            <div class="content">
+                <div class="row gap4 tabs-row">
+                    <div class="button small" id="mainmenu" data-hint="Main menu">Main menu</div>
+                    <div class="tabs row" id="tabs"><div class="tab now">Briefing</div><div class="tab">Purchasing</div><div class="tab">'Mech bay</div><div class="tab">Deploy</div></div>
+                    <div class="grow"></div>
+                    <div class="eyebrow money-label" data-if="rp != ''">RP</div><div class="money points" data-if="rp != ''">{{rp}}</div><div class="money">{{clock}}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="stage16">
+        <div id="page" class="content">
+            <div class="row" id="briefing" data-if="tab == 0">
+                <div id="map" class="map picture"></div>
+                <div id="orders">
+                    <div class="eyebrow" data-if="eyebrow != ''">{{eyebrow}}</div>
+                    <div class="title caps">{{title}}</div>
+                    <div class="scroll-box grow">
+                        <div class="scroller" id="orders-text">
+                            <div class="split">
+                                <div>
+                                    <div class="eyebrow section" data-if="objectives.size > 0">Objectives</div>
+                                    <div class="objective row top" data-for="line : objectives"><div class="num">{{line.num}}</div><div class="grow">{{line.text}}</div></div>
+                                    <div class="row section" data-if="fire != ''">
+                                        <div class="eyebrow fire-label">Fire support</div>
+                                        <div class="data grey caps">{{fire}}</div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="eyebrow section" data-if="orders.size > 0">Orders</div>
+                                    <p class="text grey para" data-for="line : orders">{{line.text}}</p>
+                                    <div class="eyebrow section" data-if="warnings.size > 0">{{warningsHead}}</div>
+                                    <p class="text grey para" data-for="line : warnings">{{line.text}}</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="fade"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row" id="deploy" data-if="tab == 3">
+                <div id="ready">
+                    <div class="row bottom head">
+                        <div class="heading caps grow">Ready area</div>
+                    </div>
+                    <div class="scroll-box grow">
+                        <div class="scroller">
+                            <div class="ready-grid">
+                                <div class="card-cell" data-for="c, i : ready"><div class="card unit" data-attr-id="'ready' + i"
+                                     data-class-off="c.off" data-class-refuse="c.refuse"
+                                     data-hint="Drag into a slot" data-hint-right="Into the first open slot" data-hint-group="Into that group">
+                                    <div class="pics">
+                                        <div class="gauges" data-if="c.piloted">
+                                            <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
+                                            <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
+                                        </div>
+                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div></div>
+                                    </div>
+                                    <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
+                                </div></div>
+                            </div>
+                        </div>
+                        <div class="fade"></div>
+                    </div>
+                </div>
+
+                <div id="drop">
+                    <div class="row bottom head">
+                        <div class="heading caps grow">Drop</div>
+                    </div>
+                    <div class="groups">
+                        <div class="group" data-for="g : groups">
+                            <div class="group-head"><div class="eyebrow" data-class-closed="g.closed">{{g.name}}</div><div class="tons" data-if="g.tons != ''">{{g.tons}}</div></div>
+                            <div class="card" data-for="c : g.cards" data-attr-id="'slot' + c.slot"
+                                 data-class-unit="c.kind == 0" data-class-empty="c.kind == 1" data-class-closed="c.kind == 2"
+                                 data-class-target="c.target" data-class-refuse="c.refuse"
+                                 data-attr-data-hint="c.kind == 0 ? 'Drag into a slot' : ''" data-attr-data-hint-right="c.kind == 0 ? 'Back to the ready area' : ''">
+                                <div class="pics" data-if="c.kind == 0">
+                                    <div class="gauges" data-if="c.piloted">
+                                        <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
+                                        <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
+                                    </div>
+                                    <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div></div>
+                                </div>
+                                <div class="facts" data-if="c.kind == 0"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="grow"></div>
+                    <div id="weight">
+                        <div class="weight-read">
+                            <div class="weight-now" data-class-more="weightMore" data-class-over="weightOver">{{weightNow}}</div>
+                            <div class="weight-of">{{weightOf}}</div>
+                            <div class="grow"></div>
+                            <div class="weight-free" data-class-over="weightOver">{{weightFree}}</div>
+                        </div>
+                        <div class="weight-row">
+                            <div class="ramp gauge"><div class="seg" data-for="s : ramp" data-style-height="s.height" data-class-on="s.state == 1" data-class-more="s.state == 2" data-class-over="s.state == 3"></div></div>
+                            <div class="button main" id="begin" data-class-dark="!canBegin" data-hint="Begin mission">Begin mission</div>
+                        </div>
+                    </div>
+                    <div class="card-cell" data-for="c : carried"><div class="card unit dragged" data-class-refuse="c.refuse"
+                         data-style-left="carriedLeft" data-style-top="carriedTop" data-hint="Drop into the slot">
+                        <div class="pics">
+                            <div class="gauges" data-if="c.piloted">
+                                <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
+                                <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
+                            </div>
+                            <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div></div>
+                        </div>
+                        <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
+                        <div class="why" data-if="c.why != ''">{{c.why}}</div>
+                    </div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar">
+        <div class="stage16">
+            <div class="content">
+                <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

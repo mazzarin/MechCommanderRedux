@@ -3,6 +3,7 @@
 #include "gui/MCScreenChange.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGamesScreen.h"
@@ -198,14 +199,24 @@ auto MCMenuScreens::Register() -> void
     Ids.Preferences = MCScreenFlow::Register(OldScreen(
         "preferences", [] { return Showing(&MCLogistics::PrefScreen); }, ShowPreferences,
         Back("preferences back", CancelPrefs)));
-    Ids.Campaign = MCScreenFlow::Register(OldScreen(
+    MCScreenKind campaign = OldScreen(
         "campaign",
         []
         {
             return Showing(&MCLogistics::BriefingScreen) || Showing(&MCLogistics::PurchaseScreen) ||
-                   Showing(&MCLogistics::RepairScreen);
+                   Showing(&MCLogistics::RepairScreen) || MCCampaignMenu::Shown();
         },
-        ReturnToGame, LeaveCampaign));
+        ReturnToGame, LeaveCampaign);
+    // Stage 8: BRIEFING and DEPLOY remade (logistics/MCCampaignMenu) over the 1998 briefing: hidden with it, and the
+    // change waits for their first whole frame.
+    campaign.Hide = []
+    {
+        MCCampaignMenu::Hide();
+        HideShown();
+    };
+
+    campaign.Ready = [] { return MCCampaignMenu::Ready(); };
+    Ids.Campaign = MCScreenFlow::Register(std::move(campaign));
     Ids.Connection = MCScreenFlow::Register(OldScreen(
         "connection", [] { return Showing(&MCLogistics::ModemScreen) || Showing(&MCLogistics::SerialScreen); },
         ConnectScreen, Back("connection back", CancelToConnect)));

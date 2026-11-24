@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "iface/MCKeyBindings.h"
+#include "logistics/MCCampaignMenu.h"
 #include "lib/MCFatal.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCUtf8Path.h"
@@ -571,6 +572,9 @@ int main(int argc, char** argv)
     // The CONTROLS screen names keys as a US keyboard does, whatever this machine's layout, so its pictures are the
     // same on every machine.
     MCKeyBindings::SetLayout(nullptr);
+    // The 1998 briefing for the tests that click it, until stage 8's step 2 records the logistics screens again; the
+    // remade BRIEFING and DEPLOY's own tests turn it on (MCCampaignMenu::Remade).
+    MCCampaignMenu::Remade() = false;
     std::vector<std::string> arguments;
 
     for (int i = 0; i < argc; i++)

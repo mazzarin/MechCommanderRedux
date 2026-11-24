@@ -1035,7 +1035,6 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
     CHECK(!OnInternet());
     const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
     REQUIRE(update != nullptr);
-    CHECK_EQ(MCRemadeTest::Words(*update, "place"), std::string("Internet"));
     MCUpdater::Answer(MCUpdater::MCAnswer::Install);
     MCUpdater::Ready();
     Settle();

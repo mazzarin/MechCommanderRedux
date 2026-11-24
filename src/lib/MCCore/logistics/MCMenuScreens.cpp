@@ -240,14 +240,13 @@ auto MCMenuScreens::Register() -> void
         },
         MCRmlFlow::MCKeep::Afresh));
     // Port-only (stage 6): UPDATE remade (logistics/MCUpdateScreen.h), from the main menu's UPDATE and INTERNET's or
-    // LAN's newer game, made afresh at each press, named by where it opened; BACK shows that screen again.
+    // LAN's newer game, made afresh at each press; BACK shows the screen it opened from again.
     Ids.Update = MCScreenFlow::Register(MCRmlFlow::Kind(
         "update",
         [](MCRmlLayer& layer)
         {
             return MCGuiHandle<MCRmlScreen>(layer.CreateChild<MCUpdateScreen>(
-                [](MCUpdateScreen& made) { made.Back = [] { MCScreenFlow::Back(); }; },
-                MCUpdateScreen::PlaceOfShown()));
+                [](MCUpdateScreen& made) { made.Back = [] { MCScreenFlow::Back(); }; }));
         },
         MCRmlFlow::MCKeep::Afresh));
     Ids.Campaign = MCScreenFlow::Register(OldScreen(

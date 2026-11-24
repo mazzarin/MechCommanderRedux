@@ -11,7 +11,7 @@
     <div class="stage16">
         <div id="frame" class="content">
             <div id="update" class="panel glass">
-                <div class="titlebar row bottom"><div class="grow"><div class="eyebrow" id="place">Main menu</div><div class="title caps">Update</div></div><div class="data grey caps nowrap" id="running"></div></div>
+                <div class="titlebar row bottom"><div class="grow"><div class="title caps">Update</div></div><div class="data grey caps nowrap" id="running"></div></div>
                 <div class="row gap12 grow" id="update-body">
                     <div id="notes">
                         <div class="list-head row"><div class="cell grow" style="padding-left: 0;" id="brings"></div><div class="cell" id="changes"></div></div>

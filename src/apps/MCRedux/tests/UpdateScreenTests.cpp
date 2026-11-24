@@ -210,7 +210,6 @@ TEST_CASE_ISOLATED("game: UPDATE opens remade through the flow: INSTALL, the dow
     RunFrames(SettleFrames);
 
     std::shared_ptr<MCUpdateScreen> update = OpenUpdate();
-    CHECK_EQ(MCRemadeTest::Words(*update, "place"), "Main menu");
     CHECK_EQ(MCRemadeTest::Words(*update, "running"),
              std::format("Running {}", ReleaseOf(MCTestUpdater::FakeRunningVersion)));
     CHECK_EQ(MCRemadeTest::Words(*update, "version"), "Version 0.2.2");

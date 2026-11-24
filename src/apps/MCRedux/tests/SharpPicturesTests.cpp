@@ -481,6 +481,9 @@ TEST_CASE_ISOLATED("game: a slide to a tab the briefing's fade left unshown take
         return;
     }
 
+    // The 1998 screens' own test (kept until stage 9 removes them): the remade campaign screen off, as no 1998 screen
+    // slides in under it (its PURCHASING and 'MECH BAY are its own tabs).
+    MCCampaignMenu::Remade() = false;
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     ClickNewCampaign(*renderer);
     Settle();
@@ -510,6 +513,9 @@ TEST_CASE_ISOLATED(
         return;
     }
 
+    // The 1998 screens' own test (kept until stage 9 removes them): the remade campaign screen off, as no 1998 screen
+    // slides in under it (its PURCHASING and 'MECH BAY are its own tabs).
+    MCCampaignMenu::Remade() = false;
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     ClickNewCampaign(*renderer);
     Settle();
@@ -547,6 +553,9 @@ TEST_CASE_ISOLATED(
         return;
     }
 
+    // The 1998 screens' own test (kept until stage 9 removes them): the remade campaign screen off, as no 1998 screen
+    // slides in under it (its PURCHASING and 'MECH BAY are its own tabs).
+    MCCampaignMenu::Remade() = false;
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     ClickNewCampaign(*renderer);
     Settle();

@@ -8,7 +8,7 @@
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCPrefsPage.h"
 #include "logistics/MCReportsNotice.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "main/MCLogistics.h"
 #include "ui/MCRmlDialog.h"
 
@@ -180,7 +180,7 @@ void AskGivenWayKeys()
     }
 
     ShowMenuMessage(GivenWayText(*givenWay), [](int32_t) { SavePrefs(); });
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.KeyTaker = [&dialog, command](uint32_t key)
     {
         if (const std::optional<std::string> refused = TakeKey(command, key); refused.has_value())
@@ -193,5 +193,5 @@ void AskGivenWayKeys()
         return true;
     };
 
-    GuiSystem().SetText(dialog.weak_from_this());
+    dialog.TakeKeyboard();
 }

@@ -18,6 +18,7 @@
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogSlider.h"
 #include "logistics/MCLogTextObject.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
@@ -770,12 +771,14 @@ TEST_CASE("game: the message dialog grows a middle piece for every two lines, an
         return;
     }
 
-    MCGuiRef<MCReusableDialog> dialog = MCGuiTree::NewRoot<MCReusableDialog>();
-    REQUIRE_EQ(dialog->Init(0, 0, 4, 4, {}), 0);
+    MCGuiRef<MCReusableDialog> view = MCGuiTree::NewRoot<MCReusableDialog>();
+    REQUIRE_EQ(view->Init(0, 0, 4, 4, {}), 0);
+    const auto dialog = std::make_shared<MCMenuDialog>();
+    dialog->SetView(view.Handle());
     dialog->SetText("Short.");
-    CHECK_EQ(dialog->NumMiddlePieces, 1);
-    const int32_t pieces = dialog->TopPiece->Height() + dialog->BottomPiece->Height();
-    CHECK_EQ(dialog->Height(), pieces + dialog->MiddlePiece->Height());
+    CHECK_EQ(view->NumMiddlePieces, 1);
+    const int32_t pieces = view->TopPiece->Height() + view->BottomPiece->Height();
+    CHECK_EQ(view->Height(), pieces + view->MiddlePiece->Height());
 
     std::string longText;
 
@@ -785,7 +788,7 @@ TEST_CASE("game: the message dialog grows a middle piece for every two lines, an
     }
 
     dialog->SetText(longText);
-    const int32_t wrap = dialog->Width() - 0x14;
+    const int32_t wrap = view->Width() - 0x14;
     int32_t lines = 1;
 
     for (std::string_view rest = dialog->Text;;)
@@ -802,18 +805,18 @@ TEST_CASE("game: the message dialog grows a middle piece for every two lines, an
     }
 
     REQUIRE(lines > 2);
-    CHECK_EQ(dialog->NumMiddlePieces, (lines + 1) / 2);
+    CHECK_EQ(view->NumMiddlePieces, (lines + 1) / 2);
 
     std::vector<int32_t> results;
     int32_t okRuns = 0;
     int32_t cancelRuns = 0;
     dialog->SetTwoButton(true);
     dialog->Callback = [&](int32_t result) { results.push_back(result); };
-    dialog->OkButton->Callback().SetExec([&] { okRuns++; });
-    dialog->CancelButton->Callback().SetExec([&] { cancelRuns++; });
+    dialog->Ok.Exec = [&] { okRuns++; };
+    dialog->Cancel.Exec = [&] { cancelRuns++; };
     dialog->KeepCallbacks = true;
-    Send(*dialog, MCGuiEventType::KeyDown, 0, 0, 0x0d);
-    Send(*dialog, MCGuiEventType::KeyDown, 0, 0, 0x1b);
+    Send(*view, MCGuiEventType::KeyDown, 0, 0, 0x0d);
+    Send(*view, MCGuiEventType::KeyDown, 0, 0, 0x1b);
     // OB-074 (fixed): Escape on a question is its CANCEL (the original ran OK).
     CHECK_EQ(okRuns, 1);
     CHECK_EQ(cancelRuns, 1);
@@ -822,12 +825,73 @@ TEST_CASE("game: the message dialog grows a middle piece for every two lines, an
     CHECK_EQ(results[1], 0);
     // The second answer cleared the callbacks (KeepCallbacks kept them for one).
     CHECK(!dialog->Callback);
+    CHECK(!dialog->Ok.Exec);
+}
 
-    // The timeout answers with its result.
+TEST_CASE("game: the message dialog's timeout closes it after its time, with its result")
+{
+    LogisticsScreen screen;
+
+    if (!screen.LoadRetail())
+    {
+        return;
+    }
+
+    // Shown by its 1998 box (as where the menus can't start): this test's GUI runs no remade screens.
+    struct OldBoxOnly
+    {
+        OldBoxOnly() { MCReusableDialog::OldBoxOnly() = true; }
+        ~OldBoxOnly() { MCReusableDialog::OldBoxOnly() = false; }
+    } oldBoxOnly;
+
+    constexpr int32_t Timeout = 3000;
+    constexpr int32_t TimeoutResult = 7;
+    constexpr uint64_t NanosecondsAMillisecond = 1'000'000;
+    MCGuiRef<MCReusableDialog> view = MCGuiTree::NewRoot<MCReusableDialog>();
+    REQUIRE_EQ(view->Init(0, 0, 4, 4, {}), 0);
+    const auto dialog = std::make_shared<MCMenuDialog>();
+    dialog->SetView(view.Handle());
+    dialog->SetText("Game saved.");
+    dialog->SetTwoButton(false);
+    std::vector<int32_t> results;
     dialog->Callback = [&](int32_t result) { results.push_back(result); };
-    dialog->TimeoutResult = 7;
-    Send(*dialog, MCGuiEventType::Timer, 0, 0, 0, MCReusableDialog::TimeoutTimer);
-    CHECK_EQ(results.back(), 7);
+    dialog->Timeout = Timeout;
+    dialog->TimeoutResult = TimeoutResult;
+    dialog->Activate();
+    CHECK(dialog->IsShowing());
+    CHECK(view->ShowWindow != 0);
+
+    // Its time is up only past its milliseconds, as the GUI's timers count.
+    screen.Clock.Advance(Timeout * NanosecondsAMillisecond);
+    screen.Gui->RunFrameCallbacks();
+    CHECK(dialog->IsShowing());
+    CHECK(results.empty());
+    screen.Clock.Advance(NanosecondsAMillisecond);
+    screen.Gui->RunFrameCallbacks();
+    CHECK(!dialog->IsShowing());
+    CHECK(view->ShowWindow == 0);
+    REQUIRE_EQ(results.size(), 1u);
+    CHECK_EQ(results[0], TimeoutResult);
+    // Cleared with the callbacks: shown again, it waits for an answer.
+    CHECK_EQ(dialog->Timeout, 0);
+    CHECK_EQ(dialog->TimeoutResult, 0);
+    dialog->Activate();
+    screen.Clock.Advance(2 * Timeout * NanosecondsAMillisecond);
+    screen.Gui->RunFrameCallbacks();
+    CHECK(dialog->IsShowing());
+    dialog->Deactivate(0);
+
+    // Kept callbacks (a launcher's leave, KeepCallbacks) keep its timeout's timer: it answers again each time.
+    dialog->Callback = [&](int32_t result) { results.push_back(result); };
+    dialog->Timeout = Timeout;
+    dialog->TimeoutResult = TimeoutResult;
+    dialog->Activate();
+    dialog->KeepCallbacks = true;
+    screen.Clock.Advance((Timeout + 1) * NanosecondsAMillisecond);
+    screen.Gui->RunFrameCallbacks();
+    REQUIRE_EQ(results.size(), 2u);
+    CHECK(dialog->Callback);
+    dialog->Deactivate(0);
 }
 
 TEST_CASE("game: the refit dialog has a line per listed item between its six lines of text")
@@ -839,14 +903,16 @@ TEST_CASE("game: the refit dialog has a line per listed item between its six lin
         return;
     }
 
-    MCGuiRef<MCRefitDialog> dialog = MCGuiTree::NewRoot<MCRefitDialog>();
-    REQUIRE_EQ(dialog->Init(0, 0, 4, 4, {}), 0);
+    MCGuiRef<MCRefitDialog> view = MCGuiTree::NewRoot<MCRefitDialog>();
+    REQUIRE_EQ(view->Init(0, 0, 4, 4, {}), 0);
+    const auto dialog = std::make_shared<MCMenuDialog>();
+    dialog->SetView(view.Handle());
     dialog->SetText("Laser,Missile,Armor");
-    CHECK_EQ(dialog->NumItems, 3);
-    CHECK_EQ(dialog->NumMiddlePieces, 4);
+    CHECK_EQ(view->NumItems, 3);
+    CHECK_EQ(view->NumMiddlePieces, 4);
     dialog->SetText("Laser");
-    CHECK_EQ(dialog->NumItems, 1);
-    CHECK_EQ(dialog->NumMiddlePieces, 3);
+    CHECK_EQ(view->NumItems, 1);
+    CHECK_EQ(view->NumMiddlePieces, 3);
 }
 
 // Buttons and the resource figure

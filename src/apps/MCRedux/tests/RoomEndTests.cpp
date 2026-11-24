@@ -14,6 +14,7 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogTextObject.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
@@ -454,7 +455,7 @@ TEST_CASE_ISOLATED("game: a LAN host's Escape leaves its remade room at once, no
     CHECK(!InSession());
     CHECK(took < MCRoomEnd::LeaveWait);
     CHECK(!remade->Shown());
-    CHECK(!GlobalLog()->QuestionDialog->IsShowing());
+    CHECK(!GlobalLog()->Question->IsShowing());
     CHECK(DialogText().empty());
     REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
     Settle();
@@ -533,9 +534,9 @@ TEST_CASE_ISOLATED("game: a launcher host's LEAVE tells its guests the room clos
     manager.HandsOn = false;
 
     // A dialog the room opens with (a new key's question) answered first; then LEAVE asks, and LEAVE ends the game.
-    while (GlobalLog()->MessageDialog->IsShowing())
+    while (GlobalLog()->Message->IsShowing())
     {
-        GlobalLog()->MessageDialog->Deactivate(0);
+        GlobalLog()->Message->Deactivate(0);
         Step();
     }
 

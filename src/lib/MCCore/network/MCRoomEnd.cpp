@@ -10,7 +10,7 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLogMenus.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCGameSession.h"
@@ -203,7 +203,7 @@ namespace
     /// </summary>
     void DropMessage(MCLogistics& logistics)
     {
-        MCReusableDialog& dialog = *logistics.MessageDialog;
+        MCMenuDialog& dialog = *logistics.Message;
 
         if (dialog.IsShowing() != 0)
         {

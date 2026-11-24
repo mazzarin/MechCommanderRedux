@@ -3,21 +3,20 @@
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogTextObject.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
 
 auto ShowMenuMessage(std::string_view text, std::function<void(int32_t)> callback, std::string_view upArt,
                      std::string_view downArt) -> void
 {
-    // Port-only (SPEC-menus.md's stage 4): over a remade screen, the remade dialog says it (MCReusableDialog::Activate).
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    // Port-only (SPEC-menus.md's stage 4): over a remade screen, the remade dialog says it (MCMenuDialog::Activate).
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.SetText(text);
     dialog.SetTwoButton(false);
     dialog.Callback = std::move(callback);
-    dialog.OkButton->SetUpPicture(upArt);
-    dialog.OkButton->SetDownPicture(downArt);
-    dialog.OkButton->Disabled = false;
+    dialog.Ok.SetPictures(upArt, downArt);
+    dialog.Ok.Disabled = false;
     dialog.Activate();
 }
 
@@ -27,38 +26,36 @@ auto ShowMenuMessage(uint32_t stringId, std::function<void(int32_t)> callback, s
     ShowMenuMessage(LoadGameString(stringId, 0xfe), std::move(callback), upArt, downArt);
 }
 
-auto AskMenuQuestion(MCReusableDialog& dialog, uint32_t stringId, std::function<void()> okExec,
+auto AskMenuQuestion(MCMenuDialog& dialog, uint32_t stringId, std::function<void()> okExec,
                      std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons) -> void
 {
     AskMenuQuestion(dialog, LoadGameString(stringId, 0xfe), std::move(okExec), std::move(cancelExec), cancelDownArt,
                     enableButtons);
 }
 
-auto AskMenuQuestion(MCReusableDialog& dialog, std::string_view text, std::function<void()> okExec,
+auto AskMenuQuestion(MCMenuDialog& dialog, std::string_view text, std::function<void()> okExec,
                      std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons) -> void
 {
-    // Over a remade screen the dialog says itself in the remade one (MCReusableDialog::Activate), its buttons its own.
+    // Over a remade screen the dialog says itself in the remade one (MCMenuDialog::Activate), its buttons its own.
     dialog.SetText(text);
     dialog.SetTwoButton(true);
     dialog.Callback = nullptr;
-    dialog.OkButton->SetUpPicture("bh_okay.tga");
-    dialog.OkButton->SetDownPicture("bg_okay.tga");
+    dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
 
     if (enableButtons)
     {
-        dialog.OkButton->Disabled = false;
+        dialog.Ok.Disabled = false;
     }
 
-    dialog.OkButton->Callback().SetExec(std::move(okExec));
-    dialog.CancelButton->SetUpPicture("bh_cancl.tga");
-    dialog.CancelButton->SetDownPicture(cancelDownArt);
+    dialog.Ok.Exec = std::move(okExec);
+    dialog.Cancel.SetPictures("bh_cancl.tga", cancelDownArt);
 
     if (enableButtons)
     {
-        dialog.CancelButton->Disabled = false;
+        dialog.Cancel.Disabled = false;
     }
 
-    dialog.CancelButton->Callback().SetExec(std::move(cancelExec));
+    dialog.Cancel.Exec = std::move(cancelExec);
     dialog.Activate();
 }
 

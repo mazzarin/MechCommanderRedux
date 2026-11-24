@@ -10,6 +10,7 @@
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLogKeyList.h"
 #include "logistics/MCLogTextButton.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
@@ -490,7 +491,7 @@ TEST_CASE_ISOLATED("game: a player who uses LIGHTS' new key for another command 
     REQUIRE(MCTestGame::StartLogistics());
     StartWithOldPrefs();
     // Port-only (SPEC-menus.md's stage 7): over the remade main menu the remade dialog asks, taking the key itself.
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
     REQUIRE(MCRmlDialogs::Shown());
     CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text,
              std::string("LIGHTS is new and takes N, but N is your EJECT key. Press a key for LIGHTS, or "
@@ -549,7 +550,7 @@ TEST_CASE_ISOLATED("game: a lobby's session screen asks for a LIGHTS key")
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     StartWithOldPrefs();
     // Port-only (SPEC-menus.md's stages 4 and 7): over the remade room the remade dialog asks, taking the key itself.
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
     REQUIRE(MCRmlDialogs::Shown());
     CHECK(MCRmlDialogs::Dialog()->Said().Text.starts_with("LIGHTS is new and takes N"));
     REQUIRE_EQ(MCKeyBindings::FindCommand(MCKeyBindings::Player(), FreeKey, MCKeyCommand::Unused),

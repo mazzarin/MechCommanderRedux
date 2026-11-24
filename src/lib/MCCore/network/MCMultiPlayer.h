@@ -23,7 +23,7 @@ class MCFitIniFile;
 class MCGameObject;
 class MCMover;
 class MCMoverGroup;
-class MCReusableDialog;
+class MCMenuDialog;
 class MCTacticalOrder;
 class MCTurret;
 class MCVector3D;
@@ -884,7 +884,7 @@ std::shared_ptr<MCMultiPlayer> MultiPlayer();
 void ShowPlayerLeft(std::string_view name);
 
 /// <summary>Shows <paramref name="text"/> in <paramref name="dialog"/> with one OK button, which runs <paramref name="exit"/>.</summary>
-void ShowOkDialog(MCReusableDialog& dialog, std::string_view text, std::function<void()> exit);
+void ShowOkDialog(MCMenuDialog& dialog, std::string_view text, std::function<void()> exit);
 
 /// <summary>Shows <paramref name="text"/> in the logistics screen's message dialog with no button: the game waits.</summary>
 void ShowWaitingDialog(std::string_view text);

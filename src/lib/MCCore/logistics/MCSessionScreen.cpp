@@ -20,7 +20,7 @@
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCLogToolButton.h"
 #include "logistics/MCPlayerNameObject.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCGenericScreen.h"
@@ -143,7 +143,7 @@ namespace
     /// <summary>The dialog's Cancel: drops the loaded mission.</summary>
     void MPCancel()
     {
-        GlobalLog()->MessageDialog->Callback = nullptr;
+        GlobalLog()->Message->Callback = nullptr;
         Screen().CancelMission();
     }
 
@@ -241,7 +241,7 @@ namespace
         }
 
         AskMenuQuestion(
-            *GlobalLog()->QuestionDialog, question,
+            *GlobalLog()->Question, question,
             []
             {
                 // Still the room, and the match still able to start (players may have left while it asked).
@@ -1165,7 +1165,7 @@ auto MCSessionScreen::WatchRoom() -> void
     const bool asking = Room().AskingFiles();
 
     if (!showAgain || game.InLogistics || game.InMission || asking || MPConfiguredMatchWaiting() ||
-        GlobalLog()->MessageDialog->IsShowing() || GlobalLog()->QuestionDialog->IsShowing())
+        GlobalLog()->Message->IsShowing() || GlobalLog()->Question->IsShowing())
     {
         return;
     }
@@ -1482,13 +1482,12 @@ auto MCSessionScreen::SomeoneCheckedIn() -> void
 auto MCSessionScreen::ShowDialog(std::string_view text, std::function<void()> onOk, std::string_view upArt,
                                  std::string_view downArt, std::function<void(int32_t)> onResult) -> void
 {
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.SetText(text);
     dialog.SetTwoButton(false);
-    dialog.OkButton->Callback().SetExec(std::move(onOk));
-    dialog.OkButton->SetUpPicture(upArt);
-    dialog.OkButton->SetDownPicture(downArt);
-    dialog.OkButton->Disabled = false;
+    dialog.Ok.Exec = std::move(onOk);
+    dialog.Ok.SetPictures(upArt, downArt);
+    dialog.Ok.Disabled = false;
     dialog.Callback = std::move(onResult);
     dialog.Activate();
 }
@@ -1568,9 +1567,9 @@ auto MCSessionScreen::FilesAnswered() -> void
         }
 
         // Everyone has it: the waiting dialog closes itself.
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-        GuiSystem().AddTimer(dialog.weak_from_this(), 0, 1000, 0, 0, false);
-        dialog.OkButton->Callback().SetExec(nullptr);
+        MCMenuDialog& dialog = *GlobalLog()->Message;
+        dialog.CloseIn(1000);
+        dialog.Ok.Exec = nullptr;
         CheckGoodToGo();
         return;
     }

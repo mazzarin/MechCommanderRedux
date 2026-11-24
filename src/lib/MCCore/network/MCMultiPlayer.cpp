@@ -14,7 +14,7 @@
 #include "linkup/MCFidpSession.h"
 #include "logistics/MCLogChat.h"
 #include "logistics/MCLogToolButton.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"
@@ -1247,33 +1247,25 @@ void MCMultiPlayer::StartPlainMessage(MCMPMessageType type)
 void ShowPlayerLeft(std::string_view name)
 {
     const std::string reason = LoadGameString(!LaunchedFromLobby ? 0x35f : 0x365, 0xfe);
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.SetText(std::format("{} {}", name, reason));
     dialog.SetTwoButton(false);
     dialog.Callback = CancelBool;
-    dialog.OkButton->Callback().SetExec(nullptr);
-    char upArt[] = "bh_okay.tga";
-    char downArt[] = "bg_okay.tga";
-    dialog.OkButton->SetUpPicture(upArt);
-    dialog.OkButton->SetDownPicture(downArt);
-    dialog.OkButton->Disabled = false;
-    dialog.OkButton->Draw();
+    dialog.Ok.Exec = nullptr;
+    dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+    dialog.Ok.Disabled = false;
     dialog.Timeout = 15000;
     dialog.Activate();
 }
 
-void ShowOkDialog(MCReusableDialog& dialog, std::string_view text, std::function<void()> exit)
+void ShowOkDialog(MCMenuDialog& dialog, std::string_view text, std::function<void()> exit)
 {
     dialog.SetText(text);
     dialog.SetTwoButton(false);
     dialog.Callback = nullptr;
-    dialog.OkButton->Callback().SetExec(std::move(exit));
-    char upArt[] = "bh_okay.tga";
-    char downArt[] = "bg_okay.tga";
-    dialog.OkButton->SetUpPicture(upArt);
-    dialog.OkButton->SetDownPicture(downArt);
-    dialog.OkButton->Disabled = false;
-    dialog.OkButton->Draw();
+    dialog.Ok.Exec = std::move(exit);
+    dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+    dialog.Ok.Disabled = false;
     dialog.Activate();
 }
 
@@ -1291,19 +1283,10 @@ void ShowWaitingDialog(std::string_view text)
         return;
     }
 
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.SetText(text);
-
-    if (dialog.OkButton != nullptr)
-    {
-        dialog.OkButton->ShowGuiWindow(false);
-    }
-
-    if (dialog.CancelButton != nullptr)
-    {
-        dialog.CancelButton->ShowGuiWindow(false);
-    }
-
+    dialog.Ok.Shown = false;
+    dialog.Cancel.Shown = false;
     dialog.Callback = nullptr;
     dialog.Activate();
 }
@@ -1321,19 +1304,10 @@ void DestroyConnectStatusWindow()
         return;
     }
 
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.Deactivate(0);
-
-    if (dialog.OkButton != nullptr)
-    {
-        dialog.OkButton->ShowGuiWindow(true);
-    }
-
-    if (dialog.CancelButton != nullptr)
-    {
-        dialog.CancelButton->ShowGuiWindow(true);
-    }
-
+    dialog.Ok.Shown = true;
+    dialog.Cancel.Shown = true;
     dialog.SetTwoButton(true);
 }
 

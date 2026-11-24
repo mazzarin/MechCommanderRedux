@@ -12,7 +12,7 @@
 #include "logistics/MCMechInventoryBlock.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCLogistics.h"
@@ -677,15 +677,13 @@ auto MCMechRepairBlock::RepairItems() -> void
         // Ask whether to strip the damaged items that have no replacement (StripUnrepaired).
         GuiSystem().Release();
         Drag.LeftDrag = false;
-        MCRefitDialog& dialog = *GlobalLog()->RefitDialog;
+        MCMenuDialog& dialog = *GlobalLog()->Refit;
         dialog.SetText(missing);
         dialog.Callback = nullptr;
         dialog.SetTwoButton(true);
-        dialog.OkButton->SetUpPicture("bh_okay.tga");
-        dialog.OkButton->SetDownPicture("bg_okay.tga");
-        dialog.OkButton->Callback().SetExec([this] { StripUnrepaired(); });
-        dialog.CancelButton->SetUpPicture("bh_cancl.tga");
-        dialog.CancelButton->SetDownPicture("bg_cancl.tga");
+        dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+        dialog.Ok.Exec = [this] { StripUnrepaired(); };
+        dialog.Cancel.SetPictures("bh_cancl.tga", "bg_cancl.tga");
         dialog.Activate();
         PlayLogSound(0x33);
         DrawBackground(SlotIndex(), std::nullopt);

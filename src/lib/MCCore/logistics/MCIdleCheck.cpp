@@ -3,7 +3,7 @@
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogMenus.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCLobbyUpdate.h"
@@ -56,7 +56,7 @@ namespace
         AskedAt.reset();
         Answered = false;
 
-        if (MCReusableDialog& dialog = *GlobalLog()->MessageDialog; dialog.IsShowing() && dialog.Text == StillThereText)
+        if (MCMenuDialog& dialog = *GlobalLog()->Message; dialog.IsShowing() && dialog.Text == StillThereText)
         {
             dialog.Deactivate(0);
         }
@@ -97,7 +97,7 @@ bool MCIdleCheck::Asking()
 
 void MCIdleCheck::Frame()
 {
-    if (GlobalLog() == nullptr || GlobalLog()->MessageDialog == nullptr)
+    if (GlobalLog() == nullptr || GlobalLog()->Message == nullptr)
     {
         return;
     }
@@ -129,7 +129,7 @@ void MCIdleCheck::Frame()
     }
 
     // Asked when nothing else is being said.
-    if (Away() && !GlobalLog()->MessageDialog->IsShowing())
+    if (Away() && !GlobalLog()->Message->IsShowing())
     {
         SDL_Log("Idle: no input for %lld minutes: STILL THERE?", static_cast<long long>(AwayTime.count()));
         AskedAt = Now();

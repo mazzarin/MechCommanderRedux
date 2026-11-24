@@ -23,6 +23,7 @@
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCUnitLimits.h"
@@ -1142,21 +1143,21 @@ TEST_CASE_ISOLATED("game: with MoreUnits the shop sells past 50 units up to 200,
     GMoreUnits = 1;
     ResourcePoints = Points;
     MCTestGame::StockStore(Stock);
-    const MCReusableDialog& message = *GlobalLog()->MessageDialog;
+    const MCMenuDialog& message = *GlobalLog()->Message;
 
     // From 50: bought, no word.
     MCTestGame::OwnUnits(50);
     BuyFirst();
     Accept();
     CHECK_EQ(NumUnits(), 51);
-    CHECK(!message.ShowWindow);
+    CHECK(!message.View()->ShowWindow);
 
     // From 160: bought, with the warning of the 200.
     MCTestGame::OwnUnits(159);
     BuyFirst();
     Accept();
     CHECK_EQ(NumUnits(), 160);
-    REQUIRE(message.ShowWindow);
+    REQUIRE(message.View()->ShowWindow);
     CHECK_EQ(message.Text, MCFormatPrintf(LoadGameString(0x372, 0xfe), 160, 200));
     CloseMessage();
 
@@ -1165,14 +1166,14 @@ TEST_CASE_ISOLATED("game: with MoreUnits the shop sells past 50 units up to 200,
     BuyFirst();
     Accept();
     CHECK_EQ(NumUnits(), 200);
-    REQUIRE(message.ShowWindow);
+    REQUIRE(message.View()->ShowWindow);
     CHECK_EQ(message.Text, LoadGameString(0x374, 0xfe));
     CloseMessage();
 
     // At 200: none sold, the same word.
     BuyFirst();
     CHECK_EQ(NumUnits(), 200);
-    REQUIRE(message.ShowWindow);
+    REQUIRE(message.View()->ShowWindow);
     CHECK_EQ(message.Text, LoadGameString(0x374, 0xfe));
     CloseMessage();
 }

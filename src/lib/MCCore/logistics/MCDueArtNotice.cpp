@@ -2,7 +2,7 @@
 #include "logistics/MCDueArtNotice.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCLogMenus.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCBenchmark.h"
@@ -62,7 +62,7 @@ namespace
     }
 
     /// <summary>Whether <paramref name="dialog"/> shows the notice.</summary>
-    bool ShowsNotice(MCReusableDialog& dialog)
+    bool ShowsNotice(MCMenuDialog& dialog)
     {
         return dialog.IsShowing() && (dialog.Text == DownloadingText || dialog.Text == ReadyText);
     }
@@ -78,12 +78,12 @@ void ShowDueArtNotice()
 {
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
-    if (logistics == nullptr || logistics->MessageDialog == nullptr || logistics->QuestionDialog == nullptr)
+    if (logistics == nullptr || logistics->Message == nullptr || logistics->Question == nullptr)
     {
         return;
     }
 
-    MCReusableDialog& dialog = *logistics->MessageDialog;
+    MCMenuDialog& dialog = *logistics->Message;
 
     // Its screen left (the room on to its match, say), it closes: it holds nothing up.
     if (ShowsNotice(dialog))
@@ -101,7 +101,7 @@ void ShowDueArtNotice()
 
     // A benchmark's run (main/MCBenchmark.h) goes through the briefing by itself: nothing stops it.
     if (Seen || text.empty() || MCBenchmark::Running() || !OnNoticeScreen(*logistics) || dialog.IsShowing() ||
-        logistics->QuestionDialog->IsShowing() || UpdatePageShown())
+        logistics->Question->IsShowing() || UpdatePageShown())
     {
         return;
     }

@@ -12,7 +12,7 @@
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogChat.h"
 #include "logistics/MCLogDialogButton.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameStrings.h"
@@ -463,11 +463,11 @@ namespace
     {
         if (LobbyLaunchArgs.Active)
         {
-            ShowOkDialog(*GlobalLog()->MessageDialog, text, CancelToMPlayer);
+            ShowOkDialog(*GlobalLog()->Message, text, CancelToMPlayer);
             return;
         }
 
-        GlobalLog()->MessageDialog->Deactivate(0);
+        GlobalLog()->Message->Deactivate(0);
         ShowMenuMessage(text);
     }
 

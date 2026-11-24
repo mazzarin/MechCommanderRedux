@@ -13,6 +13,7 @@
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
@@ -1095,7 +1096,7 @@ namespace MCTestGuest
 
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         return logistics != nullptr && logistics->MessageDialog != nullptr && logistics->MessageDialog->ShowWindow
-                   ? logistics->MessageDialog->Text
+                   ? logistics->Message->Text
                    : std::string();
     }
 

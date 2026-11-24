@@ -3,7 +3,7 @@
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCPreferencesMenu.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -199,8 +199,8 @@ bool NoticeScreenFree()
     // Port-only (stage 7): the remade main menu with nothing over it is free (logistics/MCMainMenuScreen.h); (stage 4)
     // so is the remade room, which a launcher's game never leaves. Only with nothing over it: a notice already shown
     // holds the next (each frame asks again).
-    return logistics != nullptr && OnNoticeScreen(*logistics) && !logistics->MessageDialog->IsShowing() &&
-           !logistics->QuestionDialog->IsShowing() && !UpdatePageShown() &&
+    return logistics != nullptr && OnNoticeScreen(*logistics) && !logistics->Message->IsShowing() &&
+           !logistics->Question->IsShowing() && !UpdatePageShown() &&
            (!RemadeShows() || MCMainMenuScreens::MainOnTop() || RoomScreenOnTop());
 }
 
@@ -223,8 +223,7 @@ void ShowReportsNotice()
     if (prompt == MCPrompt::Ask)
     {
         AskMenuQuestion(
-            *logistics->QuestionDialog, QuestionText, [] { Answer(true); }, [] { Answer(false); }, "bg_cancl.tga",
-            true);
+            *logistics->Question, QuestionText, [] { Answer(true); }, [] { Answer(false); }, "bg_cancl.tga", true);
     }
     else
     {

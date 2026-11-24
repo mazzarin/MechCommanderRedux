@@ -19,7 +19,7 @@
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "gui/MCGuiRef.h"
 #include "main/MCMPPlayerLights.h"
@@ -548,10 +548,10 @@ auto MCLogistics::HandleLostPlayer(uint32_t playerID, int) const -> void
         return;
     }
 
-    MCReusableDialog& dialog = *MessageDialog;
+    MCMenuDialog& dialog = *Message;
 
     // A dialog already up whose button exits keeps showing; the message follows once it is answered.
-    if (dialog.IsShowing() != 0 && dialog.OkButton->Callback().Runs(DoExit))
+    if (dialog.IsShowing() != 0 && dialog.Ok.Runs(DoExit))
     {
         dialog.Callback = LostPlayerHandler;
         return;
@@ -1081,14 +1081,13 @@ auto LostPlayerHandler(int32_t answer) -> void
     }
 
     // Show HoldString (from HandleLostPlayer) with an OK button; it closes itself after five seconds.
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.SetText(HoldString);
     dialog.SetTwoButton(false);
     dialog.Callback = CancelBool;
-    dialog.OkButton->Callback().SetExec(nullptr);
-    dialog.OkButton->SetUpPicture("bh_okay.tga");
-    dialog.OkButton->SetDownPicture("bg_okay.tga");
-    dialog.OkButton->Disabled = false;
+    dialog.Ok.Exec = nullptr;
+    dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+    dialog.Ok.Disabled = false;
     dialog.Timeout = 5000;
     dialog.TimeoutResult = 1;
     dialog.Activate();

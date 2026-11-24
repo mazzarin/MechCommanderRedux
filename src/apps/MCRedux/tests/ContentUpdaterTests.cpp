@@ -19,6 +19,7 @@
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -4025,13 +4026,13 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until
     MCScreenInput::SaveShot("hd options art size", MCScreenInput::ScreenHash());
 
     // A click on 2X asks first, saying how much it downloads: CANCEL keeps the full art.
-    MCReusableDialog& question = *GlobalLog()->QuestionDialog;
+    MCMenuDialog& question = *GlobalLog()->Question;
     MCScreenInput::RealClick(centre->first, centre->second);
     ScreenFrames();
     REQUIRE(question.IsShowing());
     CHECK_EQ(question.Text, std::format("Download the 2X HD art ({})?", twoX));
     MCScreenInput::SaveShot("hd options art size question", MCScreenInput::ScreenHash());
-    RealClickOn(*question.CancelButton);
+    RealClickOn(*question.View()->CancelButton);
     CHECK(!question.IsShowing());
     CHECK(!MCUpdater::HdPack().TwoXChosen);
     CHECK(!MCUpdater::Working());
@@ -4041,7 +4042,7 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until
     MCScreenInput::RealClick(centre->first, centre->second);
     ScreenFrames();
     REQUIRE(question.IsShowing());
-    RealClickOn(*question.OkButton);
+    RealClickOn(*question.View()->OkButton);
     CHECK(MCUpdater::HdPack().TwoXChosen);
     CHECK(MCUpdater::HdPack().PlayerPicked);
     CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("2X"));
@@ -4085,11 +4086,11 @@ TEST_CASE_ISOLATED("game: HD OPTIONS says a failed HD art download in a player's
     // The 2X art's archive gone from the release's host, as a build's not yet published: 2X, asked and taken, fails.
     std::error_code error;
     REQUIRE(std::filesystem::remove(release.Host.Path() / "hd2x-2.zip", error));
-    MCReusableDialog& question = *GlobalLog()->QuestionDialog;
+    MCMenuDialog& question = *GlobalLog()->Question;
     MCScreenInput::RealClick(centre->first, centre->second);
     ScreenFrames();
     REQUIRE(question.IsShowing());
-    RealClickOn(*question.OkButton);
+    RealClickOn(*question.View()->OkButton);
     REQUIRE(ScreenFramesUntil(MCStage::Failed));
     ScreenFrames();
     CHECK_EQ(list->Description(HdPackRow), std::string("THE DOWNLOAD FAILED. GET TRIES AGAIN."));
@@ -4117,11 +4118,11 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD o
     const std::shared_ptr<MCLogTextButton> remove = ShownButton("REMOVE");
 
     // Asked first: CANCEL keeps it.
-    MCReusableDialog& question = *GlobalLog()->QuestionDialog;
+    MCMenuDialog& question = *GlobalLog()->Question;
     RealClickOn(*remove);
     REQUIRE(question.IsShowing());
     MCScreenInput::SaveShot("hd options remove question", MCScreenInput::ScreenHash());
-    RealClickOn(*question.CancelButton);
+    RealClickOn(*question.View()->CancelButton);
     CHECK(!question.IsShowing());
     CHECK(MCUpdater::HdPack().Chosen);
     CHECK(!MCUpdater::Working());
@@ -4129,7 +4130,7 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD o
     // OK: it goes at the restart.
     RealClickOn(*remove);
     REQUIRE(question.IsShowing());
-    RealClickOn(*question.OkButton);
+    RealClickOn(*question.View()->OkButton);
     CHECK(!MCUpdater::HdPack().Chosen);
     REQUIRE(ScreenFramesUntil(MCStage::Ready));
     ScreenFrames();
@@ -4321,7 +4322,7 @@ TEST_CASE_ISOLATED("game: a mission's briefing says once a run, the new HD art a
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE(GameFramesUntil([] { return Stage() == MCStage::Ready; }));
     SettleScreen();
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
 
     // Not on the main menu, whose line says it.
     CHECK(!dialog.IsShowing());
@@ -4362,7 +4363,7 @@ TEST_CASE_ISOLATED("game: a match's room says once, as the player hosts it, that
     REQUIRE(MCTestGame::StartLobby(std::format("-host -port {} -player BOB", DueRoomPort)));
     REQUIRE(GameFramesUntil([&] { return stall->Reached.load(); }));
     ScreenFrames();
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     REQUIRE(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string(DueArtDownloadingNotice));
@@ -4411,7 +4412,7 @@ TEST_CASE_ISOLATED("game: a copy with no release due says nothing of new HD art:
     NewCampaign();
     SettleScreen();
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
 }
 
 TEST_CASE("updater: the art a program installed alone came for, without HD (the player took it out), is no new HD "

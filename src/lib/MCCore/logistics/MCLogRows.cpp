@@ -6,7 +6,7 @@
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
 #include "mission/MCMission.h"
@@ -112,16 +112,15 @@ auto ShowLogMessage(uint32_t stringId, bool okayArt) -> void
 
 auto ShowLogMessage(std::string_view text, bool okayArt) -> void
 {
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.SetText(text);
     dialog.SetTwoButton(false);
     dialog.Callback = nullptr;
 
     if (okayArt)
     {
-        dialog.OkButton->SetUpPicture("bh_okay.tga");
-        dialog.OkButton->SetDownPicture("bg_okay.tga");
-        dialog.OkButton->Disabled = false;
+        dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+        dialog.Ok.Disabled = false;
     }
 
     dialog.Activate();

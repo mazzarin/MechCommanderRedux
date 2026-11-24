@@ -25,6 +25,7 @@ class MCFitIniFile;
 class MCLogChat;
 class MCLogChatWindow;
 class MCLogInvScreen;
+class MCMenuDialog;
 class MCPacketFile;
 struct MCPane;
 class MCPurchaseDlg;
@@ -793,8 +794,16 @@ public:
     int32_t NextWarriorID = 0;
     MCGuiHandle<MCPurchaseDlg> PurchaseDialog;
     /// <summary>The one-button (or yes/no) message dialog.</summary>
-    MCGuiHandle<MCReusableDialog> MessageDialog;
+    std::shared_ptr<MCMenuDialog> Message;
     /// <summary>The yes/no dialog.</summary>
+    std::shared_ptr<MCMenuDialog> Question;
+    /// <summary>The refit list (the 1998 'MECH BAY's).</summary>
+    std::shared_ptr<MCMenuDialog> Refit;
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9, step 2): the 1998 boxes that show <see cref="Message"/>,
+    /// <see cref="Question"/> and <see cref="Refit"/> where the menus can't start.
+    /// </summary>
+    MCGuiHandle<MCReusableDialog> MessageDialog;
     MCGuiHandle<MCReusableDialog> QuestionDialog;
     MCGuiHandle<MCRefitDialog> RefitDialog;
     /// <summary>The campaign's CampaignBriefing Filename (empty when it has none).</summary>

@@ -15,6 +15,7 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPlayerNameObject.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -457,7 +458,7 @@ TEST_CASE_ISOLATED(
     ann.Leave();
     cal.Leave();
     Settle();
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
 }
 
 /// <summary>
@@ -486,7 +487,7 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update keeps its pl
     CHECK(SettleUntil([&] { return MCLobbyUpdate::LeftToUpdate(ann.Id()); }));
     ann.Leave();
     Settle();
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
     MCScreenInput::SaveShot("lobby guest 0 updating", MCScreenInput::ScreenHash());
 
     Guest back("ANN");
@@ -495,7 +496,7 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update keeps its pl
     CHECK(Shows(screen, back.Id()));
     CHECK(!Shows(screen, ann.Id()));
     CHECK(RoomOpen());
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
     MCScreenInput::SaveShot("lobby guest 1 back", MCScreenInput::ScreenHash());
 
     back.SendRules(hostId, MCMatchRule::Supported);
@@ -560,7 +561,7 @@ TEST_CASE_ISOLATED("game: a lobby's START asks while a guest is away updating, a
     // The guest gone (as it quits), its name left in its slot: START asks, and CANCEL stays in the room.
     ann.Leave();
     Settle();
-    MCReusableDialog& question = *GlobalLog()->QuestionDialog;
+    MCMenuDialog& question = *GlobalLog()->Question;
     MCTestGuest::PressInRoom("begin");
     REQUIRE(question.IsShowing());
     CHECK_EQ(question.Text, std::string("ANN is updating. Start without ANN?"));
@@ -638,7 +639,7 @@ TEST_CASE_ISOLATED("game: a lobby's room lets a guest away updating go after its
     CHECK(!Shows(screen, ann.Id()));
     CHECK(MCSessionScreen::Room().StartWaits.empty());
     CHECK(!screen.StartButton->Disabled);
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
     MCScreenInput::SaveShot("lobby start waits 1 guest not back", MCScreenInput::ScreenHash());
 }
 
@@ -754,7 +755,7 @@ TEST_CASE_ISOLATED("game: a lobby's START counts only the players there, and ask
     // The remade room's foot says it with the names as typed.
     REQUIRE(RoomScreenShown());
     CHECK_EQ(RoomScreen()->Seen().Status, std::string("Waiting for ANN and CAL to rejoin."));
-    MCReusableDialog& question = *GlobalLog()->QuestionDialog;
+    MCMenuDialog& question = *GlobalLog()->Question;
     MCTestGuest::PressInRoom("begin");
     CHECK(!question.IsShowing());
 
@@ -978,7 +979,7 @@ TEST_CASE_ISOLATED("game: a lobby's host whose update fails after RESTART keeps 
     CHECK_EQ(MCSessionScreen::Room().StartWaits, std::string("WAITING FOR CAL, ANN TO REJOIN."));
     cal.Leave();
     Settle();
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
 
     Guest annBack("ANN");
     Guest calBack("CAL");
@@ -990,7 +991,7 @@ TEST_CASE_ISOLATED("game: a lobby's host whose update fails after RESTART keeps 
     CHECK(MCSessionScreen::Room().StartWaits.empty());
     CHECK(Shows(screen, annBack.Id()));
     CHECK(Shows(screen, calBack.Id()));
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
 
     // The same room: it still has kept ANN's place once (ANN's game offers no RESTART), so ANN's Updating keeps
     // nothing. CAL's place it kept only for its host's restart: CAL's own is kept.
@@ -1045,7 +1046,7 @@ namespace
     /// <summary>Whether the message dialog's OK ends the game, back to the lobby (CancelToMPlayer, which quits it).</summary>
     bool OkEndsTheGame()
     {
-        const MCGuiCallback& ok = GlobalLog()->MessageDialog->OkButton->Callback();
+        const MCMenuDialog::MCButton& ok = GlobalLog()->Message->Ok;
 
         if (!ok.Runs(CancelToMPlayer))
         {

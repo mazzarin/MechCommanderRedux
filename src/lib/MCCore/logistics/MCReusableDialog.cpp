@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "ui/MCRmlDialog.h"
-#include "ui/MCRmlFlow.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "iface/MCKeyBindings.h"
@@ -67,11 +67,9 @@ auto MCReusableDialog::Init([[maybe_unused]] int32_t xPos, [[maybe_unused]] int3
 
     OkButton = CreateChild<MCLogDialogButton>(initButton);
     CancelButton = CreateChild<MCLogDialogButton>(initButton);
-    SetTwoButton(false);
+    PlaceButtons();
     ShowGuiWindow(false);
     SetDepth(100);
-    TimeoutResult = 0;
-    KeepCallbacks = false;
     return 0;
 }
 
@@ -80,8 +78,68 @@ auto MCReusableDialog::OnDestroy() -> void
     TopPiece.reset();
     MiddlePiece.reset();
     BottomPiece.reset();
-    Text.clear();
     MCLogObject::OnDestroy();
+}
+
+auto MCReusableDialog::SetModel(std::weak_ptr<MCMenuDialog> model) -> void
+{
+    _Model = std::move(model);
+
+    // Its buttons run the model's (a click runs its button, then closes the dialog: MCLogDialogButton).
+    const auto runs = [this](bool ok)
+    {
+        return [model = _Model, ok]
+        {
+            if (const std::shared_ptr<MCMenuDialog> shown = model.lock(); shown != nullptr)
+            {
+                (ok ? shown->Ok : shown->Cancel).Run();
+            }
+        };
+    };
+
+    OkButton->Callback().SetExec(runs(true));
+    CancelButton->Callback().SetExec(runs(false));
+    Lay();
+}
+
+auto MCReusableDialog::ModelText() const -> std::string
+{
+    const std::shared_ptr<MCMenuDialog> model = _Model.lock();
+    return model != nullptr ? model->Text : std::string();
+}
+
+auto MCReusableDialog::SyncButtons() -> void
+{
+    const std::shared_ptr<MCMenuDialog> model = _Model.lock();
+
+    if (model == nullptr)
+    {
+        return;
+    }
+
+    const auto sync = [](MCLogDialogButton& button, const MCMenuDialog::MCButton& state, std::string& downArt)
+    {
+        if (button.UpPictureName != state.UpArt)
+        {
+            button.SetUpPicture(state.UpArt);
+        }
+
+        if (downArt != state.DownArt)
+        {
+            downArt = state.DownArt;
+            button.SetDownPicture(state.DownArt);
+        }
+
+        button.Disabled = state.Disabled;
+
+        if ((button.ShowWindow != 0) != state.Shown)
+        {
+            button.ShowGuiWindow(state.Shown);
+        }
+    };
+
+    sync(*OkButton, model->Ok, _OkDownArt);
+    sync(*CancelButton, model->Cancel, _CancelDownArt);
 }
 
 auto MCReusableDialog::DrawFrame() -> void
@@ -111,13 +169,15 @@ auto MCReusableDialog::DrawFrame() -> void
 
 auto MCReusableDialog::Draw() -> void
 {
+    SyncButtons();
     DrawFrame();
 
     // The text, word-wrapped to the box: each line ends where the font says the words fit, and the character there
     // (a space) is skipped.
     int32_t lineY = TopPiece->Height() + 2;
+    const std::string text = ModelText();
 
-    for (std::string_view rest : Paragraphs(Text))
+    for (std::string_view rest : Paragraphs(text))
     {
         auto fit = static_cast<size_t>(MedBlueFont->CharactersToWidth(rest, WrapWidth(), true));
 
@@ -148,42 +208,25 @@ auto MCReusableDialog::Draw() -> void
 
 auto MCReusableDialog::HandleEvent(MCGuiEvent& event) -> void
 {
-    if (event.Type == MCGuiEventType::KeyDown)
+    const std::shared_ptr<MCMenuDialog> model = _Model.lock();
+
+    if (event.Type == MCGuiEventType::KeyDown && model != nullptr)
     {
         if (event.Key == 0x0d)
         {
-            OkButton->RunCallback();
-            Deactivate(TwoButton ? -1 : 0);
-        }
-        else if (event.Key == 0x1b && TwoButton)
-        {
-            // OB-074 (fixed): Escape answers a question with CANCEL (the original ran OK's callback, so Escape on "Are you
-            // sure you want to exit?" left the game).
-            CancelButton->RunCallback();
-            Deactivate(0);
+            model->Enter();
         }
         else if (event.Key == 0x1b)
         {
-            // Original behaviour (OB-074): Escape runs a message's one button (OK) too.
-            OkButton->RunCallback();
-            Deactivate(0);
+            model->Escape();
         }
-        else if (KeyTaker && event.ScanCode != 0 && !MCKeyBindings::IsModifierKey(event.ScanCode))
+        else if (model->KeyTaker && event.ScanCode != 0 && !MCKeyBindings::IsModifierKey(event.ScanCode))
         {
             // Port-only: the key the dialog asks for.
-            if (KeyTaker(MCKeyBindings::FromKeyEvent(event.ScanCode, event.ShiftKey != 0, event.CtrlKey != 0,
-                                                     event.AltKey != 0)))
-            {
-                Deactivate(0);
-            }
-
+            model->TakeKey(MCKeyBindings::FromKeyEvent(event.ScanCode, event.ShiftKey != 0, event.CtrlKey != 0,
+                                                       event.AltKey != 0));
             return;
         }
-    }
-    else if (event.Type == MCGuiEventType::Timer)
-    {
-        // Timed out.
-        Deactivate(TimeoutResult);
     }
 
     // While grabbed, clicks go to the child under the mouse.
@@ -201,104 +244,10 @@ auto MCReusableDialog::HandleEvent(MCGuiEvent& event) -> void
     MCGuiObject::HandleEvent(event);
 }
 
-auto MCReusableDialog::WordOf(const MCLogButton& button) -> std::string
-{
-    constexpr std::string_view CancelPicture = "bh_cancl";
-    std::string name = button.UpPictureName;
-    std::ranges::transform(name, name.begin(),
-                           [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
-    return name.starts_with(CancelPicture) ? "Cancel" : "OK";
-}
-
 auto MCReusableDialog::IsShowing() -> bool
 {
-    return MCLogObject::IsShowing() || StillSaid();
-}
-
-auto MCReusableDialog::StillSaid() const -> bool
-{
-    if (!_SaidOverRemade)
-    {
-        return false;
-    }
-
-    // Hidden by a change of screens, its say comes back (MCRmlDialogs::Tend) unless a newer one took its place.
-    if (MCRmlDialogs::Returning(_Said))
-    {
-        return true;
-    }
-
-    const MCGuiHandle<MCRmlDialog> dialog = MCRmlDialogs::Dialog();
-    return MCRmlDialogs::Shown() && dialog && dialog->Said().Text == _Said;
-}
-
-auto MCReusableDialog::SayOverRemade() -> bool
-{
-    // Port-only (SPEC-menus.md's stage 9): whenever the menus run, over a remade screen or not; the 1998 box only where
-    // they can't start.
-    if (OldBoxOnly() || !MCRmlFlow::Menus().has_value())
-    {
-        return false;
-    }
-
-    // Its buttons as Enter and Escape press them here (HandleEvent): OK, then the dialog closed with OK's result; CANCEL,
-    // or a message's one button for Escape, with 0.
-    const std::weak_ptr<MCGuiObject> self = weak_from_this();
-    const auto answer = [self](bool ok)
-    {
-        const std::shared_ptr<MCGuiObject> object = self.lock();
-
-        if (object == nullptr)
-        {
-            return;
-        }
-
-        auto& dialog = static_cast<MCReusableDialog&>(*object);
-        dialog._SaidOverRemade = false;
-        const bool two = dialog.TwoButton;
-        (ok ? *dialog.OkButton : *dialog.CancelButton).RunCallback();
-        dialog.Deactivate(ok && two ? -1 : 0);
-    };
-
-    _Said = MCRmlDialogs::AsSentence(Text);
-    MCRmlDialog::MCSay say{.Text = _Said,
-                           .Main = OkButton->Disabled ? std::string() : WordOf(*OkButton),
-                           .Other = TwoButton ? WordOf(*CancelButton) : std::string(),
-                           .OnMain = [answer] { answer(true); },
-                           .OnOther = [answer] { answer(false); }};
-
-    // Through a change to a 1998 screen with no remade one after it, it shows the old way, as the original's stayed up.
-    say.OnLost = [self]
-    {
-        const std::shared_ptr<MCGuiObject> object = self.lock();
-
-        if (object == nullptr)
-        {
-            return;
-        }
-
-        auto& dialog = static_cast<MCReusableDialog&>(*object);
-
-        if (std::exchange(dialog._SaidOverRemade, false))
-        {
-            dialog.ShowOld();
-        }
-    };
-
-    if (!MCRmlDialogs::Show(std::move(say)))
-    {
-        return false;
-    }
-
-    _SaidOverRemade = true;
-    ShowGuiWindow(false);
-
-    if (Timeout > 0)
-    {
-        GuiSystem().AddTimer(weak_from_this(), TimeoutTimer, Timeout, 0, 0, false);
-    }
-
-    return true;
+    const std::shared_ptr<MCMenuDialog> model = _Model.lock();
+    return model != nullptr ? model->IsShowing() : ShownOld();
 }
 
 auto MCReusableDialog::OldBoxOnly() -> bool&
@@ -307,31 +256,22 @@ auto MCReusableDialog::OldBoxOnly() -> bool&
     return only;
 }
 
-auto MCReusableDialog::Activate() -> void
+auto MCReusableDialog::Deactivate(int32_t result) -> void
 {
-    // Port-only (SPEC-menus.md's stage 4): over a remade screen, the remade dialog says it (a key asked for, it passes
-    // here).
-    if (SayOverRemade())
+    if (const std::shared_ptr<MCMenuDialog> model = _Model.lock(); model != nullptr)
     {
-        return;
-    }
-
-    _SaidOverRemade = false;
-    ShowOld();
-
-    if (Timeout > 0)
-    {
-        GuiSystem().AddTimer(weak_from_this(), TimeoutTimer, Timeout, 0, 0, false);
+        model->Deactivate(result);
     }
 }
 
 auto MCReusableDialog::ShowOld() -> void
 {
-    MCRmlDialogs::NoteOldBox(Text);
+    MCRmlDialogs::NoteOldBox(ModelText());
     GuiSystem().Grab(weak_from_this());
     // The original painted the dialog afresh: a press left on its buttons was gone.
     OkButton->PressedDown = false;
     CancelButton->PressedDown = false;
+    SyncButtons();
     // Port-only (SPEC-menus.md's stage 1): centred on what the window shows (the menus' frame: (320, 240) as the
     // original's), on its parent.
     const SDL_Rect shown = GuiSystem().ShownView();
@@ -341,63 +281,23 @@ auto MCReusableDialog::ShowOld() -> void
     ShowGuiWindow(true);
 }
 
-auto MCReusableDialog::Deactivate(int32_t dialogResult) -> void
+auto MCReusableDialog::HideOld(bool release) -> void
 {
-    // Port-only (SPEC-menus.md's stage 4): said over the remade screens, it grabbed nothing; closed by its timeout (or
-    // by its owner), the remade dialog closes too.
-    if (_SaidOverRemade)
-    {
-        if (StillSaid())
-        {
-            MCRmlDialogs::Close();
-        }
-
-        _SaidOverRemade = false;
-    }
-    else
+    if (release)
     {
         GuiSystem().Release();
     }
 
     ShowGuiWindow(false);
-    // Port-only (SPEC-menus.md's stage 3): a wait said over a remade screen in this dialog's place ends with it.
-    MCRmlDialogs::EndWait();
-
-    // Port-only: the keyboard a dialog asking for a key held (KeyTaker) goes back.
-    if (GuiSystem().HasText(*this))
-    {
-        GuiSystem().ReleaseText();
-    }
-
-    // The original also skipped a callback pointer IsBadReadPtr rejected.
-    if (Callback)
-    {
-        Callback(dialogResult);
-    }
-
-    if (KeepCallbacks)
-    {
-        KeepCallbacks = false;
-        return;
-    }
-
-    Callback = nullptr;
-    KeyTaker = nullptr;
-    OkButton->Callback().SetExec(nullptr);
-    CancelButton->Callback().SetExec(nullptr);
-    GuiSystem().RemoveTimer(*this, TimeoutTimer);
-    Timeout = 0;
-    TimeoutResult = 0;
 }
 
-auto MCReusableDialog::SetText(std::string_view newText) -> void
+auto MCReusableDialog::Lay() -> void
 {
-    Text = newText.substr(0, newText.find('\0'));
-
     // Count the wrapped lines; each middle piece holds two.
     int32_t lines = 0;
+    const std::string text = ModelText();
 
-    for (std::string_view rest : Paragraphs(Text))
+    for (std::string_view rest : Paragraphs(text))
     {
         auto fit = static_cast<size_t>(MedBlueFont->CharactersToWidth(rest, WrapWidth(), true));
         lines++;
@@ -412,50 +312,53 @@ auto MCReusableDialog::SetText(std::string_view newText) -> void
 
     NumMiddlePieces = (lines + 1) / 2;
     Resize(Width(), MiddlePiece->Height() * NumMiddlePieces + BottomPiece->Height() + TopPiece->Height());
-    SetTwoButton(TwoButton);
+    PlaceButtons();
 }
 
-auto MCReusableDialog::SetTwoButton(bool twoButtons) -> void
+auto MCReusableDialog::PlaceButtons() -> void
 {
-    TwoButton = twoButtons;
+    const std::shared_ptr<MCMenuDialog> model = _Model.lock();
+    const bool two = model != nullptr && model->TwoButton;
     const int32_t buttonY = Height() - 0x17;
-    // Port: OK shows again after a waiting message (ShowWaitingDialog), which hides the buttons: the message that
-    // followed one (COULDN'T JOIN THE ROOM AGAIN...) had nothing to click, only Return closing it.
-    OkButton->ShowGuiWindow(true);
+    SyncButtons();
 
-    if (TwoButton)
+    if (two)
     {
-        CancelButton->ShowGuiWindow(true);
         CancelButton->MoveTo(0x68, buttonY, false);
         OkButton->MoveTo(0x23, buttonY, false);
         return;
     }
 
-    CancelButton->ShowGuiWindow(false);
+    if (model == nullptr)
+    {
+        CancelButton->ShowGuiWindow(false);
+    }
+
     OkButton->MoveTo(0x68, buttonY, false);
 }
 
 // MCRefitDialog
 
-auto MCRefitDialog::SetText(std::string_view newText) -> void
+auto MCRefitDialog::Lay() -> void
 {
-    Text = newText.substr(0, newText.find('\0'));
     // The text is a comma-separated list, one item per line, between six lines of framing text.
-    const auto lines = static_cast<int32_t>(7 + std::ranges::count(Text, ','));
+    const auto lines = static_cast<int32_t>(7 + std::ranges::count(ModelText(), ','));
     NumMiddlePieces = lines / 2;
     NumItems = lines - 6;
     Resize(Width(), MiddlePiece->Height() * NumMiddlePieces + BottomPiece->Height() + TopPiece->Height());
-    MCReusableDialog::SetTwoButton(TwoButton);
+    PlaceButtons();
 }
 
 auto MCRefitDialog::Draw() -> void
 {
+    SyncButtons();
     DrawFrame();
     int32_t lineY = WrapText(LoadGameString(0x54, 0xfe), TopPiece->Height() + 2);
     lineY += TextLineHeight();
 
     // One item per line, cut at the commas; the last item takes the rest.
-    std::string_view items = Text;
+    const std::string text = ModelText();
+    std::string_view items = text;
 
     for (int32_t i = NumItems; i > 0; i--)
     {

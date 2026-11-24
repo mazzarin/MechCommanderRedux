@@ -8,7 +8,7 @@
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCRegistrySettings.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
@@ -222,13 +222,12 @@ void SaveGameCallback()
     if (result == 0)
     {
         // "Game saved", closing by itself after three seconds.
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+        MCMenuDialog& dialog = *GlobalLog()->Message;
         dialog.SetText(LoadGameString(0x76, 0xfe));
         dialog.SetTwoButton(false);
         dialog.Callback = SaveWorkedCallback;
-        dialog.OkButton->SetUpPicture("bh_okay.tga");
-        dialog.OkButton->SetDownPicture("bg_okay.tga");
-        dialog.OkButton->Disabled = false;
+        dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+        dialog.Ok.Disabled = false;
         dialog.Timeout = 3000;
         dialog.Activate();
         DestroyNameEntry(*pane);
@@ -285,15 +284,13 @@ void SaveGame()
     }
 
     // Overwrite? (The cancel button keeps whatever action it had.)
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.SetText(LoadGameString(0x75, 0xfe));
     dialog.SetTwoButton(true);
     dialog.Callback = nullptr;
-    dialog.OkButton->SetUpPicture("bh_okay.tga");
-    dialog.OkButton->SetDownPicture("bg_okay.tga");
-    dialog.OkButton->Callback().SetExec(ClearForSaveGameCallback);
-    dialog.CancelButton->SetUpPicture("bh_cancl.tga");
-    dialog.CancelButton->SetDownPicture("bg_cancl.tga");
+    dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+    dialog.Ok.Exec = ClearForSaveGameCallback;
+    dialog.Cancel.SetPictures("bh_cancl.tga", "bg_cancl.tga");
     dialog.Activate();
 }
 
@@ -341,7 +338,7 @@ void DeleteGame()
         return;
     }
 
-    AskMenuQuestion(*GlobalLog()->MessageDialog, 0x74, DeleteCallbackTrue, DeleteCallbackFalse, "bg_cancl.tga", false);
+    AskMenuQuestion(*GlobalLog()->Message, 0x74, DeleteCallbackTrue, DeleteCallbackFalse, "bg_cancl.tga", false);
     DestroyNameEntry(*pane);
 }
 

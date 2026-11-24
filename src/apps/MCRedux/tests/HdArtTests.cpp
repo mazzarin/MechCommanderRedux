@@ -142,6 +142,7 @@
 #include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCSessionScreen.h"
@@ -15660,7 +15661,7 @@ namespace
     /// <summary>Closes the logistics message dialog without its callback (a question shown only to be pictured).</summary>
     void DismissMessage()
     {
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+        MCMenuDialog& dialog = *GlobalLog()->Message;
         dialog.Callback = nullptr;
         dialog.Deactivate(0);
     }

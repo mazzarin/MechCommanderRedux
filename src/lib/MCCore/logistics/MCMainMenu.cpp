@@ -10,7 +10,7 @@
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCRegistrySettings.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
 #include "mission/MCMission.h"
@@ -186,16 +186,14 @@ void LeaveMatch()
 
 void CheckExit()
 {
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.SetText(LoadGameString(0xaf, 0xfe));
     dialog.SetTwoButton(true);
     // The dialog's callback and the cancel button's action are left as they were.
-    dialog.OkButton->SetUpPicture("bh_okay.tga");
-    dialog.OkButton->SetDownPicture("bg_okay.tga");
-    dialog.OkButton->Disabled = false;
-    dialog.OkButton->Callback().SetExec(DoExit);
-    dialog.CancelButton->SetUpPicture("bh_cancl.tga");
-    dialog.CancelButton->SetDownPicture("bh_cancl.tga");
-    dialog.CancelButton->Disabled = false;
+    dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+    dialog.Ok.Disabled = false;
+    dialog.Ok.Exec = DoExit;
+    dialog.Cancel.SetPictures("bh_cancl.tga", "bh_cancl.tga");
+    dialog.Cancel.Disabled = false;
     dialog.Activate();
 }

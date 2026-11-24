@@ -12,6 +12,7 @@
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUnitLimits.h"
@@ -86,13 +87,13 @@ namespace
     /// <summary>Checks that the menus' message dialog is up, saves its shot as <paramref name="shot"/>, and closes it with OK.</summary>
     void CloseMenuMessage(std::string_view shot)
     {
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-        CHECK(dialog.ShowWindow != 0);
+        MCMenuDialog& dialog = *GlobalLog()->Message;
+        CHECK(dialog.View()->ShowWindow != 0);
         MCScreenInput::SaveShot(std::string(shot), MCScreenInput::ScreenHash());
-        MCLogDialogButton& ok = *dialog.OkButton;
+        MCLogDialogButton& ok = *dialog.View()->OkButton;
         MCScreenInput::Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
         Frames();
-        CHECK(dialog.ShowWindow == 0);
+        CHECK(dialog.View()->ShowWindow == 0);
     }
 
     /// <summary>The HD settings with no row on the HD OPTIONS page yet (PREFS alone sets them).</summary>

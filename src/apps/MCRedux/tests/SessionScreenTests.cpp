@@ -33,6 +33,7 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogChat.h"
 #include "logistics/MCLogChatWindow.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "main/MCGameContext.h"
@@ -634,7 +635,7 @@ namespace
     }
 
     /// <summary>Clicks <paramref name="dialog"/>'s OK (the remade dialog's, over the remade room).</summary>
-    void ClickOk(MCReusableDialog& dialog)
+    void ClickOk(MCMenuDialog& dialog)
     {
         if (MCRmlDialogs::Shown())
         {
@@ -642,7 +643,7 @@ namespace
             return;
         }
 
-        MCLogDialogButton& ok = *dialog.OkButton;
+        MCLogDialogButton& ok = *dialog.View()->OkButton;
         Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
     }
 }
@@ -678,7 +679,7 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, guest.Id()));
 
     MCSessionScreen& screen = *GlobalLog()->SessionScreen;
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     const uint32_t hostId = manager.MyPlayer()->Id;
     constexpr std::string_view Mission = "ARENA";
     const std::string missionFile = GamePath(SavePath, Mission, ".mpk");
@@ -798,7 +799,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     SaveShot("menus 0 host alone", ScreenHash());
     // A mission loaded with nobody else in the room: its file check is done at once (nobody to answer).
     room.LoadMission("ARENA");
-    REQUIRE(SettleUntil([] { return !GlobalLog()->MessageDialog->IsShowing(); }));
+    REQUIRE(SettleUntil([] { return !GlobalLog()->Message->IsShowing(); }));
     CHECK(!room.LoadMissionButton->Disabled);
     MCTestGuest::PressInRoom("leave");
     CHECK(MCTestGuest::OnLan());
@@ -831,7 +832,7 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     Settle();
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     MCSessionScreen& room = *GlobalLog()->SessionScreen;
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     const uint32_t hostId = manager.MyPlayer()->Id;
     constexpr std::string_view Mission = "ARENA";
     const uint32_t sameData = MCMissionDataHash(GamePath(SavePath, Mission, ".mpk"));
@@ -1196,7 +1197,7 @@ namespace
         room.SetTeamTechBase(2, 1);
         room.LoadMission(RolloverMission);
         REQUIRE(SettleLong(
-            [&] { return !GlobalLog()->MessageDialog->IsShowing() && !MCSessionScreen::Room().MissionFile.empty(); }));
+            [&] { return !GlobalLog()->Message->IsShowing() && !MCSessionScreen::Room().MissionFile.empty(); }));
         room.SetTeam1RP(12000);
         room.SetTeam2RP(9000);
         Settle();
@@ -1317,7 +1318,7 @@ TEST_CASE_ISOLATED(
 
     // BOB's EXIT: the room is ANN's game's now, as it stood.
     REQUIRE(SettleLong([&] { return MultiPlayer()->IsHost && !MCTestGuest::RoomShows(bobId); }));
-    REQUIRE(SettleUntil([&] { return cat.SessionScreens() > catScreens && !GlobalLog()->MessageDialog->IsShowing(); }));
+    REQUIRE(SettleUntil([&] { return cat.SessionScreens() > catScreens && !GlobalLog()->Message->IsShowing(); }));
     Settle();
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     CHECK_EQ(manager.ServerID, ann);

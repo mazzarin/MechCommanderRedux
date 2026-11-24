@@ -8,6 +8,7 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "logistics/MCLogMenus.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
@@ -130,14 +131,14 @@ TEST_CASE_ISOLATED("game: a message with no remade screen under it is the remade
     REQUIRE(MCRmlDialogs::Shown());
     CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text, std::string(SaidMessage));
     CHECK(!GlobalLog()->MessageDialog->ShowWindow);
-    CHECK(GlobalLog()->MessageDialog->IsShowing());
+    CHECK(GlobalLog()->Message->IsShowing());
     CheckLaidOut(Menus().Menus(), "dialog_alone");
 
     MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
     RunFrames(SettleFrames);
     CHECK(!MCRmlDialogs::Shown());
     CHECK(answered.has_value());
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
     CHECK_EQ(MCRmlDialogs::OldBoxes(), oldBoxes);
 }
 

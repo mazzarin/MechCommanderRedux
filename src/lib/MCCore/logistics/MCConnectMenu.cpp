@@ -19,7 +19,7 @@
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCRegistrySettings.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
@@ -92,19 +92,18 @@ namespace
     {
         GuiSystem().AddTimer(screen.weak_from_this(), timer, 1000, 0, 0, false);
         WhackTimer = false;
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+        MCMenuDialog& dialog = *GlobalLog()->Message;
         dialog.SetText(LoadGameString(stringId, 0xfe));
         dialog.SetTwoButton(false);
         dialog.Callback = nullptr;
-        dialog.OkButton->SetUpPicture("bh_cancl.tga");
-        dialog.OkButton->SetDownPicture("bg_cancl.tga");
+        dialog.Ok.SetPictures("bh_cancl.tga", "bg_cancl.tga");
 
         if (enable)
         {
-            dialog.OkButton->Disabled = false;
+            dialog.Ok.Disabled = false;
         }
 
-        dialog.OkButton->Callback().SetExec(std::move(cancelExec));
+        dialog.Ok.Exec = std::move(cancelExec);
         dialog.Activate();
     }
 }
@@ -312,7 +311,7 @@ void DoExitToZone1()
 
 void DoExitToZone()
 {
-    AskMenuQuestion(*GlobalLog()->QuestionDialog, 0x4e9, DoExitToZone1, nullptr, "bh_cancl.tga", true);
+    AskMenuQuestion(*GlobalLog()->Question, 0x4e9, DoExitToZone1, nullptr, "bh_cancl.tga", true);
 }
 
 void DoExitToMplayer()
@@ -324,7 +323,7 @@ void DoExitToMplayer()
 
 void ShowInternet()
 {
-    AskMenuQuestion(*GlobalLog()->MessageDialog, 0x352, DoExitToMplayer, DoExitToZone, "bh_cancl.tga", true);
+    AskMenuQuestion(*GlobalLog()->Message, 0x352, DoExitToMplayer, DoExitToZone, "bh_cancl.tga", true);
 }
 
 void ResetReadyRoom()
@@ -396,7 +395,7 @@ void JoinSerialSession()
 
     CountLanPlayers();
     EnterReadyRoom(*GlobalLog()->SerialScreen, true);
-    GlobalLog()->MessageDialog->Deactivate(0);
+    GlobalLog()->Message->Deactivate(0);
 }
 
 void JoinModemSession()
@@ -412,7 +411,7 @@ void JoinModemSession()
 
     CountLanPlayers();
     EnterReadyRoom(*GlobalLog()->ModemScreen, true);
-    GlobalLog()->MessageDialog->Deactivate(0);
+    GlobalLog()->Message->Deactivate(0);
     WhackTimer = true;
 }
 
@@ -439,13 +438,12 @@ int32_t DialModemSession()
 
 void AllGoneCallback(int32_t)
 {
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     dialog.SetText(LoadGameString(0xbb, 0xfe));
     dialog.SetTwoButton(false);
     dialog.Callback = nullptr;
-    dialog.OkButton->SetUpPicture("bh_okay.tga");
-    dialog.OkButton->SetDownPicture("bg_okay.tga");
-    dialog.OkButton->Callback().SetExec(nullptr);
+    dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+    dialog.Ok.Exec = nullptr;
     dialog.Activate();
 }
 
@@ -468,7 +466,7 @@ void GOCallback()
         return;
     }
 
-    GlobalLog()->MessageDialog->Callback = AllGoneCallback;
+    GlobalLog()->Message->Callback = AllGoneCallback;
 }
 
 void Go()

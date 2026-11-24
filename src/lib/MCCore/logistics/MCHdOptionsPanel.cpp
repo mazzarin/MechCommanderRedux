@@ -6,7 +6,7 @@
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPrefsPage.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
 #include "main/MCTelemetry.h"
@@ -197,8 +197,7 @@ namespace
     void AskToRemoveHd()
     {
         AskMenuQuestion(
-            *GlobalLog()->QuestionDialog, RemoveQuestion, [] { MCUpdater::ChooseHd(false); }, nullptr, CancelHeld,
-            true);
+            *GlobalLog()->Question, RemoveQuestion, [] { MCUpdater::ChooseHd(false); }, nullptr, CancelHeld, true);
     }
 
     /// <summary>Adds HD PACK's buttons to <paramref name="page"/>, hidden until its row places one.</summary>
@@ -271,8 +270,7 @@ namespace
                                          ? std::format(DownloadArtFormat, name)
                                          : std::format(DownloadArtSizedFormat, name, MCUpdateWork::SizeText(bytes));
         AskMenuQuestion(
-            *GlobalLog()->QuestionDialog, question, [twoX] { MCUpdater::ChooseHdArt(twoX); }, nullptr, CancelHeld,
-            true);
+            *GlobalLog()->Question, question, [twoX] { MCUpdater::ChooseHdArt(twoX); }, nullptr, CancelHeld, true);
     }
 
     /// <summary>HD ART SIZE's line: whose pick it is, and both sizes where the release says them.</summary>

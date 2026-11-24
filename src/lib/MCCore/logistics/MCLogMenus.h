@@ -6,7 +6,7 @@
 class MCGenericScreen;
 class MCGuiEvent;
 class MCGuiObject;
-class MCReusableDialog;
+class MCMenuDialog;
 
 /// <summary>
 /// The one-button message dialog with <paramref name="text"/>: an enabled OK button showing <paramref name="upArt"/> /
@@ -25,11 +25,11 @@ void ShowMenuMessage(uint32_t stringId, std::function<void(int32_t)> callback = 
 /// <paramref name="cancelDownArt"/> when pressed. With <paramref name="enableButtons"/> both buttons are enabled.
 /// </summary>
 /// <remarks>The functions are kept as pointers: the logistics screens ask the OK button whether it runs DoExit.</remarks>
-void AskMenuQuestion(MCReusableDialog& dialog, uint32_t stringId, std::function<void()> okExec,
+void AskMenuQuestion(MCMenuDialog& dialog, uint32_t stringId, std::function<void()> okExec,
                      std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons);
 
 /// <summary>As the other overload, with <paramref name="text"/> (port: a question the game's strings don't hold).</summary>
-void AskMenuQuestion(MCReusableDialog& dialog, std::string_view text, std::function<void()> okExec,
+void AskMenuQuestion(MCMenuDialog& dialog, std::string_view text, std::function<void()> okExec,
                      std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons);
 
 /// <summary>The text typed in text element <paramref name="index"/> of <paramref name="screen"/> (up to its first NUL).</summary>

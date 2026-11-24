@@ -17,7 +17,7 @@
 #include "linkup/MCFidpPlayer.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogToolButton.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "network/MCGameDataHash.h"
 #include "network/MCMPGameConfiguration.h"
@@ -1412,7 +1412,7 @@ void LeaveUnloadedMatch()
     }
 
     LeaveToMainMenu(game);
-    ShowOkDialog(*GlobalLog()->MessageDialog, std::string(line), LostConnectionDialogExit);
+    ShowOkDialog(*GlobalLog()->Message, std::string(line), LostConnectionDialogExit);
 }
 
 void HandleLocalPlayerRemoved()
@@ -1442,7 +1442,7 @@ void HandleLocalPlayerRemoved()
         Mission()->EndScenario();
     }
 
-    ShowOkDialog(*GlobalLog()->MessageDialog, line, LostConnectionDialogExit);
+    ShowOkDialog(*GlobalLog()->Message, line, LostConnectionDialogExit);
 }
 
 void TakeHeldSessionLoss()

@@ -17,6 +17,7 @@
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
@@ -170,7 +171,7 @@ namespace
             }
         }
 
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+        MCMenuDialog& dialog = *GlobalLog()->Message;
         return dialog.IsShowing() && dialog.Text == text;
     }
 }
@@ -273,7 +274,7 @@ TEST_CASE_ISOLATED("screen flow: Escape goes back one screen, and on the main me
     PressEscape();
     MCTestGame::RunFrame(FrameSeconds);
     CHECK(!Asks(MCMenuScreens::QuitQuestion));
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
     CHECK(StackNow() == std::vector{main});
 }
@@ -489,9 +490,9 @@ TEST_CASE_ISOLATED("screen flow: a launcher's room is the stack's end, and asks 
     CHECK(StackNow() == std::vector{MCMenuScreens::Room()});
 
     // A dialog the room opens with (a new key's question) answered first.
-    while (GlobalLog()->MessageDialog->IsShowing() && !Asks(MCMenuScreens::LeaveGameQuestion))
+    while (GlobalLog()->Message->IsShowing() && !Asks(MCMenuScreens::LeaveGameQuestion))
     {
-        GlobalLog()->MessageDialog->Deactivate(0);
+        GlobalLog()->Message->Deactivate(0);
         MCTestGame::RunFrame(FrameSeconds);
     }
 
@@ -522,9 +523,9 @@ TEST_CASE_ISOLATED("screen flow: a launcher's LEAVE draws its frames, and lays o
     REQUIRE(RoomScreenShown());
 
     // A dialog the room opens with (a new key's question) answered first.
-    while (GlobalLog()->MessageDialog->IsShowing() && !Asks(MCMenuScreens::LeaveGameQuestion))
+    while (GlobalLog()->Message->IsShowing() && !Asks(MCMenuScreens::LeaveGameQuestion))
     {
-        GlobalLog()->MessageDialog->Deactivate(0);
+        GlobalLog()->Message->Deactivate(0);
         MCTestGame::RunFrame(FrameSeconds);
     }
 

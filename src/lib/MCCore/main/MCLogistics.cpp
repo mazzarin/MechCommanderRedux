@@ -29,6 +29,7 @@
 #include "logistics/MCLogPort.h"
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCPreferencesMenu.h"
@@ -505,7 +506,8 @@ auto MCLogistics::Start() -> void
             PurchaseDialog = dialog.WeakAs<MCPurchaseDlg>();
             dialog.MCLogDialogBox::Init(0xe5, 0xa2, 0xb5, 0x9c);
         });
-    const auto makeDialog = [](auto& handle)
+    // Port-only (SPEC-menus.md's stage 9, step 2): each dialog a model, its 1998 box its view.
+    const auto makeDialog = [](std::shared_ptr<MCMenuDialog>& model, auto& handle)
     {
         using Dialog = std::remove_cvref_t<decltype(*handle.Lock())>;
         ScreenWindow()->CreateChild<Dialog>(
@@ -514,11 +516,13 @@ auto MCLogistics::Start() -> void
                 handle = dialog.template WeakAs<Dialog>();
                 dialog.Init(0, 0, 4, 4, {});
             });
+        model = std::make_shared<MCMenuDialog>();
+        model->SetView(handle);
     };
 
-    makeDialog(MessageDialog);
-    makeDialog(QuestionDialog);
-    makeDialog(RefitDialog);
+    makeDialog(Message, MessageDialog);
+    makeDialog(Question, QuestionDialog);
+    makeDialog(Refit, RefitDialog);
 
     part.reset();
     part.emplace("menus.art");
@@ -1046,6 +1050,9 @@ MCLogistics::~MCLogistics()
     QuestionDialog.reset();
     CloseGuiObject(RefitDialog);
     RefitDialog.reset();
+    Message.reset();
+    Question.reset();
+    Refit.reset();
     InvBlockPort.reset();
     SetCurrentScreen({});
     VehicleList.reset();

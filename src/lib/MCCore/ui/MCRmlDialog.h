@@ -46,7 +46,7 @@ public:
         /// </summary>
         bool Wait = false;
         /// <summary>
-        /// Port-only (SPEC-menus.md's stage 4): an old dialog's say (MCReusableDialog), which stands as a wait does until
+        /// Port-only (SPEC-menus.md's stage 4): an old dialog's say (MCMenuDialog), which stands as a wait does until
         /// answered or ended: a change of screens hides it, and it says itself again over the next remade screen
         /// (MCRmlDialogs::Tend); with none to say itself over, this shows it the old way instead.
         /// </summary>

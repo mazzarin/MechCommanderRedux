@@ -244,6 +244,7 @@
     <ClCompile Include="logistics\MCMechInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCMechPurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCMechRepairBlock.cpp" />
+    <ClCompile Include="logistics\MCMenuDialog.cpp" />
     <ClCompile Include="logistics\MCMenuScreens.cpp" />
     <ClCompile Include="logistics\MCMissionLogisticsBridge.cpp" />
     <ClCompile Include="logistics\MCMissionNames.cpp" />
@@ -812,6 +813,7 @@
     <ClInclude Include="logistics\MCMechInventoryBlock.h" />
     <ClInclude Include="logistics\MCMechPurchaseBlock.h" />
     <ClInclude Include="logistics\MCMechRepairBlock.h" />
+    <ClInclude Include="logistics\MCMenuDialog.h" />
     <ClInclude Include="logistics\MCMenuScreens.h" />
     <ClInclude Include="logistics\MCMissionLogisticsBridge.h" />
     <ClInclude Include="logistics\MCMissionNames.h" />

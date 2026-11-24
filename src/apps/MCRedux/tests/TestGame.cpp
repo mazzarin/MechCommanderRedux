@@ -22,6 +22,7 @@
 #include "logistics/MCLogSlider.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMechPurchaseBlock.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
@@ -588,8 +589,8 @@ namespace MCTestGame
             // The room (the session screen) once the lobby's join is done, or a dialog saying it failed (the 1998 one,
             // or the remade one over the games list: SPEC-menus.md's stage 3).
             if (Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
-                (GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen ||
-                 GlobalLog()->MessageDialog->IsShowing() || MCRmlDialogs::Shown()) &&
+                (GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen || GlobalLog()->Message->IsShowing() ||
+                 MCRmlDialogs::Shown()) &&
                 GuiSystem().SmackerWindow == nullptr && !MCScreenChange::Running())
             {
                 return true;

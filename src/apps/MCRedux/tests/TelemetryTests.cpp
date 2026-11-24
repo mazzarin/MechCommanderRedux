@@ -18,6 +18,7 @@
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCReportsNotice.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -1092,7 +1093,7 @@ namespace
         MCTestGuest::Settle();
         REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
         CHECK(RoomScreenShown());
-        CHECK(!GlobalLog()->MessageDialog->IsShowing());
+        CHECK(!GlobalLog()->Message->IsShowing());
         std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
         REQUIRE(notice != nullptr);
         CHECK(HasKeys(*notice));
@@ -1132,7 +1133,7 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
     reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
     MCTestGame::RunFrame(1.0f / 15.0f);
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     CHECK(!dialog.IsShowing());
     const std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
     REQUIRE(notice != nullptr);
@@ -1177,13 +1178,13 @@ TEST_CASE_ISOLATED("game: the reports' notice in 1998's message box keeps its te
     REQUIRE(MCRemadeTest::Press(*notice, "yes"));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     ShowMenuMessage(ReportsText(MCPrompt::Notice));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE(dialog.IsShowing());
-    CHECK(TextInsidePanel(dialog));
-    MCScreenInput::RealClick(dialog.OkButton->GlobalX() + dialog.OkButton->Width() / 2,
-                             dialog.OkButton->GlobalY() + dialog.OkButton->Height() / 2);
+    CHECK(TextInsidePanel(*dialog.View()));
+    MCScreenInput::RealClick(dialog.View()->OkButton->GlobalX() + dialog.View()->OkButton->Width() / 2,
+                             dialog.View()->OkButton->GlobalY() + dialog.View()->OkButton->Height() / 2);
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(!dialog.IsShowing());
 }
@@ -1216,7 +1217,7 @@ TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice onc
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     MCTestGuest::Settle();
     NoticeAnsweredOverRoom();
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!GlobalLog()->Message->IsShowing());
 }
 
 /// <summary>The reports' notice over a lobby's remade room: Enter, as OK.</summary>
@@ -1270,7 +1271,7 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(reports.Log->Requests.empty());
     // Port-only (SPEC-menus.md's stage 6): the question remade, a dialog over the main menu, SEND with the focus.
-    CHECK(!GlobalLog()->QuestionDialog->IsShowing());
+    CHECK(!GlobalLog()->Question->IsShowing());
     const std::shared_ptr<MCRmlScreen> question = MCRemadeTest::OnTop<MCRmlScreen>();
     REQUIRE(question != nullptr);
     CHECK_EQ(MCRemadeTest::Words(*question, "heading"), std::string("Send reports?"));

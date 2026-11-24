@@ -7,6 +7,7 @@
 #include "lib/MCFitIniFile.h"
 #include "gui/MCScrollPane.h"
 #include "logistics/MCPurchaseDlg.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
@@ -183,13 +184,13 @@ namespace
     /// with OK.</summary>
     void CloseMenuMessage(std::string_view shot)
     {
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-        CHECK(dialog.ShowWindow != 0);
+        MCMenuDialog& dialog = *GlobalLog()->Message;
+        CHECK(dialog.View()->ShowWindow != 0);
         MCScreenInput::SaveShot(std::string(shot), MCScreenInput::ScreenHash());
-        MCLogDialogButton& ok = *dialog.OkButton;
+        MCLogDialogButton& ok = *dialog.View()->OkButton;
         MCScreenInput::Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
         RunFrames();
-        CHECK(dialog.ShowWindow == 0);
+        CHECK(dialog.View()->ShowWindow == 0);
     }
 
     /// <summary>The drop-down under <paramref name="parent"/> (at any depth) whose field lies at <paramref name="dropDown"/>.</summary>
@@ -269,7 +270,7 @@ TEST_CASE_ISOLATED("game: the preferences screen chooses the renderer and saves 
     REQUIRE_EQ(chosen, static_cast<int32_t>(MCRendererKind::Vulkan));
 
     // Choosing another renderer than the running one says it needs a restart; OK closes the message.
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
 
     ShowPreferences();
     RunFrames();
@@ -284,11 +285,11 @@ TEST_CASE_ISOLATED("game: the preferences screen chooses the renderer and saves 
 
     // VULKAN back: no message (it's the running renderer); VULKAN again: no change, no message.
     ChooseIn(RendererDropDown, 0);
-    CHECK(dialog.ShowWindow == 0);
+    CHECK(dialog.View()->ShowWindow == 0);
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));
     CHECK_EQ(MCScreenInput::ScreenHash(), vulkanShown);
     ChooseIn(RendererDropDown, 0);
-    CHECK(dialog.ShowWindow == 0);
+    CHECK(dialog.View()->ShowWindow == 0);
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));
     CHECK_EQ(MCScreenInput::ScreenHash(), vulkanShown);
     ChooseIn(RendererDropDown, 1);
@@ -343,7 +344,7 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));
     REQUIRE(GRenderer != static_cast<int32_t>(MCRendererKind::Software));
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    MCMenuDialog& dialog = *GlobalLog()->Message;
     MCGenericScreen& screen = *GlobalLog()->PrefScreen;
     ShowPreferences();
     MCScreenInput::RealMove(320, 400);
@@ -363,11 +364,11 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
 
     const auto closeNotice = [&]
     {
-        if (dialog.ShowWindow != 0)
+        if (dialog.View()->ShowWindow != 0)
         {
-            MCLogDialogButton& ok = *dialog.OkButton;
+            MCLogDialogButton& ok = *dialog.View()->OkButton;
             MCScreenInput::RealClick(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
-            CHECK(dialog.ShowWindow == 0);
+            CHECK(dialog.View()->ShowWindow == 0);
         }
     };
 
@@ -381,7 +382,7 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
         // (The message, when it shows, takes the mouse itself.)
         CHECK(GuiSystem().GrabbedObject() != renderer);
         CHECK_EQ(GRendererPreference, static_cast<int32_t>(expected));
-        CHECK_EQ(dialog.ShowWindow != 0, notice);
+        CHECK_EQ(dialog.View()->ShowWindow != 0, notice);
         closeNotice();
         CHECK(GuiSystem().GrabbedObject() == nullptr);
     };
@@ -427,7 +428,7 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
         MCScreenInput::RealClick(481, 250);
         MCScreenInput::RealClick(540, 165);
         CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));
-        CHECK(dialog.ShowWindow == 0);
+        CHECK(dialog.View()->ShowWindow == 0);
         CHECK(GuiSystem().GrabbedObject() == nullptr);
     }
 
@@ -445,7 +446,7 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
     MCScreenInput::RealButton(false);
     CHECK(!renderer->IsOpen());
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Software));
-    CHECK(dialog.ShowWindow != 0);
+    CHECK(dialog.View()->ShowWindow != 0);
     closeNotice();
 
     // Keys on the open list: down/up move the lit row, Escape closes with no change, Return chooses.
@@ -465,7 +466,7 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
     CHECK(!renderer->IsOpen());
     CHECK(GuiSystem().GrabbedObject() == nullptr);
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));
-    CHECK(dialog.ShowWindow == 0);
+    CHECK(dialog.View()->ShowWindow == 0);
 
     // The wheel on the open list moves the lit row (down is the next row); Return chooses it.
     MCScreenInput::RealClick(RendererDropDown.FieldX(), RendererDropDown.FieldY());
@@ -475,7 +476,7 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
     CHECK(renderer->IsOpen());
     MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Software));
-    CHECK(dialog.ShowWindow != 0);
+    CHECK(dialog.View()->ShowWindow != 0);
     closeNotice();
 
     // A closed field under the mouse: the wheel and up/down move the choice, clamped at the ends.
@@ -507,7 +508,7 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
             MCScreenInput::RealClick(DifficultyDropDown.FieldX(), DifficultyDropDown.RowY(level));
             CHECK(!difficulty->IsOpen());
             CHECK_EQ(GameDifficulty, level);
-            CHECK(dialog.ShowWindow == 0);
+            CHECK(dialog.View()->ShowWindow == 0);
         }
     }
 

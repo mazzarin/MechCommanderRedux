@@ -16,7 +16,7 @@
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
-#include "logistics/MCReusableDialog.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCSessionScreen.h"
@@ -95,22 +95,20 @@ namespace
     {
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
-        if (logistics == nullptr || logistics->MessageDialog == nullptr)
+        if (logistics == nullptr || logistics->Message == nullptr)
         {
             return;
         }
 
-        MCReusableDialog& dialog = *logistics->MessageDialog;
+        MCMenuDialog& dialog = *logistics->Message;
         dialog.SetText(text);
         dialog.SetTwoButton(true);
         dialog.Callback = nullptr;
-        dialog.OkButton->SetUpPicture("bh_okay.tga");
-        dialog.OkButton->SetDownPicture("bg_okay.tga");
-        dialog.OkButton->Disabled = false;
-        dialog.OkButton->Callback().SetExec(std::move(yes));
-        dialog.CancelButton->SetUpPicture("bh_cancl.tga");
-        dialog.CancelButton->SetDownPicture("bg_cancl.tga");
-        dialog.CancelButton->Disabled = false;
+        dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+        dialog.Ok.Disabled = false;
+        dialog.Ok.Exec = std::move(yes);
+        dialog.Cancel.SetPictures("bh_cancl.tga", "bg_cancl.tga");
+        dialog.Cancel.Disabled = false;
         dialog.Activate();
     }
 

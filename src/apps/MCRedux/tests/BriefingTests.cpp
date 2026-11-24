@@ -34,6 +34,7 @@
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCRegistrySettings.h"
+#include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCArtModes.h"
@@ -1784,10 +1785,10 @@ namespace
     /// <summary>The menus' message dialog, showing <paramref name="text"/>, closed with its OK.</summary>
     void CloseMessage(std::string_view text)
     {
-        MCReusableDialog& message = *GlobalLog()->MessageDialog;
+        MCMenuDialog& message = *GlobalLog()->Message;
         REQUIRE(message.IsShowing());
         CHECK_EQ(message.Text, text);
-        MCGuiObject& ok = *message.OkButton;
+        MCGuiObject& ok = *message.View()->OkButton;
         Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
         Settle();
         CHECK(!message.IsShowing());

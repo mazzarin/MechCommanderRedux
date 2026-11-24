@@ -397,6 +397,25 @@ bool MCDisplay::SetView(int x, int y, int width, int height)
 
 void MCDisplay::SetPalette(int first, std::span<const MCVfxRgb> entries)
 {
+    SetPalette(first, entries, entries, {});
+}
+
+void MCDisplay::SetPalette(int first, std::span<const uint8_t> rgb)
+{
+    std::array<MCVfxRgb, 256> entries{};
+    const size_t count = std::min(rgb.size() / 3, entries.size());
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        entries[i] = {rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]};
+    }
+
+    SetPalette(first, std::span<const MCVfxRgb>(entries).first(count));
+}
+
+void MCDisplay::SetPalette(int first, std::span<const MCVfxRgb> entries, std::span<const MCVfxRgb> before,
+                           std::span<const uint8_t> brightened)
+{
     if (entries.empty() || first < 0 || first >= 256)
     {
         return;
@@ -407,31 +426,24 @@ void MCDisplay::SetPalette(int first, std::span<const MCVfxRgb> entries)
 
     for (int i = 0; i < count; ++i)
     {
-        _Palette[static_cast<size_t>(first + i)] = entries[static_cast<size_t>(i)];
+        const size_t entry = static_cast<size_t>(first + i);
+        const size_t at = static_cast<size_t>(i);
+        // An entry brightened none shows as it was before, whatever the caller kept.
+        const uint8_t times = at < brightened.size() ? brightened[at] : 0;
+        _Palette[entry] = entries[at];
+        _Before[entry] = times != 0 && at < before.size() ? before[at] : entries[at];
+        _Brightened[entry] = times;
     }
 
     _PaletteDirty = true;
     EndCycleOver(first, count);
 }
 
-void MCDisplay::SetPalette(int first, std::span<const uint8_t> rgb)
+void MCDisplay::SetBrightening(std::span<const uint8_t, 256> curve)
 {
-    if (rgb.size() < 3 || first < 0 || first >= 256)
-    {
-        return;
-    }
-
-    const int count = static_cast<int>(std::min<size_t>(rgb.size() / 3, static_cast<size_t>(256 - first)));
     std::scoped_lock lock(_PaletteLock);
-
-    for (int i = 0; i < count; ++i)
-    {
-        const size_t at = static_cast<size_t>(i) * 3;
-        _Palette[static_cast<size_t>(first + i)] = {rgb[at], rgb[at + 1], rgb[at + 2]};
-    }
-
+    std::ranges::copy(curve, _BrighteningCurve.begin());
     _PaletteDirty = true;
-    EndCycleOver(first, count);
 }
 
 void MCDisplay::EndCycleOver(int first, int count)
@@ -597,6 +609,16 @@ MCFrame MCDisplay::BuildFrame(bool allColors)
         if (_PaletteDirty || allColors)
         {
             ApplyGamma(_Palette, _Gamma, _Brightness, _PaletteColors);
+            ApplyGamma(_Before, _Gamma, _Brightness, _BeforeColors);
+
+            for (size_t i = 0; i < _BeforeColors.size(); ++i)
+            {
+                const uint8_t once = _BrighteningCurve[i];
+                const uint8_t twice = _BrighteningCurve[once];
+                _BeforeColors[i].a = _Brightened[i];
+                _BrighteningColors[i] = {once, twice, _BrighteningCurve[twice], 255};
+            }
+
             frame.PaletteChanged = true;
             _PaletteDirty = false;
         }
@@ -613,6 +635,8 @@ MCFrame MCDisplay::BuildFrame(bool allColors)
 
     frame.Colors = _ShownColors;
     frame.PaletteColors = _PaletteColors;
+    frame.BeforeColors = _BeforeColors;
+    frame.BrighteningColors = _BrighteningColors;
     frame.Fade = _Fade;
     frame.FadeScales = _FadeScales;
     frame.Number = _Presents;

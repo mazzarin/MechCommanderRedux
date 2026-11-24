@@ -128,9 +128,11 @@ public:
 
     /// <summary>
     /// The colours the next <see cref="Execute"/> draws with: the palette as shown (gamma applied, 256 entries; empty
-    /// keeps the last) and the colour cycle shown over it.
+    /// keeps the last), port-only its colours before the game's brightness and the brightness's curve (MCFrame's
+    /// BeforeColors and BrighteningColors; empty: the palette's, brightened none) and the colour cycle shown over it.
     /// </summary>
-    void SetColors(std::span<const SDL_Color> palette, const MCColorCycle& cycle);
+    void SetColors(std::span<const SDL_Color> palette, std::span<const SDL_Color> before,
+                   std::span<const SDL_Color> brightening, const MCColorCycle& cycle);
 
     /// <summary>
     /// The output pixels per screen pixel across and down the underlays are shown at (above 1 when the screen is shown
@@ -2151,9 +2153,14 @@ private:
     Texture _AlphaTexture;
     bool _AlphaColorsChanged = true;
     Texture _FitTexture;
-    /// <summary>The palette drawn with (RGBA8, 256 x 1), its colours, whether they changed, and the colour cycle.</summary>
+    /// <summary>
+    /// The palette drawn with (RGBA8, 256 x PaletteRows), its colours, port-only their colours before the game's
+    /// brightness and its curve (SetColors), whether they changed, and the colour cycle.
+    /// </summary>
     Texture _PaletteTexture;
     std::array<SDL_Color, 256> _Colors{};
+    std::array<SDL_Color, 256> _BeforeColors{};
+    std::array<SDL_Color, 256> _BrighteningColors{};
     /// <summary>
     /// Port-only (<see cref="Noise"/>): the noise picture, <see cref="NoiseColumns"/> x <see cref="NoiseRows"/> original
     /// pixels of colours 0 to <see cref="NoiseColors"/> - 1 at <see cref="NoiseScale"/>, made from the palette's colours

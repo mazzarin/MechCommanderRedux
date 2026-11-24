@@ -9,6 +9,7 @@
 // BRIEFING buttons going through a change of screen (gui/MCScreenFlow.h). The flow's "campaign" kind
 // (logistics/MCMenuScreens) shows while this does.
 
+#include "logistics/MCBriefingText.h"
 #include "logistics/MCDeploy.h"
 #include "ui/MCRmlScreen.h"
 
@@ -320,4 +321,23 @@ namespace MCCampaignMenu
     std::string TonsText(int32_t tons);
     /// <summary>The eyebrow over a campaign mission's title: its operation and its number in it.</summary>
     inline constexpr std::string_view EyebrowFormat = "{} · Mission {}";
+
+    /// <summary>The mission logistics has now as its briefing and the campaign name it (BRIEFING's, the loading screen's).</summary>
+    struct MCMissionRead
+    {
+        /// <summary>Its name (the menus' for it, else as its briefing writes it).</summary>
+        std::string Title;
+        /// <summary>
+        /// A campaign mission's operation (its name and number) and its number in it; a solo mission's operation by
+        /// name alone (the numbers 0); a match's nothing (its COMMAND DESIGNATION names no map).
+        /// </summary>
+        std::string OperationName;
+        int32_t Operation = 0;
+        int32_t Mission = 0;
+        MCBriefingText::MCRead Briefing;
+        /// <summary>Its briefing map's picture (map:, the scenario's); empty with none.</summary>
+        std::string MapSource;
+    };
+
+    MCMissionRead ReadMission();
 }

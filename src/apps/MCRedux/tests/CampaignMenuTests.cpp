@@ -9,6 +9,7 @@
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCDeploy.h"
+#include "logistics/MCLoadingMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurchaseScreen.h"
@@ -533,7 +534,9 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY lay out and read at every window t
 
 /// <summary>
 /// BEGIN MISSION: dark and refused with no unit in the drop (Betty's line, nothing else); with one, the loading screen
-/// comes up over the remade screen, which never shows under it, and the mission plays with logistics gone.
+/// as designed comes up in the briefing's place, which never shows under it: the mission's operation and number, its
+/// name, objectives and the orders' first two paragraphs, its meter filling as the load goes; it's gone before the
+/// battlefield, and the mission plays with logistics gone.
 /// </summary>
 TEST_CASE_ISOLATED("game: DEPLOY's BEGIN MISSION goes to the loading screen and the mission")
 {
@@ -565,17 +568,82 @@ TEST_CASE_ISOLATED("game: DEPLOY's BEGIN MISSION goes to the loading screen and 
     ClickOn(ElementOf(screen, "begin"));
     bool loadingSeen = false;
     bool shownUnderLoading = false;
+    bool remadeLoading = false;
+    int mostPercent = 0;
 
     for (int32_t frame = 0; frame < MostFrames && !playing(); frame++)
     {
         MCTestGame::RunFrame(FlowFrame);
         loadingSeen = loadingSeen || LoadingScreenUp;
         shownUnderLoading = shownUnderLoading || (LoadingScreenUp && MCCampaignMenu::Shown());
+
+        if (MCLoadingMenu::Shown())
+        {
+            remadeLoading = true;
+            mostPercent = std::max(mostPercent, MCLoadingMenu::Screen()->get().Percent());
+        }
     }
 
     CHECK(loadingSeen);
     CHECK(!shownUnderLoading);
+    CHECK(remadeLoading);
+    CHECK(mostPercent > 0);
     REQUIRE(playing());
     CHECK(!MCCampaignMenu::Shown());
+    CHECK(!MCLoadingMenu::Shown());
     CHECK(GlobalLog() == nullptr);
+    REQUIRE(MCLoadingMenu::Screen().has_value());
+    const MCLoadingScreen& loading = MCLoadingMenu::Screen()->get();
+    CHECK_EQ(loading.Eyebrow(), std::string("Operation 1 · Beachhead · Mission 1"));
+    CHECK_EQ(loading.Title(), std::string("Liberate work camps"));
+    CHECK_EQ(loading.Objectives().size(), size_t{3});
+    CHECK_EQ(loading.Orders().size(), MCLoadingMenu::OrdersShown);
+    CHECK_EQ(loading.MapSource(), std::string("image(map:mis0101 contain center top)"));
+}
+
+/// <summary>
+/// The loading screen as designed, shown from the first briefing with its meter at 62%: on the software renderer, the
+/// whole window at 640x480, 1280x720 and 1280x1024, the hashes recorded; at every window the players' reports name,
+/// laid out and legible (MCRmlChecks). With <c>--shots</c> each picture is saved.
+/// </summary>
+TEST_CASE_ISOLATED("game: the loading screen draws the same on every machine and lays out at every window")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int ShownPercent = 62;
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    StartFirstBriefing();
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    REQUIRE(display->RendererKind() == MCRendererKind::Software);
+    MCCampaignMenu::Hide();
+    REQUIRE(MCLoadingMenu::Show());
+    MCLoadingMenu::Progress(ShownPercent);
+    CHECK_EQ(MCLoadingMenu::Screen()->get().Percent(), ShownPercent);
+    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xbc8135b2, 0x04f0428f, 0x38d25e9d};
+
+    for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
+    {
+        const MCMenusPictures::MCWindowSize& size = MCMenusPictures::FrameWindows[i];
+        REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
+        CHECK_EQ(DrawnWindow("loading"), std::format("loading {}x{}: {:#010x}", size.Width, size.Height, Hashes[i]));
+    }
+
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+
+    for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
+    {
+        menus.SetWindow(window.Width, window.Height);
+        menus.Frame();
+        const float unit = MCRmlMenus::MenusUnit(window.Width, window.Height);
+        const std::string where = std::format("loading {}x{}: ", window.Width, window.Height);
+        CHECK_EQ(where + MCRmlChecks::BoxProblems(menus.Menus().Context()), where);
+        CHECK_EQ(where + MCRmlChecks::Illegible(menus.Menus().Context(), unit), where);
+    }
+
+    MCLoadingMenu::Hide();
 }

@@ -350,34 +350,11 @@ void MCCampaignScreen::MarkTab()
 
 void MCCampaignScreen::ReadBriefing()
 {
-    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    const std::string path = logistics != nullptr ? logistics->BriefingTextPath : std::string();
-    const std::string text = path.empty() ? std::string() : MCSmuti::ReadFile(path);
-    const MCMissionNames::MCWritten written = MCMissionNames::FromBriefing(text);
-    const MCBriefingText::MCRead read = MCBriefingText::Read(text);
-    // The game's paths are written with backslashes (data\missions\brf0101.txt).
-    const std::string briefingFile = path.substr(path.find_last_of("\\/") + 1);
-    _Title = MCMissionNames::Mission(briefingFile, written.Mission);
-    _Eyebrow.clear();
-
-    // A campaign's mission: its operation and number in it, as SAVE GAME names it; a solo mission its operation;
-    // a match's side nothing (its COMMAND DESIGNATION names no map).
-    if (!_Multiplayer && !Solo && logistics != nullptr)
-    {
-        const MCSaves::MCSave save =
-            MCSaves::Unsaved(CurPlanet == 0 ? MCSaves::MCCampaign::Original : MCSaves::MCCampaign::Expansion,
-                             logistics->CurrentMission, 0);
-
-        if (save.Read)
-        {
-            _Eyebrow = std::format(MCCampaignMenu::EyebrowFormat, save.OperationName, save.Mission);
-        }
-    }
-    else if (!_Multiplayer && !written.Operation.empty())
-    {
-        _Eyebrow = MCMissionNames::Operation(written.Operation);
-    }
-
+    const MCCampaignMenu::MCMissionRead mission = MCCampaignMenu::ReadMission();
+    const MCBriefingText::MCRead& read = mission.Briefing;
+    _Title = mission.Title;
+    _Eyebrow = mission.Mission > 0 ? std::format(MCCampaignMenu::EyebrowFormat, mission.OperationName, mission.Mission)
+                                   : mission.OperationName;
     _Objectives.clear();
 
     for (size_t at = 0; at < read.Objectives.size(); ++at)
@@ -401,8 +378,7 @@ void MCCampaignScreen::ReadBriefing()
         _Warnings.push_back(MCLine{.Text = warning});
     }
 
-    const std::string scenario = Scenario();
-    _MapSource = scenario.empty() ? std::string() : std::string(MCRmlArt::MapScheme) + scenario;
+    _MapSource = mission.MapSource;
 
     if (Rml::Element* map = ElementOf(Document(), MapId); map != nullptr)
     {
@@ -414,11 +390,6 @@ void MCCampaignScreen::ReadBriefing()
         {
             map->SetProperty("decorator", std::format("image({} contain left top)", _MapSource));
         }
-    }
-
-    if (text.empty())
-    {
-        SDL_Log("Menus: the briefing's text %s can't be read", path.c_str());
     }
 }
 
@@ -1399,37 +1370,17 @@ void MCCampaignMenu::ComeBack()
 
 bool MCCampaignMenu::Show()
 {
-    const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
     const MCCampaignScreen::MCTab tab = ComingBack ? LeftOn : MCCampaignScreen::MCTab::Briefing;
     ComingBack = false;
+    const MCOptionalRef<MCCampaignScreen> made =
+        Remade() ? MCRmlFlow::MadeNow(TheScreen(), "the briefing") : std::nullopt;
 
-    if (!Remade() || !menus.has_value())
+    if (!made.has_value())
     {
         return false;
     }
 
-    if (const std::shared_ptr<MCCampaignScreen> screen = TheScreen().Lock();
-        screen == nullptr || screen->WasDestroyed())
-    {
-        TheScreen() = menus->get().Menus().CreateChild<MCCampaignScreen>([](MCCampaignScreen&) {});
-    }
-
-    MCCampaignScreen& screen = *TheScreen();
-
-    if (!screen.Document().has_value())
-    {
-        for (const MCScreenChange::MCPiece& piece : screen.Prepare())
-        {
-            piece.Run();
-        }
-    }
-
-    if (!screen.Error().empty())
-    {
-        SDL_Log("Menus: the briefing can't show: %s", screen.Error().c_str());
-        return false;
-    }
-
+    MCCampaignScreen& screen = made->get();
     screen.SetUp(tab);
     screen.Layer().Context().Update();
     screen.Show();
@@ -1446,8 +1397,49 @@ void MCCampaignMenu::Hide()
 
 MCOptionalRef<MCCampaignScreen> MCCampaignMenu::Screen()
 {
-    const std::shared_ptr<MCCampaignScreen> screen = TheScreen().Lock();
-    return screen != nullptr && !screen->WasDestroyed() ? MCOptionalRef<MCCampaignScreen>(*screen) : std::nullopt;
+    return MCRmlFlow::Alive(TheScreen());
+}
+
+MCCampaignMenu::MCMissionRead MCCampaignMenu::ReadMission()
+{
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    const std::string path = logistics != nullptr ? logistics->BriefingTextPath : std::string();
+    const std::string text = path.empty() ? std::string() : MCSmuti::ReadFile(path);
+
+    if (text.empty())
+    {
+        SDL_Log("Menus: the briefing's text %s can't be read", path.c_str());
+    }
+
+    const MCMissionNames::MCWritten written = MCMissionNames::FromBriefing(text);
+    // The game's paths are written with backslashes (data\missions\brf0101.txt).
+    const std::string briefingFile = path.substr(path.find_last_of("\\/") + 1);
+    MCMissionRead read{.Title = MCMissionNames::Mission(briefingFile, written.Mission),
+                       .Briefing = MCBriefingText::Read(text)};
+    const bool multiplayer = MultiPlayer() != nullptr;
+
+    // A campaign's mission: its operation and number in it, as SAVE GAME names it.
+    if (!multiplayer && !Solo && logistics != nullptr)
+    {
+        const MCSaves::MCSave save =
+            MCSaves::Unsaved(CurPlanet == 0 ? MCSaves::MCCampaign::Original : MCSaves::MCCampaign::Expansion,
+                             logistics->CurrentMission, 0);
+
+        if (save.Read)
+        {
+            read.OperationName = save.OperationName;
+            read.Operation = save.Operation;
+            read.Mission = save.Mission;
+        }
+    }
+    else if (!multiplayer && !written.Operation.empty())
+    {
+        read.OperationName = MCMissionNames::Operation(written.Operation);
+    }
+
+    const std::string scenario = Scenario();
+    read.MapSource = scenario.empty() ? std::string() : std::string(MCRmlArt::MapScheme) + scenario;
+    return read;
 }
 
 std::string MCCampaignMenu::TonsText(int32_t tons)

@@ -15,11 +15,13 @@
 #include "main/MCGameContext.h"
 #include "main/MCHdSettings.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
+#include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -64,6 +66,12 @@
 // through LOAD GAME's and SAVE GAME's changes: the briefing's way out to the main menu, SAVE GAME opened, Enter saving
 // and the message's OK back to the briefing, LOAD GAME opened, its LOAD into the briefing, LOAD GAME opened again and
 // Escape back to the main menu. It ends there: --record-window-landings is left out with it.
+//
+// Port-only (SPEC-menus.md's stage 8): --record-window-campaign 1 has the remade BRIEFING and DEPLOY in place of the
+// 1998 briefing: NEW CAMPAIGN to the briefing, then its tabs timed as steps (below: DEPLOY, BRIEFING, the 1998
+// PURCHASING and its BRIEFING button back), the first unit sent to the drop, BEGIN MISSION pressed on DEPLOY to the
+// loading screen as designed and the battlefield (recorded), and the results' DONE to the next briefing (recorded). It
+// ends there: --record-window-landings and --record-window-saves are left out with it.
 //
 // Port-only (SPEC-menus.md's stage 3): --record-window-games 1 times INTERNET's and LAN's changes and windows instead of
 // the mission's, through a scripted games list and a stand-in service (tests/MCInternetSpots.h): MULTIPLAYER ACCESS's
@@ -862,6 +870,31 @@ namespace
     }
 
     /// <summary>
+    /// --record-window-campaign (see the top of this file), from the main menu: NEW CAMPAIGN to the remade briefing, its
+    /// tabs, and the first unit sent to the drop, DEPLOY left showing.
+    /// </summary>
+    void TimeCampaign(const MCRealTime& time)
+    {
+        using MCTab = MCCampaignScreen::MCTab;
+        const auto shown = [] { return MCCampaignMenu::Shown() && MCCampaignMenu::Ready(); };
+        TimeStep(time, "new-campaign", [] { NewCampaign(); }, shown);
+        REQUIRE(MCCampaignMenu::Screen().has_value());
+        MCCampaignScreen& screen = MCCampaignMenu::Screen()->get();
+        const auto onTab = [&screen, shown](MCTab tab)
+        { return [&screen, shown, tab] { return shown() && screen.Tab() == tab; }; };
+        const auto choose = [&screen](MCTab tab) { return [&screen, tab] { screen.ChooseTab(tab); }; };
+        TimeStep(time, "deploy-tab", choose(MCTab::Deploy), onTab(MCTab::Deploy));
+        TimeStep(time, "briefing-tab", choose(MCTab::Briefing), onTab(MCTab::Briefing));
+        TimeStep(time, "purchasing", choose(MCTab::Purchasing), []
+                 { return GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen && !MCCampaignMenu::Shown(); });
+        TimeStep(time, "purchasing-back", [] { GlobalLog()->SetUpBriefingScreen(true); }, onTab(MCTab::Briefing));
+        screen.ChooseTab(MCTab::Deploy);
+        screen.SendReady(0, std::nullopt);
+        REQUIRE(MCDeploy::CanBegin());
+        RunPacedFor(time, SecondsBefore);
+    }
+
+    /// <summary>
     /// --record-window-games (see the top of this file), from the main menu: <paramref name="list"/> is the scripted
     /// games list.
     /// </summary>
@@ -987,6 +1020,9 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         updater.emplace();
     }
 
+    // --record-window-campaign: the remade BRIEFING and DEPLOY (the other tests keep the 1998 briefing until step 2).
+    const bool campaign = MCTest::Option("record-window-campaign").has_value();
+    MCCampaignMenu::Remade() = campaign;
     REQUIRE(MCTestGame::StartLogistics());
     // The mouse in the window's middle, where a player's rests: left in the corner, the battle's edge scrolling runs
     // the camera off the ground the units see.
@@ -1017,18 +1053,34 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         return;
     }
 
-    NewCampaign();
-    RunPaced(time, Settled, MostChangeSeconds);
-    RunPacedFor(time, SecondsBefore);
-    DeployFirstMech();
+    if (campaign)
+    {
+        TimeCampaign(time);
+    }
+    else
+    {
+        NewCampaign();
+        RunPaced(time, Settled, MostChangeSeconds);
+        RunPacedFor(time, SecondsBefore);
+        DeployFirstMech();
+    }
 
-    // BEGIN MISSION (MCBriefingScreen::Launch) to the battlefield's first seconds.
+    // BEGIN MISSION (MCBriefingScreen::Launch, or the remade DEPLOY's) to the battlefield's first seconds.
     const std::string into = RecordPart(
         folder / "into-mission", width, height,
-        [&time, battleSeconds]
+        [&time, battleSeconds, campaign]
         {
             RunPacedFor(time, SecondsBefore);
-            Mission()->RequestScenario(Mission()->Scenarios[0]);
+
+            if (campaign)
+            {
+                MCCampaignMenu::Screen()->get().PressBegin();
+            }
+            else
+            {
+                Mission()->RequestScenario(Mission()->Scenarios[0]);
+            }
+
             CHECK(RunPaced(
                 time, [] { return Mission()->State == MCMissionState::Scenario && Settled(); }, MostChangeSeconds));
             RunPacedFor(time, battleSeconds);
@@ -1049,6 +1101,14 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
                                            RunPacedFor(time, SecondsAfter);
                                        });
     std::cout << "out of the mission:\n" << out;
+
+    if (campaign)
+    {
+        // The results' DONE led to the next briefing, the remade one.
+        CHECK(MCCampaignMenu::Shown());
+        std::cout << std::format("  the flow's stack: {}\n", MCScreenFlow::StackText());
+        return;
+    }
 
     const auto recordLanding =
         [&](std::string_view name, const std::function<void()>& press, const std::function<bool()>& landed)

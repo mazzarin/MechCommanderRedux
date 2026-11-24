@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "gui/MCUpdateDisplay.h"
+#include "logistics/MCLoadingMenu.h"
 #include "engine/MCWriteTga.h"
 #include "gameos/MCSoundRenderer.h"
 #include "gui/MCGuiFont.h"
@@ -636,6 +637,8 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
         LoadingBar = MCHdArt::LoadBarPercent(progress);
         LoadingNoise = noiseChance;
         DrawProgress(LoadingBar);
+        // Port-only (SPEC-menus.md's stage 8): the loading screen as designed shows the same.
+        MCLoadingMenu::Progress(LoadingBar);
     }
     else if (!ConnectShape().Empty() && loadingScreen)
     {

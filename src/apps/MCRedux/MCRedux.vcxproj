@@ -102,6 +102,12 @@
     <CopyFileToFolders Include="..\..\res\ui\deploy.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\loading.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\loading.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\saves.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>

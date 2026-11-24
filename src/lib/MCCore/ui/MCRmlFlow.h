@@ -52,4 +52,56 @@ namespace MCRmlFlow
 
     /// <summary>Whether a remade screen shows on the menus' layer (an old dialog would show under it).</summary>
     bool Showing();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 8): the screen <paramref name="handle"/> holds, made on the menus' layer if it
+    /// isn't (or was closed) and its document read and laid out at once, for a screen the game shows itself rather
+    /// than through a change (the briefing over the 1998 one, the loading screen); none when the menus can't start or
+    /// its document can't be read (the log says why, naming it <paramref name="what"/>).
+    /// </summary>
+    template <class T> MCOptionalRef<T> MadeNow(MCGuiHandle<T>& handle, std::string_view what)
+    {
+        const MCOptionalRef<MCRmlMenus> menus = Menus();
+
+        if (!menus.has_value())
+        {
+            return std::nullopt;
+        }
+
+        if (handle.Lock() == nullptr)
+        {
+            handle = menus->get().Menus().template CreateChild<T>([](T&) {});
+        }
+
+        const std::shared_ptr<T> screen = handle.Lock();
+
+        if (screen == nullptr)
+        {
+            SDL_Log("Menus: %.*s couldn't be made", static_cast<int>(what.size()), what.data());
+            return std::nullopt;
+        }
+
+        if (!screen->Document().has_value())
+        {
+            for (const MCScreenChange::MCPiece& piece : screen->Prepare())
+            {
+                piece.Run();
+            }
+        }
+
+        if (!screen->Error().empty())
+        {
+            SDL_Log("Menus: %.*s can't show: %s", static_cast<int>(what.size()), what.data(), screen->Error().c_str());
+            return std::nullopt;
+        }
+
+        return *screen;
+    }
+
+    /// <summary>The screen <paramref name="handle"/> holds while it lives; none once closed.</summary>
+    template <class T> MCOptionalRef<T> Alive(const MCGuiHandle<T>& handle)
+    {
+        const std::shared_ptr<T> screen = handle.Lock();
+        return screen != nullptr ? MCOptionalRef<T>(*screen) : std::nullopt;
+    }
 }

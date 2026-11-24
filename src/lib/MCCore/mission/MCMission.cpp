@@ -2,6 +2,7 @@
 #include "gui/MCScreenFlow.h"
 #include "ui/MCRmlFlow.h"
 #include "network/MCIntroNote.h"
+#include "logistics/MCLoadingMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "mission/MCMission.h"
@@ -1542,6 +1543,8 @@ auto MCMission::TakeDownLoadingScreen() -> void
 {
     LoadingScreenUp = false;
     ReleaseLoadingShape();
+    // Port-only (SPEC-menus.md's stage 8): the loading screen as designed, in the dark before the battlefield.
+    MCLoadingMenu::Hide();
 }
 
 auto MCMission::ShowLoadingScreen() -> void
@@ -1563,8 +1566,10 @@ auto MCMission::ShowLoadingScreen() -> void
         }
     }
 
-    // Port-only (SPEC-menus.md's stage 8): the remade BRIEFING and DEPLOY too.
+    // Port-only (SPEC-menus.md's stage 8): the remade BRIEFING and DEPLOY too, and the loading screen as designed shown
+    // in their place, read from the briefing while logistics is still there (the 1998 one is drawn under it).
     MCRmlFlow::OldScreenShown();
+    MCLoadingMenu::Show();
     HoldLoadingShape();
     LoadingScreenUp = true;
     State = MCMissionState::StartScenario;

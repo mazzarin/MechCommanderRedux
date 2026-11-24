@@ -549,6 +549,9 @@
     <ClCompile Include="logistics\MCInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCLoadingMenu.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCLoadSaveMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2093,6 +2096,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCInventoryBlock.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCLoadingMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCLoadSaveMenu.h">

@@ -206,6 +206,7 @@
     <ClCompile Include="logistics\MCIdleCheck.cpp" />
     <ClCompile Include="logistics\MCInternetMenu.cpp" />
     <ClCompile Include="logistics\MCInventoryBlock.cpp" />
+    <ClCompile Include="logistics\MCLoadingMenu.cpp" />
     <ClCompile Include="logistics\MCLoadSaveMenu.cpp" />
     <ClCompile Include="logistics\MCLogButton.cpp" />
     <ClCompile Include="logistics\MCLogChat.cpp" />
@@ -748,6 +749,7 @@
     <ClInclude Include="logistics\MCIdleCheck.h" />
     <ClInclude Include="logistics\MCInternetMenu.h" />
     <ClInclude Include="logistics\MCInventoryBlock.h" />
+    <ClInclude Include="logistics\MCLoadingMenu.h" />
     <ClInclude Include="logistics\MCLoadSaveMenu.h" />
     <ClInclude Include="logistics\MCLogButton.h" />
     <ClInclude Include="logistics\MCLogChat.h" />

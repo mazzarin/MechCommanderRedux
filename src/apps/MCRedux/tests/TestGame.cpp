@@ -12,6 +12,7 @@
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFastFileSet.h"
 #include "logistics/MCFileScrollPane.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogComboBox.h"
 #include "logistics/MCLogInvScreen.h"
@@ -127,6 +128,16 @@ namespace MCTestGame
                 }
             }
         }
+    }
+
+    OldMainMenu::OldMainMenu()
+    {
+        MCMainMenuScreens::SetOldForTests(true);
+    }
+
+    OldMainMenu::~OldMainMenu()
+    {
+        MCMainMenuScreens::SetOldForTests(false);
     }
 
     std::filesystem::path UserFolder()

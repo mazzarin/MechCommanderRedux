@@ -10,6 +10,7 @@
 #include "iface/MCMechIcon.h"
 #include "iface/MCTacticalInterface.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "lib/MCFilesAhead.h"
 #include "lib/MCFnvHash.h"
 #include "logistics/MCLogPort.h"
@@ -698,7 +699,7 @@ TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its 
     }
 
     StartSharpLogistics();
-    REQUIRE(GlobalLog()->MainScreen->IsShowing());
+    REQUIRE(MCMainMenuScreens::Shown(MCMainPanel::Main));
 
     // At each present of the change, how far the fade had gone and whether the campaign had started (the main menu
     // hidden: the work's last step).
@@ -711,7 +712,7 @@ TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its 
     std::vector<MCShown> shown;
     const size_t rehearsed = RehearsalsRun();
     MCTestGame::OnPresent = [&]
-    { shown.push_back({.Fade = MCInput::Display()->Fade(), .Started = !GlobalLog()->MainScreen->IsShowing()}); };
+    { shown.push_back({.Fade = MCInput::Display()->Fade(), .Started = !MCMainMenuScreens::Shown(MCMainPanel::Main)}); };
 
     NewCampaign();
     REQUIRE(MCTestGame::FinishChanges());

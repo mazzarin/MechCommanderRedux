@@ -18,8 +18,8 @@ extern int32_t ReadyRoomTicks;
 extern bool WhackTimer;
 
 /// <summary>
-/// MULTIPLAYER: makes the multiplayer object and opens the LAN games (the personal build), or, when this machine can't
-/// use the network, the original's connection screen, each of its buttons enabled when the machine has it.
+/// MULTIPLAYER shown at once, the screen shown hidden (a change's dark work): port-only (stage 7), the remade one in the
+/// main menu's panel (logistics/MCMainMenuScreen.h), which makes the multiplayer object as it shows.
 /// </summary>
 void ConnectScreen();
 

@@ -11,6 +11,7 @@
 #include "logistics/MCGameList.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCLogTextObject.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -900,12 +901,14 @@ namespace MCTestGuest
         return OnGames(MCGamesWhere::Internet);
     }
 
-    /// <summary>MULTIPLAYER ACCESS (the 1998 screen) shown, nothing over it, the change that showed it over.</summary>
+    /// <summary>
+    /// MULTIPLAYER (1998's MULTIPLAYER ACCESS, remade in the main menu's panel, stage 7) shown, nothing over it, the
+    /// change that showed it over.
+    /// </summary>
     inline bool OnAccess()
     {
-        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        return logistics->CurrentScreen() == logistics->MultiplayerScreen &&
-               logistics->MultiplayerScreen->IsShowing() && !OnInternet() && !OnLan() && !MCScreenChange::Running();
+        return MCMainMenuScreens::Shown(MCMainPanel::Multiplayer) && !OnInternet() && !OnLan() &&
+               !MCScreenChange::Running();
     }
 
     /// <summary>Whether the room (the 1998 session screen) shows.</summary>
@@ -975,6 +978,41 @@ namespace MCTestGuest
             MCInput::HandleEvent(button);
             Step();
         }
+    }
+
+    // ---- The remade main menu (SPEC-menus.md's stage 7: logistics/MCMainMenuScreen) ----
+
+    /// <summary>The main menu's <paramref name="panel"/> (the menu, CAMPAIGNS, SOLO MISSIONS, MULTIPLAYER), made.</summary>
+    inline MCMainMenuScreen& Panel(MCMainPanel panel)
+    {
+        const MCOptionalRef<MCMainMenuScreen> screen = MCMainMenuScreens::Screen(panel);
+        REQUIRE(screen.has_value());
+        return screen->get();
+    }
+
+    /// <summary>A player's click on <paramref name="id"/> (a choice, a button) of the main menu's <paramref name="panel"/>.</summary>
+    inline void ClickOn(MCMainPanel panel, const char* id)
+    {
+        Rml::Element* element = ElementOf(Panel(panel), id);
+        REQUIRE(element != nullptr);
+        RealClickOn(*element);
+    }
+
+    /// <summary>MULTIPLAYER's INTERNET and LAN clicked.</summary>
+    inline void PressInternet()
+    {
+        ClickOn(MCMainPanel::Multiplayer, "internet");
+    }
+
+    inline void PressLan()
+    {
+        ClickOn(MCMainPanel::Multiplayer, "lan");
+    }
+
+    /// <summary>Whether the main menu shows with nothing over it, the change that showed it over.</summary>
+    inline bool OnMainMenu()
+    {
+        return MCMainMenuScreens::MainOnTop() && !MCScreenChange::Running();
     }
 
     /// <summary>A player's typing of <paramref name="text"/> into the remade screen's box that has the keys (SDL's text event).</summary>

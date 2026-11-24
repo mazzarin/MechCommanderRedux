@@ -2,6 +2,7 @@
 #include "logistics/MCSavesMenu.h"
 #include "ai/MCMoveGeometry.h"
 #include "logistics/MCLoadSaveMenu.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCLogistics.h"
@@ -38,8 +39,10 @@ namespace
     /// <summary>The window's buttons: a question's CANCEL, and its answer (a message's OK).</summary>
     constexpr const char* CancelId = "cancel";
     constexpr const char* AnswerId = "answer";
-    /// <summary>The thousands' separator in RP ("12,400"), and the dot between an operation's number and name.</summary>
-    constexpr char ThousandsMark = ',';
+    /// <summary>The campaign LOAD GAME opens on next (<see cref="MCSavesMenu::OpenLoad"/>); every campaign's without one.</summary>
+    std::optional<MCSaves::MCCampaign> NextLoadCampaign;
+
+    /// <summary>The dot between an operation's number and name.</summary>
     constexpr std::string_view OperationDot = " · ";
 
     MCGuiHandle<MCSavesScreen>& TheScreen()
@@ -65,19 +68,6 @@ namespace
 
     /// <summary>The screen's preparation's read, which the list's filling follows.</summary>
     constexpr std::string_view ReadPart = "menus.read";
-
-    std::string PointsText(uint32_t points)
-    {
-        constexpr size_t Group = 3;
-        std::string digits = std::to_string(points);
-
-        for (size_t at = digits.size(); at > Group; at -= Group)
-        {
-            digits.insert(at - Group, 1, ThousandsMark);
-        }
-
-        return digits;
-    }
 
     std::string_view WhenText(MCSaves::MCWhen when)
     {
@@ -468,7 +458,7 @@ void MCSavesScreen::Fill(std::optional<std::string> keep)
             .Mission = save.Read && save.When != MCSaves::MCWhen::Named ? save.MissionName : save.Name,
             .Campaign = save.Read ? std::string(MCSaves::CampaignShortName(save.Campaign)) : std::string(),
             .When = save.Read ? std::string(WhenText(save.When)) : std::string(),
-            .Points = save.Read ? PointsText(save.ResourcePoints) : std::string(),
+            .Points = save.Read ? MCSaves::PointsText(save.ResourcePoints) : std::string(),
             .Date = MCSaves::Game().DateText(save.Saved),
         });
     }
@@ -519,7 +509,7 @@ void MCSavesScreen::ShowPick()
     _PickOperation = read ? std::format("{}{}{}", shown->Operation, OperationDot, shown->OperationName) : std::string();
     _PickMission = read ? std::to_string(shown->Mission) : std::string();
     _PickSaved = read ? std::string(SavedText(shown->When)) : std::string();
-    _PickPoints = read ? PointsText(shown->ResourcePoints) : std::string();
+    _PickPoints = read ? MCSaves::PointsText(shown->ResourcePoints) : std::string();
     _PickDate = !shown.has_value()     ? std::string()
                 : _PickEyebrow.empty() ? MCSaves::Game().DateText(shown->Saved)
                                        : std::string("Now");
@@ -826,7 +816,8 @@ MCScreenFlow::MCScreenKind MCSavesMenu::Kind(MCSavesScreen::MCMode mode)
             {
                 MCSavesScreen& saves = screen->get();
                 saves.Back = [] { MCScreenFlow::Back(); };
-                saves.SetUp(mode, mode == MCMode::Save ? std::optional(PlayedCampaign()) : std::nullopt);
+                saves.SetUp(mode, mode == MCMode::Save ? std::optional(PlayedCampaign())
+                                                       : std::exchange(NextLoadCampaign, std::nullopt));
                 saves.Layer().Context().Update();
             }
         };
@@ -850,6 +841,17 @@ MCScreenFlow::MCScreenKind MCSavesMenu::Kind(MCSavesScreen::MCMode mode)
 
     kind.GivesWay = true;
     return kind;
+}
+
+void MCSavesMenu::OpenLoad(std::optional<MCSaves::MCCampaign> campaign)
+{
+    NextLoadCampaign = campaign;
+
+    // Refused while another change runs: the press goes no further, and the next LOAD GAME opens on ALL.
+    if (!MCScreenFlow::Open(MCMenuScreens::Load()))
+    {
+        NextLoadCampaign.reset();
+    }
 }
 
 MCOptionalRef<MCSavesScreen> MCSavesMenu::Screen()

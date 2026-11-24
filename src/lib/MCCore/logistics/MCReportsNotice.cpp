@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCLogMenus.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
@@ -139,8 +140,10 @@ namespace
 bool NoticeScreenFree()
 {
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    // Port-only (stage 7): the remade main menu with nothing over it is free (logistics/MCMainMenuScreen.h).
     return logistics != nullptr && OnNoticeScreen(*logistics) && !logistics->MessageDialog->IsShowing() &&
-           !logistics->QuestionDialog->IsShowing() && !UpdatePageShown() && !RemadeShows();
+           !logistics->QuestionDialog->IsShowing() && !UpdatePageShown() &&
+           (!RemadeShows() || MCMainMenuScreens::MainOnTop());
 }
 
 void ShowReportsNotice()

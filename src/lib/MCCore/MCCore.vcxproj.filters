@@ -612,6 +612,9 @@
     <ClCompile Include="logistics\MCMainMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCMainMenuScreen.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCMatchOptionsTab.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2165,6 +2168,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCMainMenu.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCMainMenuScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCMatchOptionsTab.h">

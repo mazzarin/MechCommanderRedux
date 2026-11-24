@@ -1,0 +1,26 @@
+<rml>
+<head>
+    <title>Main menu</title>
+    <link type="text/template" href="main_menu_frame.rml"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "Main menu"; stage 7; the style frames' main_menu.rml): CONTINUE plays the latest save,
+     named under it, when there is one; CAMPAIGNS and SOLO MISSIONS are submenus in its place; LOAD GAME lists every save.
+     Opened between missions (from the briefing), RETURN TO GAME leads the list instead, and SAVE GAME follows LOAD GAME
+     (logistics/MCMainMenuScreen). -->
+<body template="main-menu" class="painting" data-model="main-menu">
+    <div class="grow"></div>
+    <div class="choice two button" id="return" data-if="returns">Return to game<div class="line">{{returnLine}}</div></div>
+    <div class="choice two button" id="continue" data-if="continues">Continue<div class="line">{{continueLine}}</div></div>
+    <div class="choice button" id="campaigns">Campaigns</div>
+    <div class="choice button" id="load">Load game</div>
+    <div class="choice button" id="save" data-if="saves">Save game</div>
+    <div class="choice button" id="solo" data-if="solo">Solo missions</div>
+    <div class="choice button" id="multiplayer">Multiplayer</div>
+    <div class="divider"></div>
+    <div class="choice button" id="preferences">Preferences</div>
+    <div class="choice button" id="cinema">Original cinema</div>
+    <div class="divider"></div>
+    <div class="choice button" id="quit">Quit</div>
+    <div class="grow"></div>
+</body>
+</rml>

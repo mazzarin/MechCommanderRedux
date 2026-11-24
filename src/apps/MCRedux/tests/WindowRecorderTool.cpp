@@ -16,6 +16,7 @@
 #include "main/MCGameContext.h"
 #include "main/MCHdSettings.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
@@ -1027,7 +1028,7 @@ namespace
         REQUIRE(RunPaced(time, OnAccess, MostChangeSeconds));
 
         // INTERNET, its games listed, the first picked.
-        TimeStep(time, "internet", [] { MCScreenInput::Click(InternetX, InternetY); }, OnInternet);
+        TimeStep(time, "internet", [] { MCTestGuest::PressInternet(); }, OnInternet);
         MCGamesScreen& internet = *MCTestGuest::Games(MCGamesWhere::Internet);
         internet.SetPlayerName(std::string(PlayerName));
         list.Send(EveryKindOfGame(ListedOnline, ListedInGames));
@@ -1066,7 +1067,7 @@ namespace
 
         // BACK, then LAN and its BACK.
         TimeStep(time, "internet-back", [&internet] { internet.Back(); }, OnAccess);
-        TimeStep(time, "lan", [] { MCScreenInput::Click(LanX, LanY); }, OnLan);
+        TimeStep(time, "lan", [] { MCTestGuest::PressLan(); }, OnLan);
         TimeStep(time, "lan-back", [] { MCTestGuest::Games(MCGamesWhere::Lan)->Back(); }, OnAccess);
     }
 }
@@ -1238,7 +1239,7 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     if (MCTest::Option("record-window-saves").has_value())
     {
         const auto toMain = [&](std::string_view name)
-        { recordLanding(name, MCMenuScreens::LeaveCampaign, [&] { return shows(&MCLogistics::MainScreen); }); };
+        { recordLanding(name, MCMenuScreens::LeaveCampaign, [&] { return MCMainMenuScreens::Shown(MCMainPanel::Main); }); };
         const auto openSaves = [&](std::string_view name, MCSavesScreen::MCMode mode)
         {
             recordLanding(
@@ -1274,7 +1275,7 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         toMain("to-main-last");
         openSaves("load-game-again", MCSavesScreen::MCMode::Load);
         recordLanding(
-            "load-game-back", [] { PressKey(SDL_SCANCODE_ESCAPE); }, [&] { return shows(&MCLogistics::MainScreen); });
+            "load-game-back", [] { PressKey(SDL_SCANCODE_ESCAPE); }, [&] { return MCMainMenuScreens::Shown(MCMainPanel::Main); });
         return;
     }
 
@@ -1312,11 +1313,11 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
 
     // A quick-start mission won: SOLO MISSIONS, the main menu under it; Escape goes back to the main menu.
     playToResults(Won, true, false);
-    recordLanding("solo-missions", leaveResults, [&] { return shows(&MCLogistics::LoadScreen) && LoadingSolo; });
+    recordLanding("solo-missions", leaveResults, [] { return MCMainMenuScreens::Shown(MCMainPanel::Solo); });
     Solo = false;
     recordLanding(
         "back-to-main", [] { MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE); },
-        [&] { return shows(&MCLogistics::MainScreen); });
+        [&] { return MCMainMenuScreens::Shown(MCMainPanel::Main); });
 
     // The campaign's last mission won (the first, marked last): its end movies (skipped), then the main menu.
     NewCampaign();
@@ -1336,6 +1337,6 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
                       }
 
                       return Mission()->State == MCMissionState::Logistics && GuiSystem().SmackerWindow == nullptr &&
-                             shows(&MCLogistics::MainScreen);
+                             MCMainMenuScreens::Shown(MCMainPanel::Main);
                   });
 }

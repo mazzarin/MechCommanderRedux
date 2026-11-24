@@ -1,0 +1,68 @@
+/* Port-only (SPEC-menus.md, "Main menu"; stage 7): the main menu and its submenus (CAMPAIGNS, SOLO MISSIONS,
+   MULTIPLAYER), a list in the painting's window: the game's copy of tools/menus-frames/frames/main_menu.rcss with the
+   choices live (the mouse's hover is RmlUi's :hover; the keys' focus the look's ring). */
+
+/* The menu where the painting's window is (its window and painted frame: 336-623 x 94-430, covered whole). */
+#menu {
+    position: absolute;
+    left: 333dp;
+    top: 91dp;
+    width: 294dp;
+    height: 343dp;
+    padding: 12dp 8dp;
+    display: flex;
+    flex-direction: column;
+}
+#menu-list { flex: 1 1 0; display: flex; flex-direction: column; }
+#menu-list > * { flex: 0 0 auto; }
+#menu-list > .grow { flex: 1 1 0; }
+#menu-list > .empty { flex: 1 1 0; }  /* nothing to choose (no network): its line in the choices' room */
+
+/* A choice: Heading capitals, 28 units (the painting's window has room), command blue under the mouse. Each is a
+   button for the kit (its press's sound, the keys' focus), drawn as the frames draw a choice. */
+.choice {
+    display: block;
+    box-sizing: border-box;
+    height: 28dp;
+    padding: 0 12dp;
+    border-width: 0;
+    font-size: 14.8dp;
+    line-height: 28dp;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: left;
+    white-space: nowrap;
+    color: #fcfcfc;
+}
+.choice:hover, .choice:active { background-color: #0c346c; }
+.choice.picked { background-color: #045454; }
+/* A choice with a line under it: where it stands (the save it continues, a campaign's mission). */
+.choice.two { height: 40dp; padding-top: 4dp; line-height: 18dp; }
+.choice .line {
+    font-size: 9.51dp;
+    line-height: 13dp;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: #a4b0bc;
+}
+.choice:hover .line, .choice.picked .line { color: #fcfcfc; }
+.divider { height: 1dp; margin: 8dp 12dp; background-color: #2a3742; }
+
+/* A submenu's name, as a screen's: what it belongs to in cyan above it. */
+.subhead { padding: 0 12dp 6dp 12dp; margin: 0 0 8dp 0; border-bottom: 1dp #2a3742; }
+/* The picked choice's actions at the panel's foot, as wide as their words: the way back at the left, the main action at
+   the right under the others. */
+.actions { padding: 0 12dp; }
+.actions .row > * { flex: 0 0 auto; }
+.actions .row > .grow { flex: 1 1 0; }
+.gap-foot { height: 12dp; }
+
+#foot { margin: 0 12dp; padding-top: 8dp; border-top: 1dp #2a3742; }
+
+/* The legal lines, painted into the 1998 painting's bottom rows, set again in Fine, at 4:3's width at most so the
+   lines come out even; the bar holds four (three at most windows, four where the letters' whole pixels run wider). */
+#legal { position: absolute; left: 0; right: 0; bottom: 0; height: 48dp; }
+#legal p { padding-top: 4dp; }
+#legal .content { flex: 0 1 620dp; }

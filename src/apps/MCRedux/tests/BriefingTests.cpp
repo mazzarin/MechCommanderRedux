@@ -11,6 +11,7 @@
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCBriefingBox.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCFileScrollPane.h"
@@ -271,15 +272,17 @@ TEST_CASE_ISOLATED("game: the main menu opens its screens in their states, and c
     CHECK_EQ(GameDifficulty, difficulty);
     CHECK_EQ(SoundSystem()->MusicLevel, music);
 
-    // The multiplayer menu.
+    // The multiplayer menu (remade: the main menu's panel, the main screen logistics' under it).
     ShowMultiPlayer();
     Settle();
-    CHECK(logistics->CurrentScreen() == logistics->MultiplayerScreen);
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Multiplayer));
+    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
     CHECK_EQ(logistics->LogisticsState, 10);
     CHECK(!Solo);
     Cancel();
     Settle();
     CHECK(logistics->CurrentScreen() == logistics->MainScreen);
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Main));
 
     // A new campaign opens on the briefing screen, and the menu's return goes back there.
     NewCampaign();
@@ -301,6 +304,7 @@ TEST_CASE_ISOLATED("game: the main menu offers LOAD MISSION while there are save
 
     static constexpr std::array<std::string_view, 2> Saves = {"Bravo", "Alpha"};
     std::optional<MCTestGame::PinnedSaves> saves;
+    const MCTestGame::OldMainMenu oldMenu;
     REQUIRE(MCTestGame::StartLogistics([&saves] { saves.emplace(Saves); }));
     Settle();
     std::shared_ptr<MCLogistics> logistics = GlobalLog();

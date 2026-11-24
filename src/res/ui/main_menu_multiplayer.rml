@@ -1,0 +1,28 @@
+<rml>
+<head>
+    <title>Main menu: multiplayer</title>
+    <link type="text/template" href="main_menu_frame.rml"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "MULTIPLAYER"; stage 7; the style frames' main_menu_multiplayer.rml and
+     main_menu_multiplayer_offline.rml): MULTIPLAYER in the main menu's place (1998's MULTIPLAYER ACCESS): INTERNET with
+     how many are online (the games service's count), then LAN; each opens its list. With no network, the sentence where
+     they would be and RETRY under it; 1998's connection screen (modem, serial cable, the 1999 lobbies) is dropped.
+     Escape goes back (logistics/MCMainMenuScreen). -->
+<body template="main-menu" class="painting" data-model="multiplayer">
+    <div class="subhead">
+        <div class="eyebrow">Main menu</div>
+        <div class="heading caps">Multiplayer</div>
+    </div>
+    <div class="choice two button" id="internet" data-if="network &amp;&amp; internet">Internet<div class="line">{{online}}</div></div>
+    <div class="choice two button" id="lan" data-if="network">LAN<div class="line">Games on this network</div></div>
+    <div class="grow" data-if="network"></div>
+    <div class="empty" data-if="!network"><div class="text">No network connection.</div><div class="button small" id="retry">Retry</div></div>
+    <div class="actions column gap8">
+        <div class="row">
+            <div class="button" id="back">Back</div>
+            <div class="grow"></div>
+        </div>
+    </div>
+    <div class="gap-foot"></div>
+</body>
+</rml>

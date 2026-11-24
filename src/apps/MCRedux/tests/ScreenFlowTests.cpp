@@ -7,6 +7,7 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
@@ -286,7 +287,7 @@ TEST_CASE_ISOLATED("screen flow: a registered screen and an old one hand over to
                                                           [&]
                                                       {
                                                           CHECK(MCScreenChange::Dark());
-                                                          CHECK(!GlobalLog()->MainScreen->IsShowing());
+                                                          CHECK(!MCMainMenuScreens::Shown(MCMainPanel::Main));
                                                           shown = true;
                                                       },
                                                       .Hide = [&] { shown = false; },
@@ -302,7 +303,7 @@ TEST_CASE_ISOLATED("screen flow: a registered screen and an old one hand over to
 
     PressAndCheck("back to the main menu", [] { MCScreenFlow::Back(); }, {main});
     CHECK(!shown);
-    CHECK(GlobalLog()->MainScreen->IsShowing());
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Main));
 }
 
 /// <summary>
@@ -335,7 +336,7 @@ TEST_CASE_ISOLATED(
     REQUIRE(keptScreen);
     REQUIRE(keptScreen->Shown());
     CHECK(MCRmlFlow::Showing());
-    CHECK(!GlobalLog()->MainScreen->IsShowing());
+    CHECK(!MCMainMenuScreens::Shown(MCMainPanel::Main));
     auto& keptProbe = static_cast<MCRmlProbe&>(*keptScreen.Lock());
 
     // ENTER presses the focus's button (JOIN GAME); ESC is the screen's Back, here the next screen.
@@ -399,8 +400,7 @@ TEST_CASE_ISOLATED(
     MCScreenFlow::Back();
     RunWhileChanging();
     CHECK(StackNow() == std::vector<MCScreenId>{main});
-    CHECK(!MCRmlFlow::Showing());
-    CHECK(GlobalLog()->MainScreen->IsShowing());
+    CHECK(MCMainMenuScreens::MainOnTop());
 }
 
 /// <summary>
@@ -535,7 +535,7 @@ TEST_CASE_ISOLATED("screen flow: the campaign's end movies lead to the main menu
     CHECK(!Mission()->GameOver);
     REQUIRE(GlobalLog() != nullptr);
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
-    CHECK(GlobalLog()->MainScreen->IsShowing());
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Main));
     CHECK(StackNow() == std::vector{MCMenuScreens::Main()});
     CHECK(fades.FadedIn);
 }

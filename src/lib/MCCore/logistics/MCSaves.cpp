@@ -13,6 +13,11 @@
 namespace
 {
     constexpr std::string_view SaveExtension = ".sav";
+    /// <summary>Port-only (stage 7): a single mission's file, and its campaign's master file's name before its own.</summary>
+    constexpr std::string_view SoloExtension = ".sol";
+    constexpr std::string_view SoloMasterPrefix = "campaign";
+    /// <summary>Between the thousands of resource points (<see cref="MCSaves::PointsText"/>).</summary>
+    constexpr char ThousandsMark = ',';
     /// <summary>The campaigns' master mission files, by the saves' [Planet] Setting (Port Arthur's, Cermak's).</summary>
     constexpr std::array<std::string_view, 2> MasterFiles = {"mechcmdr1", "xmechcmdr1"};
     /// <summary>The game's names for its own saves ("PortArthurBefore_Op%i_Mis%i"), by campaign, and their length.</summary>
@@ -179,8 +184,17 @@ namespace
         return text;
     }
 
-    /// <summary>What <paramref name="scenario"/>'s briefing names its operation and mission, as the menus name them.</summary>
-    std::pair<std::string, std::string> NamesOf(std::string_view scenario)
+    /// <summary>What a scenario's mission file and briefing say of it, as the menus name it.</summary>
+    struct MCMissionFacts
+    {
+        std::string Operation;
+        std::string Mission;
+        /// <summary>The tons that drop (its MaxTonnage); 0 when it doesn't say.</summary>
+        int32_t Tons = 0;
+    };
+
+    /// <summary>What <paramref name="scenario"/>'s mission file and briefing say of it.</summary>
+    MCMissionFacts FactsOf(std::string_view scenario)
     {
         MCFitIniFile file;
         std::string briefing;
@@ -192,16 +206,45 @@ namespace
             return {};
         }
 
+        MCMissionFacts facts{.Tons = file.Read<int32_t>("MaxTonnage").value_or(0)};
         const std::optional<std::string> text = ReadTextFile(GamePath(MissionPath, briefing));
 
         if (!text.has_value())
         {
             SDL_Log("MCSaves: the briefing %s can't be read", briefing.c_str());
-            return {};
+            return facts;
         }
 
         const MCMissionNames::MCWritten written = MCMissionNames::FromBriefing(*text);
-        return {MCMissionNames::Operation(written.Operation), MCMissionNames::Mission(briefing, written.Mission)};
+        facts.Operation = MCMissionNames::Operation(written.Operation);
+        facts.Mission = MCMissionNames::Mission(briefing, written.Mission);
+        return facts;
+    }
+
+    /// <summary>
+    /// Opens the settings (the first packet) of the save <paramref name="gamePath"/> into <paramref name="settings"/>
+    /// (<paramref name="packets"/> holding it); false, and the log told, when it can't be read.
+    /// </summary>
+    bool OpenSettings(const std::string& gamePath, MCPacketFile& packets, MCFitIniFile& settings)
+    {
+        const int32_t opened = packets.Open(gamePath);
+        packets.SetMostUnpacked(MostSavePacket);
+
+        // One that can't be read is listed by its name (issue #25: the original read on in a file it couldn't open).
+        if (opened != 0 || packets.SeekPacket(0) != 0 ||
+            settings.Open(packets, static_cast<uint32_t>(packets.GetPacketSize())) != 0)
+        {
+            SDL_Log("MCSaves: the save %s can't be read", gamePath.c_str());
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>How many units a save's force has under <paramref name="block"/>'s <paramref name="count"/> (0 for none).</summary>
+    int32_t ForceCount(MCFitIniFile& settings, std::string_view block, std::string_view count)
+    {
+        return settings.SeekBlock(block) == 0 ? settings.Read<int32_t>(count).value_or(0) : 0;
     }
 }
 
@@ -280,14 +323,9 @@ void MCSaves::ReadSave(MCSave& save, std::span<const std::vector<MCScenario>> ca
 {
     MCPacketFile packets;
     MCFitIniFile settings;
-    const int32_t opened = packets.Open(SaveFile(save.Name));
-    packets.SetMostUnpacked(MostSavePacket);
 
-    // One that can't be read is listed by its name (issue #25: the original read on in a file it couldn't open).
-    if (opened != 0 || packets.SeekPacket(0) != 0 ||
-        settings.Open(packets, static_cast<uint32_t>(packets.GetPacketSize())) != 0)
+    if (!OpenSettings(SaveFile(save.Name), packets, settings))
     {
-        SDL_Log("MCSaves: the save %s can't be read", save.Name.c_str());
         return;
     }
 
@@ -315,6 +353,9 @@ void MCSaves::ReadSave(MCSave& save, std::span<const std::vector<MCScenario>> ca
     if (*missionNumber >= 0 && static_cast<size_t>(*missionNumber) < scenarios.size())
     {
         scenario = static_cast<size_t>(*missionNumber);
+        // Port-only (stage 7): the mission it opens on is its number's (an after save's, the next one).
+        save.OpensOperation = scenarios[*scenario].Operation;
+        save.OpensMission = scenarios[*scenario].Mission;
     }
 
     const auto byNumbers = [&](MCWhen when, uint32_t format)
@@ -352,6 +393,14 @@ void MCSaves::ReadSave(MCSave& save, std::span<const std::vector<MCScenario>> ca
     }
 
     NameMission(save, scenarios[*scenario], named);
+
+    // A save whose number names no mission of its campaign opens on the one it names.
+    if (save.OpensOperation == 0)
+    {
+        save.OpensOperation = save.Operation;
+        save.OpensMission = save.Mission;
+    }
+
     save.Read = true;
 }
 
@@ -364,8 +413,8 @@ void MCSaves::NameMission(MCSave& save, const MCScenario& scenario, std::unorder
 
     if (made)
     {
-        auto [operation, mission] = NamesOf(scenario.File);
-        names->second = MCNamed{std::move(operation), std::move(mission)};
+        MCMissionFacts facts = FactsOf(scenario.File);
+        names->second = MCNamed{std::move(facts.Operation), std::move(facts.Mission)};
     }
 
     save.OperationName = names->second.Operation;
@@ -385,8 +434,59 @@ auto MCSaves::Unsaved(MCCampaign campaign, int32_t mission, uint32_t points) -> 
 
     std::unordered_map<std::string, MCNamed> named;
     NameMission(save, scenarios[static_cast<size_t>(mission)], named);
+    save.OpensOperation = save.Operation;
+    save.OpensMission = save.Mission;
     save.Read = true;
     return save;
+}
+
+auto MCSaves::ReadSolo(std::string name) -> MCSolo
+{
+    MCSolo solo{.Name = std::move(name)};
+    MCPacketFile packets;
+    MCFitIniFile settings;
+
+    if (!OpenSettings(GamePath(SavePath, solo.Name, SoloExtension), packets, settings))
+    {
+        return solo;
+    }
+
+    const MCFitResult<int32_t> missionNumber =
+        settings.SeekBlock("General") == 0 ? settings.Read<int32_t>("MissionNumber") : MCFitResult<int32_t>();
+    const MCFitResult<uint32_t> points =
+        settings.SeekBlock("ResourcePoints") == 0 ? settings.Read<uint32_t>("numPoints") : MCFitResult<uint32_t>();
+    // Its campaign of one mission, as the game loads it (MCLogistics::ReadCampaign's "campaign" and its name).
+    const std::vector<MCScenario> scenarios = ReadScenarios(std::string(SoloMasterPrefix) + solo.Name);
+
+    if (!missionNumber.has_value() || !points.has_value() || *missionNumber < 0 ||
+        static_cast<size_t>(*missionNumber) >= scenarios.size())
+    {
+        SDL_Log("MCSaves: the single mission %s names no mission or points its campaign has", solo.Name.c_str());
+        return solo;
+    }
+
+    solo.ResourcePoints = *points;
+    solo.Units = ForceCount(settings, "Mechs", "NumMechs") + ForceCount(settings, "AssMechs", "NumAssMechs") +
+                 ForceCount(settings, "Vehicles", "NumVehicles") +
+                 ForceCount(settings, "AssVehicles", "NumAssVehicles");
+    const MCMissionFacts facts = FactsOf(scenarios[static_cast<size_t>(*missionNumber)].File);
+    solo.MissionName = facts.Mission;
+    solo.Tons = facts.Tons;
+    solo.Read = !solo.MissionName.empty();
+    return solo;
+}
+
+auto MCSaves::SoloMissions() -> std::vector<MCSolo>
+{
+    std::vector<MCSolo> missions;
+
+    for (const MCFoundFile& found : MCFileSystem::FindFileSources(GamePath(SavePath, "*", SoloExtension)))
+    {
+        missions.push_back(ReadSolo(MCFileSystem::ToUtf8(MCFileSystem::FromUtf8(found.Name).stem())));
+    }
+
+    std::ranges::sort(missions, [](const MCSolo& a, const MCSolo& b) { return Lowered(a.Name) < Lowered(b.Name); });
+    return missions;
 }
 
 const std::vector<MCSaves::MCSave>& MCSaves::All() const
@@ -540,6 +640,19 @@ bool MCSaves::CanName(std::string_view name)
 uint64_t MCSaves::Revision() const
 {
     return _Revision;
+}
+
+std::string MCSaves::PointsText(uint32_t points)
+{
+    constexpr size_t Group = 3;
+    std::string digits = std::to_string(points);
+
+    for (size_t at = digits.size(); at > Group; at -= Group)
+    {
+        digits.insert(at - Group, 1, ThousandsMark);
+    }
+
+    return digits;
 }
 
 std::string_view MCSaves::CampaignName(MCCampaign campaign)

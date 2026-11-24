@@ -712,16 +712,6 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     CHECK(manager.CurrentSession() == nullptr);
     CHECK(manager.CurrentConnection == MCNetProtocol::TcpIp);
     CHECK_EQ(lanScreen.PlayerName(), "Commander");
-
-    // Without a network the connection screen shows instead, and its SERIAL screen's CANCEL goes back to it.
-    ShowSerialScreen();
-    Settle();
-    auto& serialScreen = *GlobalLog()->SerialScreen;
-    ClickButton(*serialScreen.Element<MCLogButton>(1));
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MultiplayerScreen);
-    CHECK(GlobalLog()->MultiplayerScreen->IsShowing());
-    CHECK(!serialScreen.IsShowing());
-    CHECK(!MCTestGuest::OnLan());
 }
 
 /// <summary>

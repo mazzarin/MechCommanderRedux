@@ -465,8 +465,8 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY draw the same on every machine")
 
     constexpr std::array<MCDrawn, 3> Drawn = {{
         {"briefing", {0x90f15c0d, 0x82e3cd26, 0xbdcabc1b}},
-        {"deploy", {0xd9a96ad1, 0x84209082, 0xb5314cc1}},
-        {"deploy_heavy", {0xce5965c8, 0x662c22f0, 0x95431918}},
+        {"deploy", {0x51e41acf, 0xef3d9420, 0x6fe719cf}},
+        {"deploy_heavy", {0x0e66cfce, 0x250a7a16, 0x7cf73106}},
     }};
 
     const auto drawEach = [&display, &clock](const MCDrawn& drawn)
@@ -656,7 +656,7 @@ TEST_CASE_ISOLATED("game: the loading screen draws the same on every machine and
     REQUIRE(MCLoadingMenu::Show());
     MCLoadingMenu::Progress(ShownPercent);
     CHECK_EQ(MCLoadingMenu::Screen()->get().Percent(), ShownPercent);
-    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xbc8135b2, 0x04f0428f, 0x38d25e9d};
+    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xbc8135b2, 0xdb98ffa6, 0x52598df3};
 
     for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
     {

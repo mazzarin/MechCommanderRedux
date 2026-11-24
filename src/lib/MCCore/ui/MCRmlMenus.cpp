@@ -10,6 +10,8 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/Factory.h>
+#include <RmlUi/Core/StyleSheetContainer.h>
 
 namespace
 {
@@ -149,6 +151,40 @@ std::expected<std::unique_ptr<MCRmlMenus>, std::string> MCRmlMenus::Create(const
     return menus;
 }
 
+std::expected<void, std::string> MCRmlMenus::CheckFiles(const std::filesystem::path& folder)
+{
+    const std::string shown = MCFileSystem::ToUtf8(folder);
+    std::error_code error;
+
+    if (!std::filesystem::is_directory(folder, error))
+    {
+        return std::unexpected(std::format("the menus' folder {} isn't there", shown));
+    }
+
+    // Started as the game starts them: the face's files read into RmlUi's font engine (Create says which can't be).
+    const auto checked = Create(MCOptions{.Folder = folder});
+
+    if (!checked)
+    {
+        return std::unexpected(checked.error());
+    }
+
+    // The look read whole first: RmlUi takes a file it can't open, or an empty one, for a sheet with no rules.
+    if (const auto look = (*checked)->_Files->ReadFile(LookFile); !look || look->empty())
+    {
+        return std::unexpected(std::format("the menus' look {} can't be read from {}: {}", LookFile, shown,
+                                           look ? std::string("it's empty") : look.error()));
+    }
+
+    if (Rml::Factory::InstanceStyleSheetFile(std::string(LookFile)) == nullptr)
+    {
+        return std::unexpected(std::format(
+            "the menus' look {} in {} isn't a style sheet RmlUi reads (the log says why)", LookFile, shown));
+    }
+
+    return {};
+}
+
 std::expected<std::reference_wrapper<MCRmlMenus>, std::string> MCRmlMenus::Start(const MCOptions& options)
 {
     std::unique_ptr<MCRmlMenus>& menus = GameMenus();
@@ -282,10 +318,9 @@ bool MCRmlMenus::HandleEvent(const SDL_Event& event)
 
 std::shared_ptr<const MCUiDraws> MCRmlMenus::FrameFor(int32_t width, int32_t height)
 {
-    if (width != _Width || height != _Height)
-    {
-        SetWindow(width, height);
-    }
+    // Each frame: the mission layer's unit follows INTERFACE SIZE and UI RESOLUTION with the window kept (each layer
+    // lays out again only when its size or unit changed).
+    SetWindow(width, height);
 
     return Frame();
 }

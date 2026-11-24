@@ -48,12 +48,18 @@ namespace
         std::string_view New;
     };
 
+    /// <summary>The menus' files, in the program's folder: one changed, one new in a folder the copy lacks.</summary>
+    constexpr std::string_view Look = "ui/look.rcss";
+    constexpr std::string_view Face = "ui/fonts/Face.ttf";
+
     // The README is the same in both: it's never moved.
-    constexpr std::array<MCFileBytes, 5> Files{{{Game, "the game, build 500", "the game, build 600"},
+    constexpr std::array<MCFileBytes, 7> Files{{{Game, "the game, build 500", "the game, build 600"},
                                                 {Sdl, "SDL, build 500", "SDL, build 600"},
                                                 {Editor, "the editor, build 500", "the editor, build 600"},
                                                 {Readme, "the README", "the README"},
-                                                {Licences, std::nullopt, "the licences"}}};
+                                                {Licences, std::nullopt, "the licences"},
+                                                {Look, "the look, build 500", "the look, build 600"},
+                                                {Face, std::nullopt, "the face, new in build 600"}}};
 
     /// <summary>The new files' zip, as the release script makes it.</summary>
     std::string ZipBytes()
@@ -364,6 +370,11 @@ TEST_CASE("program swap: the staged files go in, the game last; the game's other
     CHECK(!std::filesystem::exists(old / Readme));
     CHECK(!std::filesystem::exists(old / OwnResolution));
     CHECK(!std::filesystem::exists(copy.Staged(Game).parent_path()));
+
+    // The menus' files the same way: the old look set aside in its folder, the new face in a folder made for it.
+    CHECK_EQ(Read(old / MCFileSystem::FromUtf8(Look)), std::string(*Files[5].Old));
+    CHECK(!std::filesystem::exists(old / MCFileSystem::FromUtf8(Face)));
+    CHECK_EQ(Read(copy.At(Face)), std::string(Files[6].New));
 
     // The update tried again before a start (its content failed to arm): the program is in, so nothing is fetched and
     // the old files, the running program among them, stay set aside.

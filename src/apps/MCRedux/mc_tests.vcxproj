@@ -59,6 +59,9 @@
     <CopyFileToFolders Include="..\..\res\ui\art\hd\closed.png">
       <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\battle.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\art\hd\main_menu.png">
       <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
     </CopyFileToFolders>
@@ -69,6 +72,12 @@
       <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\dialog.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\dialog_ask.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\dialog_reports.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\dialog.rml">
@@ -87,6 +96,15 @@
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\look.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\pause.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\prefs.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\prefs.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\missions.json">
@@ -132,6 +150,12 @@
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\probe_window.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\update.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\update.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\fonts\OFL.txt">
@@ -260,6 +284,7 @@
     <ClCompile Include="tests\ObjectTypeTests.cpp" />
     <ClCompile Include="tests\PathfindingTests.cpp" />
     <ClCompile Include="tests\PortTests.cpp" />
+    <ClCompile Include="tests\PrefsScreenTests.cpp" />
     <ClCompile Include="tests\PresenterTests.cpp" />
     <ClCompile Include="tests\ProgramSwapTests.cpp" />
     <ClCompile Include="tests\PurchaseTests.cpp" />
@@ -287,6 +312,7 @@
     <ClCompile Include="tests\TestGame.cpp" />
     <ClCompile Include="tests\TurretTests.cpp" />
     <ClCompile Include="tests\UpdaterTests.cpp" />
+    <ClCompile Include="tests\UpdateScreenTests.cpp" />
     <ClCompile Include="tests\UploadSlotsTests.cpp" />
     <ClCompile Include="tests\VfxFontImageTests.cpp" />
     <ClCompile Include="tests\VfxGameHelperTests.cpp" />
@@ -336,6 +362,7 @@
     <ClInclude Include="tests\MCTestArchive.h" />
     <ClInclude Include="tests\MCTestGuest.h" />
     <ClInclude Include="tests\MCTestShapes.h" />
+    <ClInclude Include="tests\RemadeScreens.h" />
     <ClInclude Include="tests\ScreenInput.h" />
     <ClInclude Include="tests\TestGame.h" />
   </ItemGroup>

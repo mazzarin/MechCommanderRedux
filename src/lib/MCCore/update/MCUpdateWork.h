@@ -91,6 +91,8 @@ namespace MCUpdateWork
         DiskFull,
         /// <summary>The release's content needs a newer program than this one (the newest installer brings it).</summary>
         NewerProgram,
+        /// <summary>A file downloaded isn't as the release's list has it (it's deleted: trying again downloads it afresh).</summary>
+        Damaged,
     };
 
     /// <summary>Why a piece of work failed: its kind, and the detail for the log.</summary>
@@ -100,6 +102,8 @@ namespace MCUpdateWork
         std::string Reason;
         /// <summary>DiskFull: how many more bytes the game's disk must have free.</summary>
         uint64_t BytesShort = 0;
+        /// <summary>DiskFull: how many bytes free the work needs on the game's disk in all.</summary>
+        uint64_t BytesNeeded = 0;
     };
 
     /// <summary>

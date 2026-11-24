@@ -178,7 +178,8 @@ auto MCGenericScreen::SetScreenCallback(MCLogButton& button, int32_t callback) -
             exec = [] { MCScreenFlow::Open(MCMenuScreens::Load()); };
             break;
         case 3:
-            exec = MCScreenFlow::Via("preferences", ShowPreferences);
+            // Port-only (stage 6): the remade Preferences, through the screens' flow.
+            exec = [] { MCScreenFlow::Open(MCMenuScreens::Preferences()); };
             break;
         case 4:
             exec = MCScreenFlow::Via("multiplayer", ConnectScreen);

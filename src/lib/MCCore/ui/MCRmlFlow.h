@@ -22,6 +22,17 @@ namespace MCRmlFlow
     /// <summary>Stops the game's menus (the game's end): its screens destroyed, RmlUi shut down.</summary>
     void Stop();
 
+    /// <summary>What the player is told when the menus' files don't load, before how to repair the copy.</summary>
+    inline constexpr std::string_view FilesMissing = "Redux HD's menu files are missing.";
+
+    /// <summary>
+    /// At the game's start, before anything opens: whether the menus' files in <paramref name="folder"/> (the app's own:
+    /// the program brings them, so a copy without them is damaged) load (MCRmlMenus::CheckFiles). When they don't, the
+    /// log says which and why, <paramref name="tell"/> is given <see cref="FilesMissing"/> for the player, and the game
+    /// doesn't start: no menus' RmlUi is left started, and no screen is shown. There are no other screens to play from.
+    /// </summary>
+    bool FilesLoad(const std::filesystem::path& folder, const std::function<void(std::string_view)>& tell);
+
     /// <summary>Makes a remade screen on the menus' layer (its document, its keys, its Back).</summary>
     using MCMake = std::function<MCGuiHandle<MCRmlScreen>(MCRmlLayer& layer)>;
 

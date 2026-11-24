@@ -118,6 +118,18 @@ void MCRmlFlow::Stop()
     MCRmlMenus::Stop();
 }
 
+bool MCRmlFlow::FilesLoad(const std::filesystem::path& folder, const std::function<void(std::string_view)>& tell)
+{
+    if (const auto loaded = MCRmlMenus::CheckFiles(folder); !loaded)
+    {
+        SDL_Log("Menus: the game can't start: %s", loaded.error().c_str());
+        tell(FilesMissing);
+        return false;
+    }
+
+    return true;
+}
+
 MCGuiHandle<MCRmlScreen> MCRmlFlow::Made(std::string_view name)
 {
     const auto found = std::ranges::find(MadeScreens(), name, &MCMadeScreen::first);
@@ -208,9 +220,11 @@ MCScreenFlow::MCScreenKind MCRmlFlow::Kind(std::string name, MCMake make, MCKeep
 
 void MCRmlFlow::Tend()
 {
+    // Port-only (stage 6): the mission's layer too (the pause, Preferences over the battlefield).
     if (const MCOptionalRef<MCRmlMenus> running = MCRmlMenus::Running(); running.has_value())
     {
         running->get().Menus().Tend();
+        running->get().Mission().Tend();
     }
 }
 

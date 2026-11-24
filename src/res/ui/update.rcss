@@ -1,0 +1,36 @@
+/* Port-only (SPEC-menus.md, "UPDATE"): the game's copy of tools/menus-frames/frames/update.rcss, with the panel's places
+   it takes from LOAD GAME's (load.rcss) under its own names. A panel over the painting: what the new version brings,
+   a line each, at the left; the version, its download and what the update is doing at the right; BACK, then SKIP and
+   INSTALL (STOP while it downloads, RESTART once it's in). */
+body.painting { background-color: #383b3c; decorator: image(art/main_menu.png cover center center); }
+#frame { padding-top: 90dp; }
+#update { height: 346dp; display: flex; flex-direction: column; }
+#update > * { flex: 0 0 auto; }
+#update > .grow { flex: 1 1 0; }
+#update .titlebar > * { flex: 0 0 auto; }
+#update .titlebar > .grow { flex: 1 1 0; }
+#update-body { align-items: stretch; }
+#update-body > * { flex: 0 0 auto; }
+#notes { flex: 2 1 0; display: flex; flex-direction: column; }
+#notes > * { flex: 0 0 auto; }
+#notes > .scroll-box { flex: 1 1 0; }
+.note { display: flex; flex-direction: row; gap: 8dp; padding: 2dp 14dp 2dp 0; font-size: 11.63dp; line-height: 15dp; }
+.note > * { flex: 0 0 auto; }
+.note > .grow { flex: 1 1 0; white-space: normal; }
+.note .dot { width: 3dp; height: 3dp; margin-top: 6dp; background-color: #7cd4ec; }
+#facts { flex: 0 0 212dp; box-sizing: border-box; padding-left: 12dp; border-left: 1dp #2a3742; display: flex; flex-direction: column; }
+#facts > * { flex: 0 0 auto; }
+.fact { height: 16dp; display: flex; flex-direction: row; font-size: 11.63dp; line-height: 16dp; white-space: nowrap; }
+.fact > * { flex: 0 0 auto; }
+.fact .label { flex: 0 0 72dp; font-size: 9.51dp; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #7cd4ec; }
+.fact.hidden { display: none; }
+.status { margin-top: 12dp; font-size: 11.63dp; line-height: 16dp; white-space: normal; }
+.status .meter { margin-top: 6dp; }
+.meter.hidden { display: none; }
+.meter-fill.cream { background-color: #fcfcb8; }
+#foot { padding-top: 8dp; border-top: 1dp #2a3742; gap: 8dp; }
+#foot > * { flex: 0 0 auto; }
+#foot > .grow { flex: 1 1 0; }
+#foot > .button.hidden { display: none; }
+#hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 40dp; }
+#hintbar .content { padding-top: 14dp; }

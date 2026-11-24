@@ -380,8 +380,11 @@ void MCRmlKit::OnClick(Rml::Event& event)
 {
     Rml::Element* target = event.GetTargetElement();
 
-    // Something off: its own sound, and the click goes no further (its screen never sees it).
-    if (Rml::Element* off = Up(target, OffClass); off != nullptr && Up(off, ButtonClass) == off)
+    // Something off (a button, or a held switch or stepper): its own sound, and the click goes no further (its screen
+    // never sees it).
+    if (Rml::Element* off = Up(target, OffClass);
+        off != nullptr &&
+        (Up(off, ButtonClass) == off || off->IsClassSet(SwitchClass) || off->IsClassSet(StepperClass)))
     {
         Play(OffClickSound);
         event.StopPropagation();
@@ -468,7 +471,8 @@ void MCRmlKit::OnKeyDown(Rml::Event& event)
     if ((key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT) &&
         (target->IsClassSet(SwitchClass) || target->IsClassSet(StepperClass)))
     {
-        if (!Step(*target, key == Rml::Input::KI_LEFT ? -1 : 1))
+        // A held one doesn't move.
+        if (target->IsClassSet(OffClass) || !Step(*target, key == Rml::Input::KI_LEFT ? -1 : 1))
         {
             Play(OffClickSound);
         }

@@ -82,7 +82,8 @@ public:
 
     /// <summary>
     /// Port: takes the player's key bindings (<see cref="MCKeyBindings::Player"/>), with the salvage page's key
-    /// swapped for the chat page's in multiplayer unless the player gave it another (StartScenario calls it).
+    /// swapped for the chat page's in multiplayer unless the player gave it another (StartScenario calls it, and
+    /// Preferences' ACCEPT over a mission).
     /// </summary>
     void TakePlayerKeys();
     /// <summary>Drops the selection, parser, buttons, lance icons and reserve icons.</summary>

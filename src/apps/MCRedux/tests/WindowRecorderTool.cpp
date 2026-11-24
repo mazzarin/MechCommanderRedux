@@ -3,6 +3,7 @@
 #include "MCInternetSpots.h"
 #include "MCTest.h"
 #include "MCTestGuest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
@@ -22,10 +23,14 @@
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCPauseScreen.h"
+#include "logistics/MCPrefsScreen.h"
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCSessionScreen.h"
+#include "logistics/MCSettingsModel.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
@@ -80,6 +85,11 @@
 // a newer game's JOIN GAME (its dialog) and UPDATE, UPDATE's way back, BACK, then LAN and its BACK. Each step's press to
 // the end of the first frame showing what it opened goes to the output and the frame log ("step <name>: ..."), beside
 // the changes' own lines; nothing is recorded.
+//
+// Port-only (SPEC-menus.md's stage 6): --record-window-menus 1 times stage 6's screens, each change from its press to
+// its first whole frame, as a change's line in the frame log: at the main menu Preferences opened, its sections in turn
+// (E), Escape back, UPDATE and Escape back; in the mission, after its battle's seconds, Escape to the pause, ALL
+// PREFERENCES, Escape to the pause again, Escape to the battle. Not recorded: time them with --record-window-video 0.
 
 namespace
 {
@@ -700,6 +710,39 @@ namespace
         std::shared_ptr<MCGuiCallback> _CatchUp = std::make_shared<MCGuiCallback>();
     };
 
+    /// <summary><paramref name="seconds"/> in the clock's ticks.</summary>
+    Clock::duration Seconds(double seconds)
+    {
+        return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(seconds));
+    }
+
+    /// <summary>
+    /// One of the game's frames at the display's pace, as long as the real time since the game's clock last caught up
+    /// (<paramref name="time"/>), <paramref name="afterFrame"/> as it ends (presented), then the wait for the next
+    /// refresh; when the frame ended (before the wait).
+    /// </summary>
+    Clock::time_point PacedFrame(const MCRealTime& time, const std::function<void()>& afterFrame = {})
+    {
+        const Clock::time_point started = Clock::now();
+
+        // As the game's frame loop starts each (MCGuiSystem::Run).
+        if (MCFrameLog::Enabled())
+        {
+            MCFrameLog::NextFrame(PaceHz, true);
+        }
+
+        MCTestGame::RunFrame(static_cast<float>(std::clamp(time.Behind(), ShortestFrame, LongestFrame)));
+        const Clock::time_point ended = Clock::now();
+
+        if (afterFrame)
+        {
+            afterFrame();
+        }
+
+        std::this_thread::sleep_until(started + Seconds(1.0 / PaceHz));
+        return ended;
+    }
+
     /// <summary>
     /// Runs the game's frames at a 60 Hz display's pace, each as long as the real time since the game's clock last
     /// caught up (<paramref name="time"/>), until <paramref name="done"/> (or <paramref name="mostSeconds"/>); whether
@@ -708,33 +751,16 @@ namespace
     bool RunPaced(const MCRealTime& time, const std::function<bool()>& done, double mostSeconds,
                   const std::function<void()>& afterFrame = {})
     {
-        const auto refresh = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / PaceHz));
-        const Clock::time_point end =
-            Clock::now() + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(mostSeconds));
+        const Clock::time_point end = Clock::now() + Seconds(mostSeconds);
 
         while (!done())
         {
-            const Clock::time_point now = Clock::now();
-
-            if (now >= end)
+            if (Clock::now() >= end)
             {
                 return false;
             }
 
-            // As the game's frame loop starts each (MCGuiSystem::Run).
-            if (MCFrameLog::Enabled())
-            {
-                MCFrameLog::NextFrame(PaceHz, true);
-            }
-
-            MCTestGame::RunFrame(static_cast<float>(std::clamp(time.Behind(), ShortestFrame, LongestFrame)));
-
-            if (afterFrame)
-            {
-                afterFrame();
-            }
-
-            std::this_thread::sleep_until(now + refresh);
+            PacedFrame(time, afterFrame);
         }
 
         return true;
@@ -750,6 +776,126 @@ namespace
     bool Settled()
     {
         return !MCScreenChange::Running();
+    }
+
+    /// <summary>
+    /// A change of screen the screens' flow doesn't make (the pause's, Preferences' sections), timed as the flow times
+    /// its own: from <paramref name="press"/> to the end of the first frame that drew the new screen whole (one that
+    /// started with <paramref name="shown"/> true); the line written to the frame log and printed.
+    /// </summary>
+    void TimeChange(const MCRealTime& time, std::string_view name, const std::function<void()>& press,
+                    const std::function<bool()>& shown)
+    {
+        RunPacedFor(time, SecondsBefore);
+        const Clock::time_point pressed = Clock::now();
+        const Clock::time_point end = pressed + Seconds(MostChangeSeconds);
+        press();
+        std::optional<Clock::time_point> whole;
+        int32_t frames = 0;
+
+        while (!whole.has_value() && Clock::now() < end)
+        {
+            const bool ready = shown();
+            const Clock::time_point drawn = PacedFrame(time);
+            frames++;
+
+            if (ready)
+            {
+                whole = drawn;
+            }
+        }
+
+        CHECK(whole.has_value());
+        const double ms = whole.has_value() ? std::chrono::duration<double, std::milli>(*whole - pressed).count() : 0.0;
+        const std::string line =
+            std::format("change {}: the press to the first whole frame {:.1f} ms ({} frames)", name, ms, frames);
+
+        if (MCFrameLog::Enabled())
+        {
+            MCFrameLog::Line(line);
+        }
+
+        std::cout << "  " << line << "\n";
+    }
+
+    /// <summary>A key pressed (down only: the screen it opens is timed from it); see <see cref="LetGo"/>.</summary>
+    std::function<void()> KeyDown(SDL_Scancode scancode)
+    {
+        return [scancode] { MCScreenInput::SendKeyEvent(scancode, true); };
+    }
+
+    /// <summary>The key pressed let go, and the screen it opened shown a while.</summary>
+    void LetGo(const MCRealTime& time, SDL_Scancode scancode)
+    {
+        MCScreenInput::SendKeyEvent(scancode, false);
+        RunPacedFor(time, SecondsAfter);
+    }
+
+    /// <summary>A change the flow makes, its line its own (MCScreenChange): <paramref name="press"/>, then until it ends.</summary>
+    void FlowChange(const MCRealTime& time, const std::function<void()>& press)
+    {
+        RunPacedFor(time, SecondsBefore);
+        press();
+        CHECK(RunPaced(time, Settled, MostChangeSeconds));
+    }
+
+    /// <summary>
+    /// Stage 6's screens from the main menu (--record-window-menus 1): Preferences opened, each section in turn (Q and
+    /// E), Escape back; UPDATE opened, Escape back.
+    /// </summary>
+    void TimeMenus(const MCRealTime& time)
+    {
+        FlowChange(time, [] { MCScreenFlow::Open(MCMenuScreens::Preferences()); });
+        RunPacedFor(time, SecondsAfter);
+        const std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OnTop<MCPrefsScreen>();
+        REQUIRE(prefs != nullptr);
+
+        for (size_t next = 1; next < MCSettingsModel::Sections.size(); ++next)
+        {
+            const MCSettingsModel::MCSection section = MCSettingsModel::Sections[next];
+            TimeChange(time, std::format("preferences' section {}", next + 1), KeyDown(SDL_SCANCODE_E),
+                       [&prefs, section] { return prefs->Section() == section; });
+            LetGo(time, SDL_SCANCODE_E);
+        }
+
+        FlowChange(time, KeyDown(SDL_SCANCODE_ESCAPE));
+        LetGo(time, SDL_SCANCODE_ESCAPE);
+        FlowChange(time, [] { MCUpdateScreen::OpenFromMenus(); });
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, KeyDown(SDL_SCANCODE_ESCAPE));
+        LetGo(time, SDL_SCANCODE_ESCAPE);
+    }
+
+    /// <summary>The pause shown, its first frame whole.</summary>
+    bool PauseShown()
+    {
+        const std::shared_ptr<MCPauseScreen> pause = MCRemadeTest::OnTop<MCPauseScreen>(MCRemadeTest::MCLayer::Mission);
+        return pause != nullptr && pause->Ready();
+    }
+
+    /// <summary>
+    /// Stage 6's screens in a mission (--record-window-menus 1): Escape to the pause, ALL PREFERENCES, Escape back to the
+    /// pause, Escape back to the battle.
+    /// </summary>
+    void TimePause(const MCRealTime& time)
+    {
+        TimeChange(time, "battle to pause", KeyDown(SDL_SCANCODE_ESCAPE), PauseShown);
+        LetGo(time, SDL_SCANCODE_ESCAPE);
+        const std::shared_ptr<MCPauseScreen> pause = MCRemadeTest::OnTop<MCPauseScreen>(MCRemadeTest::MCLayer::Mission);
+        REQUIRE(pause != nullptr);
+        TimeChange(
+            time, "pause to preferences", [&pause] { CHECK(MCRemadeTest::Press(*pause, "all")); },
+            []
+            {
+                const std::shared_ptr<MCPrefsScreen> prefs =
+                    MCRemadeTest::OnTop<MCPrefsScreen>(MCRemadeTest::MCLayer::Mission);
+                return prefs != nullptr && prefs->Ready();
+            });
+        RunPacedFor(time, SecondsAfter);
+        TimeChange(time, "preferences to pause", KeyDown(SDL_SCANCODE_ESCAPE), PauseShown);
+        LetGo(time, SDL_SCANCODE_ESCAPE);
+        TimeChange(time, "pause to battle", KeyDown(SDL_SCANCODE_ESCAPE), [] { return !MCPauseScreen::Shows(); });
+        LetGo(time, SDL_SCANCODE_ESCAPE);
     }
 
     /// <summary>An option's number, else <paramref name="fallback"/>.</summary>
@@ -1061,6 +1207,13 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         return;
     }
 
+    const bool menus = MCTest::Option("record-window-menus").has_value();
+
+    if (menus)
+    {
+        TimeMenus(time);
+    }
+
     if (campaign)
     {
         TimeCampaign(time);
@@ -1094,6 +1247,11 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
             RunPacedFor(time, battleSeconds);
         });
     std::cout << "into the mission:\n" << into;
+
+    if (menus)
+    {
+        TimePause(time);
+    }
 
     // The mission won, its results up (not recorded: their own fade-in is the original's).
     EndToResults(Won);

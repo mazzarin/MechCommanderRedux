@@ -160,6 +160,26 @@ namespace MCTestGame
     };
 
     /// <summary>
+    /// Keeps the test user folder's prefs.cfg as it was while it lives (Preferences' ACCEPT, the pause and the reports'
+    /// answer write PREFS): an isolated test's worker keeps its user folder for its next test, which would start with
+    /// this one's settings (the software renderer, say).
+    /// </summary>
+    class KeepPrefs
+    {
+    public:
+        KeepPrefs();
+        ~KeepPrefs();
+
+        KeepPrefs(const KeepPrefs&) = delete;
+        KeepPrefs& operator=(const KeepPrefs&) = delete;
+
+    private:
+        std::filesystem::path _Path;
+        bool _Existed = false;
+        std::string _Contents;
+    };
+
+    /// <summary>
     /// Runs one pass of aSystem::run's frame loop (the per-frame callbacks and the display update), with the frame
     /// lasting <paramref name="seconds"/> instead of the measured time.
     /// </summary>

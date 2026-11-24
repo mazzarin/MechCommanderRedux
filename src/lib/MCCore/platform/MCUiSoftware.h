@@ -7,16 +7,21 @@
 /// Port-only (SPEC-menus.md, "How it's built"): the remade menus' draws (platform/MCUiDraws.h) drawn by the CPU, for
 /// the software renderer (MCSdlPresenter): onto a picture of the window's size, transparent where nothing is drawn
 /// (premultiplied RGBA8), with SDL's software renderer, which every machine runs alike. Rectangles (nearly every draw:
-/// boxes, borders, pictures, letters) are drawn as SDL_RenderTexture copies of whole texels onto whole pixels, the boxes
-/// of one colour by <see cref="MCUiFill"/> (SDL's blend, sooner); other triangles with SDL_RenderGeometry, the untextured
-/// ones by <see cref="MCUiTriangle"/> (SDL's pixels, sooner) unless SDL would take some as a rectangle. Colours are
-/// premultiplied and blended so (<c>SDL_BLENDMODE_BLEND_PREMULTIPLIED</c>), a scissor is SDL's clip rectangle.
+/// boxes, borders, pictures, letters) are drawn as SDL_RenderTexture copies of whole texels onto whole pixels (a picture
+/// at another size from its scaled copy, <see cref="MCUiCopyOf"/>), the boxes of one colour by <see cref="MCUiFill"/>
+/// (SDL's blend, sooner); other triangles with SDL_RenderGeometry, the untextured ones by <see cref="MCUiTriangle"/>
+/// (SDL's pixels, sooner) unless SDL would take some as a rectangle. Colours are premultiplied and blended so
+/// (<c>SDL_BLENDMODE_BLEND_PREMULTIPLIED</c>), a scissor is SDL's clip rectangle.
 /// </summary>
 /// <remarks>
-/// A frame's draws are mostly the last's (RmlUi keeps an element's geometry while it doesn't change), so only the boxes
-/// where they differ are drawn again: cleared, and every draw over them drawn cut to them. That gives the pixels a whole
-/// picture gives: SDL's software draws cut by a clip rectangle are its whole draws' pixels inside it (a scaled copy is
-/// scaled whole, then cut; a triangle's pixels are found from their own places).
+/// A picture is never given to SDL as triangles: SDL takes RmlUi's two triangles of a box as a rectangle only when they
+/// meet on the other diagonal, and its software textured triangle (SDL_triangle.c, SDL_SW_BlitTriangle) refuses one
+/// whose texel places times its area pass 2^31, as a picture over most of a window's ("triangle area overflow"), which
+/// its queue drops unsaid: the main menu's painting at 1280x720 was the stone alone.
+/// <para>A frame's draws are mostly the last's (RmlUi keeps an element's geometry while it doesn't change), so only the
+/// boxes where they differ are drawn again: cleared, and every draw over them drawn cut to them. That gives the pixels a
+/// whole picture gives: SDL's software draws cut by a clip rectangle are its whole draws' pixels inside it (a scaled copy
+/// is scaled whole, then cut; a triangle's pixels are found from their own places).</para>
 /// </remarks>
 class MCUiSoftware
 {
@@ -134,6 +139,27 @@ std::vector<SDL_Rect> MCUiChangedBoxes(std::span<const MCUiDraw> before, std::sp
 
 /// <summary>The window pixels <paramref name="draw"/> may draw on, inside <paramref name="window"/> (empty: none).</summary>
 SDL_Rect MCUiFootprint(const MCUiDraw& draw, const SDL_Rect& window);
+
+/// <summary>
+/// How the software path copies a quad's texels onto its target (<see cref="MCUiCopyOf"/>): its texture's whole texels
+/// round them (<see cref="Part"/>), scaled to <see cref="Width"/> x <see cref="Height"/> (their own size: copied as they
+/// are), and the target's pixels taken from that at <see cref="From"/> (in the part scaled).
+/// </summary>
+struct MCUiCopy
+{
+    SDL_Rect Part{};
+    int Width = 0;
+    int Height = 0;
+    SDL_Rect From{};
+};
+
+/// <summary>
+/// The copy of <paramref name="texels"/> (inside their texture) onto <paramref name="target"/>: whole texels are the
+/// part itself, scaled to the target's size; texels cut between texels (a picture scaled to its box and cut by it, as a
+/// cover decorator's) the whole texels round them, scaled at the target's pixels a texel, the cut's place in them
+/// rounded to a pixel.
+/// </summary>
+MCUiCopy MCUiCopyOf(const SDL_FRect& texels, const SDL_Rect& target);
 
 /// <summary>
 /// The vertices the software path gives SDL_RenderGeometry for <paramref name="piece"/>'s triangles of

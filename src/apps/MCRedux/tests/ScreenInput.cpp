@@ -11,6 +11,26 @@
 #include "platform/MCInput.h"
 #include "platform/MCUtf8Path.h"
 
+namespace
+{
+    /// <summary>With --shots, <paramref name="save"/> of the display writes <paramref name="name"/>.png there.</summary>
+    void SaveWith(const std::string& name,
+                  std::expected<void, std::string> (MCDisplay::*save)(const std::filesystem::path&))
+    {
+        const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+        if (!shots || MCInput::Display() == nullptr)
+        {
+            return;
+        }
+
+        if (auto saved = (MCInput::Display().get()->*save)(MCFileSystem::FromUtf8(*shots) / (name + ".png")); !saved)
+        {
+            std::printf("  %s: %s\n", name.c_str(), saved.error().c_str());
+        }
+    }
+}
+
 namespace MCScreenInput
 {
     uint32_t ScreenHash()
@@ -62,18 +82,12 @@ namespace MCScreenInput
 
     void SaveShownShot(const std::string& name)
     {
-        const std::optional<std::string_view> shots = MCTest::Option("shots");
+        SaveWith(name, &MCDisplay::SaveShownScreenshot);
+    }
 
-        if (!shots || MCInput::Display() == nullptr)
-        {
-            return;
-        }
-
-        if (auto saved = MCInput::Display()->SaveShownScreenshot(MCFileSystem::FromUtf8(*shots) / (name + ".png"));
-            !saved)
-        {
-            std::printf("  %s: %s\n", name.c_str(), saved.error().c_str());
-        }
+    void SaveWindowShot(const std::string& name)
+    {
+        SaveWith(name, &MCDisplay::SaveWindowScreenshot);
     }
 
     void SendMouse(int32_t type, int32_t x, int32_t y, bool leftHeld)
@@ -211,6 +225,12 @@ namespace MCScreenInput
 
     void RealKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod)
     {
+        SendKeyEvent(scancode, down, mod);
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    void SendKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod)
+    {
         SDL_Event key{};
         key.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
         key.key.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
@@ -219,7 +239,6 @@ namespace MCScreenInput
         key.key.mod = mod;
         key.key.down = down;
         MCInput::HandleEvent(key);
-        MCTestGame::RunFrame(1.0f / 15.0f);
     }
 
     void RealChord(SDL_Scancode modifier, SDL_Keymod mod, SDL_Scancode scancode)

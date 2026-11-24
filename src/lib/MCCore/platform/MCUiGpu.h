@@ -53,6 +53,13 @@ private:
     std::expected<MCGpuHandle<SDL_GPUTexture>, std::string> Upload(SDL_GPUCopyPass& pass,
                                                                    std::span<const uint8_t> pixels, uint32_t width,
                                                                    uint32_t height);
+    /// <summary>
+    /// <paramref name="picture"/>'s texture, uploaded on <paramref name="pass"/>: a copy scaled down to fit when it's over
+    /// the largest texture the device holds (MCGpuLimits, asked the first time a picture is over the least any holds:
+    /// the HD main menu painting is 4608 wide, some Vulkan devices take 4096), which draws the same parts.
+    /// </summary>
+    std::expected<MCGpuHandle<SDL_GPUTexture>, std::string> UploadPicture(SDL_GPUCopyPass& pass,
+                                                                          const MCUiTexture& picture);
     /// <summary>The vertices' buffer, grown to hold <paramref name="bytes"/>, and their transfer buffer filled.</summary>
     std::expected<void, std::string> FillVertices(SDL_GPUCopyPass& pass, std::span<const std::byte> bytes);
 
@@ -71,7 +78,16 @@ private:
     /// <summary>A white texel: an untextured draw samples it.</summary>
     MCGpuHandle<SDL_GPUTexture> _White;
     std::unordered_map<uint64_t, MCKept> _Textures;
+    /// <summary>The longest side of a texture the device holds, once a picture has needed it.</summary>
+    std::optional<int32_t> _LargestSide;
     MCGpuHandle<SDL_GPUBuffer> _Vertices;
     MCGpuHandle<SDL_GPUTransferBuffer> _VertexTransfer;
     uint32_t _VertexCapacity = 0;
 };
+
+/// <summary>
+/// The size a <paramref name="width"/> x <paramref name="height"/> picture is uploaded at to a GPU whose textures are at
+/// most <paramref name="largest"/> a side (0: no limit): its own when it fits; else scaled down to fit, its shape kept
+/// (each side rounded, at least 1).
+/// </summary>
+SDL_Point MCUiFittedSize(int32_t width, int32_t height, int32_t largest);

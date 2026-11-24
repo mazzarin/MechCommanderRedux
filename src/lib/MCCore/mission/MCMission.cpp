@@ -6,6 +6,7 @@
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "mission/MCMission.h"
+#include "logistics/MCPauseScreen.h"
 #include "lib/MCReleaseData.h"
 #include "ai/MCMoveGeometry.h"
 #include "lib/MCFatal.h"
@@ -789,6 +790,8 @@ auto MCMission::Run() -> int32_t
         {
             if ((ScenarioResult != 0 || EndScenarioRequested != 0) && !Scenario()->StartingUp)
             {
+                // Port-only (SPEC-menus.md, "A pause menu"): a pause still up as the mission ends goes first.
+                MCPauseScreen::MissionEnding();
                 Scenario()->SetupBonus();
                 ResultsScreen->Activate();
                 State = MCMissionState::Results;

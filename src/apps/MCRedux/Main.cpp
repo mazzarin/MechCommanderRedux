@@ -26,6 +26,8 @@
 #include "platform/MCFileSystem.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCWeatherPace.h"
+#include "ui/MCRmlFlow.h"
+#include "ui/MCRmlSystem.h"
 #include "update/MCContentList.h"
 #include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
@@ -39,6 +41,8 @@
 
 #if defined(__APPLE__)
 #include "MCSparkleUpdater.h"
+
+#include <unistd.h>
 #elif defined(_WIN32)
 #include "MCSetupRun.h"
 #include "update/MCSetupBackend.h"
@@ -175,6 +179,50 @@ namespace
 
         SDL_ShowSimpleMessageBox(isError ? SDL_MESSAGEBOX_ERROR : SDL_MESSAGEBOX_INFORMATION,
                                  std::string(MessageTitle).c_str(), text.c_str(), nullptr);
+    }
+
+    /// <summary>
+    /// How the player repairs a copy missing what the program brings: the setup run again on Windows; the Mac's app,
+    /// which comes whole, downloaded again.
+    /// </summary>
+#ifdef _WIN32
+    constexpr std::string_view RepairText = "Run the Redux HD setup again to repair the install.";
+#else
+    constexpr std::string_view RepairText = "Download Redux HD again to repair it.";
+#endif
+
+    /// <summary><paramref name="text"/>, what's wrong with the copy, then how to repair it.</summary>
+    std::string WithRepair(std::string_view text)
+    {
+        return std::format("{}\n\n{}", text, RepairText);
+    }
+
+    /// <summary>
+    /// Shows <paramref name="text"/>, why the game doesn't start, as <see cref="Report"/> does; on the Mac in a message
+    /// box too unless MCRedux was started from a terminal: an app opened from the Finder has none, so Report's text would
+    /// reach no one.
+    /// </summary>
+    void ReportStop(const std::string& text)
+    {
+        Report(text, true);
+#if defined(__APPLE__)
+        if (isatty(STDERR_FILENO) == 0 &&
+            !SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, std::string(MessageTitle).c_str(), text.c_str(), nullptr))
+        {
+            SDL_Log("The start's message can't be shown: %s", SDL_GetError());
+        }
+#endif
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md): whether the remade menus' files, which come with the program (the Mac app's resources,
+    /// beside the programs on Windows), load; when they don't, the player is told how to repair the copy, and the game
+    /// doesn't start.
+    /// </summary>
+    bool MenusLoad()
+    {
+        return MCRmlFlow::FilesLoad(MCRmlFiles::AppFolder(),
+                                    [](std::string_view missing) { ReportStop(WithRepair(missing)); });
     }
 
     /// <summary>
@@ -456,8 +504,7 @@ namespace
 
     /// <summary>What the player is told of a program update that can neither finish nor be undone.</summary>
     constexpr std::string_view StuckSwapFormat =
-        "The last update of Redux HD didn't finish, and couldn't be undone ({}).\n\nRun the Redux HD setup again to "
-        "repair the install.";
+        "The last update of Redux HD didn't finish, and couldn't be undone ({}).";
 
     /// <summary>
     /// At a start, under the staging lock (another copy holding it is swapping: it finishes its own): a program update
@@ -479,7 +526,7 @@ namespace
             // The game may be a mix of two versions: the player is told, and plays on as it is.
             SDL_Log("Updates: the program update stopped midway is left as it is (%s): the setup repairs it",
                     recovered.Error.c_str());
-            Report(std::format(StuckSwapFormat, recovered.Error), true);
+            Report(WithRepair(std::format(StuckSwapFormat, recovered.Error)), true);
         }
     }
 
@@ -666,6 +713,16 @@ int main(int argc, char** argv)
         return result;
     }
 
+#ifndef _WIN32
+    // Without its menus' files the game has nothing to show: it says so before anything is asked or opens. (On Windows
+    // once a program update stopped midway is finished, below: it may be part way through them.)
+    if (!MenusLoad())
+    {
+        SDL_Quit();
+        return 1;
+    }
+#endif
+
     // A start with no command line after a lobby's game restarted into an update (Sparkle starts the new version with
     // none): the rejoin note's words, so it joins or hosts the room again (network/MCRejoinNote.h).
     if (options->GameCommandLine.empty())
@@ -731,6 +788,13 @@ int main(int argc, char** argv)
     {
         SDL_Quit();
         return 0;
+    }
+
+    // Without its menus' files the game has nothing to show: it says so before anything opens.
+    if (!MenusLoad())
+    {
+        SDL_Quit();
+        return 1;
     }
 #endif
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gui/MCListView.h"
+#include "logistics/MCDeploy.h"
 
 class MCGuiEvent;
 class MCLogMech;
@@ -66,16 +67,15 @@ private:
     void Drop(MCGuiEvent& event);
 
     /// <summary>
-    /// Puts the unit into empty slot <paramref name="slot"/> of <paramref name="lance"/>: false when it is too heavy
-    /// (without the hammer down).
-    /// </summary>
-    bool PlaceInEmptySlot(int32_t lance, int32_t slot) const;
-
-    /// <summary>
     /// The unit is in its slot: the screen shows the slots again (a block of its own there) and recounts the tonnage.
     /// </summary>
     static void Settle();
 
+    /// <summary>
+    /// A move's end (MCDeploy's): placed, the sound and the slots shown again; too heavy, the original's words and
+    /// Betty's warning. Whether it was placed.
+    /// </summary>
+    static bool Placed(MCDeploy::MCRefusal refusal);
     /// <summary>The right-button drop: the first free slot (of the lance whose key 1..3 is held); whether it was placed.</summary>
     bool DropInFreeSlot();
 

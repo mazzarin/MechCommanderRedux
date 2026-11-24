@@ -12,6 +12,7 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingBox.h"
+#include "logistics/MCDeploy.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCMainMenu.h"
@@ -89,33 +90,6 @@ namespace
         AGPixelWrite(pane, left, bottom, DropZoneColor);
     }
 
-    /// <summary>
-    /// Adds up the tonnage of the units in <paramref name="lance"/>'s drop slots (the original's running
-    /// <c>__ftol</c> of an int plus the float tonnage).
-    /// </summary>
-    int32_t LanceTonnage(int32_t lance)
-    {
-        int32_t tons = 0;
-
-        for (const auto& slot : GlobalLog()->DeploySlots[lance])
-        {
-            if (slot.Unit >= 0)
-            {
-                std::shared_ptr<MCLogMech> mech;
-                GlobalLog()->ForceMechList->GetMechInfo(slot.Unit, mech);
-                tons = static_cast<int32_t>(static_cast<float>(tons) + mech->CurTonnage);
-            }
-            else if (slot.Vehicle >= 0)
-            {
-                std::shared_ptr<MCLogVehicle> vehicle;
-                GlobalLog()->ForceVehicleList->GetVehicleInfo(slot.Vehicle, vehicle);
-                tons = static_cast<int32_t>(static_cast<float>(tons) + vehicle->CurTonnage);
-            }
-        }
-
-        return tons;
-    }
-
     /// <summary>Fills a <paramref name="width"/> by <paramref name="height"/> box of <paramref name="target"/> with <paramref name="color"/>.</summary>
     void FillArea(const MCPane& target, int32_t xPos, int32_t yPos, int32_t width, int32_t height, int32_t color)
     {
@@ -142,7 +116,7 @@ namespace
 
 auto MCBriefingScreen::FitsTonnage(const MCLogPart& part) -> bool
 {
-    return !(static_cast<float>(MaxDeployTonnage) < static_cast<float>(CurDeployTonnage) + part.CurTonnage);
+    return MCDeploy::Fits(part);
 }
 
 auto MCBriefingScreen::Init() -> void
@@ -265,30 +239,7 @@ auto MCBriefingScreen::LiftFromSlot(const MCMechBriefBlock& block) -> void
 
 auto MCBriefingScreen::SlotUnit(size_t slot) -> std::shared_ptr<MCLogPart>
 {
-    const MCLogistics& logistics = *GlobalLog();
-    const MCLogistics::DeploySlot& deploy =
-        logistics.DeploySlots[slot / MCLogistics::LanceSlots][slot % MCLogistics::LanceSlots];
-
-    if (deploy.Unit >= 0)
-    {
-        std::shared_ptr<MCLogMech> mech;
-        logistics.ForceMechList->GetMechInfo(deploy.Unit, mech);
-        return mech;
-    }
-
-    if (deploy.Vehicle >= 0)
-    {
-        std::shared_ptr<MCLogVehicle> vehicle;
-        logistics.ForceVehicleList->GetVehicleInfo(deploy.Vehicle, vehicle);
-        return vehicle;
-    }
-
-    if (MultiPlayer() != nullptr)
-    {
-        return logistics.DropSlots[slot / MCLogistics::LanceSlots][slot % MCLogistics::LanceSlots].Part.lock();
-    }
-
-    return nullptr;
+    return MCDeploy::SlotUnit(slot);
 }
 
 auto MCBriefingScreen::ShowSlots() -> void
@@ -371,34 +322,7 @@ auto MCBriefingScreen::HideBriefing() -> void
 
 auto MCBriefingScreen::LanceTons(int32_t lance) -> int32_t
 {
-    if (MultiPlayer() == nullptr)
-    {
-        return LanceTonnage(lance);
-    }
-
-    // Multiplayer: a lance counts once one of its slots holds a unit (the second lance always with two players).
-    bool occupied = lance == 1 && static_cast<int32_t>(MultiPlayer()->PlayersOnHomeTeam()->size()) == 2;
-
-    for (int32_t slot = 0; slot < 4 && !occupied; slot++)
-    {
-        const auto& deploy = GlobalLog()->DeploySlots[lance][slot];
-
-        if (deploy.Unit >= 0)
-        {
-            std::shared_ptr<MCLogMech> mech;
-            GlobalLog()->ForceMechList->GetMechInfo(deploy.Unit, mech);
-            occupied = mech != nullptr;
-        }
-        else if (deploy.Vehicle >= 0)
-        {
-            // Original behaviour (OB-082): the vehicle looked up is lance 0's, whatever the lance.
-            std::shared_ptr<MCLogVehicle> vehicle;
-            GlobalLog()->ForceVehicleList->GetVehicleInfo(GlobalLog()->DeploySlots[0][slot].Vehicle, vehicle);
-            occupied = vehicle != nullptr;
-        }
-    }
-
-    return occupied ? LanceTonnage(lance) : 0;
+    return MCDeploy::GroupTons(static_cast<size_t>(lance));
 }
 
 auto MCBriefingScreen::PaintLook(const MCPane& target) -> void
@@ -423,13 +347,10 @@ auto MCBriefingScreen::PaintLook(const MCPane& target) -> void
     // gives the player their slots. (The original measured the first lance's figure in the black font and the
     // others' in the blue one, and wrote them all in black.)
     static constexpr std::array<int32_t, 3> labelTops = {0x18, 0x88, 0xf8};
-    const std::array<bool, MCLogistics::NumDropSlots>& local = GlobalLog()->LocalDropSlot;
-    const std::array<bool, 3> lanceShown = {true, MultiPlayer() != nullptr || local[4],
-                                            MultiPlayer() != nullptr || (local[4] && local[8])};
 
     for (int32_t lance = 0; lance < 3; lance++)
     {
-        if (!lanceShown[static_cast<size_t>(lance)])
+        if (!MCDeploy::GroupShown(static_cast<size_t>(lance)))
         {
             continue;
         }
@@ -465,14 +386,7 @@ auto MCBriefingScreen::PaintLook(const MCPane& target) -> void
 
     if (!LaunchPressed && !ButtonsLocked)
     {
-        bool ready = CurDeployTonnage >= 1;
-
-        if (ready && (MaxDeployTonnage < CurDeployTonnage || GlobalLog()->RequiredAssigned() == 0))
-        {
-            ready = GlobalLog()->HammerDown != 0;
-        }
-
-        launchName = ready ? "lsbdf00.tga" : "lsbdf00a.tga";
+        launchName = MCDeploy::CanBegin() ? "lsbdf00.tga" : "lsbdf00a.tga";
     }
 
     if (const std::shared_ptr<MCLogPort> art = LogScreenArt(launchName))
@@ -641,38 +555,14 @@ auto MCBriefingScreen::OnDestroy() -> void
 
 auto MCBriefingScreen::MpCalcTonnages() -> void
 {
-    // A lance counts once one of its slots holds a unit (LanceTons); the labels show each (PaintLook).
-    CurDeployTonnage = 0;
-
-    for (int32_t lance = 0; lance < 3; lance++)
-    {
-        CurDeployTonnage += LanceTons(lance);
-    }
-
-    DrawTonnageBar();
+    // A lance counts once one of its slots holds a unit (MCDeploy::GroupTons); the labels show each (PaintLook).
+    CalcTonnages();
 }
 
 auto MCBriefingScreen::CalcTonnages() -> void
 {
-    if (MultiPlayer() != nullptr)
-    {
-        MpCalcTonnages();
-        return;
-    }
-
     // The labels show each lance's tonnage (PaintLook).
-    CurDeployTonnage = LanceTons(0);
-
-    if (GlobalLog()->LocalDropSlot[4] != 0)
-    {
-        CurDeployTonnage += LanceTons(1);
-
-        if (GlobalLog()->LocalDropSlot[8] != 0)
-        {
-            CurDeployTonnage += LanceTons(2);
-        }
-    }
-
+    MCDeploy::CountTons();
     DrawTonnageBar();
 }
 
@@ -882,8 +772,7 @@ auto MCBriefingScreen::HandleClick(int32_t xPos, int32_t yPos) -> void
 
 auto MCBriefingScreen::Launch() -> void
 {
-    if (CurDeployTonnage == 0 ||
-        ((MaxDeployTonnage < CurDeployTonnage || GlobalLog()->RequiredAssigned() == 0) && GlobalLog()->HammerDown == 0))
+    if (!MCDeploy::CanBegin())
     {
         SoundSystem()->PlayBettySample(0x1b);
         return;
@@ -892,31 +781,26 @@ auto MCBriefingScreen::Launch() -> void
     LaunchPressed = true;
     UpdateDisplay(false, false, 0, false, 0);
 
-    if (MultiPlayer() == nullptr)
+    switch (MCDeploy::Begin())
     {
-        // Everything the player owns must be within the unit limit (a mission's salvage can take it past).
-        const int32_t units = NumUnits();
-        const int32_t most = MaxUnits();
-
-        if (units <= most)
+        case MCDeploy::MCBegin::Ready:
         {
-            SoundSystem()->PlayInterfaceSample(0x3a);
-            Mission()->RequestScenario(Mission()->Scenarios[Mission()->CurrentScenario]);
+            if (MultiPlayer() == nullptr)
+            {
+                SoundSystem()->PlayInterfaceSample(0x3a);
+            }
+
             return;
         }
-
-        SoundSystem()->PlayInterfaceSample(0x33);
-        ShowLogMessage(MCFormatPrintf(LoadGameString(0x373, 0xfe).c_str(), units, most, units - most));
-        return;
+        case MCDeploy::MCBegin::TooManyUnits:
+        {
+            SoundSystem()->PlayInterfaceSample(0x33);
+            ShowLogMessage(MCDeploy::TooManyUnitsText());
+            return;
+        }
+        case MCDeploy::MCBegin::Refused:
+            break;
     }
-
-    ButtonsLocked = true;
-    MultiPlayer()->SendReadyForBattle();
-    std::string text =
-        MCFormatPrintf(LoadGameString(0x379, 199).c_str(), MultiPlayer()->SessionManager->MyPlayer()->Name.c_str());
-    // The original's 304-byte buffer.
-    text.resize(std::min<size_t>(text.size(), 303));
-    MultiPlayer()->SendChat(0, text.data());
 }
 
 auto MCBriefingScreen::HandleEvent(MCGuiEvent& event) -> void
@@ -1143,25 +1027,14 @@ auto MCBriefingScreen::SetUpDeploy() -> void
     // The units still waiting get blocks in the pane (the mechs with a pilot, then the vehicles); placed units keep
     // theirs in the slots (shown again).
     UndeployedMechs.clear();
-    DeployUnits.clear();
-    int32_t index = 0;
+    DeployUnits = MCDeploy::ReadyUnits();
 
-    for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
+    for (const std::shared_ptr<MCLogPart>& unit : DeployUnits)
     {
-        const int32_t mechIndex = index++;
-
-        if (mech->PilotIndex >= 0 && !mech->Deployed)
+        if (unit->PartType == 1)
         {
-            UndeployedMechs.push_back(mechIndex);
-            DeployUnits.push_back(mech);
-        }
-    }
-
-    for (const std::shared_ptr<MCLogVehicle>& vehicle : GlobalLog()->ForceVehicleList->Vehicles)
-    {
-        if (vehicle->Deployed == 0)
-        {
-            DeployUnits.push_back(vehicle);
+            UndeployedMechs.push_back(
+                GlobalLog()->ForceMechList->GetMechIndex(std::static_pointer_cast<const MCLogMech>(unit)));
         }
     }
 

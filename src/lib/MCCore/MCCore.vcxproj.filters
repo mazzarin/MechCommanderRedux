@@ -510,6 +510,9 @@
     <ClCompile Include="logistics\MCControlsPanel.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCDeploy.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCDragIcon.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2045,6 +2048,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCControlsPanel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCDeploy.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCDragIcon.h">

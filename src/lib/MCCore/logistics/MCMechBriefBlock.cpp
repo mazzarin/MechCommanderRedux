@@ -4,6 +4,7 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScrollPane.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCDeploy.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCTicker.h"
@@ -52,12 +53,6 @@ namespace
         GlobalLog()->Ticker->SetString(LoadGameString(id, 0xfe));
     }
 
-    /// <summary>The unit's tonnage added to (or, with <paramref name="sign"/> -1, taken from) <c>curDeployTonnage</c>.</summary>
-    int32_t DeployTonnageWith(MCLogPart& part, float sign)
-    {
-        return static_cast<int32_t>(static_cast<float>(CurDeployTonnage) + sign * part.CurTonnage);
-    }
-
     /// <summary>Fills a <paramref name="width"/> by <paramref name="height"/> box of <paramref name="target"/> with <paramref name="color"/>.</summary>
     void FillArea(const MCPane& target, int32_t xPos, int32_t yPos, int32_t width, int32_t height, int32_t color)
     {
@@ -65,16 +60,10 @@ namespace
         VfxPaneWipe(box.Frame(), color);
     }
 
-    /// <summary>Whether drop slot <paramref name="slot"/> of <paramref name="lance"/> is one the player can fill.</summary>
-    bool LocalSlot(int32_t lance, int32_t slot)
+    /// <summary>Drop slot <paramref name="slot"/>'s place on the screen.</summary>
+    const RECT& SlotRect(size_t slot)
     {
-        return GlobalLog()->LocalDropSlot[lance * 4 + slot] != 0;
-    }
-
-    /// <summary>Drop slot <paramref name="slot"/> of <paramref name="lance"/>'s place on the screen.</summary>
-    const RECT& SlotRect(int32_t lance, int32_t slot)
-    {
-        return GlobalLog()->BriefingScreen->SlotRects[static_cast<size_t>(lance * 4 + slot)];
+        return GlobalLog()->BriefingScreen->SlotRects[slot];
     }
 
     /// <summary>The unit is too heavy for the slot: says so.</summary>
@@ -83,34 +72,6 @@ namespace
         ShowLogMessage(0x4cu);
         SoundSystem()->PlayBettySample(0);
         GlobalLog()->BriefingScreen->DrawTonnageBar();
-    }
-
-    /// <summary>
-    /// Why <paramref name="mech"/> can't drop: string 0x35d for a damaged engine, 0x364 for a destroyed location; 0
-    /// when it can.
-    /// </summary>
-    uint32_t DropRefusal(MCLogMech& mech)
-    {
-        const auto& items = mech.Inventory->Items;
-        const auto engine =
-            std::ranges::find_if(items, [](const std::shared_ptr<MCLogInventoryItem>& item)
-                                 { return MasterComponentList[item->MasterID].Form == MCComponentForm::Engine; });
-
-        // Port fix: a mech without an engine item (the original dereferenced null) counts as undamaged.
-        if (engine != items.end() && !(*engine)->Stats.empty() && (*engine)->Stats.front()->Hits != 0)
-        {
-            return 0x35d;
-        }
-
-        for (const auto& location : mech.Internals)
-        {
-            if (location.CurArmor == 0)
-            {
-                return 0x364;
-            }
-        }
-
-        return 0;
     }
 }
 
@@ -236,43 +197,6 @@ auto MCMechBriefBlock::HandleEvent(MCGuiEvent& event) -> void
     }
 }
 
-auto MCMechBriefBlock::PlaceInEmptySlot(int32_t lance, int32_t slot) const -> bool
-{
-    const std::shared_ptr<MCLogVehicle> vehicle = Vehicle();
-    const std::shared_ptr<MCLogMech> mech = Mech();
-    auto& deploy = GlobalLog()->DeploySlots[lance][slot];
-
-    if (mech != nullptr)
-    {
-        if (!MCBriefingScreen::FitsTonnage(*mech) && GlobalLog()->HammerDown == 0)
-        {
-            return false;
-        }
-
-        GlobalLog()->SendAddMechMessage(*mech, lance, slot);
-        SoundSystem()->PlayInterfaceSample(PlacedSound);
-        deploy.Unit = GlobalLog()->ForceMechList->GetMechIndex(mech);
-        CurDeployTonnage = DeployTonnageWith(*mech, 1.0f);
-        mech->Deployed = true;
-        GlobalLog()->AssignedWarriorList->SetDeployed(mech->PilotIndex, true);
-        // Port-only (SPEC-memory.md's "From the briefing"): its HD art read from now, behind the briefing.
-        MCHdArt::HoldMechAhead(mech->HdFolders);
-        return true;
-    }
-
-    if (!MCBriefingScreen::FitsTonnage(*vehicle) && GlobalLog()->HammerDown == 0)
-    {
-        return false;
-    }
-
-    GlobalLog()->SendAddVehicleMessage(*vehicle, lance, slot);
-    SoundSystem()->PlayInterfaceSample(PlacedSound);
-    deploy.Vehicle = GlobalLog()->ForceVehicleList->GetVehicleIndex(vehicle);
-    CurDeployTonnage = DeployTonnageWith(*vehicle, 1.0f);
-    vehicle->Deployed = true;
-    return true;
-}
-
 auto MCMechBriefBlock::Settle() -> void
 {
     // The original moved the block onto the screen at the slot's corner; the screen makes the slot's block. The block
@@ -282,174 +206,58 @@ auto MCMechBriefBlock::Settle() -> void
     screen.CalcTonnages();
 }
 
+auto MCMechBriefBlock::Placed(MCDeploy::MCRefusal refusal) -> bool
+{
+    if (refusal == MCDeploy::MCRefusal::TooHeavy)
+    {
+        TooHeavy();
+        return false;
+    }
+
+    if (refusal != MCDeploy::MCRefusal::None)
+    {
+        return false;
+    }
+
+    SoundSystem()->PlayInterfaceSample(PlacedSound);
+    Settle();
+    return true;
+}
+
 auto MCMechBriefBlock::DropInFreeSlot() -> bool
 {
-    // Lance 1, 2 or 3 with its key held; else any.
-    int32_t lance = -1;
+    // Group 1, 2 or 3 with its key held; else any (MCDeploy::Send).
+    std::optional<size_t> group;
 
     if ((MCInput::GetAsyncKeyState('1') & 0x8000) != 0)
     {
-        lance = 0;
+        group = 0;
     }
     else if ((MCInput::GetAsyncKeyState('2') & 0x8000) != 0)
     {
-        lance = 1;
+        group = 1;
     }
     else if ((MCInput::GetAsyncKeyState('3') & 0x8000) != 0)
     {
-        lance = 2;
+        group = 2;
     }
 
-    const int32_t from = lance < 0 ? 0 : lance;
-    const int32_t to = lance < 0 ? 3 : lance + 1;
-
-    for (int32_t l = from; l < to; l++)
-    {
-        for (int32_t s = 0; s < 4; s++)
-        {
-            if (!LocalSlot(l, s))
-            {
-                // Any lance: the slots the player can fill may have gaps; the lance asked for ends at its first.
-                if (lance < 0)
-                {
-                    continue;
-                }
-                break;
-            }
-
-            const auto& deploy = GlobalLog()->DeploySlots[l][s];
-
-            if (deploy.Unit != -1 || deploy.Vehicle != -1)
-            {
-                continue;
-            }
-
-            if (!PlaceInEmptySlot(l, s))
-            {
-                TooHeavy();
-                return false;
-            }
-
-            Settle();
-            return true;
-        }
-    }
-
-    // Port fix (OB-083): with no key held and no free slot the original went on to search a fourth lance past the end
-    // of the slot tables (and, after a refusal, the later lances' slots against an uninitialised point).
-    return false;
+    return Placed(MCDeploy::Send(*Part(), group));
 }
 
 auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
 {
-    for (int32_t lance = firstLance; lance < 3; lance++)
+    for (auto lance = static_cast<size_t>(firstLance); lance < MCDeploy::Groups; lance++)
     {
-        for (int32_t slot = 0; slot < 4; slot++)
+        for (size_t place = 0; place < MCDeploy::GroupSlots; place++)
         {
-            if (!LocalSlot(lance, slot) || PtInRect(SlotRect(lance, slot), point) == 0)
-            {
-                continue;
-            }
-
-            auto& deploy = GlobalLog()->DeploySlots[lance][slot];
-            bool fits;
-
-            if (deploy.Unit > -1)
-            {
-                // A mech was there: it leaves the force's drop (its block goes with the slot's next showing). (Original
-                // behaviour (OB-166): its pilot stays marked deployed, and a mech put in its place isn't marked.)
-                std::shared_ptr<MCLogMech> occupant;
-                GlobalLog()->ForceMechList->GetMechInfo(deploy.Unit, occupant);
-                CurDeployTonnage = DeployTonnageWith(*occupant, -1.0f);
-                occupant->Deployed = false;
-                deploy.Unit = -1;
-                // Port-only (SPEC-memory.md's "The GPU from the briefing"): the mission's no more (PickUp's too).
-                MCHdArt::MechTakenOff(occupant->HdFolders);
-
-                if (Mech() != nullptr)
-                {
-                    fits = MCBriefingScreen::FitsTonnage(*Mech());
-
-                    if (fits)
-                    {
-                        GlobalLog()->SendAddMechMessage(*Mech(), lance, slot);
-                        SoundSystem()->PlayInterfaceSample(PlacedSound);
-                        deploy.Unit = GlobalLog()->ForceMechList->GetMechIndex(Mech());
-                        CurDeployTonnage = DeployTonnageWith(*Mech(), 1.0f);
-                        Mech()->Deployed = true;
-                        // Port-only (SPEC-memory.md's "From the briefing"): as PlaceInEmptySlot's.
-                        MCHdArt::HoldMechAhead(Mech()->HdFolders);
-                    }
-                }
-                else
-                {
-                    fits = MCBriefingScreen::FitsTonnage(*Vehicle());
-
-                    if (fits)
-                    {
-                        GlobalLog()->SendAddVehicleMessage(*Vehicle(), lance, slot);
-                        SoundSystem()->PlayInterfaceSample(PlacedSound);
-                        deploy.Unit = -1;
-                        deploy.Vehicle = GlobalLog()->ForceVehicleList->GetVehicleIndex(Vehicle());
-                        CurDeployTonnage = DeployTonnageWith(*Vehicle(), 1.0f);
-                        Vehicle()->Deployed = true;
-                    }
-                }
-            }
-            else if (deploy.Vehicle > -1)
-            {
-                // A vehicle was there.
-                std::shared_ptr<MCLogVehicle> occupant;
-                GlobalLog()->ForceVehicleList->GetVehicleInfo(deploy.Vehicle, occupant);
-                CurDeployTonnage = DeployTonnageWith(*occupant, -1.0f);
-                occupant->Deployed = false;
-                deploy.Vehicle = -1;
-
-                if (Mech() != nullptr)
-                {
-                    fits = MCBriefingScreen::FitsTonnage(*Mech());
-
-                    if (fits)
-                    {
-                        GlobalLog()->SendAddMechMessage(*Mech(), lance, slot);
-                        SoundSystem()->PlayInterfaceSample(PlacedSound);
-                        deploy.Vehicle = -1;
-                        deploy.Unit = GlobalLog()->ForceMechList->GetMechIndex(Mech());
-                        CurDeployTonnage = DeployTonnageWith(*Mech(), 1.0f);
-                        Mech()->Deployed = true;
-                        GlobalLog()->AssignedWarriorList->SetDeployed(Mech()->PilotIndex, true);
-                        // Port-only (SPEC-memory.md's "From the briefing"): as PlaceInEmptySlot's.
-                        MCHdArt::HoldMechAhead(Mech()->HdFolders);
-                    }
-                }
-                else
-                {
-                    fits = MCBriefingScreen::FitsTonnage(*Vehicle());
-
-                    if (fits)
-                    {
-                        GlobalLog()->SendAddVehicleMessage(*Vehicle(), lance, slot);
-                        SoundSystem()->PlayInterfaceSample(PlacedSound);
-                        deploy.Vehicle = GlobalLog()->ForceVehicleList->GetVehicleIndex(Vehicle());
-                        CurDeployTonnage = DeployTonnageWith(*Vehicle(), 1.0f);
-                        Vehicle()->Deployed = true;
-                    }
-                }
-            }
-            else
-            {
-                fits = PlaceInEmptySlot(lance, slot);
-            }
+            const size_t slot = lance * MCDeploy::GroupSlots + place;
 
             // (The slots don't overlap: no other slot is under the point.)
-            if (!fits)
+            if (MCDeploy::Open(slot) && PtInRect(SlotRect(slot), point) != 0)
             {
-                TooHeavy();
-                return false;
+                return Placed(MCDeploy::Place(*Part(), slot));
             }
-
-            Settle();
-            return true;
         }
     }
 
@@ -554,42 +362,16 @@ auto MCMechBriefBlock::PickUp(MCGuiEvent& event) -> void
 
     if (fromSlot)
     {
-        // Out of its slot (which shows empty again): the unit leaves the drop.
+        // Out of its slot (which shows empty again): the unit leaves the drop (MCDeploy::TakeOut).
         screen.LiftFromSlot(*this);
         bool found = false;
 
-        for (int32_t lance = 0; lance < 3 && !found; lance++)
+        for (size_t slot = 0; slot < MCDeploy::Slots && !found; slot++)
         {
-            for (int32_t slot = 0; slot < 4; slot++)
+            if (MCDeploy::Open(slot) && PtInRect(SlotRect(slot), POINT{event.X, event.Y}) != 0)
             {
-                if (!LocalSlot(lance, slot) || PtInRect(SlotRect(lance, slot), POINT{event.X, event.Y}) == 0)
-                {
-                    continue;
-                }
-
-                auto& deploy = GlobalLog()->DeploySlots[lance][slot];
-
-                if (Mech() == nullptr)
-                {
-                    vehicle->Deployed = false;
-                    deploy.Vehicle = -1;
-                    CurDeployTonnage = DeployTonnageWith(*vehicle, -1.0f);
-                }
-                else
-                {
-                    Mech()->Deployed = false;
-                    deploy.Unit = -1;
-                    CurDeployTonnage = DeployTonnageWith(*Mech(), -1.0f);
-                    GlobalLog()->AssignedWarriorList->SetDeployed(Mech()->PilotIndex, false);
-                    // Port-only (SPEC-memory.md's "The GPU from the briefing"): the mission's no more until it's dropped
-                    // in a slot again (DropInSlotAt, PlaceInEmptySlot: MCHdArt::HoldMechAhead).
-                    MCHdArt::MechTakenOff(Mech()->HdFolders);
-                }
-
-                screen.CalcTonnages();
-                GlobalLog()->SendRemoveForceMessage(lance, slot);
-                found = true;
-                break;
+                found = MCDeploy::TakeOut(slot);
+                screen.DrawTonnageBar();
             }
         }
 
@@ -605,9 +387,10 @@ auto MCMechBriefBlock::PickUp(MCGuiEvent& event) -> void
         }
         else
         {
-            if (const uint32_t refusal = DropRefusal(*Mech()); refusal != 0)
+            if (const std::optional<uint32_t> refusal = MCDeploy::RefusalString(MCDeploy::CantDrop(*Mech()));
+                refusal.has_value())
             {
-                const std::string text = LoadGameString(refusal, 0xfe);
+                const std::string text = LoadGameString(*refusal, 0xfe);
                 GuiSystem().Release();
                 Drag.Left = false;
                 Drag.Right = false;

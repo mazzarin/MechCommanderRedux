@@ -193,6 +193,7 @@
     <ClCompile Include="logistics\MCCompPurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCConnectMenu.cpp" />
     <ClCompile Include="logistics\MCControlsPanel.cpp" />
+    <ClCompile Include="logistics\MCDeploy.cpp" />
     <ClCompile Include="logistics\MCDragIcon.cpp" />
     <ClCompile Include="logistics\MCDueArtNotice.cpp" />
     <ClCompile Include="logistics\MCFileScrollPane.cpp" />
@@ -732,6 +733,7 @@
     <ClInclude Include="logistics\MCCompPurchaseBlock.h" />
     <ClInclude Include="logistics\MCConnectMenu.h" />
     <ClInclude Include="logistics\MCControlsPanel.h" />
+    <ClInclude Include="logistics\MCDeploy.h" />
     <ClInclude Include="logistics\MCDragIcon.h" />
     <ClInclude Include="logistics\MCDueArtNotice.h" />
     <ClInclude Include="logistics\MCFileScrollPane.h" />

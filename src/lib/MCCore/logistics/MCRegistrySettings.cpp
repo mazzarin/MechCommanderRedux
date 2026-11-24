@@ -2,6 +2,7 @@
 #include "logistics/MCRegistrySettings.h"
 #include "main/MCGameStrings.h"
 #include "platform/MCRegistry.h"
+#include "platform/MCFrameLog.h"
 
 namespace
 {
@@ -39,13 +40,33 @@ auto CheckRegistryVersionNumber() -> bool
 
 auto WriteRegistryVersionNumber() -> void
 {
-    MCRegistry::Write(GameRegistryKey, "Version", BuildVersion() + ".");
-    MCRegistry::Write(GameRegistryKey, "Language", LoadGameString(900, 99));
+    std::string version;
+    {
+        MCFrameLog::Scope probe("probe.reg strings");
+        version = BuildVersion() + ".";
+    }
+    {
+        MCFrameLog::Scope probe("probe.reg write version");
+        MCRegistry::Write(GameRegistryKey, "Version", version);
+    }
+    std::string language;
+    {
+        MCFrameLog::Scope probe("probe.reg strings");
+        language = LoadGameString(900, 99);
+    }
+    MCFrameLog::Scope probe("probe.reg write language");
+    MCRegistry::Write(GameRegistryKey, "Language", language);
 }
 
 auto EnsureRegistryVersion() -> void
 {
-    if (!CheckRegistryVersionNumber())
+    bool stored = false;
+    {
+        MCFrameLog::Scope probe("probe.reg check");
+        stored = CheckRegistryVersionNumber();
+    }
+
+    if (!stored)
     {
         WriteRegistryVersionNumber();
     }

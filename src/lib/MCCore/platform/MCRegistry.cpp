@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCRegistry.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCFrameLog.h"
 
 namespace
 {
@@ -32,7 +33,13 @@ namespace
     std::map<std::string, std::string> LoadStore()
     {
         std::map<std::string, std::string> values;
-        std::ifstream file(MCFileSystem::Resolve(StoreFileName));
+        std::filesystem::path path;
+        {
+            MCFrameLog::Scope probe("probe.reg resolve");
+            path = MCFileSystem::Resolve(StoreFileName);
+        }
+        MCFrameLog::Scope probe("probe.reg load (open, read, close)");
+        std::ifstream file(path);
         std::string line;
 
         while (std::getline(file, line))
@@ -73,18 +80,33 @@ namespace MCRegistry
     {
         std::map<std::string, std::string> values = LoadStore();
         values[StoreKey(keyName, valueName)] = std::string(data);
-        std::ofstream file(MCFileSystem::ResolveWrite(StoreFileName), std::ios::trunc);
+        std::filesystem::path path;
+        {
+            MCFrameLog::Scope probe("probe.reg resolve write");
+            path = MCFileSystem::ResolveWrite(StoreFileName);
+        }
+        std::optional<std::ofstream> file;
+        {
+            MCFrameLog::Scope probe("probe.reg open to write");
+            file.emplace(path, std::ios::trunc);
+        }
 
-        if (!file)
+        if (!*file)
         {
             return false;
         }
 
-        for (const auto& [key, value] : values)
         {
-            file << key << '=' << value << '\n';
+            MCFrameLog::Scope probe("probe.reg put");
+            for (const auto& [key, value] : values)
+            {
+                *file << key << '=' << value << '\n';
+            }
         }
 
-        return static_cast<bool>(file);
+        const bool good = static_cast<bool>(*file);
+        MCFrameLog::Scope probe("probe.reg close");
+        file.reset();
+        return good;
     }
 }

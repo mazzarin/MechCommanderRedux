@@ -272,39 +272,32 @@ void MCRmlScreen::FocusBelow()
     }
 }
 
-bool MCRmlScreen::OnClick(const std::string& id, std::function<void()> act)
+bool MCRmlScreen::Listen(const std::string& id, Rml::EventId event, std::function<void(Rml::Event&)> act)
 {
     Rml::Element* element = _Document != nullptr ? _Document->GetElementById(id) : nullptr;
 
     if (element == nullptr)
     {
-        SDL_Log("Menus: %s has no element '%s' to click", _Path.c_str(), id.c_str());
+        SDL_Log("Menus: %s has no element '%s' to listen to", _Path.c_str(), id.c_str());
         return false;
     }
 
-    auto action = std::make_shared<MCAction>(weak_from_this(), [act = std::move(act)](Rml::Event&) { act(); });
-    element->AddEventListener(Rml::EventId::Click, action.get());
+    auto action = std::make_shared<MCAction>(weak_from_this(), std::move(act));
+    element->AddEventListener(event, action.get());
     _Listening.push_back(
-        MCListening{.Element = element, .Event = static_cast<int>(Rml::EventId::Click), .Action = std::move(action)});
+        MCListening{.Element = element, .Event = static_cast<int>(event), .Action = std::move(action)});
     return true;
+}
+
+bool MCRmlScreen::OnClick(const std::string& id, std::function<void()> act)
+{
+    return Listen(id, Rml::EventId::Click, [act = std::move(act)](Rml::Event&) { act(); });
 }
 
 bool MCRmlScreen::OnChange(const std::string& id, std::function<void(int value)> act)
 {
-    Rml::Element* element = _Document != nullptr ? _Document->GetElementById(id) : nullptr;
-
-    if (element == nullptr)
-    {
-        SDL_Log("Menus: %s has no element '%s' to change", _Path.c_str(), id.c_str());
-        return false;
-    }
-
-    auto action = std::make_shared<MCAction>(weak_from_this(), [act = std::move(act)](Rml::Event& event)
-                                             { act(event.GetParameter<int>("value", 0)); });
-    element->AddEventListener(Rml::EventId::Change, action.get());
-    _Listening.push_back(
-        MCListening{.Element = element, .Event = static_cast<int>(Rml::EventId::Change), .Action = std::move(action)});
-    return true;
+    return Listen(id, Rml::EventId::Change,
+                  [act = std::move(act)](Rml::Event& event) { act(event.GetParameter<int>("value", 0)); });
 }
 
 bool MCRmlScreen::OnText(const std::string& id, std::function<void(const std::string& text, bool enter)> act)

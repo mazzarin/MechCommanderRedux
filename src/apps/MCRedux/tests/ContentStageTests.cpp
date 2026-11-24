@@ -415,6 +415,7 @@ TEST_CASE("content stage: a patch that doesn't apply fetches the file whole; a z
     const auto refused = MCContentStage::Stage(*disk, otherSource, other.Game.Path(), otherPlan, other.List, GoOn);
     REQUIRE(!refused.has_value());
     CHECK(refused.error().Reason.find("isn't as the list has it") != std::string::npos);
+    CHECK(refused.error().Kind == MCUpdateWork::MCFailureKind::Damaged);
     CHECK(MCContentSwap::Waiting(*disk, other.Game.Path()) == false);
     CHECK_EQ(Read(other.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
 }

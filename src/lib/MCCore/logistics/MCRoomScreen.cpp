@@ -11,6 +11,7 @@
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "network/MCGamesList.h"
@@ -430,10 +431,7 @@ void MCRoomScreen::ShowRoom()
     const MCRoomModel& room = Room();
     const MCRoomModel::MCWhere where = room.Where();
     const std::vector<MCRoomModel::MCPlayer> players = room.Players();
-    Keep("eyebrow", _Eyebrow,
-         std::string(where == MCRoomModel::MCWhere::Internet ? InternetPlace
-                     : where == MCRoomModel::MCWhere::Lan    ? LanPlace
-                                                             : LauncherPlace));
+    Keep("eyebrow", _Eyebrow, RoomPlace());
     Keep("name", _Name, room.Name());
     Keep("access", _Access,
          std::string(where == MCRoomModel::MCWhere::Internet ? (room.Public() ? PublicAccess : PrivateAccess)
@@ -894,6 +892,13 @@ void MCRoomScreen::PressOptions()
 
 void MCRoomScreen::PressUpdate()
 {
+    // Stage 6's UPDATE through the screens' flow over the room (BACK brings the room back as it stands); the 1998 page
+    // over the 1998 room when the menus' RmlUi can't start.
+    if (MCUpdateScreen::Open())
+    {
+        return;
+    }
+
     if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr && logistics->SessionScreen)
     {
         logistics->SessionScreen->ShowUpdateOver();
@@ -962,6 +967,15 @@ void HideRoomScreen()
     {
         Made()->Hide();
     }
+}
+
+std::string RoomPlace()
+{
+    const MCRoomModel::MCWhere where =
+        GlobalLog() != nullptr ? GlobalLog()->Room.Where() : MCRoomModel::MCWhere::Launcher;
+    return std::string(where == MCRoomModel::MCWhere::Internet ? InternetPlace
+                       : where == MCRoomModel::MCWhere::Lan    ? LanPlace
+                                                               : LauncherPlace);
 }
 
 MCGuiHandle<MCRoomScreen> RoomScreen()

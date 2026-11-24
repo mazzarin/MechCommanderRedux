@@ -23,14 +23,14 @@ namespace MCMenuScreens
     MCScreenFlow::MCScreenId Solo();
     MCScreenFlow::MCScreenId Save();
     MCScreenFlow::MCScreenId Preferences();
+    /// <summary>Port-only (stage 6): UPDATE remade, from the main menu, INTERNET and LAN.</summary>
+    MCScreenFlow::MCScreenId Update();
     /// <summary>The campaign's screens: the briefing, PURCHASING and the 'MECH BAY (sliding between them, one place).</summary>
     MCScreenFlow::MCScreenId Campaign();
     /// <summary>The original's modem and serial screens (MULTIPLAYER without a network).</summary>
     MCScreenFlow::MCScreenId Connection();
     /// <summary>A launcher's ready room (its first screen while the lobby's join goes on).</summary>
     MCScreenFlow::MCScreenId ReadyRoom();
-    /// <summary>UPDATE opened from INTERNET: the main menu's page (until stage 6), going back to INTERNET.</summary>
-    MCScreenFlow::MCScreenId Update();
 
     /// <summary>
     /// The stack under a match's games list (LAN or INTERNET), <paramref name="internet"/> saying which: the main menu,

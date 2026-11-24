@@ -11,6 +11,7 @@
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCPrefsScreen.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
@@ -18,11 +19,13 @@
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
-#include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 #include "ui/MCRmlDialog.h"
+#include "ui/MCRmlLayer.h"
+#include "ui/MCRmlMenus.h"
 #include "ui/MCRmlFlow.h"
 
 namespace
@@ -138,10 +141,10 @@ namespace
         MCScreenId Solo = MCScreenFlow::NoScreen;
         MCScreenId Save = MCScreenFlow::NoScreen;
         MCScreenId Preferences = MCScreenFlow::NoScreen;
+        MCScreenId Update = MCScreenFlow::NoScreen;
         MCScreenId Campaign = MCScreenFlow::NoScreen;
         MCScreenId Connection = MCScreenFlow::NoScreen;
         MCScreenId ReadyRoom = MCScreenFlow::NoScreen;
-        MCScreenId Update = MCScreenFlow::NoScreen;
     };
 
     MCIds Ids;
@@ -187,7 +190,21 @@ auto MCMenuScreens::Register() -> void
             return (shown != nullptr && logistics->SessionScreen.Is(*shown) && RoomScreenShown()) ||
                    Showing(&MCLogistics::SessionScreen);
         },
-        [] { GlobalLog()->SetUpSessionScreen(); },
+        []
+        {
+            // Port-only (stage 4): back from a screen over the room (stage 6's UPDATE), the room as it stands: its
+            // set-up would start it afresh.
+            const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+            const std::shared_ptr<MCLogObject> shown = logistics->CurrentScreen();
+
+            if (shown != nullptr && logistics->SessionScreen.Is(*shown))
+            {
+                logistics->SessionScreen->ShowGuiWindow(true);
+                return;
+            }
+
+            logistics->SetUpSessionScreen();
+        },
         []
         {
             // A launcher's game: the room is where it starts, and leaving it ends the game.
@@ -207,9 +224,32 @@ auto MCMenuScreens::Register() -> void
     Ids.Solo = MCScreenFlow::Register(
         OldScreen("solo missions", [] { return ShowingLoad(false, true); }, SoloLoadScreen, {}, true));
     Ids.Save = MCScreenFlow::Register(MCSavesMenu::Kind(MCSavesScreen::MCMode::Save));
-    Ids.Preferences = MCScreenFlow::Register(OldScreen(
-        "preferences", [] { return Showing(&MCLogistics::PrefScreen); }, ShowPreferences,
-        Back("preferences back", CancelPrefs)));
+    // Port-only (SPEC-menus.md, stage 6): Preferences remade (logistics/MCPrefsScreen.h), made afresh at each press so it
+    // reads the settings as they are then; ACCEPT shows the screen below, CANCEL and Escape go back (its Leave puts the
+    // settings back).
+    Ids.Preferences = MCScreenFlow::Register(MCRmlFlow::Kind(
+        "preferences",
+        [](MCRmlLayer& layer)
+        {
+            return MCGuiHandle<MCRmlScreen>(layer.CreateChild<MCPrefsScreen>(
+                [](MCPrefsScreen& made)
+                {
+                    made.Accepted = [] { MCScreenFlow::ShowBelow(); };
+                    made.Back = [] { MCScreenFlow::Back(); };
+                }));
+        },
+        MCRmlFlow::MCKeep::Afresh));
+    // Port-only (stage 6): UPDATE remade (logistics/MCUpdateScreen.h), from the main menu's UPDATE and INTERNET's or
+    // LAN's newer game, made afresh at each press, named by where it opened; BACK shows that screen again.
+    Ids.Update = MCScreenFlow::Register(MCRmlFlow::Kind(
+        "update",
+        [](MCRmlLayer& layer)
+        {
+            return MCGuiHandle<MCRmlScreen>(layer.CreateChild<MCUpdateScreen>(
+                [](MCUpdateScreen& made) { made.Back = [] { MCScreenFlow::Back(); }; },
+                MCUpdateScreen::PlaceOfShown()));
+        },
+        MCRmlFlow::MCKeep::Afresh));
     Ids.Campaign = MCScreenFlow::Register(OldScreen(
         "campaign",
         []
@@ -224,23 +264,6 @@ auto MCMenuScreens::Register() -> void
     Ids.ReadyRoom = MCScreenFlow::Register(OldScreen(
         "ready room", [] { return LauncherScreenShown() || Showing(&MCLogistics::ConnectScreen); }, [] {},
         [] { KillTheGame(); }));
-    // UPDATE from INTERNET (a newer game, "Update to play online."): the main menu's page over it until stage 6
-    // remakes UPDATE; its DONE and Escape go back to INTERNET.
-    Ids.Update = MCScreenFlow::Register(
-        MCScreenKind{.Name = "update",
-                     .Show =
-                         []
-                     {
-                         ShowMainMenu();
-                         ShowUpdatePage();
-                     },
-                     .Hide =
-                         []
-                     {
-                         HideUpdatePageViews();
-                         HideShown();
-                     },
-                     .Shows = [] { return Showing(&MCLogistics::MainScreen) && UpdatePageShown(); }});
 }
 
 auto MCMenuScreens::Main() -> MCScreenId
@@ -293,6 +316,11 @@ auto MCMenuScreens::Preferences() -> MCScreenId
     return TheIds().Preferences;
 }
 
+auto MCMenuScreens::Update() -> MCScreenId
+{
+    return TheIds().Update;
+}
+
 auto MCMenuScreens::Campaign() -> MCScreenId
 {
     return TheIds().Campaign;
@@ -306,11 +334,6 @@ auto MCMenuScreens::Connection() -> MCScreenId
 auto MCMenuScreens::ReadyRoom() -> MCScreenId
 {
     return TheIds().ReadyRoom;
-}
-
-auto MCMenuScreens::Update() -> MCScreenId
-{
-    return TheIds().Update;
 }
 
 auto MCMenuScreens::GamesStack(bool internet, bool room) -> std::vector<MCScreenId>

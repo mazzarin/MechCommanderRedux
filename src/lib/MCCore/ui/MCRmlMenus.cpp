@@ -284,10 +284,9 @@ bool MCRmlMenus::HandleEvent(const SDL_Event& event)
 
 std::shared_ptr<const MCUiDraws> MCRmlMenus::FrameFor(int32_t width, int32_t height)
 {
-    if (width != _Width || height != _Height)
-    {
-        SetWindow(width, height);
-    }
+    // Each frame: the mission layer's unit follows INTERFACE SIZE and UI RESOLUTION with the window kept (each layer
+    // lays out again only when its size or unit changed).
+    SetWindow(width, height);
 
     return Frame();
 }

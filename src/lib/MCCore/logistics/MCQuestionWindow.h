@@ -1,0 +1,38 @@
+#pragma once
+
+#include "ui/MCRmlScreen.h"
+
+/// <summary>
+/// Port-only (SPEC-menus.md, "Dialogs"; stage 6): a question over a remade screen (<c>ui/dialog_ask.rml</c>), modal:
+/// its heading the question ("Remove the HD pack?", "Exit multiplayer?"), CANCEL and its act ("Remove"), CANCEL the
+/// focus's (each such question gives something up). CANCEL, Escape and the act each close it; the act's work runs as it
+/// closes.
+/// </summary>
+class MCQuestionWindow final : public MCRmlScreen
+{
+public:
+    MCQuestionWindow(std::string heading, std::string act, std::function<void()> yes);
+
+    /// <summary>
+    /// Opens the question over the top of <paramref name="over"/>'s layer, <paramref name="eyebrow"/> over it (the
+    /// game's name, or none); <paramref name="closed"/> runs after either answer (the screen under it shows the setting
+    /// as it is then). The window, for the screen that asked to close it when it goes first (it lives on the layer);
+    /// none when its document can't be read.
+    /// </summary>
+    static MCGuiHandle<MCQuestionWindow> Ask(MCRmlScreen& over, std::string heading, std::string act,
+                                             std::function<void()> yes, std::function<void()> closed,
+                                             std::string eyebrow = {});
+
+protected:
+    void OnLoaded(Rml::ElementDocument& document) override;
+
+private:
+    /// <summary>Closes the window, then runs <paramref name="then"/> and the closed's.</summary>
+    void Answer(const std::function<void()>& then);
+
+    std::string _Heading;
+    std::string _Eyebrow;
+    std::string _Act;
+    std::function<void()> _Yes;
+    std::function<void()> _Closed;
+};

@@ -1,12 +1,14 @@
 #include "stdafx.h"
 #include "MCFakeUpdaterBackend.h"
 #include "MCScratchFolder.h"
+#include "RemadeScreens.h"
 #include "MCTest.h"
 #include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiCallback.h"
 #include "gui/MCGuiStartup.h"
+#include "gui/MCScreenChange.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
@@ -17,6 +19,7 @@
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
@@ -307,9 +310,9 @@ namespace
 }
 
 /// <summary>
-/// A game a lobby started never shows the main menu, so its session screen offers the update: a line in UPDATE's amber
-/// left of the start button while one waits, whose click opens the UPDATE page over the screen; the page takes every
-/// click on it (none reaches the start button under it), and DONE brings the screen back.
+/// A game a lobby started never shows the main menu, so its room offers the update: a line in the room's foot while
+/// one waits, whose press opens UPDATE (stage 6's) over the room through the screens' flow, named by the room's place;
+/// BACK brings the room back as it stood, its guest still in it.
 /// </summary>
 TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line opening the UPDATE page there")
 {
@@ -334,24 +337,26 @@ TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line o
     CHECK(!RoomScreen()->Seen().UpdateLine.empty());
     MCScreenInput::SaveShot("lobby session 1 update waits", MCScreenInput::ScreenHash());
 
-    // Its line opens the 1998 UPDATE page over the 1998 room, in the remade room's place until it closes.
+    // Its line opens UPDATE over the room, through the screens' flow (SPEC-menus.md's stages 4 and 6).
     MCTestGuest::PressInRoom("update");
-    REQUIRE(UpdatePageShown());
-    CHECK_EQ(UpdatePageStatus(), std::string("A NEWER VERSION IS OUT."));
-    const std::shared_ptr<MCLogTextButton> install = MCScreenInput::FindTextButton(screen, "INSTALL");
-    const std::shared_ptr<MCLogTextButton> done = MCScreenInput::FindTextButton(screen, "DONE");
-    REQUIRE(install != nullptr);
-    REQUIRE(done != nullptr);
-    CHECK(install->IsShowing());
+    REQUIRE(SettleUntil([] { return MCUpdateScreen::Shows() && !MCScreenChange::Running(); }));
+    CHECK(!RoomScreenShown());
+    const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
+    REQUIRE(update != nullptr);
+    CHECK_EQ(MCRemadeTest::Words(*update, "place"), std::string("Multiplayer"));
     MCScreenInput::SaveShot("lobby session 2 update page", MCScreenInput::ScreenHash());
 
-    // The start button is under the page: a click there stays on the page.
-    const auto [startX, startY] = Middle(*screen.StartButton);
-    CHECK(screen.FindObject(startX, startY) != screen.StartButton);
+    // Downloaded: what RESTART does in the room (ANN's game hasn't said it rejoins: the update goes in after the match).
+    MCUpdater::Answer(MCUpdater::MCAnswer::Install);
+    MCUpdater::Ready();
+    Settle();
+    CHECK_EQ(MCRemadeTest::Words(*update, "status"), std::string("Downloaded. It will install after the match."));
 
-    ClickOn(*done);
-    CHECK(!UpdatePageShown());
-    CHECK(SettleUntil([] { return RoomScreenShown(); }));
+    // BACK: the room as it stood, not set up again (its guest still in it).
+    REQUIRE(MCRemadeTest::Press(*update, "back"));
+    REQUIRE(SettleUntil([] { return RoomScreenShown() && !MCScreenChange::Running(); }));
+    CHECK(!MCUpdateScreen::Shows());
+    CHECK(MCTestGuest::RoomShows(guest.Id()));
     CHECK(!screen.ShowWindow);
 }
 

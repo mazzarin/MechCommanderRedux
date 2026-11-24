@@ -196,6 +196,9 @@ bool ShowRoomScreen();
 /// <summary>The remade room hidden (the 1998 room hidden, or another screen come up).</summary>
 void HideRoomScreen();
 
+/// <summary>Where the room is, as its eyebrow names it: "Internet", "LAN", or "Multiplayer" for a launcher's.</summary>
+std::string RoomPlace();
+
 /// <summary>The remade room (none before it first showed, or once the menus stopped).</summary>
 MCGuiHandle<MCRoomScreen> RoomScreen();
 

@@ -19,6 +19,7 @@
 #include "mission/MCScenario.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCIdleCheck.h"
+#include "logistics/MCPauseScreen.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCTeam.h"
 #include "sound/MCSoundSystem.h"
@@ -173,8 +174,10 @@ namespace
             }
             case VK_ESCAPE:
             {
+                // Port-only (SPEC-menus.md, "A pause menu"): Escape opens the pause over the battlefield; 1998's
+                // pause (and its "EXIT MULTIPLAYER?" box) when the menus' RmlUi can't start.
                 if (Scenario() != nullptr && EventsToMissionResultsScreen == 0 && Scenario()->StartingUp == 0 &&
-                    Scenario()->StartUpTurns < Turn)
+                    Scenario()->StartUpTurns < Turn && !MCPauseScreen::OpenOverMission())
                 {
                     if (MultiPlayer() == nullptr)
                     {
@@ -686,6 +689,12 @@ auto ScrollScreen() -> void
     }
 
     if (Scenario() != nullptr && Turn < 5)
+    {
+        return;
+    }
+
+    // Port-only: the pause takes the mouse, so the cursor's last place (at an edge, say) doesn't scroll on under it.
+    if (MCPauseScreen::Shows())
     {
         return;
     }

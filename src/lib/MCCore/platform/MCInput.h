@@ -194,6 +194,12 @@ namespace MCInput
     void HoldInput(bool held, std::function<void()> escape = {});
 
     /// <summary>
+    /// Port-only (SPEC-menus.md, "A pause menu"): the keys down taken as let go, before a menu over the battle takes the
+    /// keys (their release would never reach the game: a scroll key held as the pause opened would scroll on after).
+    /// </summary>
+    void LetGoOfKeys();
+
+    /// <summary>
     /// Port-only (SPEC-menus.md): a layer over the game that sees the mouse's and keys' events first (the remade menus,
     /// while they show): when it takes one (returns true), the game doesn't see it. None: the game sees them all.
     /// Window events (closing, resizing, focus) always reach the game too.

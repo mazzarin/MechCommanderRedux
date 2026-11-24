@@ -74,6 +74,8 @@ namespace
     constexpr int32_t MostChangeFrames = 600;
     /// <summary>RmlUi's clock moved on before a picture: past every motion (the ramp's fill, a refusal's reason).</summary>
     constexpr double SettleSeconds = 3.0;
+    /// <summary>The pictures' resource points (the first mission gives none; enough for the buy window's).</summary>
+    constexpr int32_t ShotPoints = 48600;
 
     /// <summary>As brf0101.txt writes it: its codes, a title, objectives carried on a line, the fire support, warnings.</summary>
     constexpr std::string_view FirstBriefing = "%fm%fc1%c****CLASSIFIED****%n\r\n"
@@ -125,6 +127,15 @@ namespace
         Rml::Element* element = screen.Document()->get().GetElementById(id);
         REQUIRE(element != nullptr);
         return *element;
+    }
+
+    /// <summary>The store's first good in stock (its parts: the first mission's store has some sold out).</summary>
+    size_t FirstInStore(const MCLogisticsTabs& tabs)
+    {
+        const auto inStore =
+            std::ranges::find_if(tabs.StoreGoods(), [](const MCLogisticsTabs::MCGood& good) { return !good.Off; });
+        REQUIRE(inStore != tabs.StoreGoods().end());
+        return static_cast<size_t>(inStore - tabs.StoreGoods().begin());
     }
 
     Rml::Vector2f Middle(const Rml::Element& element)
@@ -399,13 +410,8 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     }
 
     tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
-    const auto inStore =
-        std::ranges::find_if(tabs.StoreGoods(), [](const MCLogisticsTabs::MCGood& good) { return !good.Off; });
-    REQUIRE(inStore != tabs.StoreGoods().end());
-    // The first mission gives no resource points: enough for the buy window's picture.
-    constexpr int32_t ShotPoints = 48600;
     ResourcePoints = ShotPoints;
-    tabs.Pick(MCLogisticsTabs::MCPlace::Store, static_cast<size_t>(inStore - tabs.StoreGoods().begin()));
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, FirstInStore(tabs));
     MCTestGame::RunFrame(FlowFrame);
     Shot("purchase_parts");
     tabs.PressDeal();
@@ -1427,7 +1433,8 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
 /// A match's PURCHASING and 'MECH BAY (purchase_mp, mechbay_mp): the side's store as many of each as wanted (no count,
 /// nothing sold out), a part sold back for the full price it cost (1998's in a match), the chat's newest lines and the
 /// line being typed under the middle and right columns, a line sent there with Enter; the 'MECH BAY's lab with no
-/// repairs (a match has none).
+/// repairs (a match has none). Both the same on every machine at the frames' sizes, and laid out at every window the
+/// players' reports name.
 /// </summary>
 TEST_CASE_ISOLATED(
     "game: a match's PURCHASING and 'MECH BAY stand on the chat, the store unlimited, a sale the full price")
@@ -1441,6 +1448,15 @@ TEST_CASE_ISOLATED(
     MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
     MCCampaignScreen& screen = PlanMatch(ann, LogisticsMatchPort);
     MCLogisticsTabs& tabs = screen.Logistics();
+    // The menus on the test's clock: the chat box's caret blinks on it.
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    double clock = 0.0;
+    menus.SetClock([&clock] { return clock; });
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    REQUIRE(display->RendererKind() == MCRendererKind::Software);
+    HideClock(screen);
     const auto unlimited = [](const MCLogisticsTabs::MCGood& good) { return good.Note.empty() && !good.Off; };
 
     // PURCHASING: the side's 'Mechs and parts, no counts.
@@ -1478,7 +1494,8 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(screen.ChatLines().back().Text, std::string("Lasers for everyone"));
     CHECK(screen.ChatLines().back().Team);
     CHECK_EQ(ElementOf(screen, "say-logistics").GetAttribute<Rml::String>("value", "unread"), std::string());
-    Shot("purchase_mp");
+    DrawnEach(*display, clock, "purchase_mp", {0x8a84dad2, 0xb9b8efc1, 0xf5b60b70});
+    CheckLaidOut(menus, "purchase mp");
 
     // A 'Mech bought into the force for the 'MECH BAY: its lab without repairs.
     tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
@@ -1498,7 +1515,8 @@ TEST_CASE_ISOLATED(
     MCTestGame::RunFrame(FlowFrame);
     CHECK(tabs.LabUnit() != nullptr);
     CHECK(!tabs.Repairs());
-    Shot("mechbay_mp");
+    DrawnEach(*display, clock, "mechbay_mp", {0xaa7d0d3a, 0x8e8fe251, 0x9e3df686});
+    CheckLaidOut(menus, "mechbay mp");
 }
 
 /// <summary>
@@ -1727,6 +1745,38 @@ namespace
         constexpr double Track = 61.0;
         return MCMechBay::KnobLeft + static_cast<int32_t>(static_cast<double>(current) / maximum * Track);
     }
+
+    /// <summary>
+    /// The force 'Mech of the 'MECH BAY's sliders test and pictures as it arrived: 30 armour points short, its engine two
+    /// levels down (its knobs' floors there).
+    /// </summary>
+    constexpr int32_t ArrivedShort = 30;
+    constexpr uint8_t ArrivedEngineHits = 2;
+    /// <summary>The armour slider's steps in the sliders' test and the repair's picture.</summary>
+    constexpr int32_t RepairSteps = 10;
+
+    /// <summary>
+    /// <paramref name="mech"/> as if it arrived <see cref="ArrivedShort"/> armour points short (from its first locations
+    /// on) and its engine <see cref="ArrivedEngineHits"/> levels down, its knobs placed there (MCMechBay::PlaceKnobs).
+    /// </summary>
+    void ArriveDamaged(MCLogMech& mech)
+    {
+        int32_t missing = ArrivedShort;
+
+        for (size_t location = 0; location < mech.Armor.size(); location++)
+        {
+            MCLogMech::ArmorPoints& armor = mech.Armor[location];
+            const auto taken = static_cast<uint8_t>(std::min<int32_t>(armor.CurArmor, missing));
+            armor.CurArmor = static_cast<uint8_t>(armor.CurArmor - taken);
+            missing -= taken;
+            mech.Arrived.Armor[location] = armor.CurArmor;
+        }
+
+        REQUIRE_EQ(missing, 0);
+        MCMechBay::EngineOf(mech)->Hits = ArrivedEngineHits;
+        mech.Arrived.EngineHits = ArrivedEngineHits;
+        MCMechBay::PlaceKnobs(mech);
+    }
 }
 
 /// <summary>
@@ -1866,23 +1916,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's sliders repair and undo point by point
     const std::shared_ptr<MCLogMech> mech = logistics->ForceMechList->Mechs.front();
 
     // It arrived 30 armour points short and its engine two levels down.
-    constexpr int32_t Short = 30;
-    constexpr uint8_t EngineHits = 2;
-    int32_t missing = Short;
-
-    for (size_t location = 0; location < mech->Armor.size(); location++)
-    {
-        MCLogMech::ArmorPoints& armor = mech->Armor[location];
-        const auto taken = static_cast<uint8_t>(std::min<int32_t>(armor.CurArmor, missing));
-        armor.CurArmor = static_cast<uint8_t>(armor.CurArmor - taken);
-        missing -= taken;
-        mech->Arrived.Armor[location] = armor.CurArmor;
-    }
-
-    REQUIRE_EQ(missing, 0);
-    MCMechBay::EngineOf(*mech)->Hits = EngineHits;
-    mech->Arrived.EngineHits = EngineHits;
-    MCMechBay::PlaceKnobs(*mech);
+    ArriveDamaged(*mech);
     constexpr int32_t Points = 100000;
     ResourcePoints = Points;
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
@@ -1895,17 +1929,16 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's sliders repair and undo point by point
     const int32_t arrived = MCMechBay::Points(mech->Armor, false);
     const int32_t start = KnobFor(arrived, total);
     const auto scale = static_cast<float>(61.0 / total);
-    constexpr int32_t Steps = 10;
-    const auto wanted = static_cast<int32_t>(static_cast<double>(Steps) / static_cast<double>(scale));
+    const auto wanted = static_cast<int32_t>(static_cast<double>(RepairSteps) / static_cast<double>(scale));
     CHECK_EQ(tabs.ArmorRepair().Knob, start);
-    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, Steps);
-    CHECK_EQ(tabs.ArmorRepair().Knob, start + Steps);
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
+    CHECK_EQ(tabs.ArmorRepair().Knob, start + RepairSteps);
     CHECK_EQ(MCMechBay::Points(mech->Armor, false), arrived + wanted);
     CHECK_EQ(ResourcePoints, Points - wanted * logistics->ArmorCost);
     Shot("mechbay_repair");
 
     // Back to where it arrived: every point refunded.
-    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_LEFT, Steps);
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_LEFT, RepairSteps);
     CHECK_EQ(MCMechBay::Points(mech->Armor, false), arrived);
     CHECK_EQ(ResourcePoints, Points);
     // Not past where it arrived.
@@ -1916,23 +1949,23 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's sliders repair and undo point by point
     // Short of points: as far as they go, the knob where they ran out.
     constexpr int32_t Affordable = 3;
     ResourcePoints = logistics->ArmorCost * Affordable + 1;
-    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, Steps);
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
     CHECK_EQ(MCMechBay::Points(mech->Armor, false), arrived + Affordable);
     CHECK_EQ(ResourcePoints, 1);
     CHECK_EQ(tabs.ArmorRepair().Knob,
              static_cast<int32_t>(static_cast<double>(Affordable) * static_cast<double>(scale) + start));
-    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_LEFT, Steps);
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_LEFT, RepairSteps);
     CHECK_EQ(ResourcePoints, logistics->ArmorCost * Affordable + 1);
 
     // The engine: a level a step, each at the engine's cost, and back.
     ResourcePoints = Points;
     KeyOn(ElementOf(screen, "engine"), SDL_SCANCODE_RIGHT);
-    CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, EngineHits - 1);
+    CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, ArrivedEngineHits - 1);
     CHECK_EQ(ResourcePoints, Points - logistics->EngineCost);
     KeyOn(ElementOf(screen, "engine"), SDL_SCANCODE_RIGHT);
     CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, 0);
     KeyOn(ElementOf(screen, "engine"), SDL_SCANCODE_LEFT, 2);
-    CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, EngineHits);
+    CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, ArrivedEngineHits);
     CHECK_EQ(ResourcePoints, Points);
 
     // REPAIR ALL: the engine, the structure and the armour whole at their prices.
@@ -1940,7 +1973,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's sliders repair and undo point by point
     MCTestGame::RunFrame(FlowFrame);
     CHECK_EQ(MCMechBay::Points(mech->Armor, false), total);
     CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, 0);
-    CHECK_EQ(ResourcePoints, Points - Short * logistics->ArmorCost - EngineHits * logistics->EngineCost);
+    CHECK_EQ(ResourcePoints, Points - ArrivedShort * logistics->ArmorCost - ArrivedEngineHits * logistics->EngineCost);
 }
 
 /// <summary>
@@ -2014,4 +2047,361 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY fits and takes out parts and moves MechW
     MCTestGame::RunFrame(FlowFrame);
     CHECK(mech->PilotIndex >= 0);
     CHECK_EQ(logistics->WarriorList->Warriors.size(), pilots);
+}
+
+/// <summary>
+/// PURCHASING (the store's 'Mechs, the first picked; its parts, the first in stock picked; the buy window) and the 'MECH
+/// BAY (the force's first 'Mech; then arrived damaged and its armour partly repaired) on the software renderer, the whole
+/// window at 640x480, 1280x720 and 1280x1024, the hashes recorded: the Mac's and Windows' alike with the game's data.
+/// With <c>--shots</c> each is saved.
+/// </summary>
+TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every machine")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    StartFirstBriefing();
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    REQUIRE(display->RendererKind() == MCRendererKind::Software);
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    REQUIRE(MCRmlMenus::Running().has_value());
+    double clock = 0.0;
+    MCRmlMenus::Running()->get().SetClock([&clock] { return clock; });
+    ResourcePoints = ShotPoints;
+
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+    DrawnEach(*display, clock, "purchase", {0x41c12be7, 0x9d4e7376, 0x1b434715});
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, FirstInStore(tabs));
+    DrawnEach(*display, clock, "purchase_parts", {0xabd7c4f8, 0x328991b0, 0x58cc89da});
+    tabs.PressDeal();
+    REQUIRE(tabs.DealOpen());
+    DrawnEach(*display, clock, "purchase_buy", {0x9ea647a9, 0xa85d2176, 0x797dbed3});
+    tabs.DealCancel();
+
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    DrawnEach(*display, clock, "mechbay", {0x8570a0be, 0x98de763e, 0x8f1fc6c4});
+    ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
+    DrawnEach(*display, clock, "mechbay_repair", {0xbb439dcf, 0x63998ccf, 0xf638b836});
+}
+
+/// <summary>
+/// PURCHASING and the 'MECH BAY at every window the players' reports name: the store's four kinds (each first good
+/// picked; MECHWARRIORS and COMPONENTS with the INVENTORY on the left), the buy window, a bought 'Mech in SPARE; the 'MECH
+/// BAY on the force's first 'Mech arrived damaged, the INVENTORY's MechWarriors, and a spare 'Mech: every element inside
+/// the window, no two siblings overlapping, no text spilling or cut (MCRmlChecks::BoxProblems); every text at least 8
+/// units high, at its contrast (MCRmlChecks::Illegible).
+/// </summary>
+TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY lay out and read at every window the players' reports name")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    ResourcePoints = ShotPoints;
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+
+    constexpr std::array<std::pair<MCLogisticsTabs::MCKind, std::string_view>, 4> Kinds = {{
+        {MCLogisticsTabs::MCKind::Mechs, "purchase mechs"},
+        {MCLogisticsTabs::MCKind::MechWarriors, "purchase mechwarriors"},
+        {MCLogisticsTabs::MCKind::Components, "purchase components"},
+        {MCLogisticsTabs::MCKind::Vehicles, "purchase vehicles"},
+    }};
+
+    for (const auto& [kind, what] : Kinds)
+    {
+        tabs.ChooseKind(kind);
+        tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+        MCTestGame::RunFrame(FlowFrame);
+        CheckLaidOut(menus, what);
+    }
+
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, FirstInStore(tabs));
+    tabs.PressDeal();
+    REQUIRE(tabs.DealOpen());
+    CheckLaidOut(menus, "purchase buy");
+    tabs.DealCancel();
+
+    // A 'Mech bought into SPARE (the store's first, one put in stock).
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
+    const std::shared_ptr<MCPurMech> purMech = GlobalLog()->PurMechList->Mechs.front();
+    purMech->Variants[static_cast<size_t>(purMech->CurVariant)]->NumAvailable = 1;
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+    tabs.PressDeal();
+    REQUIRE(tabs.DealOpen());
+    tabs.DealConfirm();
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(!tabs.SpareCards().empty());
+    CheckLaidOut(menus, "purchase spare");
+
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    CheckLaidOut(menus, "mechbay repair");
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+    MCTestGame::RunFrame(FlowFrame);
+    CheckLaidOut(menus, "mechbay mechwarriors");
+    tabs.Pick(MCLogisticsTabs::MCPlace::Spare, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    CheckLaidOut(menus, "mechbay spare");
+}
+
+namespace
+{
+    /// <summary>The remade recording's window (the frames' 16:9 size) and the frames each step settles over.</summary>
+    constexpr MCMenusPictures::MCWindowSize RecordedWindow{1280, 720};
+    constexpr int32_t RecordedSettleFrames = 8;
+    /// <summary>The store's stock for the recording, as the 1998 recording's (every good two).</summary>
+    constexpr int32_t RecordedStock = 2;
+    constexpr int32_t RecordedPoints = 100000;
+
+    /// <summary>The mouse over <paramref name="element"/>'s middle (what's under the pointer shows in the details).</summary>
+    void Hover(const Rml::Element& element)
+    {
+        const Rml::Vector2f at = Middle(element);
+        MCScreenInput::PixelMove(at.x, at.y, FlowFrame);
+    }
+
+    /// <summary>A switch's choice <paramref name="choice"/> clicked (the tabs, the kinds, the INVENTORY's).</summary>
+    void ClickChoice(const MCCampaignScreen& screen, const std::string& id, int choice)
+    {
+        Rml::Element& choices = ElementOf(screen, id);
+        REQUIRE(choices.GetNumChildren() > choice);
+        ClickOn(*choices.GetChild(choice));
+    }
+
+    /// <summary>The good named <paramref name="who"/> among <paramref name="goods"/>: its card's place.</summary>
+    size_t GoodNamed(const std::vector<MCLogisticsTabs::MCGood>& goods, std::string_view who)
+    {
+        const auto found = std::ranges::find(goods, who, &MCLogisticsTabs::MCGood::Who);
+        REQUIRE(found != goods.end());
+        return static_cast<size_t>(found - goods.begin());
+    }
+
+    /// <summary>
+    /// The 'MECH BAY's INVENTORY card <paramref name="index"/> (PURCHASING's INVENTORY, hidden, has the same ids, and
+    /// first in the document).
+    /// </summary>
+    Rml::Element& InventoryCard(const MCCampaignScreen& screen, size_t index)
+    {
+        Rml::Element* card = ElementOf(screen, "inventory").QuerySelector(std::format("#stock{}", index));
+        REQUIRE(card != nullptr);
+        return *card;
+    }
+
+    /// <summary>The card of the unit <paramref name="unit"/> on the left (the force's or SPARE's): its id.</summary>
+    std::string UnitCardId(const MCLogisticsTabs& tabs, const std::shared_ptr<MCLogPart>& unit)
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        const size_t force = tabs.ForceCards().size();
+
+        for (size_t card = 0; card < force + tabs.SpareCards().size(); card++)
+        {
+            const MCLogisticsTabs::MCPlace place =
+                card < force ? MCLogisticsTabs::MCPlace::Force : MCLogisticsTabs::MCPlace::Spare;
+            const size_t index = card < force ? card : card - force;
+
+            if (tabs.UnitAt(place, index) == unit)
+            {
+                return std::format("{}{}", place == MCLogisticsTabs::MCPlace::Force ? "force" : "spare", index);
+            }
+        }
+
+        FAIL("the unit has no card on the left");
+        return {};
+    }
+}
+
+/// <summary>
+/// The logistics recording on the remade screens (SPEC-menus.md's Testing: FrameHashTests' logistics recording's
+/// purchases and mech lab steps, the same steps by the remade screens' own controls: a 'Mech, a part and a vehicle bought
+/// by a drag onto the left, two at once, a variant, the list scrolled, a buy too poor refused and its message closed,
+/// each kind's tab, what's under the pointer; in the 'MECH BAY a second 'Mech, a weapon taken out and a laser fitted,
+/// the MechWarriors, a spare 'Mech into the force and units out of it, the lab scrolled): each step's window on the
+/// software renderer at 1280x720 once settled, its hash recorded, and every frame on the way folded into one more. With
+/// <c>--shots</c> each step is saved.
+/// </summary>
+TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logistics recording's steps")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    StartFirstBriefing();
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    REQUIRE(display->RendererKind() == MCRendererKind::Software);
+    REQUIRE(MCMenusPictures::SetWindowPixels(*display, RecordedWindow.Width, RecordedWindow.Height));
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    REQUIRE(MCRmlMenus::Running().has_value());
+    double clock = 0.0;
+    MCRmlMenus::Running()->get().SetClock([&clock] { return clock; });
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    std::shared_ptr<MCLogPart> boughtMech;
+    // The screen laid out at the recording's window before the first click finds its tab.
+    MCTestGame::RunFrame(FlowFrame);
+
+    // Every frame on the way (the cards' slides, the buy window opening) folded into one more hash.
+    uint32_t frames = MCMenusPictures::FnvBasis;
+    const auto settle = [&]
+    {
+        for (int32_t frame = 0; frame < RecordedSettleFrames; frame++)
+        {
+            clock += SettleSeconds / RecordedSettleFrames;
+            MCTestGame::RunFrame(FlowFrame);
+            const auto window = display->ReadWindow();
+            REQUIRE(window.has_value());
+            frames = (frames ^ MCMenusPictures::PictureHash(*window)) * MCMenusPictures::FnvPrime;
+        }
+    };
+
+    struct MCStep
+    {
+        std::string_view Name;
+        std::function<void()> Action;
+        uint32_t Expected;
+    };
+
+    const std::array<MCStep, 38> steps = {{
+        {"purchase_again",
+         [&]
+         {
+             // Enough points and stock to buy with, as the 1998 recording's.
+             ResourcePoints = RecordedPoints;
+             MCTestGame::StockStore(RecordedStock);
+             ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Purchasing));
+             CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
+         },
+         0x9a4baf2d},
+        {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "units")); }, 0x595f4b77},
+        {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0x2b6a7b1a},
+        {"purchase_accept",
+         [&]
+         {
+             ClickOn(ElementOf(screen, "deal-confirm"));
+             MCTestGame::RunFrame(FlowFrame);
+             REQUIRE(!logistics->MechList->Mechs.empty());
+             boughtMech = logistics->MechList->Mechs.back();
+         },
+         0x57ea0457},
+        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x1a72b347},
+        {"purchase_variant",
+         [&]
+         {
+             ClickOn(ElementOf(screen, "store0"));
+             ClickChoice(screen, "variants", 1);
+         },
+         0xd45dce33},
+        {"purchase_scroll",
+         [&]
+         {
+             Hover(ElementOf(screen, "store0"));
+             MCScreenInput::RealWheel(-1);
+         },
+         0xbe0de1ff},
+        {"purchase_too_poor",
+         [&]
+         {
+             ResourcePoints = 0;
+             DragTo(ElementOf(screen, "store0"), ElementOf(screen, "units"));
+         },
+         0x9c3e3bbe},
+        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0xe2de6ae8},
+        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, "force0")); }, 0x8d3eb7fa},
+        {"purchase_pilots_tab",
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x7186ee19},
+        {"purchase_components_tab",
+         [&]
+         {
+             ResourcePoints = RecordedPoints;
+             ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Components));
+         },
+         0xb3c329a9},
+        {"purchase_component_drag",
+         [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "owned")); },
+         0x99eaf0cd},
+        {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x478e8121},
+        {"purchase_vehicles_tab",
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0x467828a8},
+        {"purchase_vehicle_drag",
+         [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "units")); },
+         0x99db6c56},
+        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xae0015b2},
+        {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
+         0x05132518},
+        {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
+         0x006eb27a},
+        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0x2000735e},
+        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0xc3814ea4},
+        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x89f08e75},
+        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0x4e8afb07},
+        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x2d96d96c},
+        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0xfd7c1a9b},
+        {"repair_mount_laser",
+         [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
+         0xd3f61456},
+        {"repair_pilots_tab", [&]
+         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x9b41154f},
+        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xe569e428},
+        {"repair_vehicles_tab",
+         [&]
+         {
+             // The 1998 bay's vehicles tab: the bought vehicle, in SPARE under the force.
+             REQUIRE(!logistics->VehicleList->Vehicles.empty());
+             ClickOn(ElementOf(screen, UnitCardId(tabs, logistics->VehicleList->Vehicles.back())));
+         },
+         0xe4b3d927},
+        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x5477cc17},
+        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x5477cc17},
+        {"repair_mech_into_force",
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0xac96e015},
+        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0xac96e015},
+        {"repair_mech_out",
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "spare-head")); }, 0x60067a53},
+        {"repair_weapon_list_scroll",
+         [&]
+         {
+             Hover(ElementOf(screen, "fit0"));
+             MCScreenInput::RealWheel(-1);
+         },
+         0xb55f0b9f},
+        {"repair_first_mech_out", [&] { DragTo(ElementOf(screen, "force0"), ElementOf(screen, "spare-head")); },
+         0x3333de7e},
+        {"briefing_after_repair",
+         [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xaf7f1bc1},
+        {"deploy_after_repair", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Deploy)); },
+         0xbed572a3},
+    }};
+
+    for (size_t index = 0; index < steps.size(); index++)
+    {
+        const MCStep& step = steps[index];
+        MCTest::Scope scope(step.Name);
+        step.Action();
+        settle();
+        const std::string name = std::format("recording{:02}_{}", index, step.Name);
+        CHECK_EQ(DrawnWindow(name),
+                 std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
+    }
+
+    CHECK_EQ(frames, 0x7554f17du);
 }

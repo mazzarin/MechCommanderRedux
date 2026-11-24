@@ -41,6 +41,7 @@
 #include "logistics/MCArtWords.h"
 #include "logistics/MCBriefingScreen.h"
 #include "main/MCInventoryList.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLogTextObject.h"
@@ -19425,6 +19426,9 @@ TEST_CASE_ISOLATED("game: HD art draws the logistics' composed pictures in place
         return;
     }
 
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
+
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     REQUIRE(renderer != nullptr);
     const std::filesystem::path pack = EmptyPack("mc_tests_hd_composed");
@@ -19645,6 +19649,9 @@ TEST_CASE_ISOLATED("game: HD art draws REMATCH's faces from the pack's copies of
     {
         return;
     }
+
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
 
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     REQUIRE(renderer != nullptr);

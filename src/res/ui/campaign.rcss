@@ -6,6 +6,12 @@
 #topbar { position: absolute; left: 0; right: 0; top: 0; height: 44dp; }
 #topbar .content { padding-top: 16dp; }
 #topbar .row { height: 28dp; }
+/* Port-only: the bar over the page (whose margin runs under it), so the tabs and MAIN MENU take the mouse; a window
+   (the buy window, its veil) over both; all of it inside the screen's own document, under any window over the screen
+   (the operation's video, a dialog). */
+body.night { z-index: 0; }
+#topbar { z-index: 1; }
+body.night > .veil, body.night > .window-place { z-index: 2; }
 .money { font-size: 11.63dp; line-height: 28dp; font-weight: 600; letter-spacing: 0.04em; color: #fcfcb8; white-space: nowrap; }
 
 /* Multiplayer: the bar's second row, the players (1998's lights, numbered P1 to P6, named only on the ticker under the

@@ -12,6 +12,7 @@
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCBriefingBox.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGenericScreen.h"
@@ -409,6 +410,9 @@ TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the dr
         return;
     }
 
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
+
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     NewCampaign();
@@ -508,6 +512,9 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     {
         return;
     }
+
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
 
     const MCScratchFolder pack("mc_briefing_tests", "lance-hold");
     MCTestGame::BootOptions.Started = [folder = pack.Path()]
@@ -825,6 +832,9 @@ TEST_CASE_ISOLATED("game: a deployed unit sold on another screen leaves its drop
         return;
     }
 
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
+
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     NewCampaign();
@@ -862,6 +872,9 @@ TEST_CASE_ISOLATED("game: the launch button leaves logistics and starts the miss
     {
         return;
     }
+
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
 
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
@@ -935,6 +948,9 @@ TEST_CASE_ISOLATED("game: HD LIGHTING set to NIGHT on the HD OPTIONS page darken
     {
         return;
     }
+
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
 
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
@@ -1092,6 +1108,9 @@ TEST_CASE_ISOLATED("game: a click on the operation tab restarts the briefing mov
     {
         return;
     }
+
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
 
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
@@ -1593,6 +1612,9 @@ TEST_CASE_ISOLATED("game: with MoreUnits a save holding more than 50 units is bo
         return;
     }
 
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
+
     constexpr std::string_view Save = "p3moreunits";
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
@@ -1621,6 +1643,9 @@ TEST_CASE_ISOLATED("game: without MoreUnits a save holding more than 50 units la
     {
         return;
     }
+
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
 
     constexpr std::string_view Save = "p3overlimit";
     REQUIRE(MCTestGame::StartLogistics());

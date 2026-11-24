@@ -106,6 +106,14 @@ namespace
     constexpr float LowestSegment = 1.0f / 3.0f;
     /// <summary>The engine slider's levels: 0 at three hits to 3 whole.</summary>
     constexpr int EngineLevels = 3;
+    /// <summary>The longest name the frames' cards hold at their size ("Light Autocannon"); longer ones are set smaller.</summary>
+    constexpr size_t LongNameLetters = 16;
+
+    /// <summary>Whether <paramref name="who"/> is longer than a card's name holds at its own size.</summary>
+    bool LongName(std::string_view who)
+    {
+        return who.size() > LongNameLetters;
+    }
 
     /// <summary>The skills in the order 1998's bars show them (the array's: Piloting, Jumping, Sensors, Gunnery).</summary>
     constexpr std::array<size_t, MCLogWarrior::NumSkills> SkillOrder = {3, 0, 1, 2};
@@ -304,7 +312,7 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
     model.List("store", _Store, std::pair{"picture", &MCGood::Picture}, std::pair{"who", &MCGood::Who},
                std::pair{"what", &MCGood::What}, std::pair{"price", &MCGood::Price}, std::pair{"note", &MCGood::Note},
                std::pair{"why", &MCGood::Why}, std::pair{"off", &MCGood::Off}, std::pair{"picked", &MCGood::Picked},
-               std::pair{"part", &MCGood::Part});
+               std::pair{"part", &MCGood::Part}, std::pair{"long", &MCGood::Long});
     model.List("stock", _StockGoods, std::pair{"picture", &MCGood::Picture});
     model.List("lifted", _Lifted, std::pair{"picture", &MCGood::Picture});
     model.Value("liftedLeft", _LiftedLeft);
@@ -659,6 +667,7 @@ void MCLogisticsTabs::FillStore()
     {
         thing.Place = MCPlace::Store;
         good.Picked = _Picked.has_value() && _Picked->Same(thing);
+        good.Long = LongName(good.Who);
         _Store.push_back(std::move(good));
         _StoreThings.push_back(std::move(thing));
     };
@@ -774,6 +783,7 @@ void MCLogisticsTabs::FillStock()
     {
         thing.Place = MCPlace::Stock;
         good.Picked = _Picked.has_value() && _Picked->Same(thing);
+        good.Long = LongName(good.Who);
 
         if (_WhyThing.has_value() && _WhyThing->Same(thing))
         {
@@ -1295,6 +1305,12 @@ std::optional<MCLogisticsTabs::MCThing> MCLogisticsTabs::ThingAt(MCPlace place, 
     return std::nullopt;
 }
 
+std::shared_ptr<MCLogPart> MCLogisticsTabs::UnitAt(MCPlace place, size_t index) const
+{
+    const std::optional<MCThing> thing = ThingAt(place, index);
+    return thing.has_value() ? thing->Unit.lock() : nullptr;
+}
+
 void MCLogisticsTabs::OnMouse(Rml::Event& event)
 {
     const auto x = event.GetParameter<float>("mouse_x", 0.0f);
@@ -1347,6 +1363,7 @@ void MCLogisticsTabs::OnMouse(Rml::Event& event)
 
                     lifted.Picked = false;
                     lifted.Off = false;
+                    lifted.Long = LongName(lifted.Who);
                     _Lifted = {lifted};
                 }
 

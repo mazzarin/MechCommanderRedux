@@ -11,6 +11,7 @@
 #include "gui/MCScreenFlow.h"
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFastFileSet.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogComboBox.h"
@@ -613,7 +614,16 @@ namespace MCTestGame
             mech->Deployed = true;
         }
 
-        Mission()->StartScenario(Mission()->Scenarios[0]);
+        if (MCCampaignMenu::Shown())
+        {
+            // The remade briefing's way, BEGIN MISSION's (MCDeploy::Begin): the loading screen's change hides the
+            // campaign's screens before logistics goes.
+            Mission()->RequestScenario(Mission()->Scenarios[0]);
+        }
+        else
+        {
+            Mission()->StartScenario(Mission()->Scenarios[0]);
+        }
 
         for (int32_t frame = 0; frame < 3000; frame++)
         {

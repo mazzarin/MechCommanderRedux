@@ -9,6 +9,7 @@
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiSmackerWindow.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCBriefingScreen.h"
 #include "gui/MCUpdateDisplay.h"
@@ -955,6 +956,9 @@ TEST_CASE_ISOLATED("game: the GPU draws the logistics screens as the software re
         return;
     }
 
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
+
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::Mirror);
     REQUIRE(MCTestGame::StartLogistics());
     const std::shared_ptr<MCVulkanRenderer> renderer = MirrorRenderer();
@@ -1102,6 +1106,9 @@ TEST_CASE_ISOLATED("game: a movie's frames go straight to the GPU, once each")
     {
         return;
     }
+
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
 
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
     REQUIRE(MCTestGame::StartLogistics());

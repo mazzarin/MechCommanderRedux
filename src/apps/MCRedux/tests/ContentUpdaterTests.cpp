@@ -4322,7 +4322,9 @@ TEST_CASE_ISOLATED("game: a mission's briefing says once a run, the new HD art a
     REQUIRE(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string(DueArtReadyNotice));
     MCScreenInput::SaveShot("art due notice 0 briefing", MCScreenInput::ScreenHash());
-    RealClickOn(*dialog.OkButton);
+    // Its OK: the remade briefing shows it as a remade dialog (MCReusableDialog::SayOverRemade), which Enter answers.
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    SettleScreen();
     CHECK(!dialog.IsShowing());
 
     // Once a run: the briefing shown again from the main menu, it doesn't show again.

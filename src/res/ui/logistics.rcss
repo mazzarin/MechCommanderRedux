@@ -23,8 +23,8 @@
 
 /* A thing as a card (PURCHASING's goods, the inventory's parts): its picture in a 24-unit column, then its name, what it
    is, and its price or count in cream. Picked by the player: card teal. Out of reach: campaign.rcss's .off. */
-#logistics .card .pic, .card.lifted .pic { flex: 0 0 24dp; height: 38dp; }
-#logistics .card .pic.part, .card.lifted .pic.part { height: 24dp; margin-top: 7dp; }
+#logistics .card.good .pic, .card.lifted .pic { flex: 0 0 24dp; height: 38dp; }
+#logistics .card.good .pic.part, .card.lifted .pic.part { height: 24dp; margin-top: 7dp; }
 /* A thing's name in its own case (a unit's callsign is in capitals). */
 #logistics .good .who, .card.lifted .who { text-transform: none; letter-spacing: 0.01em; }
 #logistics .switch > .off { color: #6c7a88; }
@@ -166,7 +166,8 @@
 #deal-window .deal-name-line { font-weight: 600; }
 #logistics .payload-head { margin-bottom: 4dp; }
 #logistics .repair .slider { margin-top: 2dp; }
-#logistics .button.dark, #logistics .button.dark:hover, #logistics .button.dark:active { color: #6c7a88; border-color: #1e2a34; }
+/* A button that can't act yet dark, as DEPLOY's BEGIN MISSION. */
+#logistics .button.dark, #logistics .button.dark:hover, #logistics .button.dark:active { background-color: #1e2a34; border-color: #1e2a34; color: #a4b0bc; }
 #logistics .fit-row { tab-index: auto; nav: auto; focus: auto; }
 /* A fitted part's first column: a weapon's range, or Equipment (the INVENTORY cards' word) whole at every size. */
 #logistics .fit-row .range { width: 62dp; }
@@ -191,7 +192,31 @@
     #logistics #inventory { flex-basis: 148dp; }
     #logistics.cols > .gap, #logistics .cols > .gap { flex-basis: 12dp; }
     #logistics .grid > .card-cell { flex-basis: 136dp; }
-    /* The columns' switches (the store's kinds, the INVENTORY's) wrap onto a second row, sharing their borders. */
-    #logistics .side .switch { flex-wrap: wrap; padding-bottom: 1dp; }
+    /* The columns' switches (the store's kinds, the INVENTORY's) wrap onto a second row, sharing their borders (the
+       padding holds the last segment's shared border on each row). */
+    #logistics .side .switch { flex-wrap: wrap; padding: 0dp 1dp 1dp 0dp; }
+    /* The INVENTORY's name alone, as on the 'MECH BAY (its count beside it would spill the column). */
+    #logistics #owned > .head > .data { display: none; }
     #logistics .side .switch > div { flex: 1 1 auto; text-align: center; margin-bottom: -1dp; }
+}
+/* Picked but out of reach (a sold-out good, a variant none are left of): its words lighter on the teal, still dim. */
+#logistics .card.picked.off .who, #logistics .card.picked.off .what, #logistics .card.picked.off .t,
+#logistics .card.picked.off .row-t, #logistics .switch > .on.off { color: #a4b0bc; }
+/* A good's name longer than the frames' (LogisticsTabs' LongName) in the details' size, so it fits its card. */
+#logistics .good .who.long, .card.lifted .who.long { font-size: 9.51dp; letter-spacing: 0; }
+/* The INVENTORY's switch a little tighter than the kit's, so COMPONENTS and MECHWARRIORS fit its 168 units. */
+#logistics #inventory .switch.small > div { padding: 0dp 6dp; }
+/* 16:10 and narrower: the switches' segments and a good's card a little tighter, so the store's four kinds, the
+   variants and a part's longest lines fit the narrower columns. */
+@media (max-aspect-ratio: 17/10) {
+    #logistics .switch.small > div, #logistics #inventory .switch.small > div { padding: 0dp 5dp; }
+    #logistics .card.good { padding: 4dp 3dp; gap: 4dp; }
+    #logistics .card.good .what { letter-spacing: 0; }
+}
+/* Port-only: 21:9 keeps the lab one column, as 16:9 (the frame's payload beside the repairs leaves a fitted part's name
+   too little room beside its range, tons and state). */
+@media (min-aspect-ratio: 2/1) {
+    #logistics .lab-body { flex-direction: column; }
+    #logistics .lab-body > * { flex: 0 0 auto; }
+    #logistics .lab-body > .payload { margin-top: 12dp; margin-left: 0dp; }
 }

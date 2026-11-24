@@ -169,7 +169,7 @@
                                     <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>
                             </div>
-                            <div class="row bottom head spare-head" data-if="spare.size > 0">
+                            <div class="row bottom head spare-head" id="spare-head" data-if="spare.size > 0">
                                 <div class="data cyan caps grow">Spare</div>
                             </div>
                             <div class="grid">
@@ -200,7 +200,7 @@
                                 <div class="card-cell" data-for="g, i : stock"><div class="card good" data-attr-id="'stock' + i" data-class-picked="g.picked" data-class-off="g.off"
                                      data-hint="Pick" data-hint-right="Sell">
                                     <div class="pic picture" data-class-part="g.part" data-style-decorator="g.picture"></div>
-                                    <div class="facts"><div class="who">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div></div></div>
+                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div></div></div>
                                 </div></div>
                             </div>
                         </div>
@@ -222,7 +222,7 @@
                                 <div class="card-cell" data-for="g, i : store"><div class="card good" data-attr-id="'store' + i" data-class-picked="g.picked" data-class-off="g.off"
                                      data-hint="Pick" data-hint-right="Buy">
                                     <div class="pic picture" data-class-part="g.part" data-style-decorator="g.picture"></div>
-                                    <div class="facts"><div class="who">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == ''"><div class="cream">{{g.price}}</div><div class="grow"></div><div class="grey">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
+                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == ''"><div class="cream">{{g.price}}</div><div class="grow"></div><div class="grey">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
                                 </div></div>
                             </div>
                         </div>
@@ -293,7 +293,7 @@
                                 <div class="card-cell" data-for="g, i : stock"><div class="card good" data-attr-id="'stock' + i" data-class-picked="g.picked" data-class-off="g.off"
                                      data-hint="Drag onto the 'Mech" data-attr-data-hint-right="stockKind == 0 ? 'Fit' : 'Board'">
                                     <div class="pic picture" data-class-part="g.part" data-style-decorator="g.picture"></div>
-                                    <div class="facts"><div class="who">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == ''"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
+                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == ''"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
                                 </div></div>
                             </div>
                         </div>
@@ -315,7 +315,7 @@
     </div>
     <div class="card-cell" data-for="g : lifted"><div class="card good dragged lifted" data-style-left="liftedLeft" data-style-top="liftedTop">
         <div class="pic picture" data-class-part="g.part" data-style-decorator="g.picture"></div>
-        <div class="facts"><div class="who">{{g.who}}</div><div class="what">{{g.what}}</div></div>
+        <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div></div>
     </div></div>
     <div class="veil" data-if="dealOpen"></div>
     <div class="window-place" data-if="dealOpen">

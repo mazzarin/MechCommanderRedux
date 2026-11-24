@@ -12,6 +12,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "lib/MCFilesAhead.h"
 #include "lib/MCFnvHash.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCLogPort.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPurchaseScreen.h"
@@ -430,6 +431,9 @@ TEST_CASE_ISOLATED("game: a screen rehearsed shows nothing, and its first frame 
     {
         return;
     }
+
+    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
+    MCCampaignMenu::Remade() = false;
 
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     const std::vector<uint8_t> menu = ShownBytes();

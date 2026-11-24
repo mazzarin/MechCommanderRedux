@@ -77,6 +77,8 @@ public:
         bool Picked = false;
         /// <summary>A part's picture (its square icon).</summary>
         bool Part = false;
+        /// <summary>A name longer than the frames' (LongName): set smaller to fit its card.</summary>
+        bool Long = false;
     };
 
     /// <summary>A line of the details' stats, a row of a payload, a fitted part's row.</summary>
@@ -175,6 +177,8 @@ public:
     std::shared_ptr<MCLogPart> LabUnit() const { return _LabPart.lock(); }
     /// <summary>The store mech's variant shown (the details' switch).</summary>
     int Variant() const { return _Variant; }
+    /// <summary>The unit a card on the left stands for (<paramref name="place"/> Force or Spare), if any.</summary>
+    std::shared_ptr<MCLogPart> UnitAt(MCPlace place, size_t index) const;
     /// <summary>Whether the lab's 'Mech can be repaired here (a force 'Mech's, outside a match): sliders, not meters.</summary>
     bool Repairs() const { return _Repairs; }
 

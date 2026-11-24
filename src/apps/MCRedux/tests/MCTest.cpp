@@ -572,9 +572,9 @@ int main(int argc, char** argv)
     // The CONTROLS screen names keys as a US keyboard does, whatever this machine's layout, so its pictures are the
     // same on every machine.
     MCKeyBindings::SetLayout(nullptr);
-    // The 1998 briefing for the tests that click it, until stage 8's step 2 records the logistics screens again; the
-    // remade BRIEFING and DEPLOY's own tests turn it on (MCCampaignMenu::Remade).
-    MCCampaignMenu::Remade() = false;
+    // The remade campaign screens, as the game shows them; the tests of the 1998 briefing's, PURCHASING's and the 'MECH
+    // BAY's blocks (kept until stage 9) turn them off (MCCampaignMenu::Remade).
+    MCCampaignMenu::Remade() = true;
     std::vector<std::string> arguments;
 
     for (int i = 0; i < argc; i++)

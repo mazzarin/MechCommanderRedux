@@ -250,20 +250,20 @@ TEST_CASE_ISOLATED("screen flow: Escape goes back one screen, and on the main me
     PressAndCheck("PREFERENCES", [] { MCScreenFlow::Open(MCMenuScreens::Preferences()); },
                   {main, MCMenuScreens::Preferences()});
     PressAndCheck("Escape from PREFERENCES", PressEscape, {main});
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
 
     PressAndCheck("LOAD GAME", [] { MCScreenFlow::Open(MCMenuScreens::Load()); }, {main, MCMenuScreens::Load()});
     PressAndCheck("Escape from LOAD GAME", PressEscape, {main});
 
     PressAndCheck("NEW CAMPAIGN", NewCampaign, {main, MCMenuScreens::Campaign()});
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     // The operation's movie (none in the test's game) would take the first Escape, as the original's did.
     GlobalLog()->BriefingScreen->StopSmackerMovies();
     PressAndCheck("Escape from the briefing", PressEscape, {main});
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     PressAndCheck("RETURN TO GAME", MCScreenFlow::Via("return to game", ReturnToGame),
                   {main, MCMenuScreens::Campaign()});
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     PressAndCheck("MAIN MENU", MCMenuScreens::LeaveCampaign, {main});
 
     // The stack's end: QUIT's question, and Escape on a question is its CANCEL (OB-074 fixed).
@@ -275,7 +275,7 @@ TEST_CASE_ISOLATED("screen flow: Escape goes back one screen, and on the main me
     MCTestGame::RunFrame(FrameSeconds);
     CHECK(!Asks(MCMenuScreens::QuitQuestion));
     CHECK(!GlobalLog()->Message->IsShowing());
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     CHECK(StackNow() == std::vector{main});
 }
 
@@ -486,7 +486,7 @@ TEST_CASE_ISOLATED("screen flow: a launcher's room is the stack's end, and asks 
 
     REQUIRE(MCTestGame::StartLobby("-host -port 28977 -player BOB"));
     RunWhileChanging();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Room());
     CHECK(StackNow() == std::vector{MCMenuScreens::Room()});
 
     // A dialog the room opens with (a new key's question) answered first.
@@ -502,7 +502,7 @@ TEST_CASE_ISOLATED("screen flow: a launcher's room is the stack's end, and asks 
     PressEscape();
     MCTestGame::RunFrame(FrameSeconds);
     CHECK(!Asks(MCMenuScreens::LeaveGameQuestion));
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Room());
 }
 
 /// <summary>
@@ -604,14 +604,14 @@ TEST_CASE_ISOLATED("screen flow: NEXT MISSION lands on the briefing with the mai
     Mission()->LeaveResults();
     RunWhileChanging();
     REQUIRE(GlobalLog() != nullptr);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     const std::vector<MCScreenId> landed = {MCMenuScreens::Main(), MCMenuScreens::Campaign()};
     CHECK(StackNow() == landed);
     CHECK_EQ(MCScreenFlow::Unrouted(), 0u);
 
     GlobalLog()->BriefingScreen->StopSmackerMovies();
     PressAndCheck("Escape from the next briefing", PressEscape, {MCMenuScreens::Main()});
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
 }
 
 /// <summary>
@@ -643,7 +643,7 @@ TEST_CASE_ISOLATED("screen flow: the campaign's end movies lead to the main menu
     CHECK(Mission()->State == MCMissionState::Logistics);
     CHECK(!Mission()->GameOver);
     REQUIRE(GlobalLog() != nullptr);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     CHECK(MCMainMenuScreens::Shown(MCMainPanel::Main));
     CHECK(StackNow() == std::vector{MCMenuScreens::Main()});
     CHECK(fades.FadedIn);

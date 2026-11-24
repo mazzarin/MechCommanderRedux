@@ -354,7 +354,7 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     StartFirstBriefing();
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
     MCCampaignScreen& screen = Shown();
-    CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK(logistics->BriefingScreen->ShowWindow == 0);
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
@@ -399,7 +399,7 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     MCTestGame::RunFrame(FlowFrame);
     CHECK(MCCampaignMenu::Shown());
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
-    CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
     MCLogisticsTabs& tabs = screen.Logistics();
     CHECK_EQ(tabs.ForceCards().size(),
@@ -453,7 +453,7 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     RunWhileChanging();
     CHECK(!MCCampaignMenu::Shown());
-    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main"));
 }
 
@@ -975,7 +975,7 @@ namespace
         REQUIRE(MCCampaignMenu::Shown());
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         REQUIRE(logistics != nullptr);
-        CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+        CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
         CHECK(logistics->BriefingScreen->ShowWindow == 0);
         CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
         CHECK_EQ(Shown().Eyebrow(), std::string(eyebrow));
@@ -1057,7 +1057,7 @@ TEST_CASE_ISOLATED("game: RETURN TO GAME, SAVE GAME and LOAD GAME go back to the
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     RunWhileChanging();
     CHECK(!MCCampaignMenu::Shown());
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main"));
     MCScreenFlow::Via("return to game", ReturnToGame)();
     RunWhileChanging();
@@ -1164,7 +1164,7 @@ TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its f
     SoloLoadScreen();
     RunWhileChanging();
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    REQUIRE(logistics->CurrentScreen() == logistics->LoadScreen);
+    REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Load());
     const std::shared_ptr<MCFileScrollPane> pane = logistics->LoadScreen->FilePane.Lock();
     REQUIRE(pane != nullptr);
     REQUIRE(!pane->Files.empty());
@@ -1175,7 +1175,7 @@ TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its f
     REQUIRE(MCCampaignMenu::Shown());
     CHECK(Solo);
     MCCampaignScreen& screen = Shown();
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK(GlobalLog()->BriefingScreen->ShowWindow == 0);
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
     CHECK_EQ(screen.Eyebrow(), std::string("Solo"));
@@ -1198,7 +1198,7 @@ TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its f
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE(MCCampaignMenu::Shown());
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     MCLogisticsTabs& tabs = screen.Logistics();
     CHECK(tabs.ForceCards().empty());
     CHECK(!tabs.StoreGoods().empty());
@@ -1251,9 +1251,9 @@ namespace
             MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
         REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
         ann.AnswerFiles(sameData);
-        MCSessionScreen::Room().AssignPlayer(manager.MyPlayerID, 1, 0, false);
-        MCSessionScreen::Room().AssignPlayer(ann.Id(), 2, 0, false);
-        MCSessionScreen::Room().LoadMission(MatchMission);
+        GlobalLog()->Room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
+        GlobalLog()->Room.AssignPlayer(ann.Id(), 2, 0, false);
+        GlobalLog()->Room.LoadMission(MatchMission);
         REQUIRE(
             MCTestGuest::SettleUntil([&] { return ann.MissionsLoaded() == 1 && MCTestGuest::DialogText().empty(); }));
         MCTestGuest::Settle();

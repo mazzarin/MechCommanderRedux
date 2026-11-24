@@ -786,7 +786,7 @@ TEST_CASE_ISOLATED("game: the hold is kept past a mission's end only where a mis
     // A quick-start mission won: SOLO MISSIONS (stage 2's landing; remade in the main menu's panel, stage 7), and
     // nothing held.
     PlayToResultsAndBack(Won, true);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     CHECK(MCMainMenuScreens::Shown(MCMainPanel::Solo));
     CHECK(!MCHdArt::HoldsFor(missions[0]));
     CHECK(!MCHdArt::HoldsFor(missions[1]));
@@ -1524,17 +1524,17 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         // Back on the main menu, neither goes anywhere.
         MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
         Settle();
-        REQUIRE(logistics->CurrentScreen() == logistics->MainScreen);
+        REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Main());
         ReturnToGame();
         Settle();
-        CHECK(logistics->CurrentScreen() == logistics->MainScreen);
+        CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
         SaveScreen();
         Settle();
-        CHECK(logistics->CurrentScreen() == logistics->MainScreen);
+        CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
 
         // The next load fills the lists again and opens the campaign.
         LoadFromScreen("p3good");
-        CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+        CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
         CHECK(!loadGame.Shown());
         CHECK_EQ(logistics->CurrentMission, goodMission);
         CHECK(!logistics->ForceMechList->Mechs.empty());
@@ -1757,7 +1757,7 @@ TEST_CASE_ISOLATED(
 
     // The good one plays.
     LoadFromScreen(GoodSave);
-    CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK_EQ(logistics->CurrentMission, goodMission);
     logistics->SetUpMainScreen(false);
     Settle();
@@ -1780,7 +1780,7 @@ namespace
         REQUIRE_EQ(logistics->SaveCampaign(name), 0);
         logistics->MechList->Clear();
         LoadFromScreen(name);
-        REQUIRE(logistics->CurrentScreen() == logistics->BriefingScreen);
+        REQUIRE(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     }
 
     /// <summary>The menus' message dialog, showing <paramref name="text"/>, closed with its OK.</summary>

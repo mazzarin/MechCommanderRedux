@@ -145,7 +145,7 @@ namespace
     bool OnBriefing()
     {
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        return logistics != nullptr && logistics->CurrentScreen() == logistics->BriefingScreen &&
+        return logistics != nullptr && MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing) &&
                MCCampaignMenu::Shown() && MCCampaignMenu::Ready() && !MCScreenChange::Running();
     }
 
@@ -160,7 +160,7 @@ namespace
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         FAIL(std::format("no briefing: logistics state {}, the briefing current {} and showing {}, a remade screen "
                          "showing {}, a change running {}, the mission's state {}, the flow's stack {}",
-                         logistics->LogisticsState, logistics->CurrentScreen() == logistics->BriefingScreen,
+                         logistics->LogisticsState, MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing),
                          logistics->BriefingScreen->IsShowing(), MCRmlFlow::Showing(), MCScreenChange::Running(),
                          std::to_underlying(Mission()->State), MCScreenFlow::StackText()));
     }

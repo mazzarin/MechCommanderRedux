@@ -23,10 +23,12 @@
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUnitLimits.h"
@@ -133,14 +135,32 @@ namespace MCTestGame
         }
     }
 
+    namespace
+    {
+        /// <summary>An OldMainMenu lives: logistics' main screen shows in the remade main menu's place.</summary>
+        bool oldMainMenu = false;
+
+        /// <summary>
+        /// The main menu up: the flow's top (MCMenuScreens::Top), the remade main menu shown in its place, or with an
+        /// OldMainMenu the 1998 one.
+        /// </summary>
+        bool MainMenuUp()
+        {
+            return MCMenuScreens::Top() == MCMenuScreens::Main() &&
+                   (oldMainMenu || MCMainMenuScreens::Shown(MCMainPanel::Main));
+        }
+    }
+
     OldMainMenu::OldMainMenu()
     {
+        oldMainMenu = true;
         MCMainMenuScreens::SetOldForTests(true);
     }
 
     OldMainMenu::~OldMainMenu()
     {
         MCMainMenuScreens::SetOldForTests(false);
+        oldMainMenu = false;
     }
 
     std::filesystem::path UserFolder()
@@ -555,8 +575,7 @@ namespace MCTestGame
         {
             RunFrame(1.0f / 15.0f);
 
-            if (Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
-                GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen && GuiSystem().SmackerWindow == nullptr &&
+            if (Mission()->State == MCMissionState::Logistics && MainMenuUp() && GuiSystem().SmackerWindow == nullptr &&
                 !MCScreenChange::Running())
             {
                 return true;
@@ -586,11 +605,11 @@ namespace MCTestGame
         {
             RunFrame(1.0f / 15.0f);
 
-            // The room (the session screen) once the lobby's join is done, or a dialog saying it failed (the 1998 one,
-            // or the remade one over the games list: SPEC-menus.md's stage 3).
+            // The room (the flow's top, the remade room shown) once the lobby's join is done, or a dialog saying it
+            // failed (the dialog's model said, or the remade one over the games list: SPEC-menus.md's stage 3).
             if (Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
-                (GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen || GlobalLog()->Message->IsShowing() ||
-                 MCRmlDialogs::Shown()) &&
+                ((MCMenuScreens::Top() == MCMenuScreens::Room() && RoomScreenShown()) ||
+                 GlobalLog()->Message->IsShowing() || MCRmlDialogs::Shown()) &&
                 GuiSystem().SmackerWindow == nullptr && !MCScreenChange::Running())
             {
                 return true;
@@ -614,7 +633,8 @@ namespace MCTestGame
         };
 
         settle();
-        NewCampaign();
+        // The remade CAMPAIGNS' NEW CAMPAIGN on the original campaign.
+        MCMainMenuModel::NewCampaign(MCSaves::MCCampaign::Original);
         settle();
         {
             // Pinned only for the set-up: starting the scenario takes logistics down.
@@ -627,16 +647,10 @@ namespace MCTestGame
             mech->Deployed = true;
         }
 
-        if (MCCampaignMenu::Shown())
-        {
-            // The remade briefing's way, BEGIN MISSION's (MCDeploy::Begin): the loading screen's change hides the
-            // campaign's screens before logistics goes.
-            Mission()->RequestScenario(Mission()->Scenarios[0]);
-        }
-        else
-        {
-            Mission()->StartScenario(Mission()->Scenarios[0]);
-        }
+        // The remade briefing's BEGIN MISSION (MCDeploy::Begin's request): the loading screen's change hides the
+        // campaign's screens before logistics goes.
+        REQUIRE(MCCampaignMenu::Shown());
+        Mission()->RequestScenario(Mission()->Scenarios[0]);
 
         for (int32_t frame = 0; frame < 3000; frame++)
         {

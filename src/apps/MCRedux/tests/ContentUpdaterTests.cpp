@@ -18,6 +18,7 @@
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCMainMenuModel.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
@@ -4331,7 +4332,7 @@ TEST_CASE_ISOLATED("game: a mission's briefing says once a run, the new HD art a
     // The campaign's first briefing, as its mission starts: the notice.
     NewCampaign();
     SettleScreen();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    REQUIRE(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     REQUIRE(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string(DueArtReadyNotice));
     MCScreenInput::SaveShot("art due notice 0 briefing", MCScreenInput::ScreenHash());
@@ -4345,7 +4346,7 @@ TEST_CASE_ISOLATED("game: a mission's briefing says once a run, the new HD art a
     SettleScreen();
     ReturnToGame();
     SettleScreen();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    REQUIRE(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK(!dialog.IsShowing());
 }
 
@@ -4365,7 +4366,7 @@ TEST_CASE_ISOLATED("game: a match's room says once, as the player hosts it, that
     REQUIRE(GameFramesUntil([&] { return stall->Reached.load(); }));
     ScreenFrames();
     MCMenuDialog& dialog = *GlobalLog()->Message;
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Room());
     REQUIRE(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string(DueArtDownloadingNotice));
 
@@ -4412,7 +4413,7 @@ TEST_CASE_ISOLATED("game: a copy with no release due says nothing of new HD art:
 
     NewCampaign();
     SettleScreen();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    REQUIRE(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK(!GlobalLog()->Message->IsShowing());
 }
 

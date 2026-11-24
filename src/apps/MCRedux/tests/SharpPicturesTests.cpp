@@ -16,6 +16,7 @@
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCLogPort.h"
 #include "logistics/MCMainMenuModel.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"
@@ -684,7 +685,7 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
     CHECK(std::prev(firstBack)->Fade >= MCGuiSystem::FadeNearBlack);
     CHECK(Mission()->State == MCMissionState::Logistics);
     REQUIRE(GlobalLog() != nullptr);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK(!GuiSystem().CanFade());
     REQUIRE(GlobalLog()->BriefingScreen->MapPicture != nullptr);
     const std::shared_ptr<MCTexture> briefingMap = GlobalLog()->BriefingScreen->MapPicture->Bitmap().Texture.lock();
@@ -773,7 +774,7 @@ TEST_CASE_ISOLATED("game: a fade into a screen rehearses it once the screen is n
     REQUIRE(MCTestGame::FinishChanges());
     MCSharpPictures::WaitForMade();
     Settle();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    REQUIRE(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     REQUIRE(GuiSystem().CanFade());
 
     // At each present of the next frame, how far its fade had gone and the rehearsals run.

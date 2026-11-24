@@ -257,7 +257,7 @@ namespace
     {
         RunWhileChanging();
         CHECK(StackNow() == std::vector{MCMenuScreens::Main()});
-        CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+        CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
         CHECK(MCMainMenuScreens::MainOnTop());
     }
 
@@ -601,7 +601,7 @@ TEST_CASE_ISOLATED("game: Escape in a mission opens the pause; RESUME, ALL PREFE
     Mission()->LeaveResults();
     RunWhileChanging();
     REQUIRE(GlobalLog() != nullptr);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK_EQ(GlobalLog()->CurrentMission, 0);
     const std::vector<MCScreenId> landed = {MCMenuScreens::Main(), MCMenuScreens::Campaign()};
     CHECK(StackNow() == landed);

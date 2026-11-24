@@ -11,6 +11,7 @@
 #include "lib/MCFilesAhead.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenuModel.h"
+#include "logistics/MCMenuScreens.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCGameContext.h"
@@ -304,7 +305,7 @@ TEST_CASE_ISOLATED("game: BEGIN MISSION fades into the loading screen, and the l
     {
         // As StartCampaignMission deploys: the force's first mech.
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        REQUIRE(logistics->CurrentScreen() == logistics->BriefingScreen);
+        REQUIRE(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
         std::shared_ptr<MCLogMech> mech;
         REQUIRE_EQ(logistics->ForceMechList->GetMechInfo(0, mech), 0);
         logistics->DeploySlots[0][0].Unit = 0;
@@ -434,7 +435,7 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
     CHECK(!Mission()->ResultsUp());
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
     REQUIRE(logistics != nullptr);
-    CHECK(logistics->CurrentScreen() != nullptr);
+    CHECK(MCMenuScreens::Top() != MCScreenFlow::NoScreen);
     CHECK_EQ(MCFilesAhead::HeldCount(), 0u);
     CHECK(SameColor(display.Surround(), MenuStone));
     CHECK_EQ(display.View().w, MenuFrameWidth);

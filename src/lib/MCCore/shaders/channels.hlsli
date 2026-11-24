@@ -198,10 +198,20 @@ MC_CHANNEL_FUNCTION bool RecolouringGreen(uint green, bool light)
 } // namespace MCGpuChannels
 #else
 // Port-only: premultiplied colour `color` of coverage `a` brightened `times` times by the game's brightness's curve (the
-// palette texture `palette`'s BrighteningRow, read with `samp`), a channel at a time, between the curve's values.
+// palette texture `palette`'s BrighteningRow, read with `samp`, between its values) at its strongest channel, the
+// others scaled as that one is: as light as the curve makes it, its hue and the strength of its colour kept (the curve
+// a channel at a time lifts the weaker channels most, washing the colour out).
 float3 BrightenedThrough(Texture2D<float4> palette, SamplerState samp, float3 color, float a, uint times)
 {
     if (times == 0u || a <= 0.0)
+    {
+        return color;
+    }
+
+    const float3 own = saturate(color / a);
+    const float strongest = max(own.r, max(own.g, own.b));
+
+    if (strongest <= 0.0)
     {
         return color;
     }
@@ -210,21 +220,13 @@ float3 BrightenedThrough(Texture2D<float4> palette, SamplerState samp, float3 co
     uint height;
     palette.GetDimensions(width, height);
     const uint channel = min(times, MaxBrightenings) - 1u;
-    const float3 at = saturate(color / a) * 255.0;
-    const int3 low = int3(floor(at));
-    const int3 high = min(low + 1, 255);
-    const float3 f = at - float3(low);
-    float3 brightened = float3(0.0, 0.0, 0.0);
-
-    [unroll] for (int c = 0; c < 3; c++)
-    {
-        const float row = ((float)BrighteningRow + 0.5) / (float)height;
-        const float from = palette.SampleLevel(samp, float2(((float)low[c] + 0.5) / (float)width, row), 0)[channel];
-        const float to = palette.SampleLevel(samp, float2(((float)high[c] + 0.5) / (float)width, row), 0)[channel];
-        brightened[c] = lerp(from, to, f[c]);
-    }
-
-    return brightened * a;
+    const float at = strongest * 255.0;
+    const int low = (int)floor(at);
+    const int high = min(low + 1, 255);
+    const float row = ((float)BrighteningRow + 0.5) / (float)height;
+    const float from = palette.SampleLevel(samp, float2(((float)low + 0.5) / (float)width, row), 0)[channel];
+    const float to = palette.SampleLevel(samp, float2(((float)high + 0.5) / (float)width, row), 0)[channel];
+    return own * (lerp(from, to, at - (float)low) / strongest) * a;
 }
 #endif
 

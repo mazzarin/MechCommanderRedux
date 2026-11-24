@@ -138,6 +138,10 @@ set_source_files_properties(${MC_SMOL_ATLAS_SOURCE} PROPERTIES SKIP_PRECOMPILE_H
 target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/smol-atlas-77a4e174)
 # xxHash (sound/MCHdAudio's sound identities), header-only.
 target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
+# Vulkan's types (platform/MCGpuLimits asks a Vulkan device its largest texture), from SDL's copy of Khronos' headers,
+# for that file alone, as on Windows.
+set_source_files_properties(${MC_SRC}/lib/MCCore/platform/MCGpuLimits.cpp
+                            PROPERTIES INCLUDE_DIRECTORIES ${MC_SRC}/lib/SDL-release-3.4.12/src/video/khronos)
 # libdeflate's decompressor (lib/MCInflate's DEFLATE), in C as on Windows, so a library of its own outside MCCore's C++
 # options; the x86 file builds to nothing here.
 set(MC_LIBDEFLATE_DIR ${MC_SRC}/lib/libdeflate-1.26)

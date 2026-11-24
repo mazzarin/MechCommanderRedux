@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCUiGpu.h"
+#include "platform/MCGpuLimits.h"
 #include "platform/MCVulkanShaders.h"
 
 namespace
@@ -184,6 +185,53 @@ auto MCUiGpu::Upload(SDL_GPUCopyPass& pass, std::span<const uint8_t> pixels, uin
     return texture;
 }
 
+auto MCUiGpu::UploadPicture(SDL_GPUCopyPass& pass, const MCUiTexture& picture)
+    -> std::expected<MCGpuHandle<SDL_GPUTexture>, std::string>
+{
+    const auto width = static_cast<uint32_t>(std::max(picture.Width, 0));
+    const auto height = static_cast<uint32_t>(std::max(picture.Height, 0));
+
+    // Every GPU holds a picture this size; a larger one is measured against this one's largest texture.
+    if (std::max(picture.Width, picture.Height) <= MCGpuLimits::VulkanLeast)
+    {
+        return Upload(pass, picture.Pixels, width, height);
+    }
+
+    if (!_LargestSide.has_value())
+    {
+        _LargestSide = MCGpuLimits::LargestTextureSide(*_Device);
+    }
+
+    const SDL_Point fitted = MCUiFittedSize(picture.Width, picture.Height, *_LargestSide);
+
+    if (fitted.x == picture.Width && fitted.y == picture.Height)
+    {
+        return Upload(pass, picture.Pixels, width, height);
+    }
+
+    const std::expected<MCSdlHandle<SDL_Surface>, std::string> scaled =
+        MCUiScaled(picture, SDL_Rect{0, 0, picture.Width, picture.Height}, fitted.x, fitted.y);
+
+    if (!scaled)
+    {
+        return std::unexpected(std::format("the menus' GPU drawing, {}", scaled.error()));
+    }
+
+    const SDL_Surface& copy = **scaled;
+
+    if (copy.pitch != fitted.x * static_cast<int>(PixelBytes))
+    {
+        return std::unexpected(std::format("the menus' GPU drawing, picture {}'s {}x{} copy has rows of {} bytes",
+                                           picture.Id, fitted.x, fitted.y, copy.pitch));
+    }
+
+    SDL_Log("Menus: picture %llu (%dx%d) is over the GPU's %d a side: drawn from a %dx%d copy",
+            static_cast<unsigned long long>(picture.Id), picture.Width, picture.Height, *_LargestSide, fitted.x,
+            fitted.y);
+    return Upload(pass, std::span(static_cast<const uint8_t*>(copy.pixels), static_cast<size_t>(copy.pitch) * copy.h),
+                  static_cast<uint32_t>(fitted.x), static_cast<uint32_t>(fitted.y));
+}
+
 std::expected<void, std::string> MCUiGpu::FillVertices(SDL_GPUCopyPass& pass, std::span<const std::byte> bytes)
 {
     const auto size = static_cast<uint32_t>(bytes.size());
@@ -280,8 +328,7 @@ std::expected<void, std::string> MCUiGpu::Draw(SDL_GPUCommandBuffer& commands, S
 
                 if (found == _Textures.end())
                 {
-                    auto made = Upload(*pass, picture.Pixels, static_cast<uint32_t>(std::max(picture.Width, 0)),
-                                       static_cast<uint32_t>(std::max(picture.Height, 0)));
+                    auto made = UploadPicture(*pass, picture);
 
                     if (!made)
                     {
@@ -378,4 +425,19 @@ std::expected<void, std::string> MCUiGpu::Draw(SDL_GPUCommandBuffer& commands, S
     // The textures of pictures nothing holds any more are let go of (SDL keeps them until the GPU is done with them).
     std::erase_if(_Textures, [](const auto& entry) { return entry.second.Picture.expired(); });
     return {};
+}
+
+SDL_Point MCUiFittedSize(int32_t width, int32_t height, int32_t largest)
+{
+    const int32_t longest = std::max(width, height);
+
+    if (largest <= 0 || longest <= largest)
+    {
+        return SDL_Point{width, height};
+    }
+
+    const double scale = static_cast<double>(largest) / static_cast<double>(longest);
+    const auto fit = [&](int32_t side)
+    { return std::clamp(static_cast<int32_t>(std::lround(static_cast<double>(side) * scale)), 1, largest); };
+    return SDL_Point{fit(width), fit(height)};
 }

@@ -36,6 +36,7 @@ namespace
     constexpr std::string_view EdSignaturesKey = "edSignatures";
     constexpr std::string_view MirrorsKey = "mirrors";
     constexpr std::string_view FilesKey = "files";
+    constexpr std::string_view ProgramFilesKey = "programFiles";
     constexpr std::string_view NameKey = "name";
     constexpr std::string_view ZipKey = "zip";
     constexpr std::string_view SetupLevelKey = "setupLevel";
@@ -87,9 +88,9 @@ namespace
 
     /// <summary>
     /// The program's file <paramref name="entry"/> in <paramref name="platform"/>'s program: a name at the top of the
-    /// game folder, by the content's rules for a path (MCContentList::PathProblem: one Windows holds, ASCII).
+    /// game folder, or with <paramref name="inFolder"/> one in the program's folder (MCReleaseFile::ProgramFileProblem).
     /// </summary>
-    MCProgramFile ProgramFileOf(const MCJson& entry, std::string_view platform)
+    MCProgramFile ProgramFileOf(const MCJson& entry, std::string_view platform, bool inFolder)
     {
         if (!entry.is_object())
         {
@@ -99,14 +100,20 @@ namespace
         MCProgramFile file{
             .Name = Text(entry, NameKey), .Size = Count(entry, SizeKey), .Sha256 = Digest(entry, Sha256Key)};
 
-        if (const std::string problem = MCContentList::PathProblem(file.Name);
-            !problem.empty() || file.Name.find('/') != std::string::npos)
+        if (const std::string problem = ProgramFileProblem(file.Name, inFolder); !problem.empty())
         {
             Fail("the program for \"{}\" names a file \"{}\" that isn't a name in the game folder ({})", platform,
-                 file.Name, problem.empty() ? "it's in a folder" : problem);
+                 file.Name, problem);
         }
 
         return file;
+    }
+
+    /// <summary>Whether the program names a file in its folder (it then lists its files under programFiles).</summary>
+    bool HasFolderFiles(const MCProgram& program)
+    {
+        return std::ranges::any_of(program.Files,
+                                   [](const MCProgramFile& file) { return file.Name.find('/') != std::string::npos; });
     }
 
     /// <summary>The hosted file <paramref name="entry"/> (<paramref name="what"/> says whose).</summary>
@@ -123,14 +130,25 @@ namespace
     /// <summary>The program's files, zip and setup level, when <paramref name="entry"/> gives them.</summary>
     void ReadProgramFiles(const MCJson& entry, std::string_view platform, MCProgram& program)
     {
-        for (const MCJson& file : Array(entry, FilesKey, false))
+        // A program with files in its folder lists them all under programFiles, and none under files (an older game
+        // reads only those, and without them runs the setup, which puts the folder in).
+        const bool inFolder = entry.contains(ProgramFilesKey);
+
+        if (inFolder && entry.contains(FilesKey))
         {
-            if (program.Files.size() == MaxProgramFiles)
+            Fail("the program for \"{}\" gives both \"{}\" and \"{}\"", platform, FilesKey, ProgramFilesKey);
+        }
+
+        const size_t most = inFolder ? MaxProgramFolderFiles : MaxProgramFiles;
+
+        for (const MCJson& file : Array(entry, inFolder ? ProgramFilesKey : FilesKey, false))
+        {
+            if (program.Files.size() == most)
             {
-                Fail("the program for \"{}\" names more than {} files", platform, MaxProgramFiles);
+                Fail("the program for \"{}\" names more than {} files", platform, most);
             }
 
-            MCProgramFile read = ProgramFileOf(file, platform);
+            MCProgramFile read = ProgramFileOf(file, platform, inFolder);
 
             // Windows' names are the same whatever their case.
             if (std::ranges::any_of(program.Files,
@@ -292,7 +310,7 @@ namespace
                         {{NameKey, file.Name}, {SizeKey, file.Size}, {Sha256Key, MCSha256::Hex(file.Sha256)}});
                 }
 
-                entry[std::string(FilesKey)] = std::move(files);
+                entry[std::string(HasFolderFiles(program) ? ProgramFilesKey : FilesKey)] = std::move(files);
             }
 
             if (program.Zip)
@@ -563,6 +581,33 @@ std::string MCReleaseFile::KeptText(const MCKept& kept)
     }
 
     return json.dump(2);
+}
+
+std::string MCReleaseFile::ProgramFileProblem(std::string_view name, bool inFolder)
+{
+    if (std::string problem = MCContentList::PathProblem(name); !problem.empty())
+    {
+        return problem;
+    }
+
+    const size_t slash = name.find('/');
+
+    if (slash == std::string_view::npos)
+    {
+        return {};
+    }
+
+    if (!inFolder)
+    {
+        return "it's in a folder";
+    }
+
+    if (name.substr(0, slash) != ProgramFolder)
+    {
+        return std::format("it's in a folder other than the program's own ({})", ProgramFolder);
+    }
+
+    return {};
 }
 
 std::string MCReleaseFile::FeedItemProblem(const MCProgram& held, std::string_view runningBuild, const MCFeedItem& item)

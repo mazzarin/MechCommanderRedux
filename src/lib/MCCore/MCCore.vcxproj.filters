@@ -1267,6 +1267,9 @@
     <ClCompile Include="platform\MCGpuCounted.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCGpuLimits.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCIceLink.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -2809,6 +2812,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCGpuCounted.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCGpuLimits.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCIceLink.h">

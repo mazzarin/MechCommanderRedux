@@ -50,7 +50,7 @@
   #error Pass /DAppVersionShown=<the version as the game shows it> (MC_VERSION_SHOWN in MCVersion.h)
 #endif
 #ifndef BinDir
-  #error Pass /DBinDir=<the folder holding MCRedux.exe, SDL3.dll and MCEditor.exe>
+  #error Pass /DBinDir=<the folder holding MCRedux.exe, SDL3.dll, MCEditor.exe and the menus' ui folder>
 #endif
 #ifndef DocsDir
   #error Pass /DDocsDir=<src\docs>
@@ -81,6 +81,9 @@
 #define GameExe "MCRedux.exe"
 #define SdlDll "SDL3.dll"
 #define EditorExe "MCEditor.exe"
+; The remade menus' files (SPEC-menus.md), in a folder of the program's own beside it, where the game reads them
+; (ui/MCRmlSystem.h): the game won't start without them. No copy of MechCommander Gold has a folder by that name.
+#define UiFolder "ui"
 ; The original's program, which becomes the game under its name (MakeGameName), not one of [Files].
 #define OriginalExe "MCX.EXE"
 ; The original under another name: MechCommander Online's copy has its MCX.EXE patched for wider screens as
@@ -231,6 +234,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#BinDir}\{#GameExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\{#SdlDll}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\{#EditorExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinDir}\{#UiFolder}\*"; DestDir: "{app}\{#UiFolder}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#DocsDir}\README.txt"; DestDir: "{app}"; DestName: "{#ReadmeName}"; Flags: ignoreversion
 Source: "{#LicencesFile}"; DestDir: "{app}"; DestName: "{#LicencesName}"; Flags: ignoreversion
 
@@ -246,6 +250,9 @@ Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Description: "{cm:PlayGame}";
 Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Flags: nowait; Check: StartAfterUpdate
 
 [UninstallDelete]
+; The menus' folder, the program's own: with what the game's program updates put there since (a later release's
+; files, which this setup never installed).
+Type: filesandordirs; Name: "{app}\{#UiFolder}"
 ; The release's own copy of a match's data, which the game made (MCReleaseCopy), and its folder once empty.
 Type: filesandordirs; Name: "{app}\Redux\Release"
 Type: dirifempty; Name: "{app}\Redux"

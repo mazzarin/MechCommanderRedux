@@ -3,8 +3,8 @@
 # tab). A push of HD doesn't run it: to check HD on Windows, run it by hand on HD (gh workflow run windows.yml --ref HD).
 # That run's build cache is also the one a new windows-* branch's first run starts from, since a run can restore only
 # its own branch's caches and the default branch's. The exes (the tests' mc_tests.exe too, for the test laptop's
-# content installs, with the menus' ui folder for the A10's and the laptop's runs of the menus' tests), the README and licences the setup installs (a release's program zip holds them as built), the
-# setup, the version header and MSBuild's log are kept as the run's artifact.
+# content installs), the menus' ui folder beside them, the README and licences, which the setup installs (a release's
+# program zip holds them as built), the setup, the version header and MSBuild's log are kept as the run's artifact.
 #
 # A release's setup: the release script (the workspace's tools/release/make_release.py make) runs it by hand with the
 # commit to build and the release's sets' sizes, which the setup shows. That run builds the commit as a release is built

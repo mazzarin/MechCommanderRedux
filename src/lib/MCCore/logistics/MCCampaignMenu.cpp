@@ -350,6 +350,13 @@ void MCCampaignScreen::OnShow()
     _LastFrame = RmlNow();
     // The chat read afresh: it may have lines from the room, or from while a 1998 screen showed.
     _Chat.Forget();
+
+    // A dialog over it belongs to the mission ("Beachhead · Mission 1", "Solo"), not the main menu it came from; a
+    // match's to its room, which named them as it showed.
+    if (!_Multiplayer)
+    {
+        MCRmlDialogs::SetPlace(_Eyebrow);
+    }
 }
 
 void MCCampaignScreen::OnHide()

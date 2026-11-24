@@ -12,6 +12,7 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMainMenuScreen.h"
@@ -140,12 +141,12 @@ namespace
         return MCRemadeTest::Visible(Panel(panel), id);
     }
 
-    /// <summary>Whether the old briefing shows (stage 8 remakes it), the change that showed it over.</summary>
+    /// <summary>Whether the remade briefing shows (stage 8's), whole, the change that showed it over.</summary>
     bool OnBriefing()
     {
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         return logistics != nullptr && logistics->CurrentScreen() == logistics->BriefingScreen &&
-               logistics->BriefingScreen->IsShowing() && !MCRmlFlow::Showing() && !MCScreenChange::Running();
+               MCCampaignMenu::Shown() && MCCampaignMenu::Ready() && !MCScreenChange::Running();
     }
 
     /// <summary>Waits for the old briefing; when it doesn't come, what shows instead.</summary>

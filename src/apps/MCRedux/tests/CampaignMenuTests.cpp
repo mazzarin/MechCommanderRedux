@@ -20,6 +20,7 @@
 #include "logistics/MCLogInvScreen.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMatchMaps.h"
 #include "logistics/MCMechBay.h"
 #include "logistics/MCMenuScreens.h"
@@ -737,7 +738,7 @@ TEST_CASE_ISOLATED("game: the loading screen draws the same on every machine and
     REQUIRE(MCLoadingMenu::Show());
     MCLoadingMenu::Progress(ShownPercent);
     CHECK_EQ(MCLoadingMenu::Screen()->get().Percent(), ShownPercent);
-    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xbc8135b2, 0xdb98ffa6, 0x52598df3};
+    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xeeb50e22, 0xd2457be9, 0xb00d4e12};
 
     for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
     {
@@ -1127,23 +1128,22 @@ TEST_CASE_ISOLATED("game: the results' NEXT MISSION and REPLAY MISSION go back t
     CHECK_EQ(GlobalLog()->CurrentMission, 1);
     CheckRemadeBriefing(SecondEyebrow, SecondTitle);
 
-    // As a quick-start mission's end (BriefingTests' EndToResultsAndBack): SOLO MISSIONS, the main menu under it.
+    // As a quick-start mission's end (BriefingTests' EndToResultsAndBack): the remade SOLO MISSIONS, the main menu
+    // under it.
     BeginFromDeploy();
     Solo = true;
     EndAndCloseResults(Won);
     CHECK(!Solo);
     CHECK(!MCCampaignMenu::Shown());
-    REQUIRE(GlobalLog() != nullptr);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen);
-    CHECK(LoadingSolo);
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Solo));
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > solo missions"));
 }
 
 /// <summary>
-/// A solo mission's PLAY (SOLO MISSIONS, 1998's load screen until stage 7) opens its remade briefing: its name (its
-/// briefing's STARCOM line, as two of the expansion's solo missions write it), no force yet (BEGIN MISSION dark), the
-/// tons that drop and the RP to buy them; 1998's tabs for it, the same four as a campaign's. (Its win's way back to SOLO
-/// MISSIONS: the results' test.)
+/// A solo mission's PLAY (1998's load screen here; the remade SOLO MISSIONS' in MainMenuTests) opens its remade
+/// briefing: its name (its briefing's STARCOM line, as two of the expansion's solo missions write it), no force yet
+/// (BEGIN MISSION dark), the tons that drop and the RP to buy them; 1998's tabs for it, the same four as a campaign's.
+/// (Its win's way back to SOLO MISSIONS: the results' test.)
 /// </summary>
 TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its force to buy")
 {
@@ -1225,8 +1225,7 @@ namespace
     {
         MCCampaignMenu::Remade() = true;
         REQUIRE(MCTestGame::StartLogistics());
-        ConnectScreen();
-        MCTestGuest::Settle();
+        MCTestGuest::OpenLan();
         const std::string address = std::format("127.0.0.1:{}", port);
         MCTestGuest::HostFromLan(address, "COMMANDER", "COMMANDER'S GAME", 4);
         MCTestGuest::Settle();
@@ -1605,7 +1604,7 @@ TEST_CASE_ISOLATED("game: a match's loading screen lights each game as it's in, 
     const std::shared_ptr<MCDisplay> display = MCInput::Display();
     REQUIRE(display != nullptr);
     REQUIRE(display->RendererKind() == MCRendererKind::Software);
-    DrawnEach(*display, clock, "loading_mp", {0x3226e1dd, 0x4db6789e, 0x5facba25});
+    DrawnEach(*display, clock, "loading_mp", {0x4c0de86d, 0x507ed6b9, 0x68d37528});
     CheckLaidOut(menus, "loading mp");
     CHECK(MCLoadingMenu::Shown());
     CHECK(!MultiPlayer()->InMission);
@@ -2324,7 +2323,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              ResourcePoints = 0;
              DragTo(ElementOf(screen, "store0"), ElementOf(screen, "units"));
          },
-         0x9c3e3bbe},
+         0x092f5a20},
         {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0xe2de6ae8},
         {"purchase_inventory_info", [&] { Hover(ElementOf(screen, "force0")); }, 0x8d3eb7fa},
         {"purchase_pilots_tab",
@@ -2403,5 +2402,5 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x7554f17du);
+    CHECK_EQ(frames, 0x47ed73fdu);
 }

@@ -504,7 +504,7 @@ bool MCSocketTransport::HasNetwork()
     // The addresses Winsock binds to (as libjuice's udp.c lists them): the loopback is never among them.
     constexpr size_t AddressListBytes = 4096;
 
-    if (!Startup())
+    if (!MCSocket::Startup())
     {
         return false;
     }

@@ -555,6 +555,9 @@
     <ClCompile Include="logistics\MCInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCKeysNotice.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCLoadingMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -871,6 +874,9 @@
       <Filter>main</Filter>
     </ClCompile>
     <ClCompile Include="main\MCMPPlayerLightsView.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
+    <ClCompile Include="main\MCPrefs.cpp">
       <Filter>main</Filter>
     </ClCompile>
     <ClCompile Include="main\MCSystemConfig.cpp">
@@ -2173,6 +2179,9 @@
     <ClInclude Include="logistics\MCInventoryBlock.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCKeysNotice.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCLoadingMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2480,6 +2489,9 @@
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCOriginalBugFixes.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="main\MCPrefs.h">
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCSystemConfig.h">

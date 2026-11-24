@@ -208,6 +208,7 @@
     <ClCompile Include="logistics\MCIdleCheck.cpp" />
     <ClCompile Include="logistics\MCInternetMenu.cpp" />
     <ClCompile Include="logistics\MCInventoryBlock.cpp" />
+    <ClCompile Include="logistics\MCKeysNotice.cpp" />
     <ClCompile Include="logistics\MCLoadingMenu.cpp" />
     <ClCompile Include="logistics\MCLoadSaveMenu.cpp" />
     <ClCompile Include="logistics\MCLogButton.cpp" />
@@ -314,6 +315,7 @@
     <ClCompile Include="main\MCMissionGlobals.cpp" />
     <ClCompile Include="main\MCMPPlayerLights.cpp" />
     <ClCompile Include="main\MCMPPlayerLightsView.cpp" />
+    <ClCompile Include="main\MCPrefs.cpp" />
     <ClCompile Include="main\MCSystemConfig.cpp" />
     <ClCompile Include="main\MCTelemetry.cpp" />
     <ClCompile Include="main\MCUpdater.cpp" />
@@ -777,6 +779,7 @@
     <ClInclude Include="logistics\MCIdleCheck.h" />
     <ClInclude Include="logistics\MCInternetMenu.h" />
     <ClInclude Include="logistics\MCInventoryBlock.h" />
+    <ClInclude Include="logistics\MCKeysNotice.h" />
     <ClInclude Include="logistics\MCLoadingMenu.h" />
     <ClInclude Include="logistics\MCLoadSaveMenu.h" />
     <ClInclude Include="logistics\MCLogButton.h" />
@@ -880,6 +883,7 @@
     <ClInclude Include="main\MCMPPlayerLights.h" />
     <ClInclude Include="main\MCMPPlayerLightsView.h" />
     <ClInclude Include="main\MCOriginalBugFixes.h" />
+    <ClInclude Include="main\MCPrefs.h" />
     <ClInclude Include="main\MCSystemConfig.h" />
     <ClInclude Include="main\MCTelemetry.h" />
     <ClInclude Include="main\MCUpdater.h" />

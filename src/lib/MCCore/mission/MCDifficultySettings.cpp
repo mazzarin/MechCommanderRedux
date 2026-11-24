@@ -1,6 +1,6 @@
 #include "stdafx.h"
 #include "mission/MCDifficultySettings.h"
-#include "logistics/MCPreferencesMenu.h"
+#include "main/MCPrefs.h"
 #include "mission/MCScenarioReading.h"
 
 MCDifficultySettings DifficultySettings;

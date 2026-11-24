@@ -4,6 +4,7 @@
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
+#include "iface/MCKeyBindings.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCHdOptionsPanel.h"
@@ -11,13 +12,14 @@
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogTextButton.h"
-#include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
+#include "main/MCPrefs.h"
 #include "main/MCSystemConfig.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
@@ -390,6 +392,95 @@ TEST_CASE_ISOLATED("game: PREFS keeps only what differs from the defaults, so a 
         }
     }
 
+    std::filesystem::remove(prefsPath);
+}
+
+/// <summary>
+/// PREFS is written as it always was (its writing left the 1998 preferences screen for main/MCPrefs): every setting it
+/// writes away from its default, HD LIGHTING at NIGHT and two keys changed, the file holds these bytes exactly.
+/// </summary>
+TEST_CASE_ISOLATED("game: PREFS is written byte for byte as the 1998 preferences screen wrote it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
+    constexpr int32_t Gamma = 3;
+    constexpr uint8_t Music = 0x21;
+    constexpr uint8_t Radio = 0x22;
+    constexpr uint8_t Effects = 0x23;
+    constexpr uint8_t Interface = 0x24;
+    constexpr int32_t Hard = 2;
+    constexpr int32_t UiResolutionChoice = 720;
+    constexpr int32_t ScrollSpeedChoice = 200;
+    constexpr int32_t InterfaceSizeChoice = 150;
+    constexpr uint32_t JumpKey = 0x25;
+    GuiSystem().PaletteCycle = MCPrefsDefaults::PaletteCycle ? 0 : 1;
+    GuiSystem().GammaLevel = Gamma;
+    GFullScreen = MCPrefsDefaults::FullScreen ? 0 : 1;
+    Force16MB = !MCPrefsDefaults::Force16Mb;
+    Force32MB = !MCPrefsDefaults::Force32Mb;
+    GameDifficulty = Hard;
+    const std::shared_ptr<MCSoundSystem> sound = SoundSystem();
+    REQUIRE(sound != nullptr);
+    sound->MusicLevel = Music;
+    sound->RadioLevel = Radio;
+    sound->DigitalMasterVolume = Effects;
+    sound->InterfaceLevel = Interface;
+    GStretchToFit = MCPrefsDefaults::StretchToFit ? 0 : 1;
+    GSoftwareCursor = MCPrefsDefaults::SoftwareCursor ? 0 : 1;
+    GRendererPreference = static_cast<int>(MCRendererKind::Software);
+    GUiResolution = UiResolutionChoice;
+    GScrollSpeed = ScrollSpeedChoice;
+    GInterfaceSize = InterfaceSizeChoice;
+    GShowFpsPreference = MCPrefsDefaults::ShowFps ? 0 : 1;
+    GHdLighting = static_cast<int>(HdLightingNight);
+    MCKeyBindings::MCKeyTable keys = MCKeyBindings::Player();
+    MCKeyBindings::Bind(keys, MCKeyCommand::Jump, JumpKey | KeyCtrl);
+    keys[static_cast<size_t>(MCKeyCommand::Eject)] = MCKeyBindings::NoKey;
+    MCKeyBindings::SetPlayer(keys);
+    SavePrefs();
+
+    std::string written;
+    {
+        std::ifstream file(prefsPath, std::ios::binary);
+        REQUIRE(file.is_open());
+        written.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    }
+
+    // As the 1998 preferences screen's SavePrefs wrote them (captured from it before the move).
+    constexpr std::string_view Written = "FITini \r\n"
+                                         "\r\n"
+                                         "[MechCommander]\r\n"
+                                         "l PrefsVersion=1\r\n"
+                                         "b PaletteCycle=TRUE\r\n"
+                                         "b DirectDraw=TRUE\r\n"
+                                         "b Force16Mb=TRUE\r\n"
+                                         "b Force32Mb=TRUE\r\n"
+                                         "l Difficulty=2\r\n"
+                                         "l Brightness=3\r\n"
+                                         "l MusicVolume=33\r\n"
+                                         "l RadioVolume=34\r\n"
+                                         "l SFXVolume=35\r\n"
+                                         "l InterfaceVolume=36\r\n"
+                                         "b StretchToFit=TRUE\r\n"
+                                         "b SoftwareCursor=TRUE\r\n"
+                                         "st Renderer=\"software\"\r\n"
+                                         "l UIResolution=720\r\n"
+                                         "l ScrollSpeed=200\r\n"
+                                         "l InterfaceSize=150\r\n"
+                                         "b ShowFps=TRUE\r\n"
+                                         "l HDLighting=3\r\n"
+                                         "b Reports=FALSE\r\n"
+                                         "\r\n"
+                                         "[Controls]\r\n"
+                                         "st Jump=\"CTRL+K\"\r\n"
+                                         "st Eject=\"NONE\"\r\n"
+                                         "FITend \r\n";
+    CHECK_EQ(written, std::string_view(Written));
     std::filesystem::remove(prefsPath);
 }
 

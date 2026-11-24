@@ -7,7 +7,7 @@
 #include "gui/MCGuiChatWindow.h"
 #include "iface/MCCommandParser.h"
 #include "iface/MCMechBar.h"
-#include "logistics/MCPreferencesMenu.h"
+#include "main/MCPrefs.h"
 #include "mission/MCNightLights.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"

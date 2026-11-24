@@ -13,7 +13,7 @@
 #include "lib/MCFile.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
-#include "logistics/MCPreferencesMenu.h"
+#include "main/MCPrefs.h"
 #include "terrain/MCMapBlockManager.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCGameStrings.h"

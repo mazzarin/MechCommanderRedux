@@ -23,6 +23,7 @@
 #include "logistics/MCLogInvScreen.h"
 #include "logistics/MCLogObject.h"
 #include "main/MCLogistics.h"
+#include "main/MCPrefs.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCPresenter.h"
 #include "sound/MCSoundSystem.h"

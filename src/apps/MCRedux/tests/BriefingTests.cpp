@@ -46,6 +46,7 @@
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "logistics/MCUnitLimits.h"
+#include "main/MCPrefs.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"

@@ -143,7 +143,7 @@ namespace MCKeyBindings
 
     /// <summary>
     /// Port-only: the next default the last <see cref="ReadPrefs"/> left without a key, taken off its list (none once
-    /// all are taken), for the player to choose a key (logistics/MCControlsPanel.h's <c>AskGivenWayKeys</c>).
+    /// all are taken), for the player to choose a key (logistics/MCKeysNotice.h's <c>AskGivenWayKeys</c>).
     /// </summary>
     std::optional<MCGivenWay> TakeGivenWay();
 

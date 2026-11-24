@@ -20,7 +20,6 @@
                     <div id="facts">
                         <div class="heading caps nowrap" style="margin-bottom: 8dp;" id="version"></div>
                         <div class="fact" id="size-fact"><div class="label">Download</div><div id="size"></div></div>
-                        <div class="fact" id="small-fact"><div class="label">Smaller art</div><div id="small"></div></div>
                         <div class="status"><div id="status"></div><div class="meter hidden" id="meter"><div class="meter-fill cream" id="meter-fill" style="width: 0%;"></div></div></div>
                     </div>
                 </div>

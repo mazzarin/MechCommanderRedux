@@ -3,6 +3,7 @@
 #include "gui/MCGuiEvent.h"
 #include "gui/MCScrollPane.h"
 #include "logistics/MCLogInvScreen.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCStore.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
@@ -97,16 +98,5 @@ auto MCInventoryBlock::SalePrice(int32_t value) -> int32_t
 
 auto MCInventoryBlock::BumpDeploySlots(bool vehicle) -> void
 {
-    for (auto& lance : GlobalLog()->DeploySlots)
-    {
-        for (auto& slot : lance)
-        {
-            int32_t& value = vehicle ? slot.Vehicle : slot.Unit;
-
-            if (value > -1)
-            {
-                ++value;
-            }
-        }
-    }
+    MCMechBay::MakeRoomInDrop(vehicle);
 }

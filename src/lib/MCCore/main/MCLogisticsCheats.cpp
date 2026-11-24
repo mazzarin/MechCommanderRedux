@@ -2,6 +2,7 @@
 #include "main/MCLogistics.h"
 #include "gui/MCGuiGlobals.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
@@ -109,8 +110,8 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
 
             for (const std::shared_ptr<MCLogMech>& mech : ForceMechList->Mechs)
             {
-                MCMechRepairBlock::RepairArmor(*mech, -1);
-                MCMechRepairBlock::RepairInternal(*mech, -1);
+                MCMechBay::RepairArmor(*mech, -1);
+                MCMechBay::RepairInternal(*mech, -1);
 
                 for (const std::shared_ptr<MCLogInventoryItem>& item : mech->Inventory->Items)
                 {
@@ -122,7 +123,7 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
 
                 // The three knobs at the mech's state (the block's Set*Slider(-1)), then the row works out what it
                 // shows.
-                MCMechRepairBlock::PlaceSliders(*mech);
+                MCMechBay::PlaceKnobs(*mech);
 
                 if (const std::shared_ptr<MCMechRepairBlock> row = RepairScreen->RowOf(*mech); row != nullptr)
                 {

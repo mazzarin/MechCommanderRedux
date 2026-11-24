@@ -5,6 +5,7 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCScrollPane.h"
 #include "logistics/MCLogRows.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCStore.h"
 #include "logistics/MCVehicleRepairBlock.h"
 #include "logistics/MCPurchaseDlg.h"
@@ -127,8 +128,7 @@ auto MCVehicleInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             });
     }
 
-    auto forceFull = []
-    { return GlobalLog()->ForceMechList->GetMechCount() + GlobalLog()->ForceVehicleList->GetVehicleCount() > 0xf; };
+    auto forceFull = [] { return MCMechBay::ForceFull(); };
 
     auto backToInventory = [&]
     {

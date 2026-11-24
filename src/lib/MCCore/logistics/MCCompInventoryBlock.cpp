@@ -6,6 +6,7 @@
 #include "gui/MCScrollPane.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCLogRows.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
@@ -37,46 +38,19 @@ namespace
     /// <returns>True when mounted; false after showing the "too heavy" message.</returns>
     bool MountComponent(MCLogInventoryItem& item, MCLogMech& mech)
     {
-        if (mech.Deployed != 0)
-        {
-            GlobalLog()->UndeployMech(mech);
-        }
-
-        uint8_t masterID = item.MasterID;
-        MCMasterComponent& component = MasterComponentList[masterID];
-        bool withAmmo = UsesAmmo(masterID);
-        double tons = component.Tonnage;
-
-        if (withAmmo)
-        {
-            tons += MasterComponentList[component.AmmoMasterId].Tonnage;
-        }
-
-        if (tons > static_cast<double>(mech.CurTonnage) - mech.UsedTonnage)
+        if (!MCMechBay::Fit(mech, item.MasterID))
         {
             ShowLogMessage(99, true);
             return false;
         }
 
         PlayLogSound(0x34);
-        mech.Inventory->AddItem(masterID, mech.Inventory->CreateStat(masterID, 0, 1, 1, 0xff), false);
-
-        if (withAmmo)
-        {
-            mech.Inventory->AddItem(component.AmmoMasterId, mech.Inventory->CreateStat(masterID, 0, 0, -1, 0xff),
-                                    false);
-        }
-
-        float added = static_cast<float>(tons);
-        mech.UsedTonnage += added;
-        mech.WeaponTonnage += added;
 
         if (const std::shared_ptr<MCMechRepairBlock> row = GlobalLog()->RepairScreen->RowOf(mech); row != nullptr)
         {
             row->SetInventory(std::nullopt);
         }
 
-        mech.CalcBR();
         GlobalLog()->RepairScreen->SelectMech(mech.SharedAs<MCLogMech>());
         return true;
     }
@@ -84,15 +58,7 @@ namespace
 
 auto MCCompInventoryBlock::MountTonnage(uint8_t masterID) -> float
 {
-    const MCMasterComponent& component = MasterComponentList[masterID];
-    float tonnage = component.Tonnage;
-
-    if (UsesAmmo(masterID))
-    {
-        tonnage = MasterComponentList[component.AmmoMasterId].Tonnage + tonnage;
-    }
-
-    return tonnage;
+    return MCMechBay::FittedTons(masterID);
 }
 
 auto MCCompInventoryBlock::Texts(uint8_t masterID) -> MCComponentTexts
@@ -172,37 +138,7 @@ auto MCCompInventoryBlock::OnDestroy() -> void
 
 auto MCCompInventoryBlock::CanMount(uint8_t masterID, float tonnage, MCOptionalRef<const MCLogMech> selected) -> bool
 {
-    if (!selected.has_value())
-    {
-        return false;
-    }
-
-    const MCLogMech& mech = *selected;
-
-    // Port: nothing a match's weapon bans ban (MCWeaponBans.h).
-    if (static_cast<double>(mech.CurTonnage) - mech.UsedTonnage < tonnage ||
-        MCComponentBanned(masterID, MCPlayedWeaponBans()))
-    {
-        return false;
-    }
-
-    // One ECM, sensor or probe per mech.
-    const MCComponentForm form = ComponentForm(masterID);
-
-    if (IsEquipment(form))
-    {
-        for (const std::shared_ptr<MCLogInventoryItem>& mounted : mech.Inventory->Items)
-        {
-            if (form == ComponentForm(mounted->MasterID))
-            {
-                return false;
-            }
-        }
-    }
-
-    // Some components only fit the mechs of name index 5, 0xe and 0x10.
-    const bool restricted = std::ranges::contains(RestrictedComps, masterID);
-    return !restricted || mech.NameIndex == 0xe || mech.NameIndex == 0x10 || mech.NameIndex == 5;
+    return MCMechBay::WhyNotFit(masterID, tonnage, selected) == MCMechBay::MCFit::None;
 }
 
 auto MCCompInventoryBlock::AddSpare(uint8_t masterID) -> std::shared_ptr<MCLogInventoryItem>

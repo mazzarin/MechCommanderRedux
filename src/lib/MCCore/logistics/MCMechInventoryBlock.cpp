@@ -6,6 +6,7 @@
 #include "gui/MCScrollPane.h"
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCLogRows.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
@@ -232,8 +233,7 @@ auto MCMechInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
     }
 
     // The force is full at 16 units.
-    auto forceFull = []
-    { return GlobalLog()->ForceMechList->GetMechCount() + GlobalLog()->ForceVehicleList->GetVehicleCount() > 0xf; };
+    auto forceFull = [] { return MCMechBay::ForceFull(); };
 
     // Back to the inventory.
     auto backToInventory = [&]

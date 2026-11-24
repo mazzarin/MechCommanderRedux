@@ -3,6 +3,7 @@
 #include "appear/MCAppearanceTypeList.h"
 #include "gui/MCScrollPane.h"
 #include "lib/MCPacketFile.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCMechInventoryBlock.h"
 #include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCMissionLogisticsBridge.h"
@@ -472,7 +473,7 @@ auto MCLogMechList::AddMech(MCFitIniFile& file, bool required, bool sorted, bool
     if (widgets)
     {
         // The repair sliders' knobs (the repair block's init placed them; the repair screen makes the rows now).
-        MCMechRepairBlock::PlaceSliders(*added);
+        MCMechBay::PlaceKnobs(*added);
         added->ReadWithWidgets = true;
         // The inventory row (the inventory block's init set it; the list makes the rows now).
         added->ListIndex = added->NameIndex;

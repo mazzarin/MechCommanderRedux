@@ -61,7 +61,7 @@ public:
 
     /// <summary>
     /// The repair sliders' knobs (pixels on the repair panel): where they were put (<see
-    /// cref="MCMechRepairBlock::PlaceSliders"/>) or last dragged, which the repair screen and the briefing box show.
+    /// cref="MCMechBay::PlaceKnobs"/>) or last dragged, which the repair screen and the briefing box show.
     /// </summary>
     struct RepairSliderKnobs
     {

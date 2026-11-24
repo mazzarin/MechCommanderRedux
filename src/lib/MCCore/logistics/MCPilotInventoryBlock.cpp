@@ -6,6 +6,7 @@
 #include "gui/MCScrollPane.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCLogRows.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurchaseDlg.h"
@@ -129,9 +130,7 @@ auto MCPilotInventoryBlock::OnSellConfirmed(MCLogWarrior& warrior, int32_t resul
 {
     if (result == 0)
     {
-        warrior.Assigned = false;
-        GlobalLog()->ShiftPilots(warrior.ListIndex, -1);
-        GlobalLog()->ReorderWarriors();
+        MCMechBay::Unassign(warrior);
         GlobalLog()->PurchaseScreen->CreatePilotInvBlock();
         GlobalLog()->PurchaseScreen->SetUpPilotInv(false, true);
         return;
@@ -144,11 +143,7 @@ auto MCPilotInventoryBlock::OnSellConfirmed(MCLogWarrior& warrior, int32_t resul
 
 auto MCPilotInventoryBlock::BoardMech(MCLogWarrior& warrior, MCLogMech& mech, int32_t row) -> void
 {
-    int32_t pilotRow = warrior.ListIndex;
-    GlobalLog()->SetPilot(row, pilotRow);
-    // The repair block's battle rating paint worked it out (the row draws it each frame).
-    mech.CalcBR();
-    GlobalLog()->SetPilot(row, pilotRow);
+    MCMechBay::Board(warrior, mech, row);
     Screen()->CreatePilotInvBlock();
     Screen()->SetUpPilotInv(false, true);
     SoundSystem()->PlayPilotSpeech(warrior.PilotAudio, 2);
@@ -157,9 +152,7 @@ auto MCPilotInventoryBlock::BoardMech(MCLogWarrior& warrior, MCLogMech& mech, in
 auto MCPilotInventoryBlock::BackToInventory(MCLogWarrior& warrior, MCGuiEvent& event) -> void
 {
     std::shared_ptr<MCLogInvScreen> screen = Screen();
-    warrior.Assigned = false;
-    GlobalLog()->ShiftPilots(warrior.ListIndex, -1);
-    GlobalLog()->ReorderWarriors();
+    MCMechBay::Unassign(warrior);
     screen->CreatePilotInvBlock();
     screen->SetUpPilotInv(false, true);
     PlayLogSound(OverPaneInside(*screen->InventoryPane, event) ? 0x34 : 0x33);
@@ -200,9 +193,7 @@ auto MCPilotInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             GuiSystem().Grab(weak_from_this());
             PilotDrag.Dragging = true;
             MakeDragIcon(PilotDrag, event);
-            warrior->Assigned = true;
-            GlobalLog()->ReorderWarriors();
-            GlobalLog()->ShiftPilots(warrior->ListIndex, 1);
+            MCMechBay::Assign(*warrior);
             screen->CreatePilotInvBlock();
             screen->SetUpPilotInv(false, false);
             MCDragIcon::Current()->Raise();
@@ -288,9 +279,7 @@ auto MCPilotInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             GuiSystem().SetCursorVisible(true);
             GuiSystem().Release();
             MCDragIcon::Remove();
-            warrior->Assigned = true;
-            GlobalLog()->ReorderWarriors();
-            GlobalLog()->ShiftPilots(warrior->ListIndex, 1);
+            MCMechBay::Assign(*warrior);
             screen->CreatePilotInvBlock();
             screen->SetUpPilotInv(false, true);
             DrawDropArt(*screen, 1);

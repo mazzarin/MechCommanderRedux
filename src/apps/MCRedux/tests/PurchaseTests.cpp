@@ -807,27 +807,27 @@ TEST_CASE("logistics: armor repair fills the head first, then the most damaged l
     mech.Armor[1] = {16, 12};
 
     // Three points all go to the head.
-    MCMechRepairBlock::RepairArmor(mech, 3);
+    MCMechBay::RepairArmor(mech, 3);
     CHECK_EQ(mech.Armor[0].CurArmor, 9);
     CHECK_EQ(mech.Armor[4].CurArmor, 6);
     CHECK_EQ(mech.Armor[1].CurArmor, 12);
 
     // Then the left arm (50%, 58%), the center torso (60%), the center torso (65% < the arm's 67%), the left arm.
-    MCMechRepairBlock::RepairArmor(mech, 2);
+    MCMechBay::RepairArmor(mech, 2);
     CHECK_EQ(mech.Armor[4].CurArmor, 8);
     CHECK_EQ(mech.Armor[1].CurArmor, 12);
-    MCMechRepairBlock::RepairArmor(mech, 3);
+    MCMechBay::RepairArmor(mech, 3);
     CHECK_EQ(mech.Armor[1].CurArmor, 14);
     CHECK_EQ(mech.Armor[4].CurArmor, 9);
 
     // A head point short goes there before the rest.
     mech.Armor[0].CurArmor = 8;
-    MCMechRepairBlock::RepairArmor(mech, 1);
+    MCMechBay::RepairArmor(mech, 1);
     CHECK_EQ(mech.Armor[0].CurArmor, 9);
     CHECK_EQ(mech.Armor[4].CurArmor, 9);
 
     // A negative count repairs it all.
-    MCMechRepairBlock::RepairArmor(mech, -1);
+    MCMechBay::RepairArmor(mech, -1);
 
     for (const auto& location : mech.Armor)
     {
@@ -842,14 +842,14 @@ TEST_CASE("logistics: internal structure repair goes to the most damaged locatio
     // The head at a third counts 30% more damaged (23%); the left arm at a third counts as it is.
     mech.Internals[0] = {3, 1};
     mech.Internals[4] = {6, 2};
-    MCMechRepairBlock::RepairInternal(mech, 1);
+    MCMechBay::RepairInternal(mech, 1);
     CHECK_EQ(mech.Internals[0].CurArmor, 2);
     CHECK_EQ(mech.Internals[4].CurArmor, 2);
     // The head at two thirds counts 47%; the arm's 33% is lower.
-    MCMechRepairBlock::RepairInternal(mech, 1);
+    MCMechBay::RepairInternal(mech, 1);
     CHECK_EQ(mech.Internals[0].CurArmor, 2);
     CHECK_EQ(mech.Internals[4].CurArmor, 3);
-    MCMechRepairBlock::RepairInternal(mech, -1);
+    MCMechBay::RepairInternal(mech, -1);
 
     for (const auto& location : mech.Internals)
     {

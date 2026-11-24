@@ -3,6 +3,7 @@
 #include "gui/MCListView.h"
 #include "gui/MCScrollPane.h"
 #include "logistics/MCLogObject.h"
+#include "logistics/MCMechBay.h"
 
 class MCGuiEvent;
 class MCInventoryList;
@@ -22,9 +23,9 @@ class MCMechRepairBlock : public MCListRow
 {
 public:
     /// <summary>Where a slider's knob is with nothing repaired: the left end of the 61-pixel track.</summary>
-    static constexpr int32_t SliderLeft = 0xea;
+    static constexpr int32_t SliderLeft = MCMechBay::KnobLeft;
     /// <summary>The right end of a slider's track (all repaired).</summary>
-    static constexpr int32_t SliderRight = 0x127;
+    static constexpr int32_t SliderRight = MCMechBay::KnobRight;
 
     /// <summary>Destroys the block if nothing did (its cleanup takes it out of the info box).</summary>
     ~MCMechRepairBlock() override;
@@ -129,13 +130,6 @@ public:
     /// <summary>With <paramref name="value"/> &lt; 0, puts the armor slider at the current total.</summary>
     void SetArmorSlider(int32_t value);
 
-    /// <summary>
-    /// Puts <paramref name="mech"/>'s three knobs (<see cref="MCLogMech::RepairSliders"/>) at its engine damage, armor
-    /// and internal structure, as the original's block did when it was made (when the mech joins the lists). An
-    /// engine past damage level 3 is set to 3.
-    /// </summary>
-    static void PlaceSliders(MCLogMech& mech);
-
     /// <summary>Port: the pilot was picked up: its portrait's place shows blank until the next paint.</summary>
     void ClearPilot();
 
@@ -163,19 +157,6 @@ public:
     /// </summary>
     std::shared_ptr<MCLogInventoryItem> GetInvItem(const std::vector<int32_t>& list, int32_t index,
                                                    uint8_t& itemNum) const;
-
-    /// <summary>
-    /// Repairs <paramref name="points"/> of <paramref name="mech"/>'s armor points (all of it when negative): the head
-    /// first, then one point at a time to the location most damaged (the center torso, the rear and the cockpit count
-    /// as more damaged).
-    /// </summary>
-    static void RepairArmor(MCLogMech& mech, int32_t points);
-
-    /// <summary>
-    /// Repairs <paramref name="points"/> of <paramref name="mech"/>'s internal structure points (all of it when
-    /// negative), most damaged first.
-    /// </summary>
-    static void RepairInternal(MCLogMech& mech, int32_t points);
 
     /// <summary>
     /// Makes the weapon list's content for <paramref name="target"/> (the block's own when absent): in multiplayer only for

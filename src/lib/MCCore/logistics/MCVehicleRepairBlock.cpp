@@ -7,6 +7,7 @@
 #include "lib/MCFatal.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogRows.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCTicker.h"
@@ -60,17 +61,14 @@ auto MCVehicleRepairBlock::SlotIndex() const -> int32_t
 auto MCVehicleRepairBlock::LeaveForce() const -> void
 {
     Assert(Vehicle() != nullptr, 0, "Vehicle is NULL");
-    GlobalLog()->RemoveVehicleFromSlots(SlotIndex() - GlobalLog()->ForceMechList->GetMechCount());
     std::shared_ptr<MCLogVehicle> leaving = Vehicle();
-    leaving->Deployed = false;
-    leaving->Assigned = false;
+    MCMechBay::LeaveForce(*leaving);
 
     if (leaving == RepairScreen().SelectedVehicle())
     {
         RepairScreen().ClearSelectedVehicle();
     }
 
-    GlobalLog()->ReorderVehicles();
     // The new listing destroys this row (the original took the block out of the pane).
     RepairScreen().RemoveVehicleFromList(*leaving);
     MCRepairScreen::CreateVhclInvBlock();

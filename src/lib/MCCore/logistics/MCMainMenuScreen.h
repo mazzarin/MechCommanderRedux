@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCScreenFlow.h"
-#include "logistics/MCSaves.h"
+#include "logistics/MCMainMenuModel.h"
 #include "ui/MCRmlScreen.h"
 
 class MCInternetCount;
@@ -24,6 +24,7 @@ enum class MCMainPanel : uint8_t
 /// SOLO MISSIONS and MULTIPLAYER, swapped in its place from it with no fade, the painting staying. Each reads what it
 /// shows as it shows: the saves (logistics/MCSaves), the single missions, the network and the online count. The 1998
 /// main menu (mainScreen.fit) stays logistics' main screen, hidden under it (MCLogistics::ShowLogScreen), until stage 9.
+/// What each shows and what its choices do is the model's (logistics/MCMainMenuModel.h); the screen is its view.
 /// </summary>
 class MCMainMenuScreen final : public MCRmlScreen
 {
@@ -34,11 +35,7 @@ public:
     MCMainPanel Panel() const { return _Panel; }
 
     /// <summary>A row of CAMPAIGNS or SOLO MISSIONS, as it shows: its name and the line under it.</summary>
-    struct MCRow
-    {
-        std::string Title;
-        std::string Line;
-    };
+    using MCRow = MCMainMenuModel::MCRow;
 
     /// <summary>The rows shown (CAMPAIGNS', SOLO MISSIONS'), and the picked one's index (-1 for none).</summary>
     const std::vector<MCRow>& Rows() const { return _Rows; }
@@ -175,19 +172,9 @@ namespace MCMainMenuScreens
     /// <summary>The online count let go (ReleaseInternetMenus, at the game's quit).</summary>
     void Release();
 
-    /// <summary>For the tests: whether MULTIPLAYER finds a network (none: it looks).</summary>
-    void SetNetworkForTests(std::optional<bool> network);
-
     /// <summary>
     /// For the tests of 1998's main menu (mainScreen.fit, kept until stage 9): logistics' main screen shows as when the
     /// menus' RmlUi can't start, the remade main menu not shown in its place.
     /// </summary>
     void SetOldForTests(bool old);
-
-    /// <summary>
-    /// The panels' words the code sets: INTERNET's line until the count comes (or when the service can't be reached),
-    /// and a campaign with no save.
-    /// </summary>
-    inline constexpr std::string_view InternetLine = "Games on the internet";
-    inline constexpr std::string_view NotStarted = "Not started";
 }

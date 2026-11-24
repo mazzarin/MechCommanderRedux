@@ -181,6 +181,7 @@ auto MCMenuScreens::Register() -> void
         MCMainMenuScreens::HideAll();
         HideShown();
     };
+
     main.Leave = AskQuit;
     main.Shows = [] { return MCMainMenuScreens::Shown(MCMainPanel::Main) || Showing(&MCLogistics::MainScreen); };
     Ids.Main = MCScreenFlow::Register(std::move(main));

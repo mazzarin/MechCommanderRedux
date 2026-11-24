@@ -523,6 +523,7 @@ bool MCSocketTransport::HasNetwork()
         return WSAIoctl(probe, SIO_ADDRESS_LIST_QUERY, nullptr, 0, list.data(), static_cast<DWORD>(list.size()),
                         &needed, nullptr, nullptr);
     };
+
     int result = query();
 
     if (result != 0 && WSAGetLastError() == WSAEFAULT && needed > list.size())

@@ -1,26 +1,13 @@
 #include "stdafx.h"
 #include "logistics/MCMainMenuScreen.h"
-#include "ai/MCMoveGeometry.h"
-#include "lib/MCFile.h"
-#include "linkup/MCSessionManager.h"
-#include "logistics/MCConnectMenu.h"
-#include "logistics/MCInternetMenu.h"
-#include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCQuestionWindow.h"
-#include "logistics/MCRegistrySettings.h"
 #include "logistics/MCSavesMenu.h"
-#include "logistics/MCUpdatePage.h"
+#include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateScreen.h"
-#include "main/MCGameContext.h"
-#include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
-#include "main/MCUpdater.h"
 #include "network/MCInternetLobby.h"
-#include "network/MCMultiPlayer.h"
-#include "platform/MCFileSystem.h"
-#include "platform/MCSocket.h"
 #include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
 #include "ui/MCRmlLayer.h"
@@ -32,8 +19,6 @@
 
 namespace
 {
-    using MCCampaign = MCSaves::MCCampaign;
-
     /// <summary>A panel's flow kind, its document and its model's name.</summary>
     struct MCPanelInfo
     {
@@ -80,49 +65,13 @@ namespace
     constexpr const char* RowsId = "rows";
     constexpr const char* ChoiceClass = "choice";
     constexpr const char* RowClass = "list-row";
-
-    /// <summary>The words.</summary>
-    constexpr std::string_view StandsFormat = "Operation {}, mission {}";
-    constexpr std::string_view LineFormat = "{} · {}";
-    constexpr std::string_view UpdateFormat = "Update to {}";
-    constexpr std::string_view SoloFormat = "Buy {} tons with {} RP";
-    constexpr std::string_view OnlineFormat = "{} players online";
-    constexpr std::string_view OneOnline = "1 player online";
-    constexpr std::string_view SoloReturn = "Solo mission";
     constexpr std::string_view ContinueWord = "Continue";
     constexpr std::string_view NewCampaignWord = "New campaign";
     constexpr std::string_view QuitWord = "Quit";
     constexpr std::string_view MainMenuPlace = "Main menu";
-    /// <summary>The campaigns' own names, under CAMPAIGNS' rows, by MCCampaign.</summary>
-    constexpr std::array<std::string_view, 2> CampaignTitles = {"MechCommander", "Desperate Measures"};
-    constexpr std::array<MCCampaign, 2> Campaigns = {MCCampaign::Original, MCCampaign::Expansion};
-
-    /// <summary>The logistics state 1998's MULTIPLAYER ACCESS had.</summary>
-    constexpr int32_t MultiplayerState = 10;
-
-    /// <summary>The tests' network (<see cref="MCMainMenuScreens::SetNetworkForTests"/>).</summary>
-    std::optional<bool> NetworkForTests;
 
     /// <summary>The tests of 1998's main menu (<see cref="MCMainMenuScreens::SetOldForTests"/>).</summary>
     bool OldForTests = false;
-
-    /// <summary>The campaign the logistics plays (CurPlanet: Port Arthur's, or Cermak's in the expansion).</summary>
-    MCCampaign PlayedCampaign()
-    {
-        return CurPlanet == 0 ? MCCampaign::Original : MCCampaign::Expansion;
-    }
-
-    std::string Stands(int32_t operation, int32_t mission)
-    {
-        return std::format(StandsFormat, operation, mission);
-    }
-
-    /// <summary>Where a save opens, as CONTINUE names it: "Original campaign · Operation 2, mission 3".</summary>
-    std::string OpensAt(const MCSaves::MCSave& save)
-    {
-        return std::format(LineFormat, MCSaves::CampaignName(save.Campaign),
-                           Stands(save.OpensOperation, save.OpensMission));
-    }
 
     /// <summary>The panel's screen while made, as it was made.</summary>
     std::shared_ptr<MCMainMenuScreen> MadeScreen(MCMainPanel panel)
@@ -185,23 +134,24 @@ namespace
         return made;
     }
 
-    /// <summary>The old CANCEL's way back to the main menu (its remade panel shows over it: MCLogistics::ShowLogScreen).</summary>
-    void SetUpMainMenu()
+    /// <summary>
+    /// Logistics' main screen made its screen, hidden, the one shown before hidden: the panels show in its place (as
+    /// MCLogistics::ShowLogScreen keeps it), so its CANCEL's way back and the old screens' sets go from it.
+    /// </summary>
+    void MainScreenUnder()
     {
-        WhackTimer = true;
-        GlobalLog()->SetUpMainScreen(true);
-        LoadingSolo = false;
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        const std::shared_ptr<MCLogObject> shown = logistics != nullptr ? logistics->CurrentScreen() : nullptr;
+
+        if (shown == nullptr || !logistics->MainScreen || logistics->MainScreen.Is(*shown))
+        {
+            return;
+        }
+
+        shown->ShowGuiWindow(false);
+        logistics->SetCurrentScreen(logistics->MainScreen);
     }
 
-    /// <summary>The multiplayer game made and started, as 1998's MULTIPLAYER did (its connection screen's).</summary>
-    void EnsureMultiplayer()
-    {
-        if (MultiPlayer() == nullptr)
-        {
-            MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
-            MultiPlayer()->Start();
-        }
-    }
 }
 
 // ---- MCMainMenuScreen ----
@@ -224,6 +174,7 @@ void MCMainMenuScreen::MakeModels(Rml::Context& context)
     switch (_Panel)
     {
         case MCMainPanel::Main:
+        {
             model.Value("returns", _Returns);
             model.Value("returnLine", _ReturnLine);
             model.Value("continues", _Continues);
@@ -231,8 +182,10 @@ void MCMainMenuScreen::MakeModels(Rml::Context& context)
             model.Value("saves", _Saves);
             model.Value("solo", _Solo);
             break;
+        }
         case MCMainPanel::Campaigns:
         case MCMainPanel::Solo:
+        {
             model.List("rows", _Rows, std::pair{"title", &MCRow::Title}, std::pair{"line", &MCRow::Line});
             model.Value("picked", _Picked);
             model.Value("started", _Started);
@@ -246,11 +199,14 @@ void MCMainMenuScreen::MakeModels(Rml::Context& context)
                             }
                         });
             break;
+        }
         case MCMainPanel::Multiplayer:
+        {
             model.Value("network", _Network);
             model.Value("internet", _Internet);
             model.Value("online", _Online);
             break;
+        }
     }
 }
 
@@ -265,11 +221,16 @@ void MCMainMenuScreen::OnLoaded(Rml::ElementDocument& /*document*/)
     };
 
     OnClick(UpdateId, [] { MCUpdateScreen::OpenFromMenus(); });
-    OnClick(BackId, back);
+
+    if (_Panel != MCMainPanel::Main)
+    {
+        OnClick(BackId, back);
+    }
 
     switch (_Panel)
     {
         case MCMainPanel::Main:
+        {
             OnClick(ReturnId, [this] { ReturnToGame(); });
             OnClick(ContinueId, [this] { Continue(); });
             OnClick(CampaignsId, [] { MCMainMenuScreens::SwapTo(MCMainPanel::Campaigns); });
@@ -288,7 +249,9 @@ void MCMainMenuScreen::OnLoaded(Rml::ElementDocument& /*document*/)
             OnClick(CinemaId, [this] { Cinema(); });
             OnClick(QuitId, [] { MCMainMenuScreens::AskQuit(); });
             break;
+        }
         case MCMainPanel::Campaigns:
+        {
             OnClick(MainId,
                     [this]
                     {
@@ -304,14 +267,17 @@ void MCMainMenuScreen::OnLoaded(Rml::ElementDocument& /*document*/)
             OnClick(LoadId, [this] { LoadCampaign(); });
             OnClick(NewId, [this] { NewCampaign(); });
             break;
+        }
         case MCMainPanel::Solo:
             OnClick(MainId, [this] { PlaySolo(); });
             break;
         case MCMainPanel::Multiplayer:
+        {
             OnClick(InternetId, [] { MCScreenFlow::Open(MCMenuScreens::Internet()); });
             OnClick(LanId, [] { MCScreenFlow::Open(MCMenuScreens::Lan()); });
             OnClick(RetryId, [this] { LookForNetwork(); });
             break;
+        }
     }
 }
 
@@ -319,16 +285,7 @@ void MCMainMenuScreen::OnShow()
 {
     if (_Panel == MCMainPanel::Multiplayer)
     {
-        // 1998's MULTIPLAYER: no single mission's game, the multiplayer game made as it opens (the main menu lets it
-        // go).
-        EnsureRegistryVersion();
-        Solo = false;
-        EnsureMultiplayer();
-
-        if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
-        {
-            logistics->LogisticsState = MultiplayerState;
-        }
+        MCMainMenuModel::EnterMultiplayer();
     }
 
     Refresh();
@@ -392,7 +349,8 @@ void MCMainMenuScreen::Pick(int row)
     if (_Panel == MCMainPanel::Campaigns)
     {
         // A campaign with a save continues it (its LOAD and NEW CAMPAIGN above); one not started starts.
-        _Started = _Picked >= 0 && !_CampaignLatest[static_cast<size_t>(_Picked)].empty();
+        _Started = _Picked >= 0 && static_cast<size_t>(_Picked) < _CampaignLatest.size() &&
+                   !_CampaignLatest[static_cast<size_t>(_Picked)].empty();
         _MainWord = std::string(_Started ? ContinueWord : NewCampaignWord);
     }
 
@@ -430,79 +388,32 @@ void MCMainMenuScreen::Refresh()
 
 void MCMainMenuScreen::RefreshMain()
 {
-    MCSaves& saves = MCSaves::Game();
-    saves.Refresh();
-    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-
-    // Between missions (a campaign loaded): RETURN TO GAME leads, and SAVE GAME follows LOAD GAME (not after a solo
-    // mission's, as 1998's SAVE MISSION).
-    _Returns = logistics != nullptr && logistics->CurrentMission != -1;
-    _Saves = _Returns && !Solo;
-    _ReturnLine.clear();
-
-    if (_Returns)
-    {
-        const MCSaves::MCSave playing = MCSaves::Unsaved(PlayedCampaign(), logistics->CurrentMission, 0);
-        _ReturnLine = Solo ? std::string(SoloReturn)
-                      : playing.Read
-                          ? std::format(LineFormat, MCSaves::CampaignName(playing.Campaign),
-                                        Stands(playing.Operation, playing.Mission))
-                          : std::string(MCSaves::CampaignName(playing.Campaign));
-    }
-
-    const MCOptionalRef<const MCSaves::MCSave> latest = saves.Latest();
-    _Continues = !_Returns && latest.has_value();
-    _Latest = latest.has_value() ? latest->get().Name : std::string();
-    _ContinueLine = latest.has_value() ? OpensAt(latest->get()) : std::string();
-    _Solo = !MCFileSystem::FindFileSources(GamePath(SavePath, "*", ".sol")).empty();
+    MCMainMenuModel::MCChoices choices = MCMainMenuModel::Choices();
+    _Returns = choices.Returns;
+    _ReturnLine = std::move(choices.ReturnLine);
+    _Saves = choices.Saves;
+    _Continues = !choices.Latest.empty();
+    _Latest = std::move(choices.Latest);
+    _ContinueLine = std::move(choices.ContinueLine);
+    _Solo = choices.Solo;
 }
 
 void MCMainMenuScreen::RefreshCampaigns()
 {
-    MCSaves& saves = MCSaves::Game();
-    saves.Refresh();
-    _Rows.clear();
-    _CampaignLatest.clear();
-    std::optional<size_t> newest;
-    SDL_Time newestSaved = 0;
-
-    for (size_t index = 0; index < Campaigns.size(); index++)
-    {
-        const MCCampaign campaign = Campaigns[index];
-        const MCOptionalRef<const MCSaves::MCSave> latest = saves.Latest(campaign);
-        const std::string stands = latest.has_value()
-                                       ? Stands(latest->get().OpensOperation, latest->get().OpensMission)
-                                       : std::string(MCMainMenuScreens::NotStarted);
-        _Rows.push_back({.Title = std::string(MCSaves::CampaignName(campaign)),
-                         .Line = std::format(LineFormat, CampaignTitles[index], stands)});
-        _CampaignLatest.push_back(latest.has_value() ? latest->get().Name : std::string());
-
-        if (latest.has_value() && (!newest.has_value() || latest->get().Saved > newestSaved))
-        {
-            newest = index;
-            newestSaved = latest->get().Saved;
-        }
-    }
-
+    MCMainMenuModel::MCCampaignList list = MCMainMenuModel::Campaigns();
+    _Rows = std::move(list.Rows);
+    _Campaigns = std::move(list.Campaigns);
+    _CampaignLatest = std::move(list.Latest);
     // Picked as it opens: the campaign of the latest save, else the original (a pick kept while it stays open, as
     // across a campaign's LOAD and back).
-    Pick(_Picked >= 0 ? _Picked : static_cast<int>(newest.value_or(0)));
+    Pick(_Picked >= 0 ? _Picked : list.Opens);
 }
 
 void MCMainMenuScreen::RefreshSolo()
 {
-    _Rows.clear();
-    _SoloNames.clear();
-
-    for (const MCSaves::MCSolo& solo : MCSaves::SoloMissions())
-    {
-        // One that can't be read is listed by its file's name alone.
-        _Rows.push_back({.Title = solo.Read ? solo.MissionName : solo.Name,
-                         .Line = solo.Read ? std::format(SoloFormat, solo.Tons, MCSaves::PointsText(solo.ResourcePoints))
-                                           : std::string()});
-        _SoloNames.push_back(solo.Name);
-    }
-
+    MCMainMenuModel::MCSoloList list = MCMainMenuModel::SoloMissions();
+    _Rows = std::move(list.Rows);
+    _SoloNames = std::move(list.Files);
     Pick(_Picked >= 0 && static_cast<size_t>(_Picked) < _Rows.size() ? _Picked : (_Rows.empty() ? -1 : 0));
 }
 
@@ -513,17 +424,11 @@ void MCMainMenuScreen::RefreshMultiplayer()
 
 void MCMainMenuScreen::LookForNetwork()
 {
-    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
-    const bool sockets = game != nullptr && game->SessionManager != nullptr && game->SessionManager->IsTcpAvailable();
-    _Network = NetworkForTests.value_or(sockets && MCSocketTransport::HasNetwork());
-    _Internet = HasInternetGames();
-    _Online = std::string(MCMainMenuScreens::InternetLine);
+    const MCMainMenuModel::MCNetwork network = MCMainMenuModel::LookForNetwork();
+    _Network = network.Network;
+    _Internet = network.Internet;
+    _Online = std::string(MCMainMenuModel::InternetLine);
     _Count.reset();
-
-    if (!_Network)
-    {
-        SDL_Log("Menus: MULTIPLAYER finds no network (%s)", sockets ? "no interface is up" : "sockets can't start");
-    }
 
     // The count asked once as it opens, shown when it comes; the line stays when the service can't be reached.
     if (_Network && _Internet)
@@ -539,16 +444,13 @@ void MCMainMenuScreen::LookForNetwork()
 
 void MCMainMenuScreen::RefreshFoot()
 {
-    std::string version = VersionLineText(MCUpdater::RunningVersion());
-    const bool canUpdate = MCUpdater::Available() && MCUpdater::Waiting();
-    std::string update =
-        canUpdate ? std::format(UpdateFormat, ReleaseOf(MCUpdater::Status().Version)) : std::string();
+    MCMainMenuModel::MCFoot foot = MCMainMenuModel::Foot();
 
-    if (version != _Version || canUpdate != _CanUpdate || update != _Update)
+    if (foot.Version != _Version || foot.Update != _Update)
     {
-        _Version = std::move(version);
-        _CanUpdate = canUpdate;
-        _Update = std::move(update);
+        _Version = std::move(foot.Version);
+        _Update = std::move(foot.Update);
+        _CanUpdate = !_Update.empty();
 
         if (_Model != nullptr)
         {
@@ -565,7 +467,7 @@ void MCMainMenuScreen::OnFrame()
     {
         if (const std::optional<int32_t> online = _Count->Online(); online.has_value())
         {
-            _Online = *online == 1 ? std::string(OneOnline) : std::format(OnlineFormat, *online);
+            _Online = MCMainMenuModel::OnlineText(*online);
 
             if (_Model != nullptr)
             {
@@ -632,18 +534,15 @@ void MCMainMenuScreen::Play(std::string name, bool campaign, std::string change)
                              }
 
                              screen->Hide();
-                             LoadingSolo = false;
 
-                             if (LoadSavedGame(name, campaign))
+                             if (MCMainMenuModel::Play(name, campaign))
                              {
                                  return;
                              }
 
                              // Refused: the panel again, saying so.
-                             SDL_Log("Menus: the save %s couldn't be loaded", name.c_str());
                              screen->Show();
-                             MCRmlDialogs::Show(
-                                 MCRmlDialog::MCSay{.Text = std::string(MCSavesMenu::RefusedText)});
+                             MCRmlDialogs::Show(MCRmlDialog::MCSay{.Text = std::string(MCSavesMenu::RefusedText)});
                          });
 }
 
@@ -661,7 +560,7 @@ void MCMainMenuScreen::ReturnToGame()
                          []
                          {
                              MCMainMenuScreens::HideAll();
-                             ::ReturnToGame();
+                             MCMainMenuModel::ReturnToGame();
                          });
 }
 
@@ -671,7 +570,7 @@ void MCMainMenuScreen::Cinema()
                          []
                          {
                              MCMainMenuScreens::HideAll();
-                             ReplayCinema();
+                             MCMainMenuModel::Cinema();
                          });
 }
 
@@ -686,25 +585,17 @@ void MCMainMenuScreen::ContinueCampaign()
 
 void MCMainMenuScreen::LoadCampaign()
 {
-    if (_Picked >= 0 && static_cast<size_t>(_Picked) < Campaigns.size())
+    if (_Picked >= 0 && static_cast<size_t>(_Picked) < _Campaigns.size())
     {
-        MCSavesMenu::OpenLoad(Campaigns[static_cast<size_t>(_Picked)]);
+        MCSavesMenu::OpenLoad(_Campaigns[static_cast<size_t>(_Picked)]);
     }
 }
 
 void MCMainMenuScreen::NewCampaign()
 {
-    // 1998's NEW CAMPAIGN and the expansion's (logistics/MCMainMenu.cpp): Betty's line, then the first briefing.
-    if (_Picked >= 0 && static_cast<size_t>(_Picked) < Campaigns.size())
+    if (_Picked >= 0 && static_cast<size_t>(_Picked) < _Campaigns.size())
     {
-        if (Campaigns[static_cast<size_t>(_Picked)] == MCCampaign::Expansion)
-        {
-            NewMcxCampaign();
-        }
-        else
-        {
-            ::NewCampaign();
-        }
+        MCMainMenuModel::NewCampaign(_Campaigns[static_cast<size_t>(_Picked)]);
     }
 }
 
@@ -780,6 +671,7 @@ bool MCMainMenuScreens::ShowNow(MCMainPanel panel)
     }
 
     // As an old screen coming up does (MCRmlFlow::OldScreenShown), the remade screens over the main menu go.
+    MainScreenUnder();
     screen->Layer().HideAll();
     screen->Show();
     MCScreenFlow::Noted();
@@ -826,7 +718,7 @@ void MCMainMenuScreens::SwapBack(MCMainPanel /*panel*/)
     }
 
     // The main menu set up again, as 1998's CANCEL did (the multiplayer game let go): its panel in this one's place.
-    SetUpMainMenu();
+    MCMainMenuModel::ToMainMenu();
 }
 
 void MCMainMenuScreens::HideAll()
@@ -879,11 +771,6 @@ void MCMainMenuScreens::Release()
     {
         screen->ReleaseCount();
     }
-}
-
-void MCMainMenuScreens::SetNetworkForTests(std::optional<bool> network)
-{
-    NetworkForTests = network;
 }
 
 void MCMainMenuScreens::SetOldForTests(bool old)

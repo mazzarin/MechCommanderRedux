@@ -191,6 +191,8 @@ namespace
         std::string Mission;
         /// <summary>The tons that drop (its MaxTonnage); 0 when it doesn't say.</summary>
         int32_t Tons = 0;
+        /// <summary>Its briefing file.</summary>
+        std::string Briefing;
     };
 
     /// <summary>What <paramref name="scenario"/>'s mission file and briefing say of it.</summary>
@@ -206,7 +208,7 @@ namespace
             return {};
         }
 
-        MCMissionFacts facts{.Tons = file.Read<int32_t>("MaxTonnage").value_or(0)};
+        MCMissionFacts facts{.Tons = file.Read<int32_t>("MaxTonnage").value_or(0), .Briefing = briefing};
         const std::optional<std::string> text = ReadTextFile(GamePath(MissionPath, briefing));
 
         if (!text.has_value())
@@ -471,7 +473,15 @@ auto MCSaves::ReadSolo(std::string name) -> MCSolo
                  ForceCount(settings, "AssVehicles", "NumAssVehicles");
     const MCMissionFacts facts = FactsOf(scenarios[static_cast<size_t>(*missionNumber)].File);
     solo.MissionName = facts.Mission;
+    solo.Briefing = facts.Briefing;
     solo.Tons = facts.Tons;
+
+    if (solo.MissionName.empty())
+    {
+        SDL_Log("MCSaves: the single mission %s's briefing %s names no mission", solo.Name.c_str(),
+                solo.Briefing.c_str());
+    }
+
     solo.Read = !solo.MissionName.empty();
     return solo;
 }

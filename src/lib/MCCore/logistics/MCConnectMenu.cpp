@@ -120,11 +120,6 @@ void ConnectScreen()
         shown->ShowGuiWindow(false);
     }
 
-    if (GlobalLog()->MainScreen && !GlobalLog()->MainScreen.Is(*GlobalLog()->CurrentScreen()))
-    {
-        GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
-    }
-
     if (!MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer))
     {
         SDL_Log("Menus: MULTIPLAYER can't show: the main menu instead");

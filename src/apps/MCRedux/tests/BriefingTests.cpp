@@ -772,10 +772,11 @@ TEST_CASE_ISOLATED("game: the hold is kept past a mission's end only where a mis
     CHECK(!keeps(Won, false));
     MCGameContext::Current().SetMultiPlayer(nullptr);
 
-    // A quick-start mission won: SOLO MISSIONS (stage 2's landing), and nothing held.
+    // A quick-start mission won: SOLO MISSIONS (stage 2's landing; remade in the main menu's panel, stage 7), and
+    // nothing held.
     PlayToResultsAndBack(Won, true);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen);
-    CHECK(LoadingSolo);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Solo));
     CHECK(!MCHdArt::HoldsFor(missions[0]));
     CHECK(!MCHdArt::HoldsFor(missions[1]));
     CHECK_EQ(MCHdArt::HeldBytes(), 0u);

@@ -15716,7 +15716,8 @@ namespace
             return;
         }
 
-        RunUntil([] { return MCTestGuest::Panel(MCMainPanel::Multiplayer).OnlineLine() != MCMainMenuScreens::InternetLine; },
+        RunUntil([]
+                 { return MCTestGuest::Panel(MCMainPanel::Multiplayer).OnlineLine() != MCMainMenuModel::InternetLine; },
                  AnswerFrames);
         shoot("mp_access");
 

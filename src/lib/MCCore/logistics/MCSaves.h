@@ -84,6 +84,8 @@ public:
         bool Read = false;
         /// <summary>The mission by its briefing's name ("Destroy All Aces").</summary>
         std::string MissionName;
+        /// <summary>Its mission's briefing file (the mission FIT's BriefingFile), as res/ui/missions.json names it.</summary>
+        std::string Briefing;
         uint32_t ResourcePoints = 0;
         /// <summary>The tons that drop (its mission's MaxTonnage).</summary>
         int32_t Tons = 0;

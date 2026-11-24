@@ -82,6 +82,13 @@
 // its first whole frame, as a change's line in the frame log: at the main menu Preferences opened, its sections in turn
 // (E), Escape back, UPDATE and Escape back; in the mission, after its battle's seconds, Escape to the pause, ALL
 // PREFERENCES, Escape to the pause again, Escape to the battle. Not recorded: time them with --record-window-video 0.
+//
+// Port-only (SPEC-menus.md's stage 7): --record-window-main 1 times the main menu's instead of the mission's: the boot
+// to the main menu's first frame (the tests' install has no intro movies), then each change from its press to its
+// first whole frame (a swap's line "change <name>: ...", a flow's change its own): CAMPAIGNS, SOLO MISSIONS and
+// MULTIPLAYER swapped in and BACK, QUIT's question and Escape, LOAD GAME and Escape, NEW CAMPAIGN into the briefing,
+// the briefing's MAIN MENU (between missions), RETURN TO GAME, the main menu again, SAVE GAME and Escape, the campaign
+// left, CONTINUE, the campaign left, SOLO MISSIONS' PLAY, the campaign left and ORIGINAL CINEMA. Not recorded.
 
 namespace
 {
@@ -851,6 +858,107 @@ namespace
         LetGo(time, SDL_SCANCODE_ESCAPE);
     }
 
+    /// <summary>The main menu's <paramref name="panel"/> on top of the menus, its first frame whole.</summary>
+    std::function<bool()> PanelOnTop(MCMainPanel panel)
+    {
+        return [panel]
+        {
+            const std::shared_ptr<MCMainMenuScreen> top = MCRemadeTest::OnTop<MCMainMenuScreen>();
+            return top != nullptr && top->Panel() == panel && top->Ready() && Settled();
+        };
+    }
+
+    /// <summary>A click on <paramref name="id"/> of the main menu's <paramref name="panel"/>, as the kit takes it.</summary>
+    std::function<void()> PressOn(MCMainPanel panel, const char* id)
+    {
+        return [panel, id] { CHECK(MCRemadeTest::Press(MCTestGuest::Panel(panel), id)); };
+    }
+
+    /// <summary>The old briefing shown, the change that showed it over.</summary>
+    bool BriefingShown()
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        return logistics != nullptr && logistics->CurrentScreen() == logistics->BriefingScreen &&
+               logistics->BriefingScreen->IsShowing() && Settled();
+    }
+
+    /// <summary>Stage 7's main menu (--record-window-main 1; see the top of this file).</summary>
+    void TimeMainMenu(const MCRealTime& time)
+    {
+        const std::function<bool()> mainShown = PanelOnTop(MCMainPanel::Main);
+
+        // The submenus, swapped in place and back.
+        constexpr std::array<std::pair<std::string_view, MCMainPanel>, 3> Submenus = {
+            {{"campaigns", MCMainPanel::Campaigns},
+             {"solo", MCMainPanel::Solo},
+             {"multiplayer", MCMainPanel::Multiplayer}}};
+
+        for (const auto& [id, panel] : Submenus)
+        {
+            TimeChange(time, std::format("main menu to {}", id), PressOn(MCMainPanel::Main, id.data()),
+                       PanelOnTop(panel));
+            RunPacedFor(time, SecondsAfter);
+            TimeChange(time, std::format("{} back", id), PressOn(panel, "back"), mainShown);
+            RunPacedFor(time, SecondsAfter);
+        }
+
+        // QUIT's question (Escape), and Escape keeping the game.
+        TimeChange(time, "main menu to quit's question", KeyDown(SDL_SCANCODE_ESCAPE),
+                   []
+                   {
+                       const std::shared_ptr<MCRmlScreen> top = MCRemadeTest::OnTop<MCRmlScreen>();
+                       return top != nullptr && MCRemadeTest::Words(*top, "heading") == MCMenuScreens::QuitQuestion &&
+                              top->Ready();
+                   });
+        LetGo(time, SDL_SCANCODE_ESCAPE);
+        TimeChange(time, "quit's question back", KeyDown(SDL_SCANCODE_ESCAPE), mainShown);
+        LetGo(time, SDL_SCANCODE_ESCAPE);
+
+        // LOAD GAME and Escape back (the flow's changes).
+        FlowChange(time, PressOn(MCMainPanel::Main, "load"));
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, KeyDown(SDL_SCANCODE_ESCAPE));
+        LetGo(time, SDL_SCANCODE_ESCAPE);
+
+        // CAMPAIGNS' NEW CAMPAIGN (no save: its main button) into the briefing; the briefing's MAIN MENU, between
+        // missions; RETURN TO GAME; the main menu again and SAVE GAME, Escape back.
+        TimeChange(time, "main menu to campaigns again", PressOn(MCMainPanel::Main, "campaigns"),
+                   PanelOnTop(MCMainPanel::Campaigns));
+        FlowChange(time, PressOn(MCMainPanel::Campaigns, "main"));
+        CHECK(BriefingShown());
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, MCMenuScreens::LeaveCampaign);
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, PressOn(MCMainPanel::Main, "campaigns"));
+        TimeChange(time, "campaigns' continue", PressOn(MCMainPanel::Campaigns, "main"), BriefingShown);
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, [] { GlobalLog()->SetUpMainScreen(false); });
+        CHECK(mainShown());
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, PressOn(MCMainPanel::Main, "return"));
+        CHECK(BriefingShown());
+        FlowChange(time, [] { GlobalLog()->SetUpMainScreen(false); });
+        FlowChange(time, PressOn(MCMainPanel::Main, "save"));
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, KeyDown(SDL_SCANCODE_ESCAPE));
+        LetGo(time, SDL_SCANCODE_ESCAPE);
+
+        // The campaign left; CONTINUE; left again; SOLO MISSIONS' PLAY; left; ORIGINAL CINEMA (no movie: back).
+        FlowChange(time, MCMenuScreens::LeaveCampaign);
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, PressOn(MCMainPanel::Main, "continue"));
+        CHECK(BriefingShown());
+        FlowChange(time, MCMenuScreens::LeaveCampaign);
+        TimeChange(time, "main menu to solo again", PressOn(MCMainPanel::Main, "solo"), PanelOnTop(MCMainPanel::Solo));
+        FlowChange(time, PressOn(MCMainPanel::Solo, "main"));
+        CHECK(BriefingShown());
+        FlowChange(time, MCMenuScreens::LeaveCampaign);
+        RunPacedFor(time, SecondsAfter);
+        FlowChange(time, PressOn(MCMainPanel::Main, "cinema"));
+        CHECK(RunPaced(time, mainShown, MostChangeSeconds));
+        RunPacedFor(time, SecondsAfter);
+    }
+
     /// <summary>The pause shown, its first frame whole.</summary>
     bool PauseShown()
     {
@@ -1121,20 +1229,39 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     };
 
     const MCTestGame::SaveGameCleanup saves;
-    // --record-window-games' list and service, from before the menus start (as the internet tests have them).
+    // --record-window-games' (and --record-window-main's) list and service, from before the menus start (as the
+    // internet tests have them).
     const bool games = MCTest::Option("record-window-games").has_value();
+    const bool mainMenu = MCTest::Option("record-window-main").has_value();
     MCServiceScript::ListScript list;
     MCFakeGames::MCFakeGamesService service;
     std::optional<MCInternetSpots::MCServicesScope> services;
     std::optional<MCTestUpdater::MCFakeUpdater> updater;
 
-    if (games)
+    if (games || mainMenu)
     {
         services.emplace(list, service);
         updater.emplace();
     }
 
+    // --record-window-main: the boot to the first frame that shows the main menu whole.
+    const Clock::time_point booting = Clock::now();
+    std::optional<double> bootToMenuMs;
+
+    if (mainMenu)
+    {
+        MCTestGame::OnPresent = [&booting, &bootToMenuMs]
+        {
+            if (!bootToMenuMs.has_value() && MCMainMenuScreens::Shown(MCMainPanel::Main) &&
+                MCMainMenuScreens::Ready(MCMainPanel::Main))
+            {
+                bootToMenuMs = std::chrono::duration<double, std::milli>(Clock::now() - booting).count();
+            }
+        };
+    }
+
     REQUIRE(MCTestGame::StartLogistics());
+    MCTestGame::OnPresent = {};
     // The mouse in the window's middle, where a player's rests: left in the corner, the battle's edge scrolling runs
     // the camera off the ground the units see.
     MCScreenInput::RealMove(GuiSystem().Width() / 2, GuiSystem().Height() / 2);
@@ -1161,6 +1288,17 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     if (games)
     {
         TimeGames(time, list);
+        return;
+    }
+
+    if (mainMenu)
+    {
+        CHECK(bootToMenuMs.has_value());
+        const std::string line =
+            std::format("start: the boot to the main menu's first frame {:.1f} ms", bootToMenuMs.value_or(0.0));
+        MCFrameLog::Line(line);
+        std::cout << "  " << line << "\n";
+        TimeMainMenu(time);
         return;
     }
 
@@ -1239,7 +1377,11 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
     if (MCTest::Option("record-window-saves").has_value())
     {
         const auto toMain = [&](std::string_view name)
-        { recordLanding(name, MCMenuScreens::LeaveCampaign, [&] { return MCMainMenuScreens::Shown(MCMainPanel::Main); }); };
+        {
+            recordLanding(name, MCMenuScreens::LeaveCampaign,
+                          [&] { return MCMainMenuScreens::Shown(MCMainPanel::Main); });
+        };
+
         const auto openSaves = [&](std::string_view name, MCSavesScreen::MCMode mode)
         {
             recordLanding(
@@ -1275,7 +1417,8 @@ TEST_CASE_ISOLATED("tool: --record-window records the window through BEGIN MISSI
         toMain("to-main-last");
         openSaves("load-game-again", MCSavesScreen::MCMode::Load);
         recordLanding(
-            "load-game-back", [] { PressKey(SDL_SCANCODE_ESCAPE); }, [&] { return MCMainMenuScreens::Shown(MCMainPanel::Main); });
+            "load-game-back", [] { PressKey(SDL_SCANCODE_ESCAPE); },
+            [&] { return MCMainMenuScreens::Shown(MCMainPanel::Main); });
         return;
     }
 

@@ -21,7 +21,6 @@ namespace
     constexpr const char* SectionsId = "sections";
     constexpr const char* RowsId = "rows";
     constexpr const char* SheetId = "sheet";
-    constexpr const char* PlaceId = "place";
     constexpr const char* AcceptId = "accept";
     constexpr const char* CancelId = "cancel";
     constexpr const char* DefaultsId = "defaults";
@@ -41,10 +40,6 @@ namespace
     /// <summary>CONTROLS' boxes: <c>key-</c> and the command's number; a section's rows: <c>section-</c> and its name.</summary>
     constexpr std::string_view KeyBoxPrefix = "key-";
     constexpr std::string_view SectionPrefix = "section-";
-
-    /// <summary>The eyebrow over the name: where Preferences opened.</summary>
-    constexpr std::string_view MenusPlaceName = "Main menu";
-    constexpr std::string_view MissionPlaceName = "Paused";
 
     /// <summary>A box waiting for a key.</summary>
     constexpr std::string_view PressAKey = "Press a key";
@@ -168,11 +163,6 @@ void MCPrefsScreen::OnLoaded(Rml::ElementDocument& document)
     {
         document.SetClass(NightClass, false);
         document.SetClass(MissionClass, true);
-    }
-
-    if (Rml::Element* place = document.GetElementById(PlaceId); place != nullptr)
-    {
-        place->SetInnerRML(std::string(InMission() ? MissionPlaceName : MenusPlaceName));
     }
 
     MakeRows(document);

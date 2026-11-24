@@ -27,7 +27,6 @@ namespace
     constexpr const char* VersionId = "version";
     constexpr const char* SizeFactId = "size-fact";
     constexpr const char* SizeId = "size";
-    constexpr const char* SmallFactId = "small-fact";
     constexpr const char* StatusId = "status";
     constexpr const char* MeterId = "meter";
     constexpr const char* MeterFillId = "meter-fill";
@@ -271,8 +270,6 @@ void MCUpdateScreen::OnLoaded(Rml::ElementDocument& document)
 {
     TheScreen = std::static_pointer_cast<MCUpdateScreen>(shared_from_this());
     SetWords(document, RunningId, std::format(RunningFormat, ReleaseOf(MCUpdater::RunningVersion())));
-    // Only the download chosen is known (HD OPTIONS' HD ART SIZE picks it): the smaller set's isn't planned.
-    SetShown(document, SmallFactId, false);
     OnClick(BackId,
             [this]
             {

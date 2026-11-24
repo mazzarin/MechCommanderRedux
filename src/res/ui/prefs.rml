@@ -13,7 +13,7 @@
         <div id="prefs" class="content">
             <div id="sheet">
                 <div id="head" class="row bottom">
-                    <div class="grow"><div class="eyebrow" id="place">Main menu</div><div class="title caps">Preferences</div></div>
+                    <div class="grow"><div class="title caps">Preferences</div></div>
                 </div>
                 <div id="body">
                     <div class="tabs side-tabs" id="sections"></div>

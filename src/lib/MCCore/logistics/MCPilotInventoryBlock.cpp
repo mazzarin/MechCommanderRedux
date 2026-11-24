@@ -11,6 +11,7 @@
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCLogistics.h"
@@ -118,7 +119,7 @@ auto MCPilotInventoryBlock::OfferSale() -> void
     const std::shared_ptr<MCLogWarrior> warrior = Warrior();
     MCLogPort picture;
     picture.Load(std::format("{}logart\\{}", ArtPath, warrior->Picture));
-    int32_t price = SalePrice(GlobalLog()->PilotCosts[warrior->Rank]);
+    int32_t price = MCStore::SalePrice(*warrior);
     // The answer goes to the pilot, not this row: the list can drop the row while the dialog is open.
     OpenPurchaseDialog(3, -price, 1, warrior->Callsign, LoadGameString(0x5f, 0xfe), picture,
                        [warrior](int32_t result, int32_t) { OnSellConfirmed(*warrior, result); });
@@ -136,14 +137,9 @@ auto MCPilotInventoryBlock::OnSellConfirmed(MCLogWarrior& warrior, int32_t resul
         return;
     }
 
-    int32_t row = warrior.ListIndex;
     SoundSystem()->PlayPilotSpeech(warrior.PilotAudio, 2);
-    warrior.Sold = true;
-    GlobalLog()->PurPilotList->SetPilotStatus(warrior.DescIndex, MCPurPilotData::SoldBack);
-    GlobalLog()->AssignedWarriorList->RemoveWarrior(static_cast<uint8_t>(warrior.Id));
-    GlobalLog()->ShiftPilots(row, -1);
-    GlobalLog()->ReorderWarriors();
-    ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost;
+    // The dialog's cost is the sale's price, negative.
+    MCStore::FirePilot(warrior, -GlobalLog()->PurchaseDialog->UnitCost);
 }
 
 auto MCPilotInventoryBlock::BoardMech(MCLogWarrior& warrior, MCLogMech& mech, int32_t row) -> void

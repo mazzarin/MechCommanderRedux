@@ -3,6 +3,7 @@
 #include "gui/MCGuiEvent.h"
 #include "gui/MCScrollPane.h"
 #include "logistics/MCLogInvScreen.h"
+#include "logistics/MCStore.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 #include "vfx/MCVfxFunctions.h"
@@ -91,12 +92,7 @@ auto MCInventoryBlock::DrawDropArt(MCLogInvScreen& screen, int32_t tab) -> void
 
 auto MCInventoryBlock::SalePrice(int32_t value) -> int32_t
 {
-    if (MultiPlayer() == nullptr && !Solo)
-    {
-        value /= 2;
-    }
-
-    return value;
+    return MCStore::SalePrice(value);
 }
 
 auto MCInventoryBlock::BumpDeploySlots(bool vehicle) -> void

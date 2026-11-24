@@ -7,6 +7,7 @@
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCStoreRow.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUnitLimits.h"
@@ -94,19 +95,10 @@ auto MCMechPurchaseBlock::OnBuyConfirmed(MCPurMech& purMech, int32_t result, int
         return;
     }
 
-    MCPurMechData& data = *purMech.Variants[static_cast<size_t>(purMech.CurVariant)];
-
-    for (int32_t count = quantity; count > 0; --count)
-    {
-        GlobalLog()->MechList->AddMech(data.FileName.data(), false, true, true);
-    }
-
-    GlobalLog()->ReorderMechs();
+    MCStore::BuyMechs(purMech, quantity, GlobalLog()->PurchaseDialog->UnitCost);
     MCPurchaseScreen::CreateMechInvBlock();
     GlobalLog()->PurchaseScreen->SetUpMechInv(true, true);
-    data.NumAvailable -= quantity;
     MCLogInvScreen::RefreshStoreRow(purMech);
-    ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost * quantity;
     CheckNumUnits();
 }
 
@@ -252,7 +244,7 @@ auto MCMechPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
             // Buy it.
             MCPurMechData& data = *PurMech()->Variants[static_cast<size_t>(PurMech()->CurVariant)];
 
-            if (ResourcePoints < data.Cost)
+            if (MCStore::WhyNotBuy(*PurMech()) == MCStore::MCRefusal::TooPoor)
             {
                 PlayLogSound(0x33);
                 ShowLogMessage(0x4d);

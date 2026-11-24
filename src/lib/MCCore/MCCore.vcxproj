@@ -271,6 +271,7 @@
     <ClCompile Include="logistics\MCSettingsScreen.cpp" />
     <ClCompile Include="logistics\MCSmuti.cpp" />
     <ClCompile Include="logistics\MCSplashScreen.cpp" />
+    <ClCompile Include="logistics\MCStore.cpp" />
     <ClCompile Include="logistics\MCStoreRow.cpp" />
     <ClCompile Include="logistics\MCTicker.cpp" />
     <ClCompile Include="logistics\MCTickerLine.cpp" />
@@ -831,6 +832,7 @@
     <ClInclude Include="logistics\MCSettingsScreen.h" />
     <ClInclude Include="logistics\MCSmuti.h" />
     <ClInclude Include="logistics\MCSplashScreen.h" />
+    <ClInclude Include="logistics\MCStore.h" />
     <ClInclude Include="logistics\MCStoreRow.h" />
     <ClInclude Include="logistics\MCTicker.h" />
     <ClInclude Include="logistics\MCTickerLine.h" />

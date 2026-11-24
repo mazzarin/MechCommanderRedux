@@ -8,6 +8,7 @@
 #include "logistics/MCLogRows.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCStoreRow.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUnitLimits.h"
@@ -86,35 +87,20 @@ auto MCCompPurchaseBlock::OnBuyConfirmed(MCLogInventoryItem& bought, int32_t res
         return;
     }
 
-    bought.Count -= quantity;
+    std::shared_ptr<MCLogInventoryItem> stockItem;
+    const MCStore::MCPartRow row =
+        MCStore::BuyParts(bought, quantity, GlobalLog()->PurchaseDialog->UnitCost, stockItem);
     MCLogInvScreen::RefreshStoreRow(bought);
-    MCInventoryList& spares = *GlobalLog()->ComponentInventory;
-    std::shared_ptr<MCLogInventoryItem> stockItem = spares.GetItemInfo(spares.GetIndexFromMasterID(bought.MasterID));
 
-    if (stockItem == nullptr)
+    if (row == MCStore::MCPartRow::Listed)
     {
-        // A new spare component: its first copy and its inventory row.
-        spares.AddItem(bought.MasterID, spares.CreateStat(spares.NextStatID, 0, 0, 1, 0xff), false);
-        stockItem = spares.GetItemInfo(spares.GetIndexFromMasterID(bought.MasterID));
-        stockItem->Count = quantity;
-        MCInventoryList::ListAsSpare(*stockItem);
-        stockItem->InventoryIndex = spares.NumItems() - 1;
-        MCPurchaseScreen::CreateCompInvBlock();
-        GlobalLog()->PurchaseScreen->SetUpCompInv(false, true);
-    }
-    else if (stockItem->Count == 0)
-    {
-        stockItem->Count = quantity;
         MCPurchaseScreen::CreateCompInvBlock();
         GlobalLog()->PurchaseScreen->SetUpCompInv(false, true);
     }
     else
     {
-        stockItem->Count += quantity;
         MCLogInvScreen::RefreshComponentRows(*stockItem);
     }
-
-    ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost * quantity;
 }
 
 auto MCCompPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
@@ -193,7 +179,7 @@ auto MCCompPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
             // Buy some.
             const MCMasterComponent& component = MasterComponentList[item->MasterID];
 
-            if (component.ResourcePoints <= ResourcePoints)
+            if (MCStore::WhyNotBuy(*item) == MCStore::MCRefusal::None)
             {
                 PlayLogSound(0x34);
                 MCLogPort picture;

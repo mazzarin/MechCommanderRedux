@@ -10,6 +10,7 @@
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCLogistics.h"
@@ -137,8 +138,7 @@ auto MCMechInventoryBlock::OfferSale(const std::shared_ptr<MCLogMech>& mech, con
 
     std::string title =
         std::format("{:.0f} Ton {} 'Mech", mech->CurTonnage, LoadGameString(WeightClassString(mech->CurTonnage), 0xfe));
-    mech->CalcMechCost(false);
-    int32_t price = SalePrice(mech->ResourcePoints);
+    int32_t price = MCStore::SalePrice(*mech);
     // The dialog shows a copy of the diagram over the store's colour.
     MCLogPort picture;
     picture.Init(DiagramWidth, DiagramHeight);
@@ -173,43 +173,9 @@ auto MCMechInventoryBlock::OnSellConfirmed(MCLogMech& sold, int32_t result) -> v
         return;
     }
 
-    MCInventoryList& spares = *GlobalLog()->ComponentInventory;
-
-    for (const std::shared_ptr<MCLogInventoryItem>& item : sold.Inventory->Items)
-    {
-        uint8_t masterID = item->MasterID;
-        MCComponentForm form = MasterComponentList[masterID].Form;
-
-        if (!IsWeapon(form) && !IsEquipment(form) && form != MCComponentForm::Jammer)
-        {
-            continue;
-        }
-
-        // Every undamaged copy goes back to the spare components.
-        for (const std::shared_ptr<MCLogInventoryStat>& stat : item->Stats)
-        {
-            if (stat->Hits != 0)
-            {
-                continue;
-            }
-
-            std::shared_ptr<MCLogInventoryItem> stockItem = spares.GetItemInfo(spares.GetIndexFromMasterID(masterID));
-
-            if (stockItem == nullptr)
-            {
-                stockItem = MCCompInventoryBlock::AddSpare(masterID);
-            }
-
-            ++stockItem->Count;
-        }
-    }
-
+    // The dialog's cost is the sale's price, negative.
+    MCStore::SellMech(sold, -GlobalLog()->PurchaseDialog->UnitCost);
     MCPurchaseScreen::CreateCompInvBlock();
-    int32_t index =
-        GlobalLog()->ForceMechList->GetMechIndex(std::static_pointer_cast<const MCLogMech>(sold.shared_from_this()));
-    GlobalLog()->ForceMechList->RemoveMech(static_cast<uint8_t>(index));
-    GlobalLog()->ReorderMechs();
-    ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost;
 }
 
 auto MCMechInventoryBlock::HandleEvent(MCGuiEvent& event) -> void

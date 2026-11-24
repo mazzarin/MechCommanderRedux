@@ -8,6 +8,7 @@
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCPilotPurchaseBlock.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
 #include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCUnitLimits.h"
@@ -66,7 +67,7 @@ auto MCPurchaseDlg::OnDestroy() -> void
 
 auto MCPurchaseDlg::CanAddOne() const -> bool
 {
-    return Quantity < MaxQuantity && UnitCost * (Quantity + 1) <= ResourcePoints;
+    return Quantity < MaxQuantity && MCStore::PaysFor(UnitCost, Quantity);
 }
 
 auto MCPurchaseDlg::HandleEvent(MCGuiEvent& event) -> void

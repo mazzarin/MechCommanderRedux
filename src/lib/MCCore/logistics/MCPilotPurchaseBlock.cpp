@@ -9,6 +9,7 @@
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCStoreRow.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUnitLimits.h"
@@ -44,15 +45,11 @@ auto MCPilotPurchaseBlock::OnHireConfirmed(MCPurPilotData& pilot, int32_t result
 
     MCPurchaseScreen& screen = *GlobalLog()->PurchaseScreen;
     float scrollPos = screen.UnitPane->ScrollPos;
-    GlobalLog()->WarriorList->AddWarrior(pilot.FileName.data(), true);
-    GlobalLog()->ReorderWarriors();
+    MCStore::HirePilot(pilot, GlobalLog()->PurchaseDialog->UnitCost);
     screen.CreatePilotInvBlock();
     screen.SetUpPilotInv(true, true);
-    pilot.Health = 0;
-    GlobalLog()->PurPilotList->SetPilotStatus(pilot.DescIndex, MCPurPilotData::Hired);
     MCPurchaseScreen::RemovePilot();
     screen.SetUpPilotPurchase();
-    ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost;
     SoundSystem()->PlayPilotSpeech(pilot.PilotAudio.data(), 2);
     screen.UnitPane->SetScrollPos(scrollPos);
 }
@@ -127,7 +124,7 @@ auto MCPilotPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
             }
 
             // Hire the pilot.
-            if (ResourcePoints < Pilot()->Cost)
+            if (MCStore::WhyNotHire(*Pilot()) == MCStore::MCRefusal::TooPoor)
             {
                 PlayLogSound(0x33);
                 ShowLogMessage(0x4d);

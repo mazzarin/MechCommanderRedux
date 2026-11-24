@@ -7,6 +7,7 @@
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCStoreRow.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUnitLimits.h"
@@ -46,19 +47,10 @@ auto MCVehiclePurchaseBlock::OnBuyConfirmed(MCPurVehicle& purVehicle, int32_t re
         return;
     }
 
-    MCPurVehicleData& data = *purVehicle.Data;
-
-    for (int32_t count = quantity; count > 0; --count)
-    {
-        GlobalLog()->VehicleList->AddVehicle(data.FileName.data(), false, true, true);
-    }
-
-    GlobalLog()->ReorderVehicles();
+    MCStore::BuyVehicles(purVehicle, quantity, GlobalLog()->PurchaseDialog->UnitCost);
     MCPurchaseScreen::CreateVhclInvBlock();
     GlobalLog()->PurchaseScreen->SetUpVhclInv(true, true);
-    data.NumAvailable -= quantity;
     MCLogInvScreen::RefreshStoreRow(purVehicle);
-    ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost * quantity;
     CheckNumUnits();
 }
 

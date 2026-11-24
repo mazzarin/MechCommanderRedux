@@ -5,6 +5,7 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCScrollPane.h"
 #include "logistics/MCLogRows.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCVehicleRepairBlock.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
@@ -58,7 +59,7 @@ auto MCVehicleInventoryBlock::OfferSale(const std::shared_ptr<MCLogVehicle>& veh
     }
 
     PlayLogSound(0x34);
-    int32_t price = SalePrice(vehicle->VehicleResourcePoints);
+    int32_t price = MCStore::SalePrice(*vehicle);
     // The answer goes to the vehicle, not this row (the list can drop the row while the dialog is open); the dialog
     // keeps its callback, so it refers to the vehicle without keeping it.
     OpenPurchaseDialog(7, -price, 1, vehicle->FileName, {}, MCOptionalOf(picture),
@@ -83,11 +84,8 @@ auto MCVehicleInventoryBlock::OnSellConfirmed(MCLogVehicle& sold, int32_t result
         return;
     }
 
-    int32_t index = GlobalLog()->ForceVehicleList->GetVehicleIndex(
-        std::static_pointer_cast<const MCLogVehicle>(sold.shared_from_this()));
-    GlobalLog()->ForceVehicleList->RemoveVehicle(static_cast<uint8_t>(index));
-    GlobalLog()->ReorderVehicles();
-    ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost;
+    // The dialog's cost is the sale's price, negative.
+    MCStore::SellVehicle(sold, -GlobalLog()->PurchaseDialog->UnitCost);
 }
 
 auto MCVehicleInventoryBlock::HandleEvent(MCGuiEvent& event) -> void

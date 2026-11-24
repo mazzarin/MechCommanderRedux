@@ -744,6 +744,9 @@
     <ClCompile Include="logistics\MCSplashScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCStore.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCStoreRow.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2333,6 +2336,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCSplashScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCStore.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCStoreRow.h">

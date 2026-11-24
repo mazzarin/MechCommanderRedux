@@ -10,6 +10,7 @@
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCLogistics.h"
@@ -221,7 +222,7 @@ auto MCCompInventoryBlock::OfferSale() -> void
     MCLogPort picture;
     picture.Load(std::format("{}logart\\lscicc{:02}.tga", ArtPath, item->RangeIndex));
     const MCMasterComponent& component = MasterComponentList[item->MasterID];
-    int32_t price = SalePrice(component.ResourcePoints);
+    int32_t price = MCStore::SalePrice(*item);
     // The answer goes to the item, not this row (the list can drop the row while the dialog is open); the dialog keeps
     // its callback, so it refers to the item without keeping it.
     OpenPurchaseDialog(5, -price, item->Count, component.Name, {}, picture,
@@ -241,9 +242,8 @@ auto MCCompInventoryBlock::OnSellConfirmed(MCLogInventoryItem& sold, int32_t res
         return;
     }
 
-    sold.Count -= quantity;
-
-    if (sold.Count == 0)
+    // The dialog's cost is the sale's price, negative.
+    if (MCStore::SellParts(sold, quantity, -GlobalLog()->PurchaseDialog->UnitCost))
     {
         MCPurchaseScreen::CreateCompInvBlock();
         GlobalLog()->PurchaseScreen->SetUpCompInv(false, true);
@@ -252,8 +252,6 @@ auto MCCompInventoryBlock::OnSellConfirmed(MCLogInventoryItem& sold, int32_t res
     {
         MCLogInvScreen::RefreshComponentRows(sold);
     }
-
-    ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost * quantity;
 }
 
 auto MCCompInventoryBlock::HandleEvent(MCGuiEvent& event) -> void

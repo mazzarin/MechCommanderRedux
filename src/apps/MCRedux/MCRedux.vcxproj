@@ -93,6 +93,12 @@
     <CopyFileToFolders Include="..\..\res\ui\fonts\SairaSemiCondensed-SemiBold.ttf">
       <DestinationFolders>$(OutDir)ui\fonts</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\main_menu.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\main_menu.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MCRedux.rc" />

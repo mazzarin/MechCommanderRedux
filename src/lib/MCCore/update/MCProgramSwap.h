@@ -20,7 +20,8 @@ class MCUpdateDisk;
 /// resolutions' copies, where they were the game) links to the new <c>MCRedux.exe</c>, flushes, sets the Apps list's
 /// version, and deletes the journal: the commit. Stopped midway, the next start finishes it from the journal, or puts
 /// the old files back when a staged one is gone or damaged; a start with nothing under way deletes what earlier swaps
-/// set aside, as no copy runs it any more.
+/// set aside, as no copy runs it any more. The program's files in its folder (the menus' <c>ui</c>) go the same way, the
+/// folders on their way made where the copy lacks them.
 /// </summary>
 namespace MCProgramSwap
 {

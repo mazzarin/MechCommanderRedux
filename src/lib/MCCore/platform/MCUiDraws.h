@@ -1,5 +1,7 @@
 #pragma once
 
+#include "platform/MCSdlHandle.h"
+
 /// <summary>
 /// Port-only (SPEC-menus.md, "How it's built"): the remade menus' draws for one frame, as RmlUi made them (indexed,
 /// coloured, textured triangles with premultiplied alpha and a scissor; ui/MCRmlRecorder records them), drawn over the
@@ -39,6 +41,14 @@ struct MCUiTexture
     /// <summary>Filtered smoothly when drawn at another size (an HD picture); else its nearest pixel is taken.</summary>
     bool Smooth = false;
 };
+
+/// <summary>
+/// <paramref name="part"/> of <paramref name="picture"/> (inside it) scaled to <paramref name="width"/> x
+/// <paramref name="height"/> as SDL scales a picture (SDL_ScaleSurface: smoothly for a smooth picture, else its nearest
+/// texels), RGBA32; why not when SDL can't.
+/// </summary>
+std::expected<MCSdlHandle<SDL_Surface>, std::string> MCUiScaled(const MCUiTexture& picture, const SDL_Rect& part,
+                                                                int width, int height);
 
 /// <summary>One draw: its triangles moved by (<see cref="X"/>, <see cref="Y"/>), coloured, or textured and coloured.</summary>
 struct MCUiDraw
@@ -87,12 +97,14 @@ int32_t MCUiPlace(float at, float by);
 
 /// <summary>
 /// An axis-aligned rectangle two of a draw's triangles make, in one colour: where it lands in the window, and the texels
-/// of the draw's texture it shows, when it has one and they are whole texels the right way round.
+/// of the draw's texture it shows, when it has one and they lie inside it the right way round: whole texels, or cut
+/// between texels (a picture scaled to its box and cut by it, as a cover decorator's painting), an edge taken as a
+/// texel's when it lies that near one.
 /// </summary>
 struct MCUiQuad
 {
     SDL_Rect Target{};
-    std::optional<SDL_Rect> Source;
+    std::optional<SDL_FRect> Texels;
     std::array<uint8_t, 4> Color{};
 };
 

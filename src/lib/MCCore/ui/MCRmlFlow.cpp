@@ -119,6 +119,18 @@ void MCRmlFlow::Stop()
     MCRmlMenus::Stop();
 }
 
+bool MCRmlFlow::FilesLoad(const std::filesystem::path& folder, const std::function<void(std::string_view)>& tell)
+{
+    if (const auto loaded = MCRmlMenus::CheckFiles(folder); !loaded)
+    {
+        SDL_Log("Menus: the game can't start: %s", loaded.error().c_str());
+        tell(FilesMissing);
+        return false;
+    }
+
+    return true;
+}
+
 MCGuiHandle<MCRmlScreen> MCRmlFlow::Made(std::string_view name)
 {
     const auto found = std::ranges::find(MadeScreens(), name, &MCMadeScreen::first);

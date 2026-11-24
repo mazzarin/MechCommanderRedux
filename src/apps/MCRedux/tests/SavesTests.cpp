@@ -491,9 +491,9 @@ TEST_CASE_ISOLATED("game: LOAD GAME, its DELETE question and SAVE GAME draw the 
     };
 
     constexpr std::array<MCDrawn, 3> Drawn = {{
-        {"load", {0xf3b04c65, 0xf77f4dd1, 0xc3f660ac}},
-        {"delete", {0xfcce34fb, 0xf523d93b, 0xb61813cb}},
-        {"save", {0x7408bf7d, 0x5699ee0f, 0x6b5b8276}},
+        {"load", {0xf3b04c65, 0xb6d93d03, 0x9c45b65e}},
+        {"delete", {0xfcce34fb, 0x986a55c5, 0x1b0be192}},
+        {"save", {0x7408bf7d, 0x265689e2, 0xad3acadd}},
     }};
 
     const auto drawEach = [&display](const MCDrawn& drawn)

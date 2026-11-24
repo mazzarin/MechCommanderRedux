@@ -451,6 +451,10 @@
     <ClCompile Include="platform\MCFlac.cpp" />
     <ClCompile Include="platform\MCFrameLog.cpp" />
     <ClCompile Include="platform\MCGpuCounted.cpp" />
+    <ClCompile Include="platform\MCGpuLimits.cpp">
+      <!-- Vulkan's types, from SDL's copy of Khronos' headers, for this file alone. -->
+      <AdditionalIncludeDirectories>$(MCLibDir)SDL-release-3.4.12\src\video\khronos;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <ClCompile Include="platform\MCIceLink.cpp">
       <!-- libdatachannel's headers include the system socket headers (winsock2.h drags in windows.h), which must
            not meet the game's Win32 stand-ins in the precompiled header. -->
@@ -998,6 +1002,7 @@
     <ClInclude Include="platform\MCFlac.h" />
     <ClInclude Include="platform\MCFrameLog.h" />
     <ClInclude Include="platform\MCGpuCounted.h" />
+    <ClInclude Include="platform\MCGpuLimits.h" />
     <ClInclude Include="platform\MCIceLink.h" />
     <ClInclude Include="platform\MCIceTransport.h" />
     <ClInclude Include="platform\MCInput.h" />

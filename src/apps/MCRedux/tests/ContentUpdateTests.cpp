@@ -467,6 +467,82 @@ TEST_CASE("update files: Windows' program files, zip and setup level are read as
     CHECK(!MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(tooMany)).has_value());
 }
 
+TEST_CASE("update files: a Windows program with its menus' folder lists every file in programFiles and none in files, "
+          "so an older game, which reads only files, runs the setup; names outside the folder are refused")
+{
+    constexpr std::string_view Hash = "3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b";
+    const std::string written = std::format(R"({{
+  "format": 1,
+  "issue": 5,
+  "current": {{
+    "release": 10,
+    "version": "0.8.0",
+    "programs": {{
+      "windows": {{"build": 1200, "size": 30000000, "sha256": "{0}",
+                   "url": "https://example.test/setup.exe", "silent": "/VERYSILENT",
+                   "programFiles": [{{"name": "MCRedux.exe", "size": 20, "sha256": "{0}"}},
+                                    {{"name": "ui/look.rcss", "size": 5, "sha256": "{0}"}},
+                                    {{"name": "ui/fonts/SairaSemiCondensed-Bold.ttf", "size": 9, "sha256": "{0}"}}],
+                   "zip": {{"url": "https://example.test/program.zip", "size": 40, "sha256": "{0}"}},
+                   "setupLevel": 3}}
+    }},
+    "content": {{"list": "{0}", "size": 1203}}
+  }}
+}})",
+                                            Hash);
+    const auto read = MCReleaseFile::ReadReleases(written);
+    REQUIRE_EQ(read.error_or(""), std::string());
+    const MCReleaseFile::MCProgram& windows = read->Current.Programs.at("windows");
+    REQUIRE_EQ(windows.Files.size(), size_t{3});
+    CHECK_EQ(windows.Files[2].Name, std::string("ui/fonts/SairaSemiCondensed-Bold.ttf"));
+    CHECK_EQ(windows.Files[2].Size, uint64_t{9});
+
+    // Written back under programFiles alone: no files for an older game to swap into a copy without the folder.
+    const MCUpdateJson::MCJson payload = MCUpdateJson::Object(MCReleaseFile::ReleasesPayload(*read));
+    const MCUpdateJson::MCJson& entry = payload["current"]["programs"]["windows"];
+    CHECK(entry.contains("programFiles"));
+    CHECK(!entry.contains("files"));
+    const auto again = MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(*read));
+    REQUIRE(again.has_value());
+    CHECK_EQ(MCReleaseFile::ReleasesPayload(*again), MCReleaseFile::ReleasesPayload(*read));
+
+    // Both lists, a name in the folder under files (an older game would refuse the whole file), or one outside the
+    // program's folder.
+    MCUpdateJson::MCJson both = MCUpdateJson::Object(written);
+    both["current"]["programs"]["windows"]["files"] = both["current"]["programs"]["windows"]["programFiles"];
+    CHECK(!MCReleaseFile::ReadReleases(both.dump()).has_value());
+    MCUpdateJson::MCJson older = MCUpdateJson::Object(written);
+    older["current"]["programs"]["windows"]["files"] = older["current"]["programs"]["windows"]["programFiles"];
+    older["current"]["programs"]["windows"].erase("programFiles");
+    CHECK(!MCReleaseFile::ReadReleases(older.dump()).has_value());
+
+    for (const std::string_view name :
+         {"bin/MCRedux.exe", "UI/look.rcss", "ui/../MCRedux.exe", "ui/fonts/../../x.dll", "ui/COM1.rcss"})
+    {
+        MCUpdateJson::MCJson bad = MCUpdateJson::Object(written);
+        bad["current"]["programs"]["windows"]["programFiles"][1]["name"] = name;
+
+        if (MCReleaseFile::ReadReleases(bad.dump()).has_value())
+        {
+            FAIL_CHECK(std::format("a program file named \"{}\" is taken", name));
+        }
+    }
+
+    CHECK_EQ(MCReleaseFile::ProgramFileProblem("ui/look.rcss", true), std::string());
+    CHECK_EQ(MCReleaseFile::ProgramFileProblem("MCRedux.exe", true), std::string());
+    CHECK(!MCReleaseFile::ProgramFileProblem("ui/look.rcss", false).empty());
+
+    MCReleaseFile::MCReleases tooMany = *read;
+    MCReleaseFile::MCProgram& many = tooMany.Current.Programs.at("windows");
+
+    while (many.Files.size() <= MCReleaseFile::MaxProgramFolderFiles)
+    {
+        many.Files.push_back({.Name = std::format("ui/art/{}.png", many.Files.size()), .Size = 1});
+    }
+
+    CHECK(!MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(tooMany)).has_value());
+}
+
 TEST_CASE("update files: a key list of a later epoch starts release.json's issues again and its releases come after "
           "any earlier; an earlier epoch, or a key list below the build's lowest issue, is refused")
 {

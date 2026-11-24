@@ -207,10 +207,11 @@ namespace MCRegistry
         // The file found here, by the folders set now: the saver's thread only writes it.
         store.Saves[MCFileSystem::ResolveWrite(StoreFileName)] = StoreText(values);
 
+        // Counted as running once started (it waits for the lock held here): a thread the system refuses leaves none.
         if (!store.Saving)
         {
-            store.Saving = true;
             MCThreadKeeper::Process().Keep(std::thread(Save));
+            store.Saving = true;
         }
     }
 

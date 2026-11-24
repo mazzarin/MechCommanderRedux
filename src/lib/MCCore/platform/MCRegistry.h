@@ -31,7 +31,10 @@ namespace MCRegistry
     /// <summary>Waits until every value written is in the file (tests; not while saves are held).</summary>
     void WaitForSaves();
 
-    /// <summary>Port-only (tests): while one is alive, no save is written, as on a disk that takes its time.</summary>
+    /// <summary>
+    /// Port-only (tests): while one is alive, no save is written, as on a disk that takes its time. The folders stay
+    /// set meanwhile: reading another folder's values waits for the saves.
+    /// </summary>
     class MCSavesHeld
     {
     public:

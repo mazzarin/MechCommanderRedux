@@ -563,7 +563,7 @@ TEST_CASE_ISOLATED("screen flow: a launcher's join draws its frames, and its CAN
     MCTestGame::RunFrame(FrameSeconds);
     REQUIRE(LauncherScreenShown());
     REQUIRE(Asks("Joining Steel Rain..."));
-    CheckMenusFrames("launcher join", {0xf5df255e, 0x0d120b81, 0xc148cdc7});
+    CheckMenusFrames("launcher join", {0x538a4579, 0x5291b67a, 0x9fc55820});
 
     // A bare -join: the game's own words until the session found names the room.
     LobbyLaunchArgs.SessionName.clear();

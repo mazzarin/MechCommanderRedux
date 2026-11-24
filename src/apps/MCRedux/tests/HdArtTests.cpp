@@ -13491,7 +13491,18 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
         }
 
         const std::filesystem::path path = folder / std::format("{}_{}.png", name, original ? "original" : "sharp");
-        REQUIRE(MCInput::Display()->SaveShownScreenshot(path).has_value());
+
+        // A remade screen (the menus' or the mission's PAUSED) draws on the whole window, over the game's view (black
+        // under it): its picture is the window's.
+        if (const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running(); menus.has_value() && menus->get().Showing())
+        {
+            REQUIRE(MCTestGame::SaveWholeWindow(path));
+        }
+        else
+        {
+            REQUIRE(MCInput::Display()->SaveShownScreenshot(path).has_value());
+        }
+
         std::cout << std::format("  {}: {}\n", name, path.string());
 
         // Port-only: with --sharp-menus-window 1, the whole window too, as it shows round the view (the menus' frame on

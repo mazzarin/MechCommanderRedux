@@ -6,9 +6,12 @@
 #include "gui/MCGuiGlobals.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCGpuLimits.h"
 #include "platform/MCInput.h"
+#include "platform/MCUiGpu.h"
 #include "platform/MCUiSoftware.h"
 #include "platform/MCUtf8Path.h"
+#include "platform/MCVulkanShaders.h"
 #include "sprite/MCHdArt.h"
 #include "ui/MCRmlArt.h"
 #include "ui/MCRmlChecks.h"
@@ -42,6 +45,13 @@ namespace
     using MCMenusPictures::PictureHash;
 
     constexpr size_t PixelBytes = 4;
+    constexpr uint8_t Opaque = 255;
+
+    /// <summary>Why <paramref name="made"/> failed; empty when it didn't.</summary>
+    template <typename T> std::string WhyNot(const std::expected<T, std::string>& made)
+    {
+        return made.has_value() ? std::string() : made.error();
+    }
 
     /// <summary>The FNV-1a hash of a window's picture as the display reads it.</summary>
     uint32_t PictureHash(const MCDisplay::MCShownScreen& picture)
@@ -491,9 +501,7 @@ namespace
                     };
 
                     const SDL_FRect target = toFloat(quad.Target);
-                    const std::optional<SDL_FRect> source =
-                        quad.Source.has_value() ? std::optional(toFloat(*quad.Source)) : std::nullopt;
-                    SDL_RenderTexture(renderer, texture, source.has_value() ? &*source : nullptr, &target);
+                    SDL_RenderTexture(renderer, texture, quad.Texels.has_value() ? &*quad.Texels : nullptr, &target);
                 }
             }
 
@@ -1164,6 +1172,314 @@ TEST_CASE("menus: the app's art reads as RGB, its HD copy in its place at the 19
     CHECK_EQ(plain->Texture->Width, Width);
     CHECK(!MCRmlArt::Load("art/missing.png", true, files).has_value());
     CHECK(!MCRmlArt::Load("../painting.png", false, files).has_value());
+}
+
+namespace
+{
+    /// <summary>The look's stone (look.rcss's <c>.stone</c>), under the painting.</summary>
+    constexpr std::array<uint8_t, PixelBytes> StonePixel = {0x38, 0x3b, 0x3c, 0xff};
+
+    /// <summary>A document of the painting alone over the whole window (look.rcss's <c>.painting</c>).</summary>
+    constexpr std::string_view PaintingDocument = "painting_alone.rml";
+    constexpr std::string_view PaintingRml =
+        R"(<rml><head><link type="text/rcss" href="look.rcss"/></head><body class="painting"></body></rml>)";
+
+    /// <summary>The pixel at (<paramref name="x"/>, <paramref name="y"/>) of an RGBA32 picture.</summary>
+    std::array<uint8_t, PixelBytes> PixelAt(const SDL_Surface& picture, int x, int y)
+    {
+        const auto* at = static_cast<const uint8_t*>(picture.pixels) + static_cast<ptrdiff_t>(y) * picture.pitch +
+                         static_cast<ptrdiff_t>(x) * static_cast<ptrdiff_t>(PixelBytes);
+        return {at[0], at[1], at[2], at[3]};
+    }
+
+    /// <summary>How many of the picture's pixels are the stone's.</summary>
+    int64_t StonePixels(const SDL_Surface& picture)
+    {
+        int64_t stone = 0;
+
+        for (int y = 0; y < picture.h; ++y)
+        {
+            for (int x = 0; x < picture.w; ++x)
+            {
+                stone += PixelAt(picture, x, y) == StonePixel ? 1 : 0;
+            }
+        }
+
+        return stone;
+    }
+}
+
+/// <summary>
+/// The main menu's painting (look.rcss's <c>.painting</c>: <c>image(art/main_menu.png cover)</c>, its height the
+/// window's) drawn on the software path with HD art off and on, at the frames' windows and 1024x768: the painting over
+/// the whole window, not the stone under it. At 640x480 its cut falls on whole texels (256 in); at the others between
+/// texels (1280x720's 149 1/3 in), which the software path gave SDL's textured triangles, whose overflow check dropped
+/// them unsaid ("triangle area overflow"): the stone alone. Its middle pixel isn't the stone's, and hardly any are.
+/// </summary>
+TEST_CASE_ISOLATED("menus: the main menu's painting covers the window on the software path, cut between texels too")
+{
+    constexpr std::array<MCWindowSize, FrameWindows.size() + 1> Windows = {
+        {FrameWindows[0], FrameWindows[1], FrameWindows[2], {1024, 768}}};
+    // The painting has the stone's exact colour in few of its pixels, if any: fewer than one in this many.
+    constexpr int64_t StoneOneIn = 100;
+    const MCScratchFolder scratch("mc_menu_ui_tests", "painting");
+    std::filesystem::copy(MCRmlFiles::AppFolder(), scratch.Path(), std::filesystem::copy_options::recursive);
+
+    {
+        std::ofstream document(scratch.Path() / PaintingDocument);
+        document << PaintingRml;
+        REQUIRE(document.good());
+    }
+
+    for (const bool hd : {false, true})
+    {
+        auto made = MCRmlMenus::Create(MCRmlMenus::MCOptions{.Width = Windows[0].Width,
+                                                             .Height = Windows[0].Height,
+                                                             .Hd = hd,
+                                                             .Folder = scratch.Path(),
+                                                             .Sound = [](uint32_t) {}});
+        REQUIRE_EQ(made.has_value() ? std::string() : made.error(), "");
+        const std::unique_ptr<MCRmlMenus> menus = std::move(*made);
+        menus->SetClock([] { return 0.0; });
+        const MCGuiHandle<MCRmlScreen> screen = menus->Menus().CreateChild<MCRmlScreen>(
+            [](MCRmlScreen& painting) { painting.SetDocument(std::string(PaintingDocument)); });
+        const auto opened = screen->Open();
+        REQUIRE_EQ(opened.has_value() ? std::string() : opened.error(), "");
+
+        for (const MCWindowSize window : Windows)
+        {
+            const std::string name = std::format("{}x{}{}", window.Width, window.Height, hd ? " HD" : "");
+            menus->SetWindow(window.Width, window.Height);
+            std::shared_ptr<const MCUiDraws> draws;
+
+            for (int32_t frame = 0; frame < SettleFrames; ++frame)
+            {
+                draws = menus->Frame();
+            }
+
+            REQUIRE(draws != nullptr);
+            MCUiSoftware software;
+            const auto drawn = software.Draw(*draws);
+            REQUIRE_EQ(drawn.has_value() ? std::string() : drawn.error(), "");
+            const SDL_Surface& picture = *software.Picture();
+
+            // SDL's save takes the surface as changeable; it only reads it.
+            if (const std::optional<std::filesystem::path> path =
+                    ShotPath(std::format("menus_painting_{}x{}{}", window.Width, window.Height, hd ? "_hd" : ""));
+                path.has_value())
+            {
+                CHECK(SDL_SavePNG(const_cast<SDL_Surface*>(&picture), MCFileSystem::ToUtf8(*path).c_str()));
+            }
+
+            const std::array<uint8_t, PixelBytes> middle = PixelAt(picture, picture.w / 2, picture.h / 2);
+            CHECK_EQ(std::format("{}: middle {}", name, middle == StonePixel ? "the stone" : "the painting"),
+                     std::format("{}: middle the painting", name));
+            CHECK_EQ(std::format("{}: middle's alpha {}", name, middle[3]),
+                     std::format("{}: middle's alpha 255", name));
+            const int64_t area = static_cast<int64_t>(picture.w) * picture.h;
+            CHECK_EQ(
+                std::format("{}: the stone {}", name, StonePixels(picture) * StoneOneIn > area ? "shows" : "hidden"),
+                std::format("{}: the stone hidden", name));
+        }
+    }
+}
+
+/// <summary>
+/// The size a picture over a GPU's largest texture is uploaded at: the HD main menu painting (4608 x 1920) on a Vulkan
+/// device of Vulkan's least (4096) scaled to fit, its shape kept; a picture that fits, or no limit, as it is. And the
+/// copy as SDL scales it.
+/// </summary>
+TEST_CASE("menus: a picture over the GPU's largest texture is uploaded scaled down to fit, its shape kept")
+{
+    constexpr SDL_Point Painting{4608, 1920};
+    constexpr SDL_Point PaintingFitted{4096, 1707};
+    constexpr SDL_Point Original{1152, 480};
+    constexpr int32_t NoLimit = 0;
+    constexpr int32_t Long = 100000;
+    const auto same = [](const SDL_Point& a, const SDL_Point& b) { return a.x == b.x && a.y == b.y; };
+
+    CHECK(same(MCUiFittedSize(Painting.x, Painting.y, MCGpuLimits::VulkanLeast), PaintingFitted));
+    CHECK(same(MCUiFittedSize(Painting.y, Painting.x, MCGpuLimits::VulkanLeast), SDL_Point{1707, 4096}));
+    CHECK(same(MCUiFittedSize(Painting.x, Painting.y, MCGpuLimits::MetalLeast), Painting));
+    CHECK(same(MCUiFittedSize(Painting.x, Painting.y, NoLimit), Painting));
+    CHECK(same(MCUiFittedSize(Original.x, Original.y, MCGpuLimits::VulkanLeast), Original));
+    CHECK(same(MCUiFittedSize(Long, 1, MCGpuLimits::VulkanLeast), SDL_Point{MCGpuLimits::VulkanLeast, 1}));
+
+    // A smooth picture's copy, half its size: RGBA32 rows of its own width.
+    constexpr int Width = 8;
+    constexpr int Height = 4;
+    const std::shared_ptr<const MCUiTexture> picture = MCRmlRecorder::MakeTexture(
+        Width, Height, std::vector<uint8_t>(static_cast<size_t>(Width) * Height * PixelBytes, Opaque), true);
+    const auto scaled = MCUiScaled(*picture, SDL_Rect{0, 0, Width, Height}, Width / 2, Height / 2);
+    REQUIRE_EQ(WhyNot(scaled), "");
+    CHECK_EQ((*scaled)->w, Width / 2);
+    CHECK_EQ((*scaled)->h, Height / 2);
+    CHECK_EQ((*scaled)->pitch, Width / 2 * static_cast<int>(PixelBytes));
+    CHECK(!MCUiScaled(*picture, SDL_Rect{1, 0, Width, Height}, Width, Height).has_value());
+}
+
+namespace
+{
+    /// <summary>SDL's GPU device of <paramref name="driver"/>; none (why printed) when this machine has none.</summary>
+    std::shared_ptr<SDL_GPUDevice> GpuDevice(SDL_GPUShaderFormat format, const char* driver)
+    {
+        std::shared_ptr<SDL_GPUDevice> device(SDL_CreateGPUDevice(format, false, driver), MCSdlDeleter{});
+
+        if (device == nullptr)
+        {
+            std::cout << std::format("  (no {} GPU device: {})\n", driver, SDL_GetError());
+        }
+
+        return device;
+    }
+
+    std::string DeviceName(SDL_GPUDevice& device)
+    {
+        const char* const name =
+            SDL_GetStringProperty(SDL_GetGPUDeviceProperties(&device), SDL_PROP_GPU_DEVICE_NAME_STRING, "");
+        return name != nullptr ? name : "";
+    }
+
+    /// <summary>
+    /// <paramref name="draws"/> drawn by MCUiGpu on <paramref name="device"/> over a cleared target of their size, read
+    /// back (RGBA8, premultiplied); why not.
+    /// </summary>
+    std::expected<std::vector<uint8_t>, std::string> GpuDrawn(const std::shared_ptr<SDL_GPUDevice>& device,
+                                                              const MCUiDraws& draws)
+    {
+        constexpr SDL_GPUTextureFormat Format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        const auto width = static_cast<uint32_t>(draws.Width);
+        const auto height = static_cast<uint32_t>(draws.Height);
+        auto ui = MCUiGpu::Create(device);
+
+        if (!ui)
+        {
+            return std::unexpected(ui.error());
+        }
+
+        SDL_GPUTextureCreateInfo info{};
+        info.type = SDL_GPU_TEXTURETYPE_2D;
+        info.format = Format;
+        info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+        info.width = width;
+        info.height = height;
+        info.layer_count_or_depth = 1;
+        info.num_levels = 1;
+        const MCGpuHandle<SDL_GPUTexture> target(SDL_CreateGPUTexture(device.get(), &info), MCGpuRelease{device});
+        SDL_GPUTransferBufferCreateInfo download{};
+        download.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+        download.size = width * height * static_cast<uint32_t>(PixelBytes);
+        const MCGpuHandle<SDL_GPUTransferBuffer> buffer(SDL_CreateGPUTransferBuffer(device.get(), &download),
+                                                        MCGpuRelease{device});
+        SDL_GPUCommandBuffer* const commands = SDL_AcquireGPUCommandBuffer(device.get());
+
+        if (target == nullptr || buffer == nullptr || commands == nullptr)
+        {
+            return std::unexpected(std::format("a {}x{} target to read back: {}", width, height, SDL_GetError()));
+        }
+
+        if (auto drawn = (*ui)->Draw(*commands, *target, Format, width, height, draws, true); !drawn)
+        {
+            SDL_CancelGPUCommandBuffer(commands);
+            return std::unexpected(drawn.error());
+        }
+
+        SDL_GPUCopyPass* const copy = SDL_BeginGPUCopyPass(commands);
+        SDL_GPUTextureRegion region{};
+        region.texture = target.get();
+        region.w = width;
+        region.h = height;
+        region.d = 1;
+        SDL_GPUTextureTransferInfo to{};
+        to.transfer_buffer = buffer.get();
+        to.pixels_per_row = width;
+        to.rows_per_layer = height;
+        SDL_DownloadFromGPUTexture(copy, &region, &to);
+        SDL_EndGPUCopyPass(copy);
+        SDL_GPUFence* const fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+
+        if (fence == nullptr || !SDL_WaitForGPUFences(device.get(), true, &fence, 1))
+        {
+            return std::unexpected(std::format("the read back's fence: {}", SDL_GetError()));
+        }
+
+        SDL_ReleaseGPUFence(device.get(), fence);
+        const auto* const mapped =
+            static_cast<const uint8_t*>(SDL_MapGPUTransferBuffer(device.get(), buffer.get(), false));
+
+        if (mapped == nullptr)
+        {
+            return std::unexpected(std::format("the read back's buffer: {}", SDL_GetError()));
+        }
+
+        std::vector<uint8_t> pixels(mapped, mapped + download.size);
+        SDL_UnmapGPUTransferBuffer(device.get(), buffer.get());
+        return pixels;
+    }
+}
+
+/// <summary>
+/// The largest texture SDL's GPU device holds, which a picture over it is scaled down to: Metal's on the Mac; a Vulkan
+/// device's own, read from Vulkan by the name SDL gives it (on Windows, and on a Mac with a Vulkan loader, SDL's Vulkan
+/// device through MoltenVK); none for a name no device has. On the game's own device, a picture one texel wider than
+/// that drawn over a small target: its colour, from the copy that fits. Skipped without a GPU.
+/// </summary>
+TEST_CASE_ISOLATED("menus: the GPU's largest texture is the device's own, and a picture over it is drawn from a copy")
+{
+    constexpr int Target = 16;
+    constexpr std::array<uint8_t, PixelBytes> Blue{0x0c, 0x34, 0x6c, Opaque};
+
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
+    {
+        std::cout << std::format("  (skipped: no video: {})\n", SDL_GetError());
+        return;
+    }
+
+    CHECK(!MCGpuLimits::VulkanLargestSide("no such device").has_value());
+
+    if (std::shared_ptr<SDL_GPUDevice> device = GpuDevice(MCVulkanShaders::Format, MCVulkanShaders::Driver))
+    {
+        const int32_t largest = MCGpuLimits::LargestTextureSide(*device);
+#ifdef __APPLE__
+        CHECK_EQ(largest, MCGpuLimits::MetalLeast);
+#else
+        const std::expected<int32_t, std::string> own = MCGpuLimits::VulkanLargestSide(DeviceName(*device));
+        REQUIRE_EQ(WhyNot(own), "");
+        CHECK_EQ(largest, *own);
+#endif
+        std::vector<uint8_t> pixels(static_cast<size_t>(largest + 1) * PixelBytes);
+
+        for (size_t at = 0; at < pixels.size(); at += PixelBytes)
+        {
+            std::copy(Blue.begin(), Blue.end(), pixels.begin() + static_cast<ptrdiff_t>(at));
+        }
+
+        auto geometry = std::make_shared<MCUiGeometry>();
+        const auto corner = [](float x, float y, float u, float v)
+        { return MCUiVertex{.X = x, .Y = y, .Color = {Opaque, Opaque, Opaque, Opaque}, .U = u, .V = v}; };
+        constexpr auto Side = static_cast<float>(Target);
+        geometry->Vertices = {corner(0, 0, 0, 0), corner(Side, 0, 1, 0), corner(Side, Side, 1, 1),
+                              corner(0, Side, 0, 1)};
+        geometry->Indices = {0, 3, 1, 1, 3, 2};
+        MCUiDraws draws{.Width = Target, .Height = Target};
+        draws.Draws.push_back(MCUiDraw{
+            .Geometry = geometry, .Texture = MCRmlRecorder::MakeTexture(largest + 1, 1, std::move(pixels), false)});
+        const std::expected<std::vector<uint8_t>, std::string> drawn = GpuDrawn(device, draws);
+        REQUIRE_EQ(WhyNot(drawn), "");
+        const size_t middle = (static_cast<size_t>(Target / 2) * Target + Target / 2) * PixelBytes;
+        CHECK(std::equal(Blue.begin(), Blue.end(), drawn->begin() + static_cast<ptrdiff_t>(middle)));
+    }
+
+    if (const std::shared_ptr<SDL_GPUDevice> vulkan = GpuDevice(SDL_GPU_SHADERFORMAT_SPIRV, "vulkan"))
+    {
+        const std::expected<int32_t, std::string> side = MCGpuLimits::VulkanLargestSide(DeviceName(*vulkan));
+        REQUIRE_EQ(WhyNot(side), "");
+        CHECK(*side >= MCGpuLimits::VulkanLeast);
+        CHECK_EQ(MCGpuLimits::LargestTextureSide(*vulkan), *side);
+        std::cout << std::format("  (Vulkan's {}: {} a side)\n", DeviceName(*vulkan), *side);
+    }
+
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
 namespace

@@ -130,8 +130,8 @@ MC_CHANNEL float FeetSteps = 4.0f;
 
 // An HD frame's index picture's green: 255 a pixel with an index, 254 one that is also part of an object's baked shadow
 // (MCHdArt::MarkBakedShadows, or the pack's marks: a forest's). A version 2 frame also has 253 and 252, its index
-// spread past the original's pixels (outside a baked shadow and in one), and 251 and 250, drawn and blended (outside
-// one and in one). 249 is a pixel without an index that the frame covers (its alpha at the pixel's centre over
+// spread past the original's pixels (outside a baked shadow and in one), and 251 and 250, a translucent frame's pixel
+// drawn through AlphaPal.ini (outside one and in one): blended at a special colour, opaque at any other. 249 is a pixel without an index that the frame covers (its alpha at the pixel's centre over
 // HdMaskAlpha: an in-between's edge), which MCVulkanRenderer::MarkHdCoverage marks in a version 1 frame on the GPU,
 // with the spread marks: SpreadStep less where the frame doesn't cover a pixel, and at least CoveredNoIndex where it
 // does.
@@ -165,12 +165,19 @@ MC_CHANNEL_FUNCTION bool OriginalDrawsGreen(uint green)
     return green == HasIndex || green == BakedShadow || green == DrawnBlended || green == DrawnBlendedShadow;
 }
 
-// Whether a frame covers an original pixel (KindHdSmooth's mask), once MarkHdCoverage has marked a version 1 frame:
-// drawn, in a baked shadow or not, or covered without an index; not spread to, and not drawn and blended (those lie
-// outside a translucent frame's coverage).
+// Whether a green alone puts its original pixel in KindHdSmooth's mask, once MarkHdCoverage has marked a version 1
+// frame: drawn, in a baked shadow or not, or covered without an index; not spread to. A translucent frame's pixel
+// (DrawnThroughAlphaGreen) is in the mask by its index's kind instead (draw.pshader's InHdMask).
 MC_CHANNEL_FUNCTION bool CoversGreen(uint green)
 {
     return green == HasIndex || green == BakedShadow || green == CoveredNoIndex;
+}
+
+// Whether a version 2 frame's green is a translucent frame's pixel the original draws through AlphaPal.ini, in a baked
+// shadow or not: blended at a special colour, opaque at any other, which the green doesn't say (its index does).
+MC_CHANNEL_FUNCTION bool DrawnThroughAlphaGreen(uint green)
+{
+    return green == DrawnBlended || green == DrawnBlendedShadow;
 }
 
 // Whether a frame's pixel is recoloured by its index (today's colour of it). In a frame holding its blended pixels

@@ -123,6 +123,7 @@ TEST_CASE("gpu channels: every green of an HD frame's index picture means what t
         CHECK_EQ(Gc::InShadowGreen(green), in({254, 252, 250}, green));
         CHECK_EQ(Gc::OriginalDrawsGreen(green), in({255, 254, 251, 250}, green));
         CHECK_EQ(Gc::CoversGreen(green), in({255, 254, 249}, green));
+        CHECK_EQ(Gc::DrawnThroughAlphaGreen(green), in({251, 250}, green));
         CHECK_EQ(Gc::RecolouringGreen(green, true), in({255, 254}, green));
         CHECK_EQ(Gc::RecolouringGreen(green, false), green >= 250);
         CHECK_EQ(MCHdArt::HasIndexMark(mark), Gc::HasIndexGreen(green));

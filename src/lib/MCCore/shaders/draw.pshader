@@ -298,6 +298,13 @@ float4 Fetch(Texture2D<float4> tex, SamplerState samp, int2 texel)
     return tex.SampleLevel(samp, (float2(texel) + 0.5) / float2(width, height), 0);
 }
 
+// The kind AlphaPal.ini gives palette index `index` as the original's draw reads it (alphaTex's row 0): AlphaNothing,
+// AlphaOpaque, or blended.
+uint AlphaKindOf(uint index)
+{
+    return (uint)round(Fetch(alphaTex, alphaSampler, int2(index, 0)).x);
+}
+
 // Port-only: where the draw's picture lies in the textures it is read from (a page pictures share: MCVulkanRenderer's
 // PicturePlace), from main: its pixels' corner in sourceTex (an HD art frame's indices'), its HD colours' corner in
 // hdTex, and its size (0 x 0: the source's own). Every read of a picture goes through SourceAt and HdAt, and keeps
@@ -1050,7 +1057,7 @@ Output SmoothBlendedPixel(Input input, int2 target)
             }
 
             const float weight = wx[x] * wy[y];
-            const uint alphaKind = (uint)round(Fetch(alphaTex, alphaSampler, int2(value, 0)).x);
+            const uint alphaKind = AlphaKindOf(value);
 
             if (alphaKind == AlphaOpaque)
             {
@@ -1208,20 +1215,50 @@ float BakedShadowAt(int2 original, float2 shape)
     return BakedShadowOf(PixelsAroundAt(original, shape));
 }
 
-// Port-only (KindHdSmooth): whether an HD frame's index picture's green marks an original pixel its frame covers, its
-// alpha at the pixel's centre over half (channels.hlsli's HdMaskAlpha): drawn opaque, in a baked shadow or not, or
-// covered without an index (MCVulkanRenderer::MarkHdCoverage marks a version 1 frame's so as it goes up).
-bool CoversIn(float green)
+// Port-only (KindHdSmooth): whether an original pixel lies in its HD frame's mask, which its HD colours are drawn by:
+// the pixels the original draws opaque. Its index picture's green `green` says so for one drawn, in a baked shadow or
+// not, and one covered without an index (its alpha at the pixel's centre over half, channels.hlsli's HdMaskAlpha;
+// MCVulkanRenderer::MarkHdCoverage marks a version 1 frame's so as it goes up). A translucent frame's pixel
+// (DrawnThroughAlphaGreen) is in it where AlphaPal.ini leaves its index (the red, `index`, read only for such a pixel)
+// opaque, as the original draws it; at a special colour it blends instead (SmoothBlendedPixel, by the same kinds).
+bool InHdMask(float green, float index)
 {
-    return CoversGreen(Byte(green));
+    const uint mark = Byte(green);
+
+    if (CoversGreen(mark))
+    {
+        return true;
+    }
+
+    if (!DrawnThroughAlphaGreen(mark))
+    {
+        return false;
+    }
+
+    return AlphaKindOf(Byte(index)) == AlphaOpaque;
+}
+
+// Whether any of a gather's four greens is a translucent frame's pixel (DrawnThroughAlphaGreen), whose index the mask
+// reads.
+bool AnyDrawnThroughAlpha(float4 greens)
+{
+    return DrawnThroughAlphaGreen(Byte(greens.x)) || DrawnThroughAlphaGreen(Byte(greens.y)) ||
+           DrawnThroughAlphaGreen(Byte(greens.z)) || DrawnThroughAlphaGreen(Byte(greens.w));
+}
+
+// Pixel (x, y) of a 2 x 2 gather (x, y in 0 and 1, y down): its x, y, z, w are the bottom left, bottom right, top right
+// and top left.
+float GatheredAt(float4 four, int x, int y)
+{
+    return y == 0 ? (x == 0 ? four.w : four.z) : (x == 0 ? four.x : four.y);
 }
 
 // Port-only: an HD frame's coverage at `shape` (a place in its original's pixels, their centres at .5) for
-// KindHdSmooth: the original's pixels (`original` its size) that its frame covers (CoversIn), smoothed as a smooth-edged
+// KindHdSmooth: the original's pixels (`original` its size) in its frame's mask (InHdMask), smoothed as a smooth-edged
 // shape's are (SmoothCoverage), so its edges are curves at the output's resolution instead of its mask's steps.
 // `nearest` becomes the covered pixel nearest the place. The 4 x 4 pixels' marks are read 2 x 2 at a time, each by one
-// gather at the four's shared corner in the index picture, whose x, y, z, w are the four's bottom left, bottom right,
-// top right and top left; those outside the picture are not covered.
+// gather at the four's shared corner in the index picture (GatheredAt), and their indices so where a translucent
+// frame's pixel is among the four; those outside the picture are not covered.
 float HdMaskCoverage(int2 original, float2 shape, out int2 nearest)
 {
     const float2 at = shape - 0.5;
@@ -1234,11 +1271,19 @@ float HdMaskCoverage(int2 original, float2 shape, out int2 nearest)
     sourceTex.GetDimensions(width, height);
     const float2 sourceSize = float2((float)width, (float)height);
     float4 marks[4];
+    float4 indices[4];
 
     [unroll] for (int quad = 0; quad < 4; quad++)
     {
         const int2 corner = sourceCorner + base + int2((quad & 1) * 2, (quad >> 1) * 2);
-        marks[quad] = sourceTex.GatherGreen(sourceSampler, float2(corner) / sourceSize);
+        const float2 gatherAt = float2(corner) / sourceSize;
+        marks[quad] = sourceTex.GatherGreen(sourceSampler, gatherAt);
+        indices[quad] = float4(0.0, 0.0, 0.0, 0.0);
+
+        [branch] if (AnyDrawnThroughAlpha(marks[quad]))
+        {
+            indices[quad] = sourceTex.GatherRed(sourceSampler, gatherAt);
+        }
     }
 
     float coverage = 0.0;
@@ -1250,10 +1295,10 @@ float HdMaskCoverage(int2 original, float2 shape, out int2 nearest)
         [unroll] for (int x = 0; x < 4; x++)
         {
             const int2 texel = base + int2(x - 1, y - 1);
-            const float4 four = marks[(y >> 1) * 2 + (x >> 1)];
-            const float mark = (y & 1) == 0 ? ((x & 1) == 0 ? four.w : four.z) : ((x & 1) == 0 ? four.x : four.y);
+            const int quad = (y >> 1) * 2 + (x >> 1);
 
-            if (any(texel < 0) || any(texel >= original) || !CoversIn(mark))
+            if (any(texel < 0) || any(texel >= original) ||
+                !InHdMask(GatheredAt(marks[quad], x & 1, y & 1), GatheredAt(indices[quad], x & 1, y & 1)))
             {
                 continue;
             }
@@ -2390,7 +2435,7 @@ Output DrawnOutput(Input input)
     if ((flags & AlphaBlend) != 0)
     {
         const uint entry = (flags & GivenAlpha) != 0 ? input.op.w : value;
-        const uint alphaKind = (uint)round(Fetch(alphaTex, alphaSampler, int2(entry, 0)).x);
+        const uint alphaKind = AlphaKindOf(entry);
 
         if (alphaKind == AlphaNothing && (flags & TableAfter) == 0)
         {

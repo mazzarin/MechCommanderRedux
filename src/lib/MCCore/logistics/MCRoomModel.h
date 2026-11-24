@@ -160,6 +160,11 @@ public:
         /// <summary>The player's name, the session's as the player was seated.</summary>
         std::string Name;
         MCFileStatus Files = MCFileStatus::NotAsked;
+        /// <summary>
+        /// Whether the room shows the seat's name: hidden as the room opens, shown as it seats the player, hidden as the
+        /// player leaves. A seat past the players the room last opened with keeps its id, hidden.
+        /// </summary>
+        bool Shown = false;
     };
 
     /// <summary>The players shown the room, a seat each.</summary>
@@ -188,6 +193,8 @@ public:
     void Seat(size_t seat, uint32_t playerId);
     /// <summary>Player <paramref name="playerId"/>'s seat; none when the room doesn't show it.</summary>
     MCOptionalRef<MCSeat> SeatOf(uint32_t playerId);
+    /// <summary>Whether the room shows player <paramref name="playerId"/>'s name in a seat (<see cref="MCSeat::Shown"/>).</summary>
+    bool ShowsName(uint32_t playerId) const;
     /// <summary>Whether the host's inquiry of the mission's file waits for a player's answer.</summary>
     bool AskingFiles() const;
 
@@ -421,6 +428,9 @@ public:
 private:
     /// <summary>The view's <paramref name="tell"/>, when the room has a view.</summary>
     template <typename F> void ToView(F&& tell) const;
+
+    /// <summary>Seat <paramref name="seat"/>'s name shown or hidden, on the view too.</summary>
+    void ShowSeat(size_t seat, bool shown);
 
     /// <summary>Lays the players on no team down the list of them (see the callers for the skips).</summary>
     void LayOutUnassigned(uint32_t skipId, size_t names, bool skipEmpty);

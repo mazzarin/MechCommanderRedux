@@ -17,6 +17,7 @@
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
@@ -1091,7 +1092,7 @@ namespace
         REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
         reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
         MCTestGuest::Settle();
-        REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+        REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Room());
         CHECK(RoomScreenShown());
         CHECK(!GlobalLog()->Message->IsShowing());
         std::shared_ptr<MCRmlScreen> notice = RemadeNotice();

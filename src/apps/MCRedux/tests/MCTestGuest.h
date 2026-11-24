@@ -10,14 +10,12 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCGamesScreen.h"
-#include "logistics/MCLogTextObject.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
@@ -1077,26 +1075,25 @@ namespace MCTestGuest
         return true;
     }
 
-    /// <summary>Whether the game's session screen shows player <paramref name="id"/>.</summary>
+    /// <summary>Whether the game's room shows player <paramref name="id"/>'s name (the room model's seats).</summary>
     inline bool RoomShows(uint32_t id)
     {
-        return std::ranges::any_of(GlobalLog()->SessionScreen->PlayerNames, [id](const auto& name)
-                                   { return name != nullptr && name->ShowWindow && name->PlayerId() == id; });
+        return GlobalLog()->Room.ShowsName(id);
     }
 
     /// <summary>
-    /// Whether the host's session screen shows guest <paramref name="id"/> and showed it the room with its game up: no
-    /// showing again waits for its ping (which puts the screen back on its chat tab).
+    /// Whether the host's room shows guest <paramref name="id"/> and showed it the room with its game up: no showing
+    /// again waits for its ping (which puts the room back on its chat).
     /// </summary>
     inline bool RoomShowsReady(uint32_t id)
     {
         return RoomShows(id) && GlobalLog()->Room.ShownWithGameUp(id);
     }
 
-    /// <summary>Whether <paramref name="screen"/> is logistics' screen now.</summary>
-    template <class Screen> bool OnScreen(const Screen& screen)
+    /// <summary>Whether <paramref name="screen"/> is the flow's top screen now (MCMenuScreens::Top).</summary>
+    inline bool OnScreen(MCScreenFlow::MCScreenId screen)
     {
-        return GlobalLog()->CurrentScreen() == screen;
+        return MCMenuScreens::Top() == screen;
     }
 
     /// <summary>Whether this game is in a session.</summary>
@@ -1143,14 +1140,10 @@ namespace MCTestGuest
                !MCScreenChange::Running();
     }
 
-    /// <summary>
-    /// Whether the room shows: the remade one (SPEC-menus.md's stage 4) in the 1998 session screen's place, logistics'
-    /// screen still; or the 1998 one where the remade one can't show.
-    /// </summary>
+    /// <summary>Whether the room shows: the flow's top, the remade room (SPEC-menus.md's stage 4) shown.</summary>
     inline bool InRoom()
     {
-        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen &&
-               (RoomScreenShown() || GlobalLog()->SessionScreen->IsShowing());
+        return MCMenuScreens::Top() == MCMenuScreens::Room() && RoomScreenShown();
     }
 
     /// <summary>The element <paramref name="id"/> in a remade screen's document; none while it isn't open.</summary>
@@ -1371,7 +1364,7 @@ namespace MCTestGuest
         lan.PickRow(0);
         REQUIRE(lan.Seen().CanJoin);
         lan.PressJoin();
-        REQUIRE(SettleUntil([] { return OnScreen(GlobalLog()->SessionScreen) && InSession(); }));
+        REQUIRE(SettleUntil([] { return OnScreen(MCMenuScreens::Room()) && InSession(); }));
         Settle();
     }
 
@@ -1382,8 +1375,7 @@ namespace MCTestGuest
     inline bool HostLobbyRoom(std::string_view port, std::initializer_list<std::reference_wrapper<Guest>> guests)
     {
         if (!MCTestGame::StartLobby(std::format("-host -port {} -player BOB", port)) || MultiPlayer() == nullptr ||
-            MultiPlayer()->SessionManager->DirectPlay == nullptr ||
-            GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen)
+            MultiPlayer()->SessionManager->DirectPlay == nullptr || !OnScreen(MCMenuScreens::Room()))
         {
             return false;
         }
@@ -1403,6 +1395,6 @@ namespace MCTestGuest
                        std::ranges::all_of(guests, [](const Guest& guest) { return guest.SessionScreens() > 0; });
             });
         Settle();
-        return shown && GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
+        return shown && OnScreen(MCMenuScreens::Room());
     }
 }

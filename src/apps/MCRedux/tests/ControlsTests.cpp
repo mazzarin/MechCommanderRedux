@@ -11,6 +11,7 @@
 #include "logistics/MCLogKeyList.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
@@ -547,7 +548,7 @@ TEST_CASE_ISOLATED("game: a lobby's session screen asks for a LIGHTS key")
     }
 
     REQUIRE(MCTestGame::StartLobby("-host -port 28975 -player BOB"));
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Room());
     StartWithOldPrefs();
     // Port-only (SPEC-menus.md's stages 4 and 7): over the remade room the remade dialog asks, taking the key itself.
     CHECK(!GlobalLog()->Message->IsShowing());

@@ -488,6 +488,18 @@ auto MCRoomModel::SeatOf(uint32_t playerId) -> MCOptionalRef<MCSeat>
     return found != Seats.end() && playerId != NoPlayer ? MCOptionalRef<MCSeat>(*found) : std::nullopt;
 }
 
+auto MCRoomModel::ShowsName(uint32_t playerId) const -> bool
+{
+    return playerId != NoPlayer &&
+           std::ranges::any_of(Seats, [playerId](const MCSeat& seat) { return seat.Shown && seat.Id == playerId; });
+}
+
+auto MCRoomModel::ShowSeat(size_t seat, bool shown) -> void
+{
+    Seats.at(seat).Shown = shown;
+    ToView([seat, shown](MCRoomView& view) { view.ShowName(seat, shown); });
+}
+
 auto MCRoomModel::AskingFiles() const -> bool
 {
     return std::ranges::any_of(Seats, [](const MCSeat& seat) { return seat.Files == MCFileStatus::Waiting; });
@@ -555,6 +567,12 @@ auto MCRoomModel::Activate(bool refresh) -> void
     // The view's tabs and buttons a new room's (SPEC-menus.md's stage 2: EXIT goes back one screen, as Escape does), and
     // its names hidden, each at its row.
     ToView([](MCRoomView& view) { view.Opening(); });
+
+    for (MCSeat& seat : Seats)
+    {
+        seat.Shown = false;
+    }
+
     CancelMission();
     Team2RP = 0;
     Team1RP = 0;
@@ -615,7 +633,7 @@ auto MCRoomModel::Activate(bool refresh) -> void
     do
     {
         Seat(index, ids[index]);
-        ToView([index](MCRoomView& view) { view.ShowName(index, true); });
+        ShowSeat(index, true);
         AssignPlayer(ids[index], NoTeam, 0, true);
         lights.SetPlayerID(static_cast<int32_t>(index), ids[index]);
         lights.SetPlayerStatus(ids[index], refresh ? LightCheckingIn : LightIdle);
@@ -1122,7 +1140,7 @@ auto MCRoomModel::RemovePlayer(uint32_t playerId) -> void
         MultiPlayer()->SessionManager->RemovePlayerFromGroup(MultiPlayer()->ClanGroupID, playerId);
     }
 
-    ToView([&seat](MCRoomView& view) { view.ShowName(*seat, false); });
+    ShowSeat(*seat, false);
     Seat(*seat, NoPlayer);
     NumPlayers = std::max(NumPlayers - 1, 0);
     LayOutUnassigned(NoPlayer, MaxPlayers, true);

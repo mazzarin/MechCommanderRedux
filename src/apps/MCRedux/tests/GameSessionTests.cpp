@@ -16,6 +16,7 @@
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenuModel.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"
@@ -531,7 +532,7 @@ TEST_CASE_ISOLATED("game: a match's results close in the fade into the menus, th
     CHECK(Mission()->State == MCMissionState::Logistics);
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
     REQUIRE(logistics != nullptr);
-    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
+    CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     CHECK(MultiPlayer() == nullptr);
     CHECK(!GuiSystem().CanFade());
     CHECK(MCFilesAhead::TakenCount() > taken);
@@ -670,7 +671,7 @@ TEST_CASE_ISOLATED("game: winning a campaign mission moves the campaign on to th
     REQUIRE(GlobalLog() != nullptr);
     CHECK_EQ(GlobalLog()->CurrentMission, 1);
     CHECK_EQ(Mission()->CurrentScenario, 1);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
 }
 
 /// <summary>A lost campaign mission is played again: the same mission's briefing comes up.</summary>
@@ -688,5 +689,5 @@ TEST_CASE_ISOLATED("game: losing a campaign mission replays it")
     REQUIRE(GlobalLog() != nullptr);
     CHECK_EQ(GlobalLog()->CurrentMission, 0);
     CHECK_EQ(Mission()->CurrentScenario, 0);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
 }

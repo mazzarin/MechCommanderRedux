@@ -300,7 +300,10 @@ namespace MCCampaignMenu
     /// </summary>
     bool Show();
 
-    /// <summary>The next <see cref="Show"/> is the way back from the 1998 PURCHASING or 'MECH BAY: the tab it was left on.</summary>
+    /// <summary>
+    /// The next <see cref="Show"/> is the way back to the screen (from the 1998 PURCHASING or 'MECH BAY, the main menu's
+    /// RETURN TO GAME, SAVE GAME's "Game saved."): the tab it was left on.
+    /// </summary>
     void ComeBack();
 
     /// <summary>The screen hidden (an old screen comes up, the loading screen).</summary>

@@ -4,6 +4,7 @@
 #include "ai/MCMoveGeometry.h"
 #include "gui/MCUpdateDisplay.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
@@ -111,6 +112,8 @@ void ReturnToGame()
     }
     else
     {
+        // Port-only (SPEC-menus.md's stage 8): the remade briefing on the tab it was left on.
+        MCCampaignMenu::ComeBack();
         GlobalLog()->SetUpBriefingScreen(false);
     }
 

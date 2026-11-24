@@ -10,12 +10,16 @@
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCDeploy.h"
+#include "logistics/MCFileScrollPane.h"
+#include "logistics/MCGenericScreen.h"
+#include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLoadingMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCOperationVideo.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
+#include "logistics/MCSavesMenu.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUnitLimits.h"
 #include "gui/MCUpdateDisplay.h"
@@ -861,4 +865,255 @@ TEST_CASE_ISOLATED("game: a match's briefing asks before leaving, and leaves for
     CHECK(!MCCampaignMenu::Shown());
     CHECK(MCTestGuest::OnLan());
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > multiplayer > lan"));
+}
+
+namespace
+{
+    /// <summary>Frames at the mission's rate until its results show (twenty seconds: the scenario's end, their fade).</summary>
+    constexpr int32_t MostFramesToResults = 300;
+    constexpr float MissionFrame = 1.0f / 15.0f;
+    /// <summary>A mission's results: above 3 a win (NEXT MISSION), below a loss (REPLAY MISSION).</summary>
+    constexpr uint32_t Won = 5;
+    constexpr uint32_t Lost = 2;
+    constexpr std::string_view FirstTitle = "Liberate work camps";
+    constexpr std::string_view FirstEyebrow = "Beachhead · Mission 1";
+
+    /// <summary>
+    /// The remade briefing up on BRIEFING where the campaign stands (<paramref name="eyebrow"/> over
+    /// <paramref name="title"/>), the 1998 briefing logistics' screen and hidden under it, the main menu under it in the
+    /// stack.
+    /// </summary>
+    void CheckRemadeBriefing(std::string_view eyebrow, std::string_view title)
+    {
+        REQUIRE(MCCampaignMenu::Shown());
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        REQUIRE(logistics != nullptr);
+        CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+        CHECK(logistics->BriefingScreen->ShowWindow == 0);
+        CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
+        CHECK_EQ(Shown().Eyebrow(), std::string(eyebrow));
+        CHECK_EQ(Shown().Title(), std::string(title));
+    }
+
+    /// <summary>Whether the mission plays (its start done).</summary>
+    bool Playing()
+    {
+        return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario && !Scenario()->StartingUp;
+    }
+
+    /// <summary>
+    /// DEPLOY's BEGIN MISSION with READY AREA's first card sent into the drop (Enter), run until the mission plays.
+    /// </summary>
+    void BeginFromDeploy()
+    {
+        constexpr int32_t MostFrames = 3000;
+        MCCampaignScreen& screen = Shown();
+        screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+        MCTestGame::RunFrame(FlowFrame);
+        ElementOf(screen, "ready0").Focus();
+        MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+        MCTestGame::RunFrame(FlowFrame);
+        REQUIRE(screen.CanBegin());
+        ClickOn(ElementOf(screen, "begin"));
+
+        for (int32_t frame = 0; frame < MostFrames && !Playing(); frame++)
+        {
+            MCTestGame::RunFrame(FlowFrame);
+        }
+
+        REQUIRE(Playing());
+        CHECK(!MCCampaignMenu::Shown());
+        CHECK(!MCLoadingMenu::Shown());
+    }
+
+    /// <summary>The mission playing ended as <paramref name="result"/>, and its results closed: the way back done.</summary>
+    void EndAndCloseResults(uint32_t result)
+    {
+        ScenarioResult = result;
+        Mission()->EndScenarioRequested = -1;
+
+        for (int32_t frame = 0; frame < MostFramesToResults && Mission()->State != MCMissionState::Results; frame++)
+        {
+            MCTestGame::RunFrame(MissionFrame);
+        }
+
+        REQUIRE(Mission()->State == MCMissionState::Results);
+        Mission()->CloseResultsScreen();
+        RunWhileChanging();
+    }
+}
+
+/// <summary>
+/// The ways back to the remade briefing between missions (SPEC-menus.md's stage 8 walk): Escape to the main menu and
+/// its RETURN TO GAME, SAVE GAME's "Game saved.", LOAD GAME's LOAD; each opens it where the campaign stands, the 1998
+/// briefing hidden under it.
+/// </summary>
+TEST_CASE_ISOLATED("game: RETURN TO GAME, SAVE GAME and LOAD GAME go back to the remade briefing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCCampaignMenu::Remade() = true;
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+    CheckRemadeBriefing(FirstEyebrow, FirstTitle);
+
+    // DEPLOY, Escape: the main menu; its RETURN TO GAME: the briefing again, on DEPLOY (as 1998's went back to the
+    // screen left).
+    Shown().ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    RunWhileChanging();
+    CHECK(!MCCampaignMenu::Shown());
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main"));
+    MCScreenFlow::Via("return to game", ReturnToGame)();
+    RunWhileChanging();
+    REQUIRE(MCCampaignMenu::Shown());
+    CHECK(Shown().Tab() == MCCampaignScreen::MCTab::Deploy);
+    Shown().ChooseTab(MCCampaignScreen::MCTab::Briefing);
+    MCTestGame::RunFrame(FlowFrame);
+    CheckRemadeBriefing(FirstEyebrow, FirstTitle);
+
+    // SAVE GAME from the main menu, Enter under its default name, "Game saved." and Enter: the briefing.
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Save()));
+    RunWhileChanging();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& saves = MCSavesMenu::Screen()->get();
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    REQUIRE(saves.Dialog());
+    REQUIRE(saves.Dialog()->Shown());
+    CHECK_EQ(saves.Dialog()->Saying().Question, std::string(MCSavesMenu::SavedText));
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    RunWhileChanging();
+    CHECK(!saves.Shown());
+    CheckRemadeBriefing(FirstEyebrow, FirstTitle);
+
+    // LOAD GAME from the main menu, Enter on the save just made: its briefing.
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    RunWhileChanging();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& load = MCSavesMenu::Screen()->get();
+    CHECK(load.Mode() == MCSavesScreen::MCMode::Load);
+    REQUIRE_EQ(load.Rows().size(), size_t{1});
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    RunWhileChanging();
+    CHECK(!load.Shown());
+    CHECK_EQ(GlobalLog()->CurrentMission, 0);
+    CheckRemadeBriefing(FirstEyebrow, FirstTitle);
+}
+
+/// <summary>
+/// The way into a mission and back with the remade screens (SPEC-menus.md's stage 8 walk): the first briefing's BEGIN
+/// MISSION, the mission won, its results' NEXT MISSION: the next mission's remade briefing; BEGIN MISSION again, lost,
+/// REPLAY MISSION: that mission's briefing again; the third as a quick-start mission's, won: back to SOLO MISSIONS. Each
+/// mission's start takes the menus' way back down (the stack cleared), and each landing makes it again (the main menu
+/// under the briefing, or under SOLO MISSIONS). The second mission's pilots join the lance in its first frames: its end
+/// came in the mech bar's dance, which crashed the way back.
+/// </summary>
+TEST_CASE_ISOLATED("game: the results' NEXT MISSION and REPLAY MISSION go back to the remade briefing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup cleanup;
+    StartFirstBriefing();
+    CheckRemadeBriefing(FirstEyebrow, FirstTitle);
+    BeginFromDeploy();
+    CHECK(MCScreenFlow::Stack().empty());
+
+    EndAndCloseResults(Won);
+    REQUIRE(GlobalLog() != nullptr);
+    CHECK_EQ(GlobalLog()->CurrentMission, 1);
+    constexpr std::string_view SecondEyebrow = "Beachhead · Mission 2";
+    constexpr std::string_view SecondTitle = "Rescue captured pilots";
+    CheckRemadeBriefing(SecondEyebrow, SecondTitle);
+
+    BeginFromDeploy();
+    EndAndCloseResults(Lost);
+    REQUIRE(GlobalLog() != nullptr);
+    CHECK_EQ(GlobalLog()->CurrentMission, 1);
+    CheckRemadeBriefing(SecondEyebrow, SecondTitle);
+
+    // As a quick-start mission's end (BriefingTests' EndToResultsAndBack): SOLO MISSIONS, the main menu under it.
+    BeginFromDeploy();
+    Solo = true;
+    EndAndCloseResults(Won);
+    CHECK(!Solo);
+    CHECK(!MCCampaignMenu::Shown());
+    REQUIRE(GlobalLog() != nullptr);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen);
+    CHECK(LoadingSolo);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > solo missions"));
+}
+
+/// <summary>
+/// A solo mission's PLAY (SOLO MISSIONS, 1998's load screen until stage 7) opens its remade briefing: its name (its
+/// briefing's STARCOM line, as two of the expansion's solo missions write it), no force yet (BEGIN MISSION dark), the
+/// tons that drop and the RP to buy them; 1998's tabs for it, the same four as a campaign's. (Its win's way back to SOLO
+/// MISSIONS: the results' test.)
+/// </summary>
+TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its force to buy")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCCampaignMenu::Remade() = true;
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    SoloLoadScreen();
+    RunWhileChanging();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    REQUIRE(logistics->CurrentScreen() == logistics->LoadScreen);
+    const std::shared_ptr<MCFileScrollPane> pane = logistics->LoadScreen->FilePane.Lock();
+    REQUIRE(pane != nullptr);
+    REQUIRE(!pane->Files.empty());
+    REQUIRE_EQ(pane->Files.front().Name, std::string("ACEHUNT"));
+    pane->SetSelectedFile(0);
+    MCScreenFlow::Via("load", LoadGame)();
+    RunWhileChanging();
+    REQUIRE(MCCampaignMenu::Shown());
+    CHECK(Solo);
+    MCCampaignScreen& screen = Shown();
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    CHECK(GlobalLog()->BriefingScreen->ShowWindow == 0);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
+    CHECK_EQ(screen.Eyebrow(), std::string("Solo"));
+    CHECK_EQ(screen.Title(), std::string("Destroy all aces"));
+    CHECK_EQ(screen.Objectives().size(), size_t{5});
+    CHECK(ResourcePoints > 0);
+
+    // DEPLOY: nothing ready, BEGIN MISSION dark, the drop's tons all free.
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(screen.ReadyCards().empty());
+    CHECK(!screen.CanBegin());
+    CHECK_EQ(screen.WeightNow(), std::string("0"));
+    CHECK_EQ(screen.WeightFree(), std::format("{} tons free", MaxDeployTonnage));
+    screen.ChooseTab(MCCampaignScreen::MCTab::Briefing);
+    MCTestGame::RunFrame(FlowFrame);
+
+    // E: 1998's PURCHASING, its BRIEFING button back.
+    MCScreenInput::RealKey(SDL_SCANCODE_E);
+    RunWhileChanging();
+    CHECK(!MCCampaignMenu::Shown());
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen);
+    GlobalLog()->SetUpBriefingScreen(true);
+    RunWhileChanging();
+    REQUIRE(MCCampaignMenu::Shown());
+    CHECK(Solo);
 }

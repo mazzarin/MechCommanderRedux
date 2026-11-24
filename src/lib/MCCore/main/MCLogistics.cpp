@@ -1129,7 +1129,10 @@ auto MCLogistics::ShowLogScreen(bool show, bool redraw) const -> void
         GuiSystem().ActivatePaletteFromTga(ArtPath + "logart\\lsrupm05.tga");
     }
 
-    CurrentScreen()->ShowGuiWindow(show);
+    // Port-only (SPEC-menus.md's stage 8): the 1998 briefing stays hidden under the remade one (the way back from a
+    // mission shows logistics' screen once its briefing is set up).
+    const bool underRemade = CurrentScreen() == BriefingScreen && MCCampaignMenu::Shown();
+    CurrentScreen()->ShowGuiWindow(show && !underRemade);
 }
 
 auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t

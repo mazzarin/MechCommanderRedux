@@ -96,7 +96,10 @@ namespace
         return screen;
     }
 
-    /// <summary>The tab the screen was left on for the 1998 PURCHASING or 'MECH BAY, and whether the next show comes back to it.</summary>
+    /// <summary>
+    /// The tab the screen was left on (for the 1998 PURCHASING or 'MECH BAY, the main menu), and whether the next show
+    /// comes back to it.
+    /// </summary>
     MCCampaignScreen::MCTab LeftOn = MCCampaignScreen::MCTab::Briefing;
     bool ComingBack = false;
 
@@ -294,6 +297,8 @@ void MCCampaignScreen::OnShow()
 
 void MCCampaignScreen::OnHide()
 {
+    // However it hides (a 1998 screen showing hides the remade ones), the way back comes to this tab.
+    LeftOn = Tab();
     // The operation's video goes with the briefing (a mission begun, the main menu).
     MCVideoMenu::Close();
 
@@ -670,8 +675,7 @@ void MCCampaignScreen::ChooseTab(MCTab tab)
     }
 
     // PURCHASING and the 'MECH BAY: the 1998 screens until step 2, through a change; their BRIEFING button comes back
-    // to the tab left on. The tabs show the one left on meanwhile.
-    LeftOn = Tab();
+    // to the tab left on (kept as the screen hides). The tabs show the one left on meanwhile.
     MarkTab();
 
     const bool purchasing = tab == MCTab::Purchasing;
@@ -1382,7 +1386,8 @@ bool MCCampaignMenu::Wanted()
 
 void MCCampaignMenu::ComeBack()
 {
-    ComingBack = true;
+    // Only for a show that comes: the 1998 briefing's way back keeps no flag for a later one.
+    ComingBack = Wanted();
 }
 
 bool MCCampaignMenu::Show()

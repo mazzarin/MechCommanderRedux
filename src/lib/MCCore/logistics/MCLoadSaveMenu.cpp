@@ -2,6 +2,7 @@
 #include "logistics/MCLoadSaveMenu.h"
 #include "lib/MCFile.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLogDialogButton.h"
@@ -168,6 +169,8 @@ void SaveWorkedCallback(int32_t)
     }
     else if (GlobalLog()->PreviousState != 4)
     {
+        // Port-only (SPEC-menus.md's stage 8): the remade briefing on the tab it was left on.
+        MCCampaignMenu::ComeBack();
         GlobalLog()->SetUpBriefingScreen(false);
     }
     else

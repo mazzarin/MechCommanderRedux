@@ -13,8 +13,11 @@ namespace
     constexpr std::string_view FileName = "missions.json";
     constexpr const char* OperationsKey = "operations";
     constexpr const char* MissionsKey = "missions";
-    /// <summary>The line a briefing names its operation on, before the word (its operation's, then a slash).</summary>
-    constexpr std::string_view FedcomMark = "FEDCOM:";
+    /// <summary>
+    /// The marks of the line a briefing names its operation on, before the word (its operation's, then a slash): the
+    /// Inner Sphere's, and the Clans' (two of the expansion's solo missions).
+    /// </summary>
+    constexpr std::array<std::string_view, 2> DispatchMarks = {"FEDCOM:", "STARCOM:"};
     /// <summary>The most a data file may hold (it is a few kilobytes): a larger one isn't read.</summary>
     constexpr std::uintmax_t MostFileBytes = 1 << 20;
 
@@ -143,6 +146,23 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>Where the operation's word starts on <paramref name="line"/>, after its dispatch mark; none without one.</summary>
+    std::optional<size_t> AfterMark(std::string_view line)
+    {
+        for (const std::string_view mark : DispatchMarks)
+        {
+            if (const size_t at = line.find(mark); at != std::string_view::npos)
+            {
+                return at + mark.size();
+            }
+        }
+
+        return std::nullopt;
+    }
+}
+
 auto MCMissionNames::FromBriefing(std::string_view text) -> MCWritten
 {
     MCWritten written;
@@ -155,9 +175,9 @@ auto MCMissionNames::FromBriefing(std::string_view text) -> MCWritten
         const std::string visible = Visible(text.substr(start, end - start));
         start = end + 1;
 
-        if (const size_t mark = visible.find(FedcomMark); !afterFedcom && mark != std::string::npos)
+        if (const std::optional<size_t> mark = afterFedcom ? std::nullopt : AfterMark(visible); mark.has_value())
         {
-            const std::string_view rest = std::string_view(visible).substr(mark + FedcomMark.size());
+            const std::string_view rest = std::string_view(visible).substr(*mark);
             written.Operation = std::string(Trimmed(rest.substr(0, rest.find('/'))));
             afterFedcom = true;
             continue;

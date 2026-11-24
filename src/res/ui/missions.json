@@ -8,7 +8,8 @@
     "CUTTHROAT": "Cutthroat",
     "HYDRA": "Hydra",
     "GORGON": "Gorgon",
-    "MINOTAUR": "Minotaur"
+    "MINOTAUR": "Minotaur",
+    "SOLO": "Solo"
   },
   "missions": {
     "brf0101.txt": "Liberate work camps",
@@ -53,6 +54,9 @@
     "xbrf0302.txt": "Eliminate reinforcements",
     "xbrf0303.txt": "Obliterate complex",
     "xbrf0304.txt": "Destroy engine drills",
-    "xbrf0305.txt": "Destroy engine drills"
+    "xbrf0305.txt": "Destroy engine drills",
+    "xsbrf0401.txt": "Destroy all aces",
+    "xsbrf0402.txt": "Destroy garrison",
+    "xsbrf0404.txt": "Port Arthur redux"
   }
 }

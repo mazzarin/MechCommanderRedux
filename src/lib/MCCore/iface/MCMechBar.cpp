@@ -133,6 +133,15 @@ auto MCMechBar::Resize(int32_t width, int32_t height) -> void
 
 auto MCMechBar::CleanUp() -> void
 {
+    // Port fix: a mission ending during the dance (a mech activated in its last frames) left its callback running on
+    // the bar's icons, gone below: the way back from the mission crashed.
+    if (_DanceCallback != nullptr)
+    {
+        GuiSystem().RemoveCallback(*_DanceCallback);
+        _DanceCallback.reset();
+        Dancing = false;
+    }
+
     // Last to first, as the original removed them.
     while (!_Buttons.empty())
     {

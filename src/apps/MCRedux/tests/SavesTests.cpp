@@ -79,7 +79,8 @@ namespace
     }
 }
 
-TEST_CASE("saves: a briefing names its operation on its FEDCOM line and its mission on the starred lines after it")
+TEST_CASE(
+    "saves: a briefing names its operation on its FEDCOM or STARCOM line and its mission on the starred lines after it")
 {
     // Its formatting codes dropped, a title on two lines joined, the rule between them skipped.
     // As brf0104.txt writes them, a line of each (its %n), with its centring and colours.
@@ -93,6 +94,12 @@ TEST_CASE("saves: a briefing names its operation on its FEDCOM line and its miss
     const MCMissionNames::MCWritten written = MCMissionNames::FromBriefing(briefing);
     CHECK_EQ(written.Operation, std::string("SKYHOOK"));
     CHECK_EQ(written.Mission, std::string("DESTROY CLAN HEADQUARTERS BUILDING"));
+
+    // The Clans' STARCOM line, as two of the expansion's solo missions write it (xsbrf0401.txt).
+    const MCMissionNames::MCWritten clans = MCMissionNames::FromBriefing(
+        "%fs%fc4%cSTARCOM:SOLO/04PRDN01%n\r\n%fc5%c----------%n\r\n%fc6%c***DESTROY ALL ACES***%n\r\n");
+    CHECK_EQ(clans.Operation, std::string("SOLO"));
+    CHECK_EQ(clans.Mission, std::string("DESTROY ALL ACES"));
 
     // One without them names nothing.
     const MCMissionNames::MCWritten nothing = MCMissionNames::FromBriefing("Commander,\r\n***A TITLE***\r\n");

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCSaves.h"
 
 #include <optional>
@@ -132,3 +131,45 @@ namespace MCMainMenuModel
     inline constexpr std::string_view InternetLine = "Games on the internet";
     inline constexpr std::string_view NotStarted = "Not started";
 }
+
+// The 1998 main menu's callbacks (logistics\logmain.cpp), the model's since stage 9's step 2: new campaigns, the
+// cinematics, back to the game, the multiplayer menu and the way out. The 1998 main screen's buttons, the flow and the
+// network call them.
+
+/// <summary>Starts a new original campaign.</summary>
+void NewCampaign();
+
+/// <summary>Starts a new Mech Commander Gold (MCX) campaign.</summary>
+void NewMcxCampaign();
+
+/// <summary>
+/// Port-only: the campaign <paramref name="campaign"/> started from its start file <paramref name="startFile"/> on the
+/// briefing screen at once, its palette left for the next frame to fade to: what <see cref="NewCampaign"/> and
+/// <see cref="NewMcxCampaign"/> do in the fade from their click (the original's, then at the click).
+/// <paramref name="firstPlanet"/> starts it on the first planet (the expansion's keeps the planet it had).
+/// </summary>
+void BeginCampaign(std::string_view campaign, std::string_view startFile, bool firstPlanet);
+
+/// <summary>Opens the multiplayer menu.</summary>
+void ShowMultiPlayer();
+
+/// <summary>Replays the campaign's cinematics.</summary>
+void ReplayCinema();
+
+/// <summary>Returns from the menu to the logistics screen left (purchase, repair or briefing).</summary>
+void ReturnToGame();
+
+/// <summary>Ends the campaign (the player lost): the game quits.</summary>
+void GameOverMan();
+
+/// <summary>Back to the main menu (stops a modem or serial wait).</summary>
+void Cancel();
+
+/// <summary>Leaves the session (multiplayer) and goes back to the main menu; from a lobby launch, the game quits.</summary>
+void DoExit();
+
+/// <summary>Port: <see cref="DoExit"/>'s leaving a match: the multiplayer logistics taken down and the session left.</summary>
+void LeaveMatch();
+
+/// <summary>The exit button: asks for confirmation, then <see cref="DoExit"/>.</summary>
+void CheckExit();

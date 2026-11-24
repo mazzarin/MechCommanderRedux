@@ -9,7 +9,7 @@
 #include "gui/MCScreenFlow.h"
 #include "lib/MCFile.h"
 #include "logistics/MCBriefingScreen.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCSavesMenu.h"

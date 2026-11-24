@@ -13,7 +13,7 @@
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogSlider.h"
 #include "logistics/MCLogToolButton.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCRegistrySettings.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"

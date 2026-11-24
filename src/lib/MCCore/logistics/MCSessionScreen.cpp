@@ -23,7 +23,7 @@
 #include "main/MCUpdater.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCLoadSaveMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "main/MCGameStrings.h"

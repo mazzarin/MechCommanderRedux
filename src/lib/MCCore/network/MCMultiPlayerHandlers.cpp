@@ -1367,20 +1367,14 @@ namespace
         game.InLogistics = false;
         GlobalLog()->DestroyMultiplayer();
 
-        if (GlobalLog()->CurrentScreen() != GlobalLog()->MainScreen)
+        if (MCMenuScreens::Top() != MCMenuScreens::Main())
         {
             WhackTimer = true;
         }
 
         // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade.
         MCScreenFlow::Change("main menu",
-                             []
-                             {
-                                 GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-                                 GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
-                                 GlobalLog()->LogisticsState = 1;
-                                 GlobalLog()->ShowLogScreen(true, true);
-                             });
+                             [] { MCMenuScreens::ShowBack(MCMenuScreens::Main(), MCMenuScreens::MCBackWay::InPlace); });
         game.LeaveSession();
     }
 }

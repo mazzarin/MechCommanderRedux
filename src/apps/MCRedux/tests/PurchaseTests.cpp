@@ -30,7 +30,7 @@
 #include "logistics/MCVehicleInventoryBlock.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCGamePaths.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "main/MCGameContext.h"
 #include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"

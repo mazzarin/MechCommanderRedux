@@ -4,6 +4,7 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCSessionScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCLobbyUpdate.h"
@@ -48,7 +49,7 @@ namespace
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         return game != nullptr && game->SessionManager != nullptr && game->SessionManager->Internet != nullptr &&
                game->SessionManager->CurrentSession() != nullptr && logistics != nullptr &&
-               logistics->CurrentScreen() == logistics->SessionScreen && !MCLobbyUpdate::MatchUnderWay();
+               MCMenuScreens::Top() == MCMenuScreens::Room() && !MCLobbyUpdate::MatchUnderWay();
     }
 
     /// <summary>The question is over: its message closes, if it still shows.</summary>

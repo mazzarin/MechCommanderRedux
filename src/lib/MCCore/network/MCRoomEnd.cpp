@@ -11,7 +11,7 @@
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLogMenus.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -504,7 +504,7 @@ auto MCRoomEnd::ShowGames(MCGames games, std::string_view line, std::function<vo
                          [games, line = std::string(line), then = std::move(then)]
                          {
                              MCLogistics& shown = *GlobalLog();
-                             shown.CurrentScreen()->ShowGuiWindow(false);
+                             shown.HideScreen();
                              DropMessage(shown);
 
                              if (games == MCGames::Internet)
@@ -789,8 +789,9 @@ auto MCRoomEnd::LeaveToGames() -> void
     // The modem and serial screens (shown only without a network) go back to the connection screen, as in the original.
     // Port-only (SPEC-menus.md's stage 3): the remade LAN screen's own way back is its kind's (logistics/MCGamesScreen).
     const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
-    const bool fromRoom = GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
-    const bool fromLanGame = (fromRoom || GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen) &&
+    const MCScreenFlow::MCScreenId top = MCMenuScreens::Top();
+    const bool fromRoom = top == MCMenuScreens::Room();
+    const bool fromLanGame = (fromRoom || top == MCMenuScreens::ReadyRoom()) &&
                              (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx);
     // Port (Redux HD): an internet game's room goes back to the INTERNET screen.
     const bool fromInternetGame = fromRoom && MultiPlayer()->SessionManager->Internet != nullptr;
@@ -816,7 +817,7 @@ auto MCRoomEnd::LeaveToGames() -> void
         GlobalLog()->ClearChat();
     }
 
-    GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+    GlobalLog()->HideScreen();
 
     if (fromInternetGame)
     {

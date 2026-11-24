@@ -10,7 +10,7 @@
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFilesAhead.h"
 #include "logistics/MCBriefingScreen.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCGameContext.h"

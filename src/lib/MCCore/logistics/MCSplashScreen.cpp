@@ -10,7 +10,7 @@
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCInternetMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogToolButton.h"
 #include "logistics/MCLogChatInput.h"

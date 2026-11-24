@@ -16,7 +16,7 @@
 #include "logistics/MCChatView.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogRows.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"

@@ -311,6 +311,12 @@ public:
     int32_t SetUpMainScreen(bool fromMenu);
 
     /// <summary>
+    /// Port-only (stage 9, step 2): the main menu's multiplayer teardown (SetUpMainScreen's logic): the match's
+    /// logistics and game let go, the chat's blinks stopped, the purchase dialog hidden.
+    /// </summary>
+    void LeaveMatchAtMainMenu();
+
+    /// <summary>
     /// Reads the campaign's purchase file <paramref name="purchaseFile"/>: the costs, the campaign briefing, the
     /// current mission's purchase file, cinema and operation; then sets up the shop from <paramref name="file"/>.
     /// </summary>
@@ -750,6 +756,15 @@ public:
 
     /// <summary>Makes <paramref name="screen"/> the screen being shown.</summary>
     void SetCurrentScreen(MCLogObject& screen) { SetCurrentScreen(screen.WeakAs<MCLogObject>()); }
+
+    /// <summary>Port-only (stage 9, step 2): the 1998 screen being shown hidden (under the remade ones), if any.</summary>
+    void HideScreen() const;
+
+    /// <summary>
+    /// Port-only (stage 9, step 2): the 1998 screens' part of a set-up: the screen shown hidden and
+    /// <paramref name="screen"/> made the screen being shown; the one shown before.
+    /// </summary>
+    std::shared_ptr<MCLogObject> ShowInPlace(std::weak_ptr<MCLogObject> screen);
     MCGuiHandle<MCSessionScreen> SessionScreen;
     /// <summary>Port-only (SPEC-menus.md's stage 4): the multiplayer room's state, which the room's screens view.</summary>
     MCRoomModel Room;

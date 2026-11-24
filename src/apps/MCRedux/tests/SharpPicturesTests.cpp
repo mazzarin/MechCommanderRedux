@@ -15,7 +15,7 @@
 #include "lib/MCFnvHash.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCLogPort.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"

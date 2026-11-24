@@ -396,7 +396,7 @@ namespace
                              []
                              {
                                  MCLogistics& logistics = *GlobalLog();
-                                 logistics.CurrentScreen()->ShowGuiWindow(false);
+                                 logistics.HideScreen();
                                  logistics.SetCurrentScreen(logistics.ConnectScreen);
                                  logistics.LogisticsState = WaitingState;
                                  logistics.ShowLogScreen(true, true);
@@ -439,7 +439,7 @@ namespace
         }
         else
         {
-            GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+            GlobalLog()->HideScreen();
             ShowInternetScreen();
         }
 

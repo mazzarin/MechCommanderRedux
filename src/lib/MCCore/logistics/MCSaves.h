@@ -7,15 +7,39 @@
 // GAME. Each is read as the list is refreshed: its campaign, mission and RP (its first packet), the mission's
 // briefing's name for it (MCMissionNames) and when it was written (the file's time).
 
+#include "gui/MCScreenChange.h"
 #include "lib/MCOptionalRef.h"
 
 #include <SDL3/SDL_time.h>
 
 class MCFitIniFile;
 
+/// <summary>
+/// Port-only (SPEC-menus.md's changes of screen): a save's load as a change's job, run live from its press a step a
+/// frame; <see cref="MCSaves::ShowSavedGame"/> ends it once the screen is dark.
+/// </summary>
+struct MCSavedGameLoad
+{
+    std::vector<MCScreenChange::MCPiece> Job;
+    /// <summary>The load's result once its job has run: 0 loaded, else refused.</summary>
+    std::shared_ptr<int32_t> Result;
+};
+
 class MCSaves
 {
 public:
+    /// <summary>
+    /// Port-only (stage 9, step 2): the load of save <paramref name="name"/> (a campaign's .sav, or a single mission's
+    /// .sol) begun (LOAD GAME's, the main menu's CONTINUE and PLAY, 1998's LOAD).
+    /// </summary>
+    static MCSavedGameLoad LoadSavedGameAhead(std::string_view name, bool campaign);
+
+    /// <summary>
+    /// A save's load ended, its job run: the music stopped; on success (<paramref name="result"/> 0) the briefing set up
+    /// and the logistics music on. Whether the game took the save (a refused one leaves no campaign).
+    /// </summary>
+    static bool ShowSavedGame(int32_t result);
+
     /// <summary>The campaign a save plays (its [Planet] Setting: Port Arthur's, or Cermak's in the expansion).</summary>
     enum class MCCampaign : uint8_t
     {

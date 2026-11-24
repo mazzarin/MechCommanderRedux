@@ -14,7 +14,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPrefsScreen.h"

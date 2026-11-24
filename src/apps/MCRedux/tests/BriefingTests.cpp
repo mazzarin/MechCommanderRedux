@@ -23,7 +23,7 @@
 #include "logistics/MCHdOptionsPanel.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogButton.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCSavesMenu.h"

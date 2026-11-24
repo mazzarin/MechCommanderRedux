@@ -15,7 +15,7 @@
 #include "lib/MCPacketFile.h"
 #include "logistics/MCLogButton.h"
 #include "logistics/MCLogMenus.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCMenuDialog.h"

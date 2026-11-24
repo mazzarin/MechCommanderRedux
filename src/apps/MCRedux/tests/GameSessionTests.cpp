@@ -15,7 +15,7 @@
 #include "linkup/MCLinkupMessages.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingScreen.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"

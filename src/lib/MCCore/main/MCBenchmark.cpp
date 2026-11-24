@@ -11,7 +11,8 @@
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCDeploy.h"
 #include "logistics/MCLogisticsTabs.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCHdSettings.h"
@@ -818,7 +819,7 @@ namespace
         {
             case MCBriefingPhase::Menu:
             {
-                if (logistics->CurrentScreen() == logistics->MainScreen)
+                if (MCMenuScreens::Top() == MCMenuScreens::Main())
                 {
                     MCFrameLog::Note("benchmark: a new campaign");
                     NewCampaign();
@@ -829,7 +830,7 @@ namespace
             }
             case MCBriefingPhase::Opening:
             {
-                if (logistics->CurrentScreen() == logistics->BriefingScreen && MCCampaignMenu::Ready())
+                if (MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing) && MCCampaignMenu::Ready())
                 {
                     run.Phase = MCBriefingPhase::Steps;
                     StartStep(run, 0);

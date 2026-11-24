@@ -17,7 +17,7 @@
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCMenuDialog.h"

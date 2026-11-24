@@ -20,7 +20,7 @@
 #include "logistics/MCLogInvScreen.h"
 #include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCLogSlider.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCPurMechList.h"

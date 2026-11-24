@@ -7,7 +7,7 @@
 #include "gui/MCScrollPane.h"
 #include "lib/MCFatal.h"
 #include "logistics/MCTicker.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCLogToolButton.h"
 #include "logistics/MCLogChatInput.h"

@@ -18,7 +18,7 @@
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"

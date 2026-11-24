@@ -13,9 +13,9 @@
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCLogMenus.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCSessionScreen.h"
+#include "logistics/MCMenuScreens.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
@@ -90,7 +90,7 @@ namespace
     /// <summary>Whether logistics' screen is the room (the 1998 session screen, in the remade room's place too).</summary>
     bool RoomCurrent()
     {
-        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
+        return MCMenuScreens::Top() == MCMenuScreens::Room();
     }
 
     /// <summary>The slot of <paramref name="playerId"/> on <paramref name="team"/>, or -1.</summary>

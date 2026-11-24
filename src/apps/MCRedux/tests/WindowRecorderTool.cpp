@@ -22,7 +22,7 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurchaseScreen.h"

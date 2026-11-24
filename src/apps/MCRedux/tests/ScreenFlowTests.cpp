@@ -14,7 +14,7 @@
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCLoadSaveMenu.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCMenuDialog.h"

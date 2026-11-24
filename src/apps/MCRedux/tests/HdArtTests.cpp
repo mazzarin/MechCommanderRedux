@@ -129,7 +129,7 @@
 #include "main/MCGameStrings.h"
 #include "logistics/MCPurProfile.h"
 #include "lib/MCFile.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"

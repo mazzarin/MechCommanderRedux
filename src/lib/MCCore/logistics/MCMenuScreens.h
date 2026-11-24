@@ -32,6 +32,51 @@ namespace MCMenuScreens
     /// <summary>A launcher's ready room (its first screen while the lobby's join goes on).</summary>
     MCScreenFlow::MCScreenId ReadyRoom();
 
+    /// <summary>Port-only (stage 9): the campaign screen's pages, shown one at a time.</summary>
+    enum class MCCampaignPage
+    {
+        Briefing,
+        Purchasing,
+        MechBay
+    };
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9, step 2): the flow's top screen, which says which screen shows for the music,
+    /// the notices, the idle check, the network's room and the benchmark: Main (the main menu, its submenus, LAN and
+    /// INTERNET over it), ReadyRoom, Load (LOAD GAME, SOLO's), MissionPick, Save, Preferences, Room or Campaign (at
+    /// <see cref="TopPage"/>); <see cref="MCScreenFlow::NoScreen"/> with none, or no logistics. Until the 1998 screens
+    /// go, the one logistics shows sets it (<see cref="NoteTop"/>).
+    /// </summary>
+    MCScreenFlow::MCScreenId Top();
+
+    /// <summary>The campaign's page shown while <see cref="Top"/> is the campaign.</summary>
+    MCCampaignPage TopPage();
+
+    /// <summary>Whether the top is the campaign, on <paramref name="page"/>.</summary>
+    bool CampaignOn(MCCampaignPage page);
+
+    /// <summary>The flow's top screen is now <paramref name="id"/> (on <paramref name="page"/>, the campaign's).</summary>
+    void NoteTop(MCScreenFlow::MCScreenId id, MCCampaignPage page = MCCampaignPage::Briefing);
+
+    /// <summary>How <see cref="ShowBack"/> shows the screen it goes back to.</summary>
+    enum class MCBackWay
+    {
+        /// <summary>Shown, the screen shown left as it is (the campaign's end).</summary>
+        Shown,
+        /// <summary>The screen shown hidden first, then it shown (a match's end, a session left).</summary>
+        InPlace,
+        /// <summary>Made the screen, hidden (a launcher's join failed: its message ends the game).</summary>
+        Hidden
+    };
+
+    /// <summary>
+    /// The way back from a mission or a session onto the flow's screen <paramref name="id"/>, shown as
+    /// <paramref name="way"/> says: the main menu (logistics' main screen with the main menu's state, shown with its
+    /// palette), SOLO MISSIONS (the main menu where it can't show) or the campaign's briefing. The caller's landing
+    /// (MCScreenFlow::Land) and Noted stay its own.
+    /// </summary>
+    void ShowBack(MCScreenFlow::MCScreenId id, MCBackWay way);
+
     /// <summary>
     /// The stack under a match's games list (LAN or INTERNET), <paramref name="internet"/> saying which: the main menu,
     /// MULTIPLAYER ACCESS, the games; with <paramref name="room"/>, the room over them (a rematch, a rejoin).

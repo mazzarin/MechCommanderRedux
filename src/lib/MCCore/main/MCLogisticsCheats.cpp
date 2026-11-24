@@ -4,6 +4,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMechBay.h"
 #include "logistics/MCMechRepairBlock.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCUnitLimits.h"
@@ -144,8 +145,9 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
             }
 
             const std::shared_ptr<MCLogInvScreen> screen =
-                CurrentScreen() == RepairScreen ? std::static_pointer_cast<MCLogInvScreen>(RepairScreen.Lock())
-                                                : PurchaseScreen.Lock();
+                MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::MechBay)
+                    ? std::static_pointer_cast<MCLogInvScreen>(RepairScreen.Lock())
+                    : PurchaseScreen.Lock();
             // The rows numbered again; the 1998 screen's component tab shows them (each row refreshed).
             ReIndexInventory();
             screen->SetUpCompInv(true, true);

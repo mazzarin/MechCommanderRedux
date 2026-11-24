@@ -17,7 +17,7 @@
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogTextButton.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"

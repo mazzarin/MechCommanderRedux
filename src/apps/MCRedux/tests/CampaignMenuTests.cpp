@@ -21,7 +21,7 @@
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCLogisticsTabs.h"
-#include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMatchMaps.h"
 #include "logistics/MCMechBay.h"

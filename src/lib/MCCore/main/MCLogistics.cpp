@@ -1709,14 +1709,29 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
         // this one.
         if (MCScreenChange::InPiece() && !animate)
         {
-            MCScreenChange::RunNext(MCCampaignMenu::ShowPieces(
+            std::vector<MCScreenChange::MCPiece> pieces = MCCampaignMenu::ShowPieces(
                 [logistics = weak_from_this()]
                 {
                     if (const std::shared_ptr<MCLogistics> shown = logistics.lock(); shown != nullptr)
                     {
                         shown->ShowOldBriefing();
                     }
-                }));
+                });
+
+            // The 1998 briefing hidden again once the remade one shows: the way back from a mission shows logistics'
+            // screen (ShowLogScreen) as this returns, before the remade screen's pieces have run.
+            pieces.back().Run = [show = std::move(pieces.back().Run), logistics = weak_from_this()]
+            {
+                show();
+
+                if (const std::shared_ptr<MCLogistics> shown = logistics.lock();
+                    shown != nullptr && shown->BriefingScreen && MCCampaignMenu::Shown())
+                {
+                    shown->BriefingScreen->ShowGuiWindow(false);
+                }
+            };
+
+            MCScreenChange::RunNext(std::move(pieces));
             return 0;
         }
 

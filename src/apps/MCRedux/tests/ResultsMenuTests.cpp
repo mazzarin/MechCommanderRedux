@@ -8,6 +8,7 @@
 #include "gui/MCScreenFlow.h"
 #include "gui/MCUpdateDisplay.h"
 #include "linkup/MCSessionManager.h"
+#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCMatchMaps.h"
 #include "logistics/MCMenuScreens.h"
@@ -281,6 +282,9 @@ namespace
         REQUIRE(logistics != nullptr);
         CHECK_EQ(logistics->CurrentMission, mission);
         CHECK(MCCampaignMenu::Shown());
+        // The 1998 briefing stays hidden under the remade one.
+        REQUIRE(logistics->BriefingScreen != nullptr);
+        CHECK(logistics->BriefingScreen->ShowWindow == 0);
         const std::vector<MCScreenId> landed = {MCMenuScreens::Main(), MCMenuScreens::Campaign()};
         CHECK(StackNow() == landed);
         CHECK_EQ(MCScreenFlow::Unrouted(), 0u);

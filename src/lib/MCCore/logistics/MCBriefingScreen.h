@@ -34,6 +34,22 @@ public:
     static constexpr int32_t OperationTab = 1;
     static constexpr int32_t MissionTab = 2;
 
+    /// <summary>
+    /// The map area the mission's tac map picture is stretched over, its first and last pixels each way (a picture's
+    /// first pixel at the left and top, its last at the right and bottom): 283 pixels square.
+    /// </summary>
+    static constexpr int32_t MapLeft = 0x159;
+    static constexpr int32_t MapTop = 0x1a;
+    static constexpr int32_t MapRight = 0x273;
+    static constexpr int32_t MapBottom = 0x134;
+
+    /// <summary>
+    /// Where the briefing marks the world position (<paramref name="worldX"/>, <paramref name="worldY"/>) on its map,
+    /// in the screen's pixels: the map turned 45 degrees, <paramref name="scale"/> world units to a map pixel
+    /// (<see cref="MarkerScale"/>). Port: the original's drop zone marker worked it out in place.
+    /// </summary>
+    static SDL_FPoint MapPointOf(float worldX, float worldY, float scale);
+
     /// <summary>Destroys the screen if nothing did (its cleanup stops the movie).</summary>
     ~MCBriefingScreen() override { Destroy(); }
 

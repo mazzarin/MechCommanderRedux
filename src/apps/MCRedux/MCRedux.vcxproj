@@ -141,6 +141,78 @@
     <CopyFileToFolders Include="..\..\res\ui\art\hd\cross.png">
       <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F1_br.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F1_bl.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F1_tr.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F1_tl.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F2_br.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F2_bl.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F2_tr.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F2_tl.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F3_br.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F3_bl.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F3_tr.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\zone_tag_F3_tl.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F1_br.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F1_bl.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F1_tr.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F1_tl.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F2_br.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F2_bl.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F2_tr.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F2_tl.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F3_br.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F3_bl.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F3_tr.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\zone_tag_F3_tl.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\pause.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>

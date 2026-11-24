@@ -498,6 +498,9 @@
     <ClCompile Include="logistics\MCBriefingScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCChatView.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCChooseMapWindow.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2066,6 +2069,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCBriefingScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCChatView.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCChooseMapWindow.h">

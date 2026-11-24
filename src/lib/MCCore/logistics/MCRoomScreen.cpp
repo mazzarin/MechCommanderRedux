@@ -3,8 +3,8 @@
 #include "gui/MCScreenFlow.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCSessionManager.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCChooseMapWindow.h"
-#include "logistics/MCLogChat.h"
 #include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCMatchMaps.h"
 #include "logistics/MCMatchOptionsWindow.h"
@@ -50,16 +50,6 @@ namespace
     constexpr std::string_view ToChoose = "to choose a map and the teams.";
     constexpr std::string_view AllWeaponsFormat = "All {}";
     constexpr std::string_view SomeWeaponsFormat = "{} of {}";
-
-    /// <summary>The players' colours by their number (the look's names; the chat's colours, gamesys.fit's order).</summary>
-    constexpr std::array<std::string_view, MCRoomModel::MaxPlayers> PlayerColours = {"orange", "red",   "cream",
-                                                                                     "cyan",   "green", "white"};
-    /// <summary>A line of the chat's that no player said (a join, a leave, the code): grey.</summary>
-    constexpr std::string_view GameColour = "grey";
-    /// <summary>The chat's colour codes (SMUTI's): "%fc" and a digit.</summary>
-    constexpr std::string_view ColourCode = "%fc";
-    /// <summary>The text colour of a line to the sender's team (MCLogChatInput's).</summary>
-    constexpr char TeamTextColour = '4';
 
     /// <summary>The kit's choices of the tech base switch: Inner Sphere, then Clan.</summary>
     constexpr int InnerSphereChoice = 0;
@@ -121,97 +111,6 @@ namespace
         return any ? std::optional(static_cast<int32_t>(points)) : std::nullopt;
     }
 
-    /// <summary>The characters the 1998 chat box takes (MCLogChatInput): printable ASCII, and 0xbf-0xfd.</summary>
-    constexpr Uint32 FirstPrintable = 0x20;
-    constexpr Uint32 LastPrintable = 0x7e;
-    constexpr Uint32 FirstAccented = 0xbf;
-    constexpr Uint32 LastAccented = 0xfd;
-    /// <summary>The chat formatter's code character, which the 1998 box never took.</summary>
-    constexpr Uint32 ChatCode = '%';
-    constexpr unsigned char FirstNonAscii = 0x80;
-    /// <summary>The most bytes one code point takes in UTF-8, with room for SDL_UCS4ToUTF8's.</summary>
-    constexpr size_t Utf8Most = 4;
-
-    /// <summary>
-    /// What's typed (UTF-8) as the 1998 chat box sends it: its characters one byte each (0xbf-0xfd the code points
-    /// they are), anything else left out, at most the chat's MaxLength.
-    /// </summary>
-    std::string AsChatBytes(std::string_view typed)
-    {
-        std::string bytes;
-        const char* at = typed.data();
-        size_t left = typed.size();
-
-        while (left > 0 && bytes.size() < MCLogChat::MaxLength)
-        {
-            const Uint32 point = SDL_StepUTF8(&at, &left);
-
-            if (point == 0)
-            {
-                break;
-            }
-
-            if ((point >= FirstPrintable && point <= LastPrintable && point != ChatCode) ||
-                (point >= FirstAccented && point <= LastAccented))
-            {
-                bytes.push_back(static_cast<char>(point));
-            }
-        }
-
-        return bytes;
-    }
-
-    /// <summary>A line's bytes as the chat sends them in UTF-8 for the remade views (0xbf-0xfd the code points).</summary>
-    std::string AsUtf8(std::string_view bytes)
-    {
-        std::string text;
-
-        for (const char c : bytes)
-        {
-            const auto byte = static_cast<unsigned char>(c);
-
-            if (byte < FirstNonAscii)
-            {
-                text.push_back(c);
-                continue;
-            }
-
-            std::array<char, Utf8Most> utf8{};
-            const char* end = SDL_UCS4ToUTF8(byte, utf8.data());
-            text.append(utf8.data(), static_cast<size_t>(end - utf8.data()));
-        }
-
-        return text;
-    }
-
-    /// <summary>Text with the chat's colour codes taken out.</summary>
-    std::string Uncoded(std::string_view text)
-    {
-        std::string plain;
-        size_t at = 0;
-
-        while (at < text.size())
-        {
-            if (text.substr(at).starts_with(ColourCode) && at + ColourCode.size() < text.size())
-            {
-                at += ColourCode.size() + 1;
-                continue;
-            }
-
-            plain.push_back(text[at++]);
-        }
-
-        return plain;
-    }
-
-    /// <summary>The player number whose chat colour is the code's digit <paramref name="digit"/>; none for another.</summary>
-    std::optional<int32_t> NumberOfColour(char digit)
-    {
-        const std::array<int32_t, 6>& colours = GlobalLog()->PlayerColors;
-        const auto found = std::ranges::find(colours, digit - '0');
-        return found != colours.end() ? std::optional(static_cast<int32_t>(found - colours.begin())) : std::nullopt;
-    }
-
     /// <summary>The option row's value's name, as it shows ("Mission's", "On").</summary>
     std::string ValueName(const MCLogOptionList::Row& row)
     {
@@ -234,13 +133,6 @@ MCRoomScreen::MCRoomScreen()
 }
 
 MCRoomScreen::~MCRoomScreen() = default;
-
-std::string MCRoomScreen::ColourOf(int32_t playerNumber)
-{
-    return playerNumber >= 0 && static_cast<size_t>(playerNumber) < PlayerColours.size()
-               ? std::string(PlayerColours[static_cast<size_t>(playerNumber)])
-               : std::string(GameColour);
-}
 
 void MCRoomScreen::MakeModels(Rml::Context& context)
 {
@@ -280,9 +172,7 @@ void MCRoomScreen::MakeModels(Rml::Context& context)
     model.Value("options_word", _OptionsWord);
     model.List("opts", _Opts, std::pair{"name", &MCOption::Name}, std::pair{"value", &MCOption::Value},
                std::pair{"off", &MCOption::Off});
-    model.List("chat", _Chat, std::pair{"game", &MCChatLine::Game}, std::pair{"name", &MCChatLine::Name},
-               std::pair{"colour", &MCChatLine::Colour}, std::pair{"text", &MCChatLine::Text},
-               std::pair{"team", &MCChatLine::Team});
+    _Chat.Bind(model, "chat");
     model.Value("can_team_chat", _CanTeamChat);
     model.Value("update_line", _UpdateLine);
     model.Value("waits", _Waits);
@@ -362,7 +252,7 @@ void MCRoomScreen::OnShow()
     SDL_Log("Room: shown");
     MCRmlDialogs::SetPlace(Room().Name());
     _Dragged.reset();
-    _ChatSeen = 0;
+    _Chat.Forget();
 
     if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
     {
@@ -486,7 +376,7 @@ void MCRoomScreen::ShowTeams(const std::vector<MCRoomModel::MCPlayer>& players)
 
     for (const MCRoomModel::MCPlayer& player : players)
     {
-        const std::string colour = ColourOf(player.Number);
+        const std::string colour = MCChatView::ColourOf(player.Number);
 
         if (player.Team == MCRoomModel::Team1 || player.Team == MCRoomModel::Team2)
         {
@@ -603,42 +493,10 @@ void MCRoomScreen::ShowMatch()
 
 void MCRoomScreen::ShowChat()
 {
-    const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat;
-
-    if (chat == nullptr || chat->LinesAdded == _ChatSeen)
+    if (_Model != nullptr)
     {
-        return;
+        _Chat.Show(*_Model);
     }
-
-    _ChatSeen = chat->LinesAdded;
-    std::vector<MCChatLine> lines;
-
-    // A player's line is "%fc<their colour>name: %fc<text colour>text" (MCLogChat::ProcessChatString); the rest are the
-    // game's own (who joined, who left, the code).
-    for (const MCLogChat::HistoryLine& history : chat->Lines)
-    {
-        const std::string_view text = history.Text;
-        const size_t split = text.find(std::string(": ") + std::string(ColourCode));
-        const bool said = text.starts_with(ColourCode) && text.size() > ColourCode.size() && split != text.npos &&
-                          split + 2 + ColourCode.size() < text.size();
-        const std::optional<int32_t> number = said ? NumberOfColour(text[ColourCode.size()]) : std::nullopt;
-
-        if (!said || !number.has_value())
-        {
-            lines.push_back(
-                MCChatLine{.Game = true, .Colour = std::string(GameColour), .Text = Sentence(Uncoded(text))});
-            continue;
-        }
-
-        const size_t textColourAt = split + 2 + ColourCode.size();
-        lines.push_back(MCChatLine{.Game = false,
-                                   .Name = Uncoded(text.substr(ColourCode.size() + 1, split - ColourCode.size() - 1)),
-                                   .Colour = ColourOf(*number),
-                                   .Text = AsUtf8(Uncoded(text.substr(textColourAt + 1))),
-                                   .Team = text[textColourAt] == TeamTextColour});
-    }
-
-    Keep("chat", _Chat, std::move(lines));
 }
 
 void MCRoomScreen::ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players)
@@ -663,7 +521,7 @@ void MCRoomScreen::ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players)
     const bool placed = std::ranges::all_of(players, [](const MCRoomModel::MCPlayer& player)
                                             { return player.Team != MCRoomModel::NoTeam; });
     Keep("wait_name", _WaitName, host != players.end() && !room.Hosting() ? host->Name : std::string());
-    Keep("wait_colour", _WaitColour, host != players.end() ? ColourOf(host->Number) : std::string());
+    Keep("wait_colour", _WaitColour, host != players.end() ? MCChatView::ColourOf(host->Number) : std::string());
     Keep("wait_what", _WaitWhat,
          std::string(!room.MissionFile.empty() && placed && !players.empty() ? ToPlanning : ToChoose));
     Keep("can_begin", _CanBegin, room.Hosting() && room.CanStart && game != nullptr);
@@ -768,7 +626,7 @@ MCRoomScreen::MCSeen MCRoomScreen::Seen() const
         seen.Options.push_back(std::format("{} | {}", option.Name, option.Value));
     }
 
-    for (const MCChatLine& line : _Chat)
+    for (const MCChatView::MCLine& line : _Chat.Lines())
     {
         seen.Chat.push_back(line.Game ? line.Text : std::format("{}: {}", line.Name, line.Text));
     }
@@ -842,23 +700,7 @@ void MCRoomScreen::PickTechBase(int8_t team, int8_t techBase)
 
 void MCRoomScreen::Say(std::string_view text, bool toTeam)
 {
-    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
-    const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat;
-
-    // What the 1998 box would have sent: its characters only ('%' is the chat formatter's code character).
-    const std::string line = AsChatBytes(text);
-
-    if (game == nullptr || chat == nullptr || line.empty() || game->SessionManager == nullptr ||
-        game->SessionManager->MyPlayer() == nullptr)
-    {
-        return;
-    }
-
-    // As the 1998 chat box sends it (MCLogChatInput): to all in colour 6, to the team in 4.
-    constexpr int32_t AllColour = 6;
-    constexpr int32_t TeamColour = 4;
-    game->SendChat(toTeam ? game->HomeTeamGroupID : 0, line);
-    chat->ProcessChatString(game->SessionManager->MyPlayer()->Id, line, toTeam ? TeamColour : AllColour);
+    MCChatView::Say(text, toTeam);
 }
 
 void MCRoomScreen::PressChooseMap()

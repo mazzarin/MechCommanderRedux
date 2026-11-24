@@ -7,6 +7,7 @@
 // BEGIN PLANNING. It shows in the 1998 session screen's place (MCSessionScreen::ShowGuiWindow), which stays logistics'
 // screen, hidden, while its logic moves into the model: the flow's "room" kind is the same, what is sent is unchanged.
 
+#include "logistics/MCChatView.h"
 #include "logistics/MCRoomModel.h"
 #include "ui/MCRmlScreen.h"
 
@@ -71,9 +72,6 @@ public:
     void OnFrame() override;
     void OnDestroy() override;
 
-    /// <summary>A player's name's colour class (the look's): by the player's number, as the chat's colours go.</summary>
-    static std::string ColourOf(int32_t playerNumber);
-
 protected:
     void MakeModels(Rml::Context& context) override;
     void OnLoaded(Rml::ElementDocument& document) override;
@@ -123,17 +121,6 @@ private:
         bool operator==(const MCOption&) const = default;
     };
 
-    struct MCChatLine
-    {
-        bool Game = false;
-        std::string Name;
-        std::string Colour;
-        std::string Text;
-        bool Team = false;
-
-        bool operator==(const MCChatLine&) const = default;
-    };
-
     /// <summary>The model's room copied into what the document binds, each change said.</summary>
     void ShowRoom();
     void ShowTeams(const std::vector<MCRoomModel::MCPlayer>& players);
@@ -175,8 +162,8 @@ private:
     std::vector<MCMapLine> _MapLines;
     std::string _OptionsWord;
     std::vector<MCOption> _Opts;
-    std::vector<MCChatLine> _Chat;
-    size_t _ChatSeen = 0;
+    /// <summary>The chat's lines as the document binds them (logistics/MCChatView, stage 8's too).</summary>
+    MCChatView _Chat;
     bool _CanTeamChat = false;
     std::string _Say;
     std::string _UpdateLine;

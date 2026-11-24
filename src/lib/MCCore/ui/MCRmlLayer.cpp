@@ -71,6 +71,11 @@ namespace
     constexpr int NoModifiers = 0;
     /// <summary>A text box's button that Enter in it presses (its id), and the look's class of a button that's off.</summary>
     constexpr const char* EnterAttribute = "data-enter";
+    /// <summary>
+    /// Port-only (stage 8): a text box whose Enter sends its line (a chat's): RmlUi's own Enter, the box's change with
+    /// its "linebreak" (MCRmlScreen::OnText's enter), the focus staying in it.
+    /// </summary>
+    constexpr const char* LineAttribute = "data-line";
     constexpr const char* OffClass = "off";
 
     /// <summary>The window pixels a window point is (SDL's mouse events are in points).</summary>
@@ -306,9 +311,16 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
             const bool typing = Typing();
 
             // Enter in a text box: done, on to the next control as Tab goes (what was typed is its value already); in
-            // one whose data-enter names a button (SAVE GAME's NAME), that button pressed (port-only, stage 5).
+            // one whose data-enter names a button (SAVE GAME's NAME), that button pressed (port-only, stage 5); in a
+            // chat's line (data-line), the line sent (port-only, stage 8).
             if (typing && (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER))
             {
+                if (Rml::Element* box = _Context.GetFocusElement(); box != nullptr && box->HasAttribute(LineAttribute))
+                {
+                    _Context.ProcessKeyDown(key, held);
+                    return true;
+                }
+
                 if (Rml::Element* box = _Context.GetFocusElement(); box != nullptr && box->HasAttribute(EnterAttribute))
                 {
                     const std::string pressed = box->GetAttribute<Rml::String>(EnterAttribute, "");

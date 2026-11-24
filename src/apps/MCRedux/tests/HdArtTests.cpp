@@ -22496,3 +22496,513 @@ TEST_CASE_ISOLATED("game: a forest's version 2 frame folded into its draw keeps 
         std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
     }
 }
+
+namespace
+{
+    /// <summary>A translucent frame --hd-translucent-check draws: whose it is, its bounds, and its place on a page.</summary>
+    struct TranslucentFrame
+    {
+        /// <summary>The appearance's type id, its type, and the packet and frame of its shape.</summary>
+        uint32_t Appearance = 0;
+        std::shared_ptr<MCAppearanceType> Type;
+        uint32_t Packet = 0;
+        int32_t Frame = 0;
+        int32_t Width = 0;
+        int32_t Height = 0;
+        /// <summary>The bounds' top-left corner from the hot spot.</summary>
+        int32_t XMin = 0;
+        int32_t YMin = 0;
+        /// <summary>
+        /// Whether its HD art is a redraw whose outline is its own, the original's a loose guide (a single tree's), so
+        /// the original's solid pixels are counted but don't fail it.
+        /// </summary>
+        bool Redrawn = false;
+        /// <summary>Its page, and its bounds' corner there (pane coordinates).</summary>
+        size_t Page = 0;
+        int32_t X = 0;
+        int32_t Y = 0;
+        /// <summary>Its pixels the original's draw shows solid (the same over both backgrounds), row after row.</summary>
+        std::vector<uint8_t> Solid;
+    };
+
+    /// <summary>The frames' shapes, by appearance type id and packet.</summary>
+    using TranslucentShapes = std::map<std::pair<uint32_t, uint32_t>, std::shared_ptr<MCShape>>;
+
+    /// <summary>The page of a frame larger than a page (drawn on none).</summary>
+    constexpr size_t OnNoPage = std::numeric_limits<size_t>::max();
+    /// <summary>The space around frames on a page (original pixels), so no frame's smoothed edge reaches the next.</summary>
+    constexpr int32_t TranslucentFrameGap = 6;
+    /// <summary>
+    /// How far inside the original's solid pixels a pixel lies to be checked: the HD mask's B-spline reaches two original
+    /// pixels each way, so nearer the edge the HD draw rightly blends with what lies under it.
+    /// </summary>
+    constexpr int32_t TranslucentInterior = 2;
+    /// <summary>
+    /// How far apart (in any channel) a pixel's colours over the two backgrounds may be for it to count as solid: the
+    /// original's exactly, the HD draw's within its filtering.
+    /// </summary>
+    constexpr int OriginalSolidWithin = 2;
+    constexpr int HdSolidWithin = 8;
+    /// <summary>The backgrounds are chosen among the indices drawn opaque, the palette's fixed ends left out.</summary>
+    constexpr int FirstBackgroundIndex = 10;
+    constexpr int LastBackgroundIndex = 245;
+    /// <summary>The least the backgrounds' brightness (r + g + b) lies apart, so a see-through pixel shows.</summary>
+    constexpr int BackgroundsApart = 288;
+    /// <summary>How many of the appearances with missing pixels are named.</summary>
+    constexpr size_t TranslucentWorstShown = 40;
+
+    int ColorApart(SDL_Color a, SDL_Color b)
+    {
+        return std::max({std::abs(a.r - b.r), std::abs(a.g - b.g), std::abs(a.b - b.b)});
+    }
+
+    int Brightness(SDL_Color color)
+    {
+        return color.r + color.g + color.b;
+    }
+
+    /// <summary>
+    /// Lays <paramref name="frames"/> out in rows on pages <paramref name="width"/> x <paramref name="height"/> (pane
+    /// pixels), in order, a gap around each; a frame larger than a page goes on none (<see cref="OnNoPage"/>).
+    /// </summary>
+    /// <returns>The pages' count.</returns>
+    size_t LayOutPages(std::vector<TranslucentFrame>& frames, int32_t width, int32_t height)
+    {
+        size_t page = 0;
+        bool placed = false;
+        int32_t x = TranslucentFrameGap;
+        int32_t y = TranslucentFrameGap;
+        int32_t rowHeight = 0;
+
+        for (TranslucentFrame& frame : frames)
+        {
+            if (frame.Width + 2 * TranslucentFrameGap > width || frame.Height + 2 * TranslucentFrameGap > height)
+            {
+                frame.Page = OnNoPage;
+                continue;
+            }
+
+            if (x + frame.Width + TranslucentFrameGap > width)
+            {
+                x = TranslucentFrameGap;
+                y += rowHeight + TranslucentFrameGap;
+                rowHeight = 0;
+            }
+
+            if (y + frame.Height + TranslucentFrameGap > height)
+            {
+                ++page;
+                x = TranslucentFrameGap;
+                y = TranslucentFrameGap;
+                rowHeight = 0;
+            }
+
+            frame.Page = page;
+            frame.X = x;
+            frame.Y = y;
+            x += frame.Width + TranslucentFrameGap;
+            rowHeight = std::max(rowHeight, frame.Height);
+            placed = true;
+        }
+
+        return placed ? page + 1 : 0;
+    }
+
+    /// <summary>
+    /// The shapes of <paramref name="frames"/>, each packet loaded now from the sprite files (with HD art on, its frames
+    /// attached as the game attaches them).
+    /// </summary>
+    TranslucentShapes LoadTranslucentShapes(const std::vector<TranslucentFrame>& frames)
+    {
+        TranslucentShapes shapes;
+
+        for (const TranslucentFrame& frame : frames)
+        {
+            const std::pair key{frame.Appearance, frame.Packet};
+
+            if (shapes.contains(key))
+            {
+                continue;
+            }
+
+            std::shared_ptr<MCShape> shape =
+                SpriteManager()->GetShapeData(frame.Appearance & AppearancePacketMask, frame.Packet, Turn, frame.Type);
+            MCTest::Scope scope(std::format("appearance {:#x} packet {}", frame.Appearance, frame.Packet));
+            REQUIRE(shape != nullptr);
+            shapes.emplace(key, std::move(shape));
+        }
+
+        return shapes;
+    }
+
+    /// <summary>
+    /// The pixels of each frame of <paramref name="onPage"/> that show solid, row after row: the same colour (within
+    /// <paramref name="within"/>) drawn over the dark and over the light one of <paramref name="backgrounds"/> (palette
+    /// indices filling the screen). Each frame is drawn by AGShapeDraw, as the game draws its objects (ScaleDraw), on the
+    /// screen shown larger than itself, and read at its original pixels' centres. Saved over the light background as
+    /// <paramref name="shot"/> when given.
+    /// </summary>
+    std::vector<std::vector<uint8_t>> SolidOnPage(const std::vector<TranslucentFrame*>& onPage,
+                                                  const TranslucentShapes& shapes, std::array<uint8_t, 2> backgrounds,
+                                                  std::span<const SDL_Color, 256> colors, int within,
+                                                  const std::optional<std::filesystem::path>& shot)
+    {
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        MCPane& pane = ScreenPort()->Frame();
+        const int32_t paneWidth = pane.X1 - pane.X0 + 1;
+        const int32_t paneHeight = pane.Y1 - pane.Y0 + 1;
+        std::array<std::vector<SDL_Color>, 2> drawn;
+
+        for (size_t background = 0; background < backgrounds.size(); ++background)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            // An ellipse twice the pane's size about its centre covers the whole pane.
+            AGEllipseFill(pane, paneWidth / 2, paneHeight / 2, paneWidth, paneHeight, backgrounds[background]);
+
+            for (const TranslucentFrame* frame : onPage)
+            {
+                const auto shape = shapes.find({frame->Appearance, frame->Packet});
+                MCTest::Scope scope(std::format("appearance {:#x} packet {}", frame->Appearance, frame->Packet));
+                REQUIRE(shape != shapes.end());
+                AGShapeDraw(pane, shape->second->FrameList(), frame->Frame, frame->X - frame->XMin,
+                            frame->Y - frame->YMin);
+            }
+
+            auto shown = display->ReadShownScreen();
+
+            if (!shown.has_value())
+            {
+                MCTest::Scope scope(std::format("reading the shown screen: {}", shown.error()));
+                REQUIRE(false);
+            }
+
+            if (shot.has_value() && background + 1 == backgrounds.size())
+            {
+                REQUIRE(display->SaveShownScreenshot(*shot).has_value());
+            }
+
+            const double scaleX = static_cast<double>(shown->Width) / display->Width();
+            const double scaleY = static_cast<double>(shown->Height) / display->Height();
+            const auto at = [&](int32_t paneX, int32_t paneY)
+            {
+                const auto x = static_cast<int32_t>((pane.X0 + paneX + 0.5) * scaleX);
+                const auto y = static_cast<int32_t>((pane.Y0 + paneY + 0.5) * scaleY);
+                return shown->Pixels[static_cast<size_t>(y) * shown->Width + x];
+            };
+
+            // The page's corner shows the background: the read sees what was drawn after the frame, where it was drawn.
+            const SDL_Color corner = at(TranslucentFrameGap / 2, TranslucentFrameGap / 2);
+            MCTest::Scope scope(std::format("the page's corner {} {} {}, background {}", corner.r, corner.g, corner.b,
+                                            backgrounds[background]));
+            REQUIRE(ColorApart(corner, colors[backgrounds[background]]) <= HdSolidWithin);
+
+            for (const TranslucentFrame* frame : onPage)
+            {
+                for (int32_t row = 0; row < frame->Height; ++row)
+                {
+                    for (int32_t column = 0; column < frame->Width; ++column)
+                    {
+                        drawn[background].push_back(at(frame->X + column, frame->Y + row));
+                    }
+                }
+            }
+        }
+
+        std::vector<std::vector<uint8_t>> solid;
+        size_t next = 0;
+
+        for (const TranslucentFrame* frame : onPage)
+        {
+            std::vector<uint8_t>& pixels = solid.emplace_back(static_cast<size_t>(frame->Width) * frame->Height);
+
+            for (uint8_t& pixel : pixels)
+            {
+                pixel = ColorApart(drawn[0][next], drawn[1][next]) <= within ? 1 : 0;
+                ++next;
+            }
+        }
+
+        return solid;
+    }
+
+    /// <summary>
+    /// Whether every pixel of <paramref name="frame"/> within <see cref="TranslucentInterior"/> of (column, row), that one
+    /// too, shows solid in the original's draw.
+    /// </summary>
+    bool InsideSolid(const TranslucentFrame& frame, int32_t column, int32_t row)
+    {
+        for (int32_t y = row - TranslucentInterior; y <= row + TranslucentInterior; ++y)
+        {
+            for (int32_t x = column - TranslucentInterior; x <= column + TranslucentInterior; ++x)
+            {
+                if (x < 0 || y < 0 || x >= frame.Width || y >= frame.Height ||
+                    frame.Solid[static_cast<size_t>(y) * frame.Width + x] == 0)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-translucent-check &lt;pack&gt;</c> checks that the HD draw shows every solid pixel of the objects'
+/// translucent frames (shapes whose top-left pixel is colour 0: AlphaPal's special colours in them blend, the rest are
+/// opaque) that the original's draw shows. In mission 1 (or <c>--mission</c>'s), the screen shown larger than itself as
+/// the game shows it, every such frame of every object appearance (<c>--kind</c> and <c>--appearance</c> pick, as
+/// --hd-coverage's; effects left out, their pack frames holding their blended pixels) is drawn in pages, without HD art
+/// and then with the pack's, each page over a dark and a light background. A pixel is solid where its colour is the same
+/// over both. Fails on any pixel the original shows solid, two pixels or more inside its edge, that the HD draw lets the
+/// background through; names the appearances with the most. A single tree's are counted apart: its HD art is redrawn,
+/// the original's shape a loose guide. With <c>--shots &lt;folder&gt;</c>, the pages over the
+/// light background (<c>page&lt;n&gt;_original.png</c>, <c>page&lt;n&gt;_hd.png</c>) and every appearance's count
+/// (<c>translucent.tsv</c>).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-translucent-check finds translucent frames' solid pixels the HD draw leaves out")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-translucent-check");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The folders are made absolute before the game starts: the game works in the install's folder.
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
+    std::optional<std::filesystem::path> shots;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("shots"); given.has_value())
+    {
+        shots = std::filesystem::absolute(std::filesystem::path(*given));
+        std::filesystem::create_directories(*shots);
+    }
+
+    int32_t mission = 1;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("mission"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), mission);
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On, mission);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    std::optional<uint8_t> dark;
+    std::optional<uint8_t> light;
+
+    for (int index = FirstBackgroundIndex; index <= LastBackgroundIndex; ++index)
+    {
+        if (SpecialColor[index] != 0)
+        {
+            continue;
+        }
+
+        const auto chosen = static_cast<uint8_t>(index);
+
+        if (!dark.has_value() || Brightness(colors[chosen]) < Brightness(colors[*dark]))
+        {
+            dark = chosen;
+        }
+
+        if (!light.has_value() || Brightness(colors[chosen]) > Brightness(colors[*light]))
+        {
+            light = chosen;
+        }
+    }
+
+    REQUIRE((dark.has_value() && light.has_value()));
+    REQUIRE(Brightness(colors[*light]) - Brightness(colors[*dark]) >= BackgroundsApart);
+    const std::array<uint8_t, 2> backgrounds = {*dark, *light};
+
+    std::vector<TranslucentFrame> frames;
+    std::map<uint32_t, std::string> labels;
+
+    for (const auto& [appearance, type] : PickedObjectAppearances())
+    {
+        if (KindInfo(appearance.Kind).Blended)
+        {
+            continue;
+        }
+
+        for (const auto& [packet, shape] : ChosenShapes(type, PacketChoice::Drawn))
+        {
+            const std::span<const uint8_t> table = shape->FrameList();
+
+            if (!VfxIsShapeTable(table))
+            {
+                continue;
+            }
+
+            for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+            {
+                const std::expected<DecodedFrame, std::string> decoded = Decode(table, frame);
+
+                if (!decoded.has_value() || !decoded->Translucent || decoded->Width == 0)
+                {
+                    continue;
+                }
+
+                frames.push_back(TranslucentFrame{.Appearance = appearance.Id,
+                                                  .Type = type,
+                                                  .Packet = packet,
+                                                  .Frame = frame,
+                                                  .Width = decoded->Width,
+                                                  .Height = decoded->Height,
+                                                  .XMin = decoded->XMin,
+                                                  .YMin = decoded->YMin,
+                                                  .Redrawn = appearance.Kind == ObjectKind::Tree});
+                std::string label = std::string(KindInfo(appearance.Kind).Name);
+
+                for (const std::string& name : appearance.Types)
+                {
+                    label += " " + name;
+                }
+
+                labels.emplace(appearance.Id, std::move(label));
+            }
+        }
+    }
+
+    const MCPane& pane = ScreenPort()->Frame();
+    const size_t pages = LayOutPages(frames, pane.X1 - pane.X0 + 1, pane.Y1 - pane.Y0 + 1);
+    std::vector<std::vector<TranslucentFrame*>> onPages(pages);
+    size_t unplaced = 0;
+
+    for (TranslucentFrame& frame : frames)
+    {
+        if (frame.Page == OnNoPage)
+        {
+            ++unplaced;
+            continue;
+        }
+
+        onPages[frame.Page].push_back(&frame);
+    }
+
+    std::cout << std::format("  {} translucent frames of {} appearances on {} pages ({} larger than a page left out); "
+                             "backgrounds {} and {}\n",
+                             frames.size() - unplaced, labels.size(), pages, unplaced, *dark, *light);
+    const auto shotOf = [&](size_t page, std::string_view mode) -> std::optional<std::filesystem::path>
+    {
+        if (!shots.has_value())
+        {
+            return std::nullopt;
+        }
+
+        return *shots / std::format("page{:03}_{}.png", page, mode);
+    };
+
+    {
+        const TranslucentShapes shapes = LoadTranslucentShapes(frames);
+
+        for (size_t page = 0; page < pages; ++page)
+        {
+            std::vector<std::vector<uint8_t>> solid =
+                SolidOnPage(onPages[page], shapes, backgrounds, colors, OriginalSolidWithin, shotOf(page, "original"));
+
+            for (size_t i = 0; i < onPages[page].size(); ++i)
+            {
+                onPages[page][i]->Solid = std::move(solid[i]);
+            }
+        }
+    }
+
+    struct Tally
+    {
+        bool Redrawn = false;
+        size_t Frames = 0;
+        size_t HdFrames = 0;
+        size_t Inside = 0;
+        size_t Missing = 0;
+    };
+
+    std::map<uint32_t, Tally> tallies;
+    Tally total;
+    MCHdArtOn hdArt(packFolder);
+    const TranslucentShapes shapes = LoadTranslucentShapes(frames);
+
+    for (size_t page = 0; page < pages; ++page)
+    {
+        const std::vector<std::vector<uint8_t>> solid =
+            SolidOnPage(onPages[page], shapes, backgrounds, colors, HdSolidWithin, shotOf(page, "hd"));
+
+        for (size_t i = 0; i < onPages[page].size(); ++i)
+        {
+            const TranslucentFrame& frame = *onPages[page][i];
+            Tally& tally = tallies[frame.Appearance];
+            tally.Redrawn = frame.Redrawn;
+            const std::shared_ptr<MCShape>& shape = shapes.at({frame.Appearance, frame.Packet});
+            const bool hd = MCHdArt::FindInFolder(shape->HdFolder, frame.Frame, frame.Width, frame.Height) != nullptr;
+            ++tally.Frames;
+            tally.HdFrames += hd ? 1 : 0;
+
+            for (int32_t row = 0; row < frame.Height; ++row)
+            {
+                for (int32_t column = 0; column < frame.Width; ++column)
+                {
+                    if (!InsideSolid(frame, column, row))
+                    {
+                        continue;
+                    }
+
+                    ++tally.Inside;
+                    tally.Missing += solid[i][static_cast<size_t>(row) * frame.Width + column] == 0 ? 1 : 0;
+                }
+            }
+        }
+    }
+
+    std::vector<std::pair<uint32_t, Tally>> missing;
+    Tally redrawn;
+    std::optional<std::ofstream> tsv;
+
+    if (shots.has_value())
+    {
+        tsv.emplace(*shots / "translucent.tsv");
+        *tsv << "appearance\tpacket\tkind and types\tframes\thd frames\tinside pixels\tmissing\n";
+    }
+
+    for (const auto& [appearance, tally] : tallies)
+    {
+        Tally& sum = tally.Redrawn ? redrawn : total;
+        sum.Frames += tally.Frames;
+        sum.HdFrames += tally.HdFrames;
+        sum.Inside += tally.Inside;
+        sum.Missing += tally.Missing;
+
+        if (tally.Missing != 0 && !tally.Redrawn)
+        {
+            missing.emplace_back(appearance, tally);
+        }
+
+        if (tsv.has_value())
+        {
+            *tsv << std::format("{:#x}\t{}\t{}\t{}\t{}\t{}\t{}\n", appearance, appearance & AppearancePacketMask,
+                                labels[appearance], tally.Frames, tally.HdFrames, tally.Inside, tally.Missing);
+        }
+    }
+
+    std::ranges::sort(missing, std::greater{}, [](const auto& entry) { return entry.second.Missing; });
+
+    for (size_t i = 0; i < std::min(missing.size(), TranslucentWorstShown); ++i)
+    {
+        const auto& [appearance, tally] = missing[i];
+        std::cout << std::format("  {:#x} ({}): {} of {} pixels inside missing, {} frames ({} HD)\n", appearance,
+                                 labels[appearance], tally.Missing, tally.Inside, tally.Frames, tally.HdFrames);
+    }
+
+    std::cout << std::format("  {} of {} appearances miss pixels: {} of {} pixels inside, {} frames ({} HD); redrawn "
+                             "trees apart: {} of {} pixels inside, {} frames\n",
+                             missing.size(), tallies.size(), total.Missing, total.Inside, total.Frames, total.HdFrames,
+                             redrawn.Missing, redrawn.Inside, redrawn.Frames);
+    CHECK_EQ(total.Missing, 0u);
+}

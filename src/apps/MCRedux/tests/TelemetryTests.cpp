@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "../MCMemorySystem.h"
 #include "../MCTelemetryBackend.h"
+#include "MCMenusPictures.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "RemadeScreens.h"
@@ -8,25 +9,35 @@
 #include "MCTestGuest.h"
 #include "TestGame.h"
 #include "fakes/MCFakeMemorySystem.h"
+#include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCLogButton.h"
+#include "logistics/MCLogMenus.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
 #include "main/MCTelemetry.h"
 #include "mission/MCMission.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCInput.h"
 #include "platform/MCMemoryRoom.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCVulkanShaders.h"
+#include "ui/MCRmlDialog.h"
 #include "update/MCInstalled.h"
 #include "update/MCUpdateDisk.h"
+
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 // The reports (main/MCTelemetry.h), with a stand-in for the app's backend: nothing sent before the player has seen
 // what the reports hold, the question where the law wants consent first (the system's own region, or the server's),
@@ -1025,6 +1036,85 @@ TEST_CASE("reports: frame-time percentiles, and who's asked first")
     CHECK(MCTelemetry::AskFirst("IN", indiaDay));
 }
 
+namespace
+{
+    /// <summary>Frames for the menus to lay a new window out and draw it whole.</summary>
+    void SettleMenusWindow()
+    {
+        constexpr int32_t SettleFrames = 4;
+
+        for (int32_t frame = 0; frame < SettleFrames; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 60.0f);
+        }
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 6): the reports' notice remade, on top of the menus: its title and sentences,
+    /// OK alone; null when it doesn't show.
+    /// </summary>
+    std::shared_ptr<MCRmlScreen> RemadeNotice()
+    {
+        std::shared_ptr<MCRmlScreen> notice = MCRemadeTest::OnTop<MCRmlScreen>();
+
+        if (notice == nullptr || MCRemadeTest::Words(*notice, "heading") != "Reports")
+        {
+            return nullptr;
+        }
+
+        CHECK_EQ(MCRemadeTest::Words(*notice, "ask"),
+                 std::string("MechCommander Redux sends anonymous reports of your computer, frame rates, settings and "
+                             "crashes to help it run better."));
+        CHECK_EQ(MCRemadeTest::Words(*notice, "kept"), std::string("Turn this off under Reports in Preferences."));
+        CHECK_EQ(MCRemadeTest::Words(*notice, "yes"), std::string("OK"));
+        CHECK(!MCRemadeTest::Visible(*notice, "no"));
+        return notice;
+    }
+
+    /// <summary>Whether <paramref name="screen"/>'s document has the keys (the menus' focus is in it).</summary>
+    bool HasKeys(const MCRmlScreen& screen)
+    {
+        const MCOptionalRef<Rml::ElementDocument> document = screen.Document();
+        Rml::Context* context = document.has_value() ? document->get().GetContext() : nullptr;
+        const Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
+        return focus != nullptr && focus->GetOwnerDocument() == &document->get();
+    }
+
+    /// <summary>
+    /// A lobby's game hosting on <paramref name="port"/> as BOB, the reports' region answered: its remade room with the
+    /// notice over it, the keys the notice's (not the room's chat box).
+    /// </summary>
+    std::shared_ptr<MCRmlScreen> NoticeOverLobbyRoom(std::string_view port, MCFakeReports& reports)
+    {
+        REQUIRE(MCTestGame::StartLobby(std::format("-host -port {} -player BOB", port)));
+        REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+        reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
+        MCTestGuest::Settle();
+        REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+        CHECK(RoomScreenShown());
+        CHECK(!GlobalLog()->MessageDialog->IsShowing());
+        std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
+        REQUIRE(notice != nullptr);
+        CHECK(HasKeys(*notice));
+        return notice;
+    }
+
+    /// <summary>The notice over a lobby's room answered: gone, the room on top with the keys, REPORTS on.</summary>
+    void NoticeAnsweredOverRoom()
+    {
+        CHECK(RemadeNotice() == nullptr);
+        const std::shared_ptr<MCRoomScreen> room = MCRemadeTest::OnTop<MCRoomScreen>();
+        REQUIRE(room != nullptr);
+        CHECK(HasKeys(*room));
+        CHECK_EQ(GReports, 1);
+        CHECK(MCTelemetry::Reporting());
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 7): over the remade main menu the notice is stage 6's remade dialog (the 1998 one
+/// would show under it), drawn on the software renderer at the recorded frames' windows; its OK turns REPORTS on.
+/// </summary>
 TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its OK turns REPORTS on")
 {
     if (!MCTestGame::Available())
@@ -1034,29 +1124,71 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
 
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
-    REQUIRE(MCTestGame::StartLogistics());
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    // The saves pinned (none): the menu under the dialog the same whatever earlier tests left.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
     reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
     MCTestGame::RunFrame(1.0f / 15.0f);
     MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    CHECK(!dialog.IsShowing());
+    const std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
+    REQUIRE(notice != nullptr);
+    MCScreenInput::SaveWindowShot("reports notice");
+    // Port-only (stage 7): over the remade main menu, at the recorded frames' windows.
+    MCScreenInput::RealMove(0, 0);
+    MCMenusPictures::CheckWindowFrames(*MCInput::Display(), "main_menu_reports_notice",
+                                       {0xfa1efc70, 0x70293fd0, 0x252f245e}, SettleMenusWindow);
+    REQUIRE(MCRemadeTest::Press(*notice, "yes"));
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK(MCMainMenuScreens::MainOnTop());
+    CHECK_EQ(GReports, 1);
+    CHECK(MCTelemetry::Reporting());
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK(MCMainMenuScreens::MainOnTop());
+}
+
+/// <summary>
+/// The reports' notice as 1998's message box, as it shows where the menus' RmlUi can't start (over 1998's main menu,
+/// nothing remade showing): its text inside its panel.
+/// </summary>
+TEST_CASE_ISOLATED("game: the reports' notice in 1998's message box keeps its text inside its panel")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs prefs;
+    MCFakeReports reports;
+    const MCTestGame::OldMainMenu oldMenu;
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+    reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    const std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
+    REQUIRE(notice != nullptr);
+    REQUIRE(MCRemadeTest::Press(*notice, "yes"));
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    REQUIRE(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    ShowMenuMessage(ReportsText(MCPrompt::Notice));
+    MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE(dialog.IsShowing());
-    CHECK_EQ(dialog.Text, std::string(ReportsText(MCPrompt::Notice)));
-    MCScreenInput::SaveShot("reports notice", MCScreenInput::ScreenHash());
     CHECK(TextInsidePanel(dialog));
     MCScreenInput::RealClick(dialog.OkButton->GlobalX() + dialog.OkButton->Width() / 2,
                              dialog.OkButton->GlobalY() + dialog.OkButton->Height() / 2);
-    MCTestGame::RunFrame(1.0f / 15.0f);
-    CHECK(!dialog.IsShowing());
-    CHECK_EQ(GReports, 1);
-    CHECK(MCTelemetry::Reporting());
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(!dialog.IsShowing());
 }
 
 /// <summary>
 /// A game a lobby starts never shows the main menu: its room (the session screen) shows the reports' notice instead,
-/// once: not again as the room is shown again for a player who joins.
+/// once: not again each frame while it shows, nor as the room is shown again for a player who joins. Over the remade
+/// room (stage 4) the notice has the keys, a guest's join leaving it on top; Escape closes it, as seen.
 /// </summary>
 TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice once")
 {
@@ -1068,25 +1200,54 @@ TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice onc
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     MCTestGuest::Guest guest("ANN");
-    REQUIRE(MCTestGame::StartLobby("-host -port 28899 -player BOB"));
-    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
-    reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
-    MCTestGuest::Settle();
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
-    REQUIRE(dialog.IsShowing());
-    CHECK_EQ(dialog.Text, std::string(ReportsText(MCPrompt::Notice)));
-    MCScreenInput::SaveShot("reports notice session screen", MCScreenInput::ScreenHash());
-    // Over the remade room (SPEC-menus.md's stage 4), the remade dialog says it.
-    MCTestGuest::PressDialogOk();
-    CHECK(!dialog.IsShowing());
-    CHECK_EQ(GReports, 1);
+    const std::shared_ptr<MCRmlScreen> notice = NoticeOverLobbyRoom("28899", reports);
+    MCScreenInput::SaveWindowShot("reports notice session screen");
 
+    // A guest joins while it shows: still the one notice on top, with the keys.
     REQUIRE(guest.Join(*MultiPlayer()->SessionManager->DirectPlay, "127.0.0.1:28899"));
     REQUIRE(MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(guest.Id()); }));
     MCTestGuest::Settle();
-    CHECK(!dialog.IsShowing());
-    CHECK_EQ(GReports, 1);
+    CHECK(RemadeNotice() == notice);
+    CHECK(HasKeys(*notice));
+
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGuest::Settle();
+    NoticeAnsweredOverRoom();
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+}
+
+/// <summary>The reports' notice over a lobby's remade room: Enter, as OK.</summary>
+TEST_CASE_ISOLATED("game: Enter closes the reports' notice over a lobby's room")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs prefs;
+    MCFakeReports reports;
+    REQUIRE(NoticeOverLobbyRoom("28892", reports) != nullptr);
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    MCTestGuest::Settle();
+    NoticeAnsweredOverRoom();
+}
+
+/// <summary>The reports' notice over a lobby's remade room: OK clicked (the mouse reaches it too).</summary>
+TEST_CASE_ISOLATED("game: OK closes the reports' notice over a lobby's room")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs prefs;
+    MCFakeReports reports;
+    const std::shared_ptr<MCRmlScreen> notice = NoticeOverLobbyRoom("28896", reports);
+    Rml::Element* ok = MCRemadeTest::Find(*notice, "yes");
+    REQUIRE(ok != nullptr);
+    MCTestGuest::RealClickOn(*ok);
+    MCTestGuest::Settle();
+    NoticeAnsweredOverRoom();
 }
 
 TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CANCEL leaves REPORTS off")
@@ -1099,21 +1260,34 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     reports.Log->Countries = {"DE"};
-    REQUIRE(MCTestGame::StartLogistics());
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    // The saves pinned (none): the menu under the dialog the same whatever earlier tests left.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(reports.Log->Requests.empty());
-    // Port-only (SPEC-menus.md's stage 6): the question remade, a dialog over the main menu, DON'T SEND with the focus.
+    // Port-only (SPEC-menus.md's stage 6): the question remade, a dialog over the main menu, SEND with the focus.
     CHECK(!GlobalLog()->QuestionDialog->IsShowing());
     const std::shared_ptr<MCRmlScreen> question = MCRemadeTest::OnTop<MCRmlScreen>();
     REQUIRE(question != nullptr);
+    CHECK_EQ(MCRemadeTest::Words(*question, "heading"), std::string("Send reports?"));
+    const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
+    REQUIRE(menus.has_value());
+    CHECK(menus->get().Menus().Context().GetFocusElement() == MCRemadeTest::Find(*question, "yes"));
+    CHECK(MCRemadeTest::Visible(*question, "no"));
     CHECK_EQ(MCRemadeTest::Words(*question, "ask"),
              std::string("Send reports of your computer, frame rates, settings and crashes, under a random ID, to help "
                          "MechCommander Redux run better?"));
     CHECK_EQ(MCRemadeTest::Words(*question, "kept"), std::string("No name or IP address is kept."));
     MCScreenInput::SaveWindowShot("reports question");
+    // Port-only (stage 7): over the remade main menu, at the recorded frames' windows.
+    MCScreenInput::RealMove(0, 0);
+    MCMenusPictures::CheckWindowFrames(*MCInput::Display(), "main_menu_reports_question",
+                                       {0x64cb4c3a, 0x26198167, 0x9aad576e}, SettleMenusWindow);
     REQUIRE(MCRemadeTest::Press(*question, "no"));
     MCTestGame::RunFrame(1.0f / 15.0f);
-    CHECK(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
+    CHECK(MCRemadeTest::OnTop<MCRmlScreen>() != question);
+    CHECK(MCMainMenuScreens::MainOnTop());
     CHECK_EQ(GReports, 0);
     CHECK(!MCTelemetry::Reporting());
     CHECK(MCTelemetry::Prompt() == MCPrompt::None);
@@ -1181,16 +1355,18 @@ TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and 
     constexpr int32_t componentEntries = 50;
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
-    REQUIRE(MCTestGame::StartLogistics());
+    // Its saves in a folder of its own, gone with it whatever its result: a refused one left behind would be the next
+    // test's to read.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
     reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
     MCTestGame::RunFrame(1.0f / 15.0f);
     std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    MCReusableDialog& notice = *logistics->MessageDialog;
-    REQUIRE(notice.IsShowing());
-    MCScreenInput::RealClick(notice.OkButton->GlobalX() + notice.OkButton->Width() / 2,
-                             notice.OkButton->GlobalY() + notice.OkButton->Height() / 2);
+    const std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
+    REQUIRE(notice != nullptr);
+    REQUIRE(MCRemadeTest::Press(*notice, "yes"));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE(MCTelemetry::Reporting());
     NewCampaign();
@@ -1245,11 +1421,4 @@ TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and 
     CHECK_EQ(logistics->LoadCampaign("p3reported", ".sav", false, true), 0);
     CHECK_EQ(logistics->CurrentMission, good);
     CHECK_EQ(reports.Log->Requests.size(), reported);
-
-    for (const std::string_view save : {"p3reported", "p3past", "p3end", "p3damaged"})
-    {
-        MCFileSystem::RemoveFile(GamePath(SavePath, save, ".sav"));
-    }
-
-    MCFileSystem::RemoveFile(GamePath(SavePath, "p3reported", ".pur"));
 }

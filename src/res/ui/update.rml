@@ -11,7 +11,7 @@
     <div class="stage16">
         <div id="frame" class="content">
             <div id="update" class="panel glass">
-                <div class="titlebar row bottom"><div class="grow"><div class="eyebrow" id="place">Main menu</div><div class="title caps">Update</div></div><div class="data grey caps nowrap" id="running"></div></div>
+                <div class="titlebar row bottom"><div class="grow"><div class="title caps">Update</div></div><div class="data grey caps nowrap" id="running"></div></div>
                 <div class="row gap12 grow" id="update-body">
                     <div id="notes">
                         <div class="list-head row"><div class="cell grow" style="padding-left: 0;" id="brings"></div><div class="cell" id="changes"></div></div>
@@ -20,7 +20,6 @@
                     <div id="facts">
                         <div class="heading caps nowrap" style="margin-bottom: 8dp;" id="version"></div>
                         <div class="fact" id="size-fact"><div class="label">Download</div><div id="size"></div></div>
-                        <div class="fact" id="small-fact"><div class="label">Smaller art</div><div id="small"></div></div>
                         <div class="status"><div id="status"></div><div class="meter hidden" id="meter"><div class="meter-fill cream" id="meter-fill" style="width: 0%;"></div></div></div>
                     </div>
                 </div>

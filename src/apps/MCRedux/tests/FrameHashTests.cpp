@@ -653,6 +653,7 @@ namespace
         const MCRecordedPrefs prefs;
         std::optional<MCTestGame::PinnedSaves> saves;
         RequestDrawing(gpu);
+        const MCTestGame::OldMainMenu oldMenu;
         REQUIRE(MCTestGame::StartLogistics([&saves] { saves.emplace(); }));
 
         if (!DrawingAsAsked(gpu))

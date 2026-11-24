@@ -14,6 +14,8 @@ namespace MCMenuScreens
 
     /// <summary>The old screens' ids in the flow (registered on first use).</summary>
     MCScreenFlow::MCScreenId Main();
+    /// <summary>Port-only (stage 7): the main menu's submenus (logistics/MCMainMenuScreen.h).</summary>
+    MCScreenFlow::MCScreenId Campaigns();
     MCScreenFlow::MCScreenId Multiplayer();
     MCScreenFlow::MCScreenId Lan();
     MCScreenFlow::MCScreenId Internet();
@@ -27,8 +29,6 @@ namespace MCMenuScreens
     MCScreenFlow::MCScreenId Update();
     /// <summary>The campaign's screens: the briefing, PURCHASING and the 'MECH BAY (sliding between them, one place).</summary>
     MCScreenFlow::MCScreenId Campaign();
-    /// <summary>The original's modem and serial screens (MULTIPLAYER without a network).</summary>
-    MCScreenFlow::MCScreenId Connection();
     /// <summary>A launcher's ready room (its first screen while the lobby's join goes on).</summary>
     MCScreenFlow::MCScreenId ReadyRoom();
 
@@ -44,10 +44,16 @@ namespace MCMenuScreens
     /// </summary>
     std::vector<MCScreenFlow::MCScreenId> RoomStack();
 
-    /// <summary>Escape on the main menu (the stack's end): "Quit the game?", whose OK quits.</summary>
+    /// <summary>
+    /// Escape and QUIT on the main menu (the stack's end): "Quit the game?", whose answer quits; over the remade main
+    /// menu (logistics/MCMainMenuScreen.h), else the 1998 dialog.
+    /// </summary>
     void AskQuit();
 
-    /// <summary>A launcher's room's LEAVE and Escape (the stack's end): "Leave the game?", whose OK ends the game.</summary>
+    /// <summary>
+    /// A launcher's room's LEAVE and Escape (the stack's end): "Leave the game?", whose OK ends the game (a host's
+    /// goodbye to its guests first: network/MCRoomEnd.h's LeaveLauncherGame).
+    /// </summary>
     void AskLeaveGame();
 
     /// <summary>

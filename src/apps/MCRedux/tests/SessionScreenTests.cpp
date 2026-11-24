@@ -48,6 +48,9 @@
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+
 using namespace MCScreenInput;
 using MCTestGuest::Guest;
 using MCTestGuest::Settle;
@@ -93,8 +96,9 @@ TEST_CASE_ISOLATED(
 
     using MCMenusPictures::CheckMenusFrames;
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+
+    // The LAN games from MULTIPLAYER, hosting on the loopback.
+    MCTestGuest::OpenLan();
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(HostAddress);
@@ -256,7 +260,7 @@ namespace
 /// The remade room's boxes take what the 1998 room's did. The chat sends what the 1998 chat box could
 /// (MCLogChatInput): its characters one byte each, the accented 0xbf-0xfd as those bytes, '%' (the chat formatter's
 /// code) and the rest left out, and shows that line back with its accents, as it does the chat's names and its own
-/// lines. The points take seven digits at most, as the 1998 RP box (whose tick would send more cut to seven).
+/// lines. Enter in the box says what's typed (the box marked data-line: Enter is RmlUi's, not the next control's). The points take seven digits at most, as the 1998 RP box (whose tick would send more cut to seven).
 /// </summary>
 TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's boxes did")
 {
@@ -266,8 +270,7 @@ TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's b
     }
 
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     REQUIRE(MultiPlayer() != nullptr);
     MultiPlayer()->SessionManager->ConnectTcp(ChatHostAddress);
     MCTestGuest::HostOnLan("Bob", "Chat game", 6);
@@ -290,6 +293,19 @@ TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's b
     const std::vector<std::string> accented = room.Seen().Chat;
     CHECK(std::ranges::find(accented, std::string("Ren\xc3\xa9: hi")) != accented.end());
     CHECK(std::ranges::find(accented, std::string("Ren\xc3\xa9 joined.")) != accented.end());
+
+    // Typed into the chat's box and Enter, as a player says a line: said, the box emptied, the keys still in it.
+    Rml::Element* say = MCTestGuest::ElementOf(room, "say");
+    REQUIRE(say != nullptr);
+    MCTestGuest::RealClickOn(*say);
+    MCTestGuest::RealType("Ready when you are");
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    Settle();
+    const std::vector<std::string> typed = room.Seen().Chat;
+    CHECK(std::ranges::find(typed, std::string("Bob: Ready when you are")) != typed.end());
+    CHECK_EQ(say->GetAttribute<Rml::String>("value", "unread"), std::string());
+    REQUIRE(say->GetContext() != nullptr);
+    CHECK(say->GetContext()->GetFocusElement() == say);
 
     room.TypePoints(MCRoomModel::Team1, "9,999,999");
     Settle();
@@ -332,8 +348,7 @@ TEST_CASE_ISOLATED("game: the room's MATCH OPTIONS sets the match's options and 
     }
 
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(OptionsHostAddress);
@@ -646,8 +661,7 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     }
 
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(DataHostAddress);
@@ -751,23 +765,24 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     }
 
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     REQUIRE(MultiPlayer() != nullptr);
     CHECK(MCTestGuest::OnLan());
     CHECK(MCTestGuest::DialogText().empty());
     CHECK(MultiPlayer()->SessionManager->CurrentConnection == MCNetProtocol::TcpIp);
 
-    // The games' CANCEL: the main menu, the multiplayer object gone.
+    // The games' CANCEL: MULTIPLAYER again; its BACK: the main menu, the multiplayer object gone.
     MCGamesScreen& lanScreen = *MCTestGuest::Games(MCGamesWhere::Lan);
     lanScreen.Back();
-    Settle();
+    REQUIRE(MCTestGuest::SettleUntil(MCTestGuest::OnAccess));
+    CHECK(MultiPlayer() != nullptr);
+    MCTestGuest::ClickOn(MCMainPanel::Multiplayer, "back");
+    REQUIRE(MCTestGuest::SettleUntil(MCTestGuest::OnMainMenu));
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
     CHECK(MultiPlayer() == nullptr);
 
     // Hosting from the games: the room, the host alone in it, whose EXIT leaves the game and lists the games again.
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(MenuHostAddress);
@@ -791,16 +806,6 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     CHECK(manager.CurrentSession() == nullptr);
     CHECK(manager.CurrentConnection == MCNetProtocol::TcpIp);
     CHECK_EQ(lanScreen.PlayerName(), "Commander");
-
-    // Without a network the connection screen shows instead, and its SERIAL screen's CANCEL goes back to it.
-    ShowSerialScreen();
-    Settle();
-    auto& serialScreen = *GlobalLog()->SerialScreen;
-    ClickButton(*serialScreen.Element<MCLogButton>(1));
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MultiplayerScreen);
-    CHECK(GlobalLog()->MultiplayerScreen->IsShowing());
-    CHECK(!serialScreen.IsShowing());
-    CHECK(!MCTestGuest::OnLan());
 }
 
 /// <summary>
@@ -817,8 +822,7 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     }
 
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(RoomHostAddress);
@@ -960,8 +964,7 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can
     }
 
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     REQUIRE(MultiPlayer() != nullptr);
     MCMultiPlayer& game = *MultiPlayer();
     MCSessionManager& manager = *game.SessionManager;
@@ -1160,11 +1163,10 @@ namespace
     void HostTheRollingRoom(const std::filesystem::path& folder)
     {
         REQUIRE(MCTestGame::StartLogistics());
-        ConnectScreen();
-        Settle();
+        MCTestGuest::OpenLan();
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
         manager.ConnectTcp(RolloverHostAddress);
-        // MULTIPLAYER opens the LAN games (the personal build).
+        // The LAN games (MULTIPLAYER's LAN).
         MCTestGuest::HostOnLan("BOB", "Rolling room", 6);
         Settle();
         REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
@@ -1274,8 +1276,7 @@ TEST_CASE_ISOLATED(
     } bob(folder.Path());
 
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(RolloverHostAddress);
     std::shared_ptr<MCFidpSession> found;

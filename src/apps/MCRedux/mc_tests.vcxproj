@@ -104,6 +104,24 @@
     <CopyFileToFolders Include="..\..\res\ui\look.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\main_menu.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\main_menu.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\main_menu_campaigns.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\main_menu_frame.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\main_menu_multiplayer.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\main_menu_solo.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\match_options.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
@@ -284,6 +302,7 @@
     <ClCompile Include="tests\LogisticsListTests.cpp" />
     <ClCompile Include="tests\LogisticsTests.cpp" />
     <ClCompile Include="tests\LogisticsViewTests.cpp" />
+    <ClCompile Include="tests\MainMenuTests.cpp" />
     <ClCompile Include="tests\MCTest.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>

@@ -1,0 +1,34 @@
+<rml>
+<head>
+    <title>Main menu: campaigns</title>
+    <link type="text/template" href="main_menu_frame.rml"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "Main menu"; stage 7; the style frames' main_menu_campaigns.rml): CAMPAIGNS in the main
+     menu's place, each campaign with where the player is in it; the picked one's CONTINUE (its latest save), LOAD (LOAD
+     GAME on its saves) and NEW CAMPAIGN (from its first mission); one not started has NEW CAMPAIGN alone. Escape goes
+     back to the main menu (logistics/MCMainMenuScreen). -->
+<body template="main-menu" class="painting" data-model="campaigns">
+    <div class="subhead">
+        <div class="eyebrow">Main menu</div>
+        <div class="heading caps">Campaigns</div>
+    </div>
+    <div id="rows">
+        <div class="choice two list-row" data-for="row, i : rows" data-class-picked="i == picked"
+             data-event-click="pick(i)" data-event-focus="pick(i)">{{row.title}}<div class="line">{{row.line}}</div></div>
+    </div>
+    <div class="grow"></div>
+    <div class="actions column gap8">
+        <div class="row gap8" data-if="started">
+            <div class="grow"></div>
+            <div class="button" id="load">Load</div>
+            <div class="button" id="new">New campaign</div>
+        </div>
+        <div class="row">
+            <div class="button" id="back">Back</div>
+            <div class="grow"></div>
+            <div class="button main" id="main">{{mainWord}}</div>
+        </div>
+    </div>
+    <div class="gap-foot"></div>
+</body>
+</rml>

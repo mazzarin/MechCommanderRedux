@@ -1,5 +1,5 @@
 {
-  "about": "Port-only (SPEC-menus.md, stage 5): the campaigns' operations and missions by the names the remade menus show them. The briefings write them in capitals (FEDCOM:SKYHOOK, ***DESTROY ENEMY CONVOY***); here each in its own case, as the approved frames have them. A mission is its briefing file's (the mission FIT's BriefingFile); an operation is the word its briefings' FEDCOM line gives it. One not here shows as its briefing writes it (logistics/MCMissionNames.h).",
+  "about": "Port-only (SPEC-menus.md, stages 5 and 7): the campaigns' operations and missions, and the single missions, by the names the remade menus show them. The briefings write them in capitals (FEDCOM:SKYHOOK, ***DESTROY ENEMY CONVOY***); here each in its own case, as the approved frames have them. A mission is its briefing file's (the mission FIT's BriefingFile); an operation is the word its briefings' FEDCOM line gives it. One not here shows as its briefing writes it (logistics/MCMissionNames.h).",
   "operations": {
     "BEACHHEAD": "Beachhead",
     "SKYHOOK": "Skyhook",
@@ -55,8 +55,8 @@
     "xbrf0303.txt": "Obliterate complex",
     "xbrf0304.txt": "Destroy engine drills",
     "xbrf0305.txt": "Destroy engine drills",
-    "xsbrf0401.txt": "Destroy all aces",
-    "xsbrf0402.txt": "Destroy garrison",
-    "xsbrf0404.txt": "Port Arthur redux"
+    "xsbrf0401.txt": "Destroy All Aces",
+    "xsbrf0402.txt": "Destroy Garrison",
+    "xsbrf0404.txt": "Port Arthur Redux"
   }
 }

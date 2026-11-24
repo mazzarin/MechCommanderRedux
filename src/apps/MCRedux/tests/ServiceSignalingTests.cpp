@@ -247,6 +247,16 @@ TEST_CASE(
     REQUIRE_EQ(host.Sent.size(), size_t{1});
     CHECK(host.Sent[0].Data.contains(R"("public":true)"));
     CHECK(signaling.LinkSettings(Guest).RelayOnly);
+
+    // Port-only (SPEC-menus.md, "In the room"): a host's goodbye takes its room off the list, the room otherwise as it
+    // stands; once only.
+    host.Sent.clear();
+    signaling.Unlist();
+    REQUIRE_EQ(host.Sent.size(), size_t{1});
+    CHECK_EQ(host.Sent[0].Data, std::string(R"({"battle":false,"max":4,"mission":"","name":"ANOTHER",)"
+                                            R"("players":["BOB","ANN"],"public":false,"t":"room"})"));
+    signaling.Unlist();
+    CHECK_EQ(host.Sent.size(), size_t{1});
 }
 
 /// <summary>

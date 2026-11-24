@@ -49,8 +49,6 @@ public:
         std::string UpdateLine;
         bool Hosting = false;
         bool CanBegin = false;
-        /// <summary>The host's room closing (its guests waited for): LEAVE and BEGIN PLANNING held.</summary>
-        bool Closing = false;
     };
 
     MCSeen Seen() const;
@@ -174,7 +172,6 @@ private:
     std::string _WaitColour;
     std::string _WaitWhat;
     bool _CanBegin = false;
-    bool _Closing = false;
 };
 
 /// <summary>
@@ -194,6 +191,12 @@ MCGuiHandle<MCRoomScreen> RoomScreen();
 
 /// <summary>Whether the remade room shows.</summary>
 bool RoomScreenShown();
+
+/// <summary>
+/// Whether the remade room shows with nothing over it (no MATCH OPTIONS, CHOOSE MAP, dialog or notice): the notices'
+/// turn, as the main menu's (MCMainMenuScreens::MainOnTop).
+/// </summary>
+bool RoomScreenOnTop();
 
 /// <summary>
 /// Port-only (SPEC-menus.md's stage 4, a launcher's way in): a launcher's game on the painting alone

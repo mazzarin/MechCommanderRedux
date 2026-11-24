@@ -545,6 +545,9 @@ auto MCGuiSystem::RunFrameCallbacks(bool includeAdded) -> void
     MCScreenFlow::Tend();
     // Port-only (SPEC-menus.md, the remade screens): the screens shown, their lists kept up and their jobs moved along.
     MCRmlFlow::Tend();
+    // Port-only (SPEC-menus.md, "In the room"): a host's goodbye to its room, which goes on after its game has gone (a
+    // way back to the main menu drops it): every frame, with a game or none.
+    MCSessionManager::PumpGoodbye();
 
     for (size_t i = 0; i < (includeAdded ? _Callbacks.size() : count); i++)
     {

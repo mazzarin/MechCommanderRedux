@@ -45,6 +45,12 @@ public:
         /// </summary>
         int32_t Operation = 0;
         int32_t Mission = 0;
+        /// <summary>
+        /// Port-only (stage 7): the mission it opens on, its briefing's (the main menu's CONTINUE names it): an after
+        /// save's next mission, else the one it names.
+        /// </summary>
+        int32_t OpensOperation = 0;
+        int32_t OpensMission = 0;
         std::string OperationName;
         std::string MissionName;
         std::string Scenario;
@@ -64,6 +70,48 @@ public:
         DiskFull,
         Failed,
     };
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 7, SOLO MISSIONS): a single mission shipped, a .sol in SavePath (a save of a
+    /// campaign of one mission, its master file "campaign" and its name): its briefing's name for its mission, and what
+    /// it starts with.
+    /// </summary>
+    struct MCSolo
+    {
+        /// <summary>Its file's name, without .sol ("ACEHUNT"), as the game loads it.</summary>
+        std::string Name;
+        /// <summary>Whether its settings could be read: one that can't is listed by its file's name alone.</summary>
+        bool Read = false;
+        /// <summary>The mission by its briefing's name ("Destroy All Aces").</summary>
+        std::string MissionName;
+        /// <summary>Its mission's briefing file (the mission FIT's BriefingFile), as res/ui/missions.json names it.</summary>
+        std::string Briefing;
+        uint32_t ResourcePoints = 0;
+        /// <summary>The tons that drop (its mission's MaxTonnage).</summary>
+        int32_t Tons = 0;
+        /// <summary>The units it starts with (its force's 'Mechs and vehicles); none for the shipped three.</summary>
+        int32_t Units = 0;
+    };
+
+    /// <summary>What a campaign save's settings (its first packet) say of it.</summary>
+    struct MCSettings
+    {
+        /// <summary>Its [Planet] Setting (Port Arthur's without one).</summary>
+        MCCampaign Campaign = MCCampaign::Original;
+        /// <summary>Its MissionNumber: the scenario of its campaign's master mission file it opens on.</summary>
+        int32_t MissionNumber = 0;
+        uint32_t ResourcePoints = 0;
+    };
+
+    /// <summary>
+    /// The settings of the save <paramref name="gamePath"/>, as the saves list and 1998's load and save screens read
+    /// them; none, and the log told naming it, when the file can't be read (empty, cut short, not a save), or they name
+    /// a campaign the game doesn't have, or no mission or points. Such a save is damaged: listed by its name alone.
+    /// </summary>
+    static std::optional<MCSettings> ReadSettings(const std::string& gamePath);
+
+    /// <summary>The single missions on disk, read now, by their files' names.</summary>
+    static std::vector<MCSolo> SoloMissions();
 
     /// <summary>The game's list (read when a screen refreshes it).</summary>
     static MCSaves& Game();
@@ -119,6 +167,9 @@ public:
     static std::string_view CampaignName(MCCampaign campaign);
     static std::string_view CampaignShortName(MCCampaign campaign);
 
+    /// <summary>Resource points as the menus write them, their thousands marked: "325,000".</summary>
+    static std::string PointsText(uint32_t points);
+
     /// <summary>When a save was written, for a list: "Today 21:52", "Yesterday 23:05", "18 Nov 23:30", "18 Nov 2025".</summary>
     std::string DateText(SDL_Time saved) const;
 
@@ -149,6 +200,9 @@ private:
         std::string Operation;
         std::string Mission;
     };
+
+    /// <summary>The single mission <paramref name="name"/>'s .sol read (<see cref="SoloMissions"/>).</summary>
+    static MCSolo ReadSolo(std::string name);
 
     /// <summary>The scenarios a campaign's master mission file lists; none when it can't be read.</summary>
     static std::vector<MCScenario> ReadScenarios(std::string_view master);

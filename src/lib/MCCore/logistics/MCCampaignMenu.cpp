@@ -13,7 +13,6 @@
 #include "logistics/MCOperationVideo.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCSaves.h"
-#include "logistics/MCSavesMenu.h"
 #include "logistics/MCSmuti.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCGameStrings.h"
@@ -470,7 +469,7 @@ void MCCampaignScreen::ReadBriefing()
 bool MCCampaignScreen::FillBar()
 {
     const std::string points = ResourceDisplayState == 0
-                                   ? MCSavesMenu::PointsText(static_cast<uint32_t>(std::max(ResourcePoints, 0)))
+                                   ? MCSaves::PointsText(static_cast<uint32_t>(std::max(ResourcePoints, 0)))
                                    : std::string();
     const std::string clock = MCPort::StrTime();
 

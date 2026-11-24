@@ -5,7 +5,6 @@
 #include "platform/MCInput.h"
 #include "platform/MCUtf8Path.h"
 #include "ui/MCRmlArt.h"
-#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlRecorder.h"
 #include "ui/MCRmlSystem.h"
 
@@ -305,12 +304,6 @@ bool MCRmlMenus::HandleEvent(const SDL_Event& event)
     }
 
     if (Showing() && _InputHeld != nullptr && IsPress(event) && _InputHeld())
-    {
-        return true;
-    }
-
-    // Port-only (SPEC-menus.md's stage 4): a dialog asking for a key takes it first.
-    if (Showing() && MCRmlDialogs::TakeKey(event))
     {
         return true;
     }

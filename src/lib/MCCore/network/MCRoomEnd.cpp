@@ -13,6 +13,7 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "main/MCGameContext.h"
+#include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
@@ -21,6 +22,8 @@
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "platform/MCDirectPlay.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
 #include "sprite/MCHdArt.h"
 
 namespace
@@ -49,10 +52,9 @@ namespace
     constexpr std::string_view ReopeningText = "Opening your room again...";
     constexpr std::string_view NotReopenedText = "Couldn't open your room again.";
 
-    /// <summary>A host's wait for its guests to leave on its word, then what it does.</summary>
+    /// <summary>A host's REMATCH: its wait for its guests to leave on its word, then the room hosted again.</summary>
     struct MCEnding
     {
-        MCRoomEnd::MCHow How = MCRoomEnd::MCHow::Closed;
         /// <summary>The guests told, by id: the wait ends when none is left in the session.</summary>
         std::vector<uint32_t> Told;
         Clock::time_point Until;
@@ -94,8 +96,6 @@ namespace
     };
 
     std::optional<MCEnding> Ending;
-    /// <summary>The host's EXIT, its wait over: it leaves without telling the room again.</summary>
-    bool LeavingNow = false;
     /// <summary>The host said it closed the room (its name), the guest's leave coming.</summary>
     std::optional<std::string> ClosedBy;
     std::optional<MCMatchRoom> MatchRoom;
@@ -532,47 +532,58 @@ auto MCRoomEnd::CloseRoom() -> bool
     // A rematch's room left: its picks are no one's.
     Returning.reset();
 
-    if (LeavingNow || Ending.has_value() || game == nullptr || !game->IsHost || GamesOf() == MCGames::None ||
+    if (Ending.has_value() || game == nullptr || !game->IsHost || game->SessionManager == nullptr ||
         game->SessionManager->CurrentSession() == nullptr)
     {
         return false;
     }
 
+    MCSessionManager& manager = *game->SessionManager;
+
     // The room goes on under another game when one can take it over (MCDirectPlay::HasSuccessor): nothing to tell.
-    if (game->SessionManager->LeaveHandsOn())
+    if (manager.LeaveHandsOn())
     {
-        SDL_Log("Room end: the host's EXIT hands the room on");
+        SDL_Log("Room end: the host's LEAVE hands the room on");
         return false;
     }
 
     std::vector<uint32_t> told;
-
-    for (const std::shared_ptr<MCFidpPlayer>& player : game->SessionManager->GetPlayers(nullptr))
-    {
-        if (player != nullptr && player->Id != game->SessionManager->MyPlayerID && HearsRoomEnds(*game, player->Id))
-        {
-            told.push_back(player->Id);
-        }
-    }
+    std::ranges::transform(TakingGuests(*game), std::back_inserter(told), &MCLobbyUpdate::MCPlace::Id);
 
     if (told.empty())
     {
         return false;
     }
 
-    SDL_Log("Room end: the host closes its room; waiting for %zu guests to leave first", told.size());
+    // Port-only (SPEC-menus.md, "In the room"): the word first, then the session left at once, its goodbye kept apart
+    // until the guests have left on it (LeaveWait at most): they say "Bob closed the game." as they go.
+    SDL_Log("Room end: the host closes its room; its goodbye to %zu guests goes behind it", told.size());
     SendRoomEnds(*game, MCHow::Closed);
-    Ending = MCEnding{.How = MCHow::Closed, .Told = std::move(told), .Until = Now() + LeaveWait};
+    manager.LeaveAfterGoodbye(std::move(told), LeaveWait);
+    return true;
+}
 
-    // Nothing more to press on the room meanwhile.
-    if (const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        logistics != nullptr && logistics->SessionScreen != nullptr && logistics->SessionScreen->ExitButton != nullptr)
+auto MCRoomEnd::LeaveLauncherGame() -> void
+{
+    CloseRoom();
+    KillTheGame();
+}
+
+auto MCRoomEnd::FinishGoodbye(std::chrono::milliseconds internetWait) -> void
+{
+    if (!MCSessionManager::GoodbyeLingers())
     {
-        logistics->SessionScreen->ExitButton->Disabled = true;
-        logistics->SessionScreen->StartButton->Disabled = true;
+        return;
     }
 
-    return true;
+    SDL_Log("Room end: the game ends once its goodbye to its room has gone, its window hidden meanwhile");
+
+    if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+    {
+        SDL_HideWindow(&display->Window());
+    }
+
+    MCSessionManager::FinishGoodbye(internetWait);
 }
 
 auto MCRoomEnd::HostSaid(uint32_t fromId, int32_t how) -> bool
@@ -762,12 +773,12 @@ auto MCRoomEnd::Rematch() -> void
         SendRoomEnds(*game, MCHow::Rematch);
     }
 
-    Ending = MCEnding{.How = MCHow::Rematch, .Told = std::move(told), .Until = Now() + LeaveWait};
+    Ending = MCEnding{.Told = std::move(told), .Until = Now() + LeaveWait};
 }
 
 auto MCRoomEnd::Rematching() -> bool
 {
-    return (Ending.has_value() && Ending->How == MCHow::Rematch) || HostAfterResults;
+    return Ending.has_value() || HostAfterResults;
 }
 
 auto MCRoomEnd::PlaceReturning(MCSessionScreen& room) -> void
@@ -878,7 +889,6 @@ auto MCRoomEnd::Frame() -> void
         SDL_Log("Room end: not waiting longer for every guest to leave");
     }
 
-    const MCHow how = Ending->How;
     Ending.reset();
 
     if (game == nullptr)
@@ -889,32 +899,18 @@ auto MCRoomEnd::Frame() -> void
     // The rematch: the results close, and the room is hosted again (AfterMatch, once the menus are back); with them gone
     // already, at once. At the results the mission has no menus (it dropped them as the scenario loaded): asking for them
     // first dropped the rematch there, the room never hosted again.
-    if (how == MCHow::Rematch)
+    HostAfterResults = true;
+
+    if (AtResults())
     {
-        HostAfterResults = true;
-
-        if (AtResults())
-        {
-            Mission()->LeaveResults();
-        }
-        else if (GlobalLog() != nullptr)
-        {
-            AfterMatch();
-        }
-
-        // Else the results are already closing: the mission's way back hosts it (TakesOnAfterMatch).
-        return;
+        Mission()->LeaveResults();
+    }
+    else if (GlobalLog() != nullptr)
+    {
+        AfterMatch();
     }
 
-    if (GlobalLog() == nullptr)
-    {
-        return;
-    }
-
-    // The EXIT, now: back to the games.
-    LeavingNow = true;
-    LeaveRoom();
-    LeavingNow = false;
+    // Else the results are already closing: the mission's way back hosts it (TakesOnAfterMatch).
 }
 
 auto MCRoomEnd::SetClock(std::function<Clock::time_point()> clock) -> void

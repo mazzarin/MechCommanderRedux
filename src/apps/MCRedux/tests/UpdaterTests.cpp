@@ -231,6 +231,7 @@ TEST_CASE_ISOLATED("game: without an updater the main menu keeps ORIGINAL CINEMA
         return;
     }
 
+    const MCTestGame::OldMainMenu oldMenu;
     REQUIRE(MCTestGame::StartLogistics());
     Frames();
     const std::shared_ptr<MCLogButton> cinema = GlobalLog()->MainScreen->CinemaButton.Lock();
@@ -255,6 +256,7 @@ TEST_CASE_ISOLATED("game: the main menu names the version running under its wind
         return;
     }
 
+    const MCTestGame::OldMainMenu oldMenu;
     REQUIRE(MCTestGame::StartLogistics());
     Frames();
     const std::shared_ptr<MCGuiObject> window = GlobalLog()->MainScreen->Element<MCGuiObject>(MenuWindowElement);
@@ -286,6 +288,7 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     }
 
     MCFakeUpdater updater;
+    const MCTestGame::OldMainMenu oldMenu;
     REQUIRE(MCTestGame::StartLogistics());
     Frames();
     CHECK_EQ(updater.Log->Checks.size(), size_t{1});

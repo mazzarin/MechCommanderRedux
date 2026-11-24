@@ -5,18 +5,22 @@
 #include "TestGame.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiPort.h"
+#include "gui/MCScreenChange.h"
+#include "gui/MCScreenFlow.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogTextObject.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
+#include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
@@ -26,6 +30,9 @@
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCRoomEnd.h"
+#include "ui/MCRmlDialog.h"
+
+#include <thread>
 
 // Port-only (Redux HD): where a game the menus took to its room goes when the room ends (network/MCRoomEnd.h): back to
 // the games screen it came from, saying why. The game's side is the test game; the others' are the tests' players
@@ -42,6 +49,7 @@ using MCTestGuest::OnScreen;
 using MCTestGuest::PressDialogOk;
 using MCTestGuest::Settle;
 using MCTestGuest::SettleUntil;
+using MCTestGuest::Step;
 
 namespace
 {
@@ -62,6 +70,93 @@ namespace
         MCTestGuest::HostFromLan(std::format("127.0.0.1:{}", port), "COMMANDER", "COMMANDER'S GAME", 4);
         Settle();
         REQUIRE(OnScreen(GlobalLog()->SessionScreen));
+    }
+
+    /// <summary>How the host leaves its remade room: LEAVE clicked, or Escape pressed.</summary>
+    enum class MCLeaveBy
+    {
+        Click,
+        Escape,
+    };
+
+    /// <summary>The most frames a change of screen runs here (its fades go by the clock, the frames milliseconds apart).</summary>
+    constexpr int32_t MostChangeFrames = 300;
+
+    /// <summary>
+    /// The host leaves its remade room as a player does (<paramref name="by"/>), <paramref name="during"/> done as the
+    /// screen begins to change, then the frames while it changes: how long from the press until the change was done.
+    /// </summary>
+    std::chrono::steady_clock::duration LeaveTheRoom(MCLeaveBy by, const std::function<void()>& during = {})
+    {
+        const MCGuiHandle<MCRoomScreen> room = RoomScreen();
+        REQUIRE(room);
+        REQUIRE(room->Shown());
+        Step();
+        const auto pressed = std::chrono::steady_clock::now();
+
+        if (by == MCLeaveBy::Click)
+        {
+            Rml::Element* leave = MCTestGuest::ElementOf(*room, "leave");
+            REQUIRE(leave != nullptr);
+            MCTestGuest::RealClickOn(*leave);
+        }
+        else
+        {
+            RealKey(SDL_SCANCODE_ESCAPE);
+        }
+
+        Step();
+        REQUIRE(MCScreenChange::Running());
+
+        if (during != nullptr)
+        {
+            during();
+        }
+
+        for (int32_t frame = 0; frame < MostChangeFrames && MCScreenChange::Running(); frame++)
+        {
+            Step();
+        }
+
+        Step();
+        return std::chrono::steady_clock::now() - pressed;
+    }
+
+    /// <summary>
+    /// A LAN search at <paramref name="address"/>, the game's frames between its asks (a host's goodbye answers in them):
+    /// whether a search for any room hears of one there, then whether one for open rooms, as the LAN games' is, lists it.
+    /// </summary>
+    std::pair<bool, bool> LanSearchHears(std::string_view address)
+    {
+        constexpr int32_t MostLooks = 30;
+        MCDirectPlay searcher;
+        REQUIRE(MCTestGuest::Connect(searcher, address) == DP_OK);
+        DPSESSIONDESC2 desc{};
+        desc.dwSize = sizeof(desc);
+        desc.guidApplication = MultiPlayerAppGuid;
+        const auto look = [&](uint32_t flags)
+        {
+            bool heard = false;
+            searcher.EnumSessions(
+                desc, 0,
+                [&heard](const DPSESSIONDESC2& /*session*/, uint32_t found)
+                {
+                    heard = heard || (found & DPESC_TIMEDOUT) == 0;
+                    return (found & DPESC_TIMEDOUT) == 0;
+                },
+                flags | MCENUMSESSIONS_NOWAIT);
+            return heard;
+        };
+
+        bool heard = false;
+
+        for (int32_t asked = 0; asked < MostLooks && !heard; asked++)
+        {
+            heard = look(0);
+            Step();
+        }
+
+        return {heard, look(DPENUMSESSIONS_AVAILABLE)};
     }
 
     /// <summary>A clock the tests move on by hand: the room's end's waits, and the lobby updates' (a guest's rejoin).</summary>
@@ -104,8 +199,7 @@ TEST_CASE_ISOLATED("game: a LAN guest whose room ends goes back to the LAN games
 
     constexpr std::string_view Port = "28951";
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
 
     // BOB's game goes without a word: its connection lost.
     auto bob = std::make_unique<Host>();
@@ -176,8 +270,7 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host starts a mission it can't load 
 
     constexpr std::string_view Port = "28956";
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     Host bob;
     REQUIRE(bob.Open(Port, "BOB", "BOB'S GAME"));
     JoinFromLan(Port, "ANN");
@@ -208,12 +301,15 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host starts a mission it can't load 
 }
 
 /// <summary>
-/// The host's EXIT from a LAN room: a guest's game takes the room over (MCDirectPlay::HasSuccessor), so the host leaves
-/// at once, telling no one. Where no game can take it over (here the host's leave set not to hand on), it tells the
-/// guests whose builds take its word that the room closes, and leaves once they have (an older build's guest is told
-/// nothing, and loses the session as before); a guest that doesn't leave is waited for only a moment.
+/// Port-only (SPEC-menus.md, "In the room"): the host's LEAVE from a LAN room. A guest's game takes the room over
+/// (MCDirectPlay::HasSuccessor): the host leaves at once, telling no one. Where no game can take it over (here the
+/// host's leave set not to hand on), the host is on the LAN games as the change of screen ends, its session left, and its
+/// goodbye goes behind it: the guests whose builds take its word are told the room closes, the session kept apart until
+/// they have left on it, none losing its link first (an older build's guest is told nothing, and loses the session as
+/// before). A guest who doesn't leave is waited for only a moment, and a room hosted again ends the goodbye at once.
 /// </summary>
-TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, and leaves once they have")
+TEST_CASE_ISOLATED(
+    "game: a LAN host's LEAVE goes at once to the LAN games, its goodbye kept until its guests have left")
 {
     if (!MCTestGame::Available())
     {
@@ -224,10 +320,9 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
     constexpr std::string_view Port = "28952";
     const std::string address = std::format("127.0.0.1:{}", Port);
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
 
-    // A room another game can take over: EXIT leaves it to them at once, the room told nothing.
+    // A room another game can take over: LEAVE leaves it to them at once, the room told nothing.
     HostFromLan(RollingPort);
     Guest eve("EVE", MCMatchRule::Supported);
     REQUIRE(eve.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", RollingPort)));
@@ -235,6 +330,7 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
     MCTestGuest::PressInRoom("leave");
     REQUIRE(SettleUntil([] { return OnLan(); }));
     CHECK(!InSession());
+    CHECK(!MCSessionManager::SaysGoodbye());
     CHECK(eve.RoomEnds().empty());
     eve.Leave();
 
@@ -246,46 +342,70 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
     REQUIRE(ann.Join(*manager.DirectPlay, address));
     REQUIRE(cal.Join(*manager.DirectPlay, address));
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && MCTestGuest::RoomShows(cal.Id()); }));
-    MCSessionScreen& room = *GlobalLog()->SessionScreen;
     manager.HandsOn = false;
 
-    // EXIT: the room is told (CAL's older game ignores the word); the room waits for ANN to go, not for CAL.
-    MCTestGuest::PressInRoom("leave");
+    // LEAVE: the LAN games as the change of screen ends, nothing waiting for ANN. She's told, her link kept for her to
+    // leave on the word (the word goes to everyone; CAL's older game ignores it, and isn't waited for).
+    const std::chrono::steady_clock::duration took = LeaveTheRoom(MCLeaveBy::Click);
+    CHECK(OnLan());
+    CHECK(!InSession());
+    CHECK(took < MCRoomEnd::LeaveWait);
+    CHECK(MCSessionManager::SaysGoodbye());
+    SaveShot("room end 3 left at once", ScreenHash());
+
+    // Off the LAN's lists meanwhile: the room answers a search as shut to new players, and the LAN games ask for open
+    // rooms only.
+    const auto [answers, listed] = LanSearchHears(address);
+    CHECK(answers);
+    CHECK(!listed);
     REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
     CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Closed)});
-    CHECK(OnScreen(GlobalLog()->SessionScreen));
-    CHECK(InSession());
-    CHECK(room.ExitButton->Disabled);
+    CHECK(!ann.Lost());
+    CHECK(!cal.Lost());
+    CHECK(MCSessionManager::SaysGoodbye());
 
-    // She leaves: the host goes back to the LAN games.
+    // She leaves on it: the goodbye ends, the host still on the LAN games, nothing said; CAL's session ends with it.
     ann.Leave();
-    REQUIRE(SettleUntil([] { return OnLan(); }));
-    CHECK(!InSession());
+    REQUIRE(SettleUntil([&] { return !MCSessionManager::SaysGoodbye(); }));
+    CHECK(OnLan());
     CHECK(DialogText().empty());
+    CHECK(SettleUntil([&] { return cal.Lost(); }));
+    cal.Leave();
 
-    // Hosted again with a guest who never leaves: the host goes after its moment's wait.
-    ManualClock clock;
+    // Hosted again with a guest who never leaves: the goodbye waits for him only a moment.
     HostFromLan(Port);
     Guest dan("DAN", MCMatchRule::Supported);
     REQUIRE(dan.Join(*MultiPlayer()->SessionManager->DirectPlay, address));
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()); }));
     MultiPlayer()->SessionManager->HandsOn = false;
-    MCTestGuest::PressInRoom("leave");
+    LeaveTheRoom(MCLeaveBy::Click);
+    CHECK(OnLan());
     REQUIRE(SettleUntil([&] { return !dan.RoomEnds().empty(); }));
-    Settle();
-    CHECK(OnScreen(GlobalLog()->SessionScreen));
-    clock.Advance(MCRoomEnd::LeaveWait);
-    REQUIRE(SettleUntil([] { return OnLan(); }));
-    CHECK(!InSession());
+    CHECK(SettleUntil([] { return !MCSessionManager::SaysGoodbye(); }));
+    CHECK(SettleUntil([&] { return dan.Lost(); }));
+    dan.Leave();
+
+    // A room hosted again during a goodbye ends it first, its port the new room's.
+    HostFromLan(Port);
+    Guest eli("ELI", MCMatchRule::Supported);
+    REQUIRE(eli.Join(*MultiPlayer()->SessionManager->DirectPlay, address));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(eli.Id()); }));
+    MultiPlayer()->SessionManager->HandsOn = false;
+    LeaveTheRoom(MCLeaveBy::Click);
+    REQUIRE(MCSessionManager::SaysGoodbye());
+    REQUIRE(SettleUntil([&] { return !eli.RoomEnds().empty(); }));
+    HostFromLan(Port);
+    CHECK(InSession());
+    CHECK(!MCSessionManager::SaysGoodbye());
+    CHECK(SettleUntil([&] { return eli.Lost(); }));
 }
 
 /// <summary>
-/// Port-only (SPEC-menus.md's stage 4): while the host's remade room closes and waits for its guests to leave, LEAVE,
-/// Escape and BEGIN PLANNING are held, as the 1998 room's EXIT and START were. A second LEAVE would leave at once, its
-/// guests losing the link instead of being told; BEGIN PLANNING would start a match in a closing room.
+/// Port-only (SPEC-menus.md, "In the room"): Escape in the host's remade room is its LEAVE, and goes at once too. The
+/// room is gone as the change of screen ends, so nothing in it is left to press meanwhile: BEGIN PLANNING clicked and
+/// Escape pressed again as the screen changes start no match and say no second goodbye.
 /// </summary>
-TEST_CASE_ISOLATED(
-    "game: a LAN host's remade room holds LEAVE, Escape and BEGIN PLANNING while it waits for its guests")
+TEST_CASE_ISOLATED("game: a LAN host's Escape leaves its remade room at once, nothing in it left to press")
 {
     if (!MCTestGame::Available())
     {
@@ -295,11 +415,8 @@ TEST_CASE_ISOLATED(
     constexpr std::string_view Port = "28959";
     constexpr std::string_view Mission = "ARENA";
     const std::string address = std::format("127.0.0.1:{}", Port);
-    // The wait's clock held, so the room waits for ANN however long the presses take.
-    ManualClock clock;
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     HostFromLan(Port);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.HandsOn = false;
@@ -321,36 +438,148 @@ TEST_CASE_ISOLATED(
     const MCGuiHandle<MCRoomScreen> remade = RoomScreen();
     REQUIRE(remade);
     REQUIRE(remade->Seen().CanBegin);
-    CHECK(!remade->Seen().Closing);
 
-    // LEAVE: ANN is told and the room waits for her, LEAVE and BEGIN PLANNING greyed.
-    MCTestGuest::PressInRoom("leave");
+    // Escape, then BEGIN PLANNING and Escape again as the screen changes: the LAN games, ANN told once, no match.
+    Rml::Element* begin = MCTestGuest::ElementOf(*remade, "begin");
+    REQUIRE(begin != nullptr);
+    const std::chrono::steady_clock::duration took = LeaveTheRoom(MCLeaveBy::Escape,
+                                                                  [begin]
+                                                                  {
+                                                                      MCTestGuest::RealClickOn(*begin);
+                                                                      RealKey(SDL_SCANCODE_ESCAPE);
+                                                                  });
+    CHECK(OnLan());
+    CHECK(!InSession());
+    CHECK(took < MCRoomEnd::LeaveWait);
+    CHECK(!remade->Shown());
+    CHECK(!GlobalLog()->QuestionDialog->IsShowing());
+    CHECK(DialogText().empty());
     REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
     Settle();
-    CHECK(MCRoomEnd::WaitsForGuests());
-    CHECK(remade->Seen().Closing);
-    CHECK(!remade->Seen().CanBegin);
-    SaveShot("room end 3 closing", ScreenHash());
-
-    // LEAVE again, Escape and BEGIN PLANNING, clicked and pressed: still the room, waiting for ANN, no match.
-    MCTestGuest::PressInRoom("leave");
-    RealKey(SDL_SCANCODE_ESCAPE);
-    Settle();
-    MCTestGuest::PressInRoom("begin");
-    remade->PressLeave();
-    remade->PressBegin();
-    Settle();
-    CHECK(OnScreen(GlobalLog()->SessionScreen));
-    CHECK(InSession());
-    CHECK(!manager.SessionLocked());
-    CHECK(MCRoomEnd::WaitsForGuests());
+    CHECK(OnLan());
     CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Closed)});
+    CHECK(!ann.Lost());
 
-    // She leaves: the host goes back to the LAN games, nothing said.
+    // She leaves on the word: the goodbye ends.
     ann.Leave();
-    REQUIRE(SettleUntil([] { return OnLan(); }));
+    CHECK(SettleUntil([] { return !MCSessionManager::SaysGoodbye(); }));
+    CHECK(OnLan());
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md, "In the room"): the host's goodbye outlives its game. LEAVE, then straight on to the main
+/// menu (Escape on the LAN games, then on MULTIPLAYER), which drops the multiplayer game: the goodbye goes on, the guest
+/// told and her link kept until she leaves on the word, so her game says "Bob closed the game.", never a lost
+/// connection.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN host's goodbye goes on after its LEAVE and a way back to the main menu")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28985";
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    HostFromLan(Port);
+    Guest ann("ANN", MCMatchRule::Supported);
+    REQUIRE(ann.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", Port)));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()); }));
+    MultiPlayer()->SessionManager->HandsOn = false;
+
+    // LEAVE, then Escape on the LAN games and on MULTIPLAYER: the main menu, the multiplayer game gone, the goodbye on.
+    LeaveTheRoom(MCLeaveBy::Click);
+    REQUIRE(OnLan());
+    RealKey(SDL_SCANCODE_ESCAPE);
+    REQUIRE(SettleUntil(MCTestGuest::OnAccess));
+    RealKey(SDL_SCANCODE_ESCAPE);
+    REQUIRE(SettleUntil(MCTestGuest::OnMainMenu));
+    REQUIRE(MultiPlayer() == nullptr);
+    CHECK(MCSessionManager::SaysGoodbye());
+
+    // ANN is told, her link kept until she leaves on the word; then the goodbye ends.
+    REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
+    CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Closed)});
+    CHECK(!ann.Lost());
+    CHECK(MCSessionManager::SaysGoodbye());
+    ann.Leave();
+    CHECK(SettleUntil([] { return !MCSessionManager::GoodbyeLingers(); }));
+    CHECK(MCTestGuest::OnMainMenu());
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md, "In the room"): a launcher's host's LEAVE ("Leave the game?" answered LEAVE) tells its
+/// guests the room closes and ends the game; the goodbye goes on apart, and the game's end waits for it (RunGame's
+/// MCRoomEnd::FinishGoodbye, the window gone) until the guest has left on the word, its link kept until then, and no
+/// longer: the game ends as she leaves, not when the goodbye's time is up.
+/// </summary>
+TEST_CASE_ISOLATED("game: a launcher host's LEAVE tells its guests the room closes, the game ending once they've left")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28973";
+    REQUIRE(MCTestGame::StartLobby(std::format("-host -port {} -player BOB", Port)));
+    REQUIRE(SettleUntil([] { return InSession() && OnScreen(GlobalLog()->SessionScreen); }));
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    Guest ann("ANN", MCMatchRule::Supported);
+    REQUIRE(ann.Join(*manager.DirectPlay, std::format("127.0.0.1:{}", Port)));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()); }));
+    manager.HandsOn = false;
+
+    // A dialog the room opens with (a new key's question) answered first; then LEAVE asks, and LEAVE ends the game.
+    while (GlobalLog()->MessageDialog->IsShowing())
+    {
+        GlobalLog()->MessageDialog->Deactivate(0);
+        Step();
+    }
+
+    REQUIRE(MCScreenFlow::Back());
+    Step();
+    REQUIRE(MCRmlDialogs::Shown());
+    REQUIRE(MCRmlDialogs::Dialog()->Said().Heading == MCMenuScreens::LeaveGameQuestion);
+    std::optional<int32_t> quit;
+
+    try
+    {
+        MCRmlDialogs::Dialog()->PressMain();
+    }
+    catch (const MCGameQuit& ended)
+    {
+        quit = ended.ExitCode;
+    }
+
+    CHECK(quit == std::optional<int32_t>(0));
     CHECK(!InSession());
-    CHECK(DialogText().empty());
+    REQUIRE(MCSessionManager::SaysGoodbye());
+
+    // ANN leaves once she has the word, her link still up then; the game's end waits for her, not for the wait's end.
+    bool lostFirst = false;
+    std::chrono::steady_clock::time_point left;
+    std::jthread guest(
+        [&]
+        {
+            const auto until = std::chrono::steady_clock::now() + MCTestGuest::AnswerWait;
+
+            while (ann.RoomEnds().empty() && std::chrono::steady_clock::now() < until)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
+            lostFirst = ann.Lost();
+            left = std::chrono::steady_clock::now();
+            ann.Leave();
+        });
+    MCRoomEnd::FinishGoodbye({});
+    const auto finished = std::chrono::steady_clock::now();
+    guest.join();
+    CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Closed)});
+    CHECK(!lostFirst);
+    CHECK(!MCSessionManager::GoodbyeLingers());
+    CHECK(finished - left < MCRoomEnd::LeaveWait / 2);
 }
 
 /// <summary>
@@ -373,8 +602,7 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     constexpr int32_t Team2Points = 9000;
     const std::string address = std::format("127.0.0.1:{}", Port);
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     HostFromLan(Port);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     // The match's session, kept: the rematch's room is another (a host's session has no instance of its own here).
@@ -520,8 +748,7 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host has a rematch joins its room ag
 
     constexpr std::string_view Port = "28954";
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     auto bob = std::make_unique<Host>();
     REQUIRE(bob->Open(Port, "BOB", "BOB'S GAME"));
     JoinFromLan(Port, "ANN");

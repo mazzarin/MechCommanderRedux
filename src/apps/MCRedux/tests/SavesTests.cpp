@@ -95,11 +95,13 @@ TEST_CASE(
     CHECK_EQ(written.Operation, std::string("SKYHOOK"));
     CHECK_EQ(written.Mission, std::string("DESTROY CLAN HEADQUARTERS BUILDING"));
 
-    // The Clans' STARCOM line, as two of the expansion's solo missions write it (xsbrf0401.txt).
-    const MCMissionNames::MCWritten clans = MCMissionNames::FromBriefing(
-        "%fs%fc4%cSTARCOM:SOLO/04PRDN01%n\r\n%fc5%c----------%n\r\n%fc6%c***DESTROY ALL ACES***%n\r\n");
-    CHECK_EQ(clans.Operation, std::string("SOLO"));
-    CHECK_EQ(clans.Mission, std::string("DESTROY ALL ACES"));
+    // A single mission against a Clan's aces has a STARCOM line in its place (xsbrf0401.txt's).
+    const MCMissionNames::MCWritten clan = MCMissionNames::FromBriefing("%fm%fc1%c****CLASSIFIED****%n\r\n"
+                                                                        "%fs%fc4%cSTARCOM:SOLO/04PRDN01%n\r\n"
+                                                                        "%fc5%c----------%n\r\n"
+                                                                        "%fc6%c***DESTROY ALL ACES***%n\r\n");
+    CHECK_EQ(clan.Operation, std::string("SOLO"));
+    CHECK_EQ(clan.Mission, std::string("DESTROY ALL ACES"));
 
     // A match's side briefing (ccaldera.txt): no FEDCOM line, its title the starred line under the dispatch's head.
     const MCMissionNames::MCWritten side = MCMissionNames::FromBriefing(
@@ -517,9 +519,9 @@ TEST_CASE_ISOLATED("game: LOAD GAME, its DELETE question and SAVE GAME draw the 
     };
 
     constexpr std::array<MCDrawn, 3> Drawn = {{
-        {"load", {0xf3b04c65, 0xb6d93d03, 0x9c45b65e}},
-        {"delete", {0xfcce34fb, 0x986a55c5, 0x1b0be192}},
-        {"save", {0x7408bf7d, 0x265689e2, 0xad3acadd}},
+        {"load", {0x7a39ac75, 0x60cb8fd0, 0x7ea16a57}},
+        {"delete", {0xec945728, 0x6146ccbe, 0x7ad4b467}},
+        {"save", {0xd5d58b2d, 0x4969b2ad, 0xd931d954}},
     }};
 
     const auto drawEach = [&display](const MCDrawn& drawn)

@@ -10,6 +10,7 @@
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCReusableDialog.h"
 #include "main/MCLogistics.h"
+#include "ui/MCRmlDialog.h"
 
 namespace
 {
@@ -134,6 +135,24 @@ namespace
                            MCKeyBindings::KeyLabel(key), MCKeyBindings::CommandLabel(owner),
                            MCKeyBindings::CommandLabel(command));
     }
+
+    /// <summary>
+    /// <paramref name="key"/> made <paramref name="command"/>'s; when another command has it, nothing changes and the
+    /// words say whose it is.
+    /// </summary>
+    std::optional<std::string> TakeKey(MCKeyCommand command, uint32_t key)
+    {
+        if (const MCKeyCommand owner = MCKeyBindings::FindCommand(MCKeyBindings::Player(), key, command);
+            owner != MCKeyCommand::Unused)
+        {
+            return InUseText(key, owner, command);
+        }
+
+        MCKeyBindings::MCKeyTable keys = MCKeyBindings::Player();
+        keys[static_cast<size_t>(command)] = key;
+        MCKeyBindings::SetPlayer(keys);
+        return std::nullopt;
+    }
 }
 
 void AskGivenWayKeys()
@@ -151,32 +170,28 @@ void AskGivenWayKeys()
     }
 
     // However it closes, PREFS keeps the answer (the key, or none), so the player is asked once. Port-only
-    // (SPEC-menus.md's stage 4): its key taker set before it shows, so over a remade screen (a launcher's room) the
-    // remade dialog asks for the key.
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-    dialog.SetText(GivenWayText(*givenWay));
-    dialog.SetTwoButton(false);
-    dialog.Callback = [](int32_t) { SavePrefs(); };
-    dialog.OkButton->SetUpPicture("bh_okay.tga");
-    dialog.OkButton->SetDownPicture("bg_okay.tga");
-    dialog.OkButton->Disabled = false;
+    // (SPEC-menus.md's stage 7): over the remade main menu the remade dialog asks, taking the key itself.
     const MCKeyCommand command = givenWay->Command;
+
+    if (MCRmlDialogs::AskKey(
+            GivenWayText(*givenWay), [command](uint32_t key) { return TakeKey(command, key); }, [] { SavePrefs(); }))
+    {
+        return;
+    }
+
+    ShowMenuMessage(GivenWayText(*givenWay), [](int32_t) { SavePrefs(); });
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
     dialog.KeyTaker = [&dialog, command](uint32_t key)
     {
-        if (const MCKeyCommand owner = MCKeyBindings::FindCommand(MCKeyBindings::Player(), key, command);
-            owner != MCKeyCommand::Unused)
+        if (const std::optional<std::string> refused = TakeKey(command, key); refused.has_value())
         {
-            dialog.SetText(InUseText(key, owner, command));
+            dialog.SetText(*refused);
             dialog.Activate();
             return false;
         }
 
-        MCKeyBindings::MCKeyTable keys = MCKeyBindings::Player();
-        keys[static_cast<size_t>(command)] = key;
-        MCKeyBindings::SetPlayer(keys);
         return true;
     };
 
-    dialog.Activate();
     GuiSystem().SetText(dialog.weak_from_this());
 }

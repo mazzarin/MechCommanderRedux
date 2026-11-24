@@ -22,7 +22,6 @@ namespace
     constexpr const char* UpdateDocument = "update.rml";
 
     /// <summary>The document's places (ui/update.rml).</summary>
-    constexpr const char* PlaceId = "place";
     constexpr const char* RunningId = "running";
     constexpr const char* BringsId = "brings";
     constexpr const char* ChangesId = "changes";
@@ -30,7 +29,6 @@ namespace
     constexpr const char* VersionId = "version";
     constexpr const char* SizeFactId = "size-fact";
     constexpr const char* SizeId = "size";
-    constexpr const char* SmallFactId = "small-fact";
     constexpr const char* StatusId = "status";
     constexpr const char* MeterId = "meter";
     constexpr const char* MeterFillId = "meter-fill";
@@ -49,11 +47,6 @@ namespace
 
     /// <summary>A note's leading mark in the release's notes (CHANGELOG.md's list items).</summary>
     constexpr std::string_view NoteMark = "- ";
-
-    /// <summary>Where it opened, over its name.</summary>
-    constexpr std::string_view MainMenuPlace = "Main menu";
-    constexpr std::string_view InternetPlace = "Internet";
-    constexpr std::string_view LanPlace = "LAN";
 
     /// <summary>The status line's words (SPEC-menus.md's UPDATE, and its "When something goes wrong").</summary>
     constexpr std::string_view FoundText = "A newer version is out.";
@@ -205,7 +198,7 @@ namespace
     }
 }
 
-MCUpdateScreen::MCUpdateScreen(std::string place) : _Place(std::move(place))
+MCUpdateScreen::MCUpdateScreen()
 {
     SetDocument(UpdateDocument);
     Keys = {{"Esc", "Back"}};
@@ -230,24 +223,6 @@ bool MCUpdateScreen::Open()
     // Refused while another change runs: the press goes no further.
     MCScreenFlow::Open(MCMenuScreens::Update());
     return true;
-}
-
-std::string MCUpdateScreen::PlaceOfShown()
-{
-    const MCScreenFlow::MCScreenId shown = MCScreenFlow::Shown();
-
-    if (shown == MCMenuScreens::Internet())
-    {
-        return std::string(InternetPlace);
-    }
-
-    // Port-only (stage 4): over the room, the room's place (a launcher's room's UPDATE line).
-    if (shown == MCMenuScreens::Room())
-    {
-        return RoomPlace();
-    }
-
-    return std::string(shown == MCMenuScreens::Lan() ? LanPlace : MainMenuPlace);
 }
 
 std::string_view MCUpdateScreen::Word(MCAct act)
@@ -305,10 +280,7 @@ std::string MCUpdateScreen::StatusText(const MCStatus& status)
 void MCUpdateScreen::OnLoaded(Rml::ElementDocument& document)
 {
     TheScreen = std::static_pointer_cast<MCUpdateScreen>(shared_from_this());
-    SetWords(document, PlaceId, _Place);
     SetWords(document, RunningId, std::format(RunningFormat, ReleaseOf(MCUpdater::RunningVersion())));
-    // Only the download chosen is known (HD OPTIONS' HD ART SIZE picks it): the smaller set's isn't planned.
-    SetShown(document, SmallFactId, false);
     OnClick(BackId,
             [this]
             {

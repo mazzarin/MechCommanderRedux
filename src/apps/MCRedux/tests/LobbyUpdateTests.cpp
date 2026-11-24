@@ -343,7 +343,6 @@ TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line o
     CHECK(!RoomScreenShown());
     const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
     REQUIRE(update != nullptr);
-    CHECK_EQ(MCRemadeTest::Words(*update, "place"), std::string("Multiplayer"));
     MCScreenInput::SaveShot("lobby session 2 update page", MCScreenInput::ScreenHash());
 
     // Downloaded: what RESTART does in the room (ANN's game hasn't said it rejoins: the update goes in after the match).

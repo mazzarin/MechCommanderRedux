@@ -4,6 +4,7 @@
 #include "network/MCIntroNote.h"
 #include "logistics/MCLoadingMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuScreens.h"
 #include "mission/MCMission.h"
 #include "logistics/MCPauseScreen.h"
@@ -978,9 +979,25 @@ auto MCMission::Run() -> int32_t
     }
 
     // Port-only (SPEC-menus.md's stage 2): from a movie (the intro, ORIGINAL CINEMA) the menus fade in from black.
+    // Port-only (stage 7): the remade main menu read in the dark, a piece a frame, the fade-in waiting for its first
+    // whole frame (the logistics' state shows it, MCLogistics::ShowLogScreen).
     if (toLogistics && fromMovie && GuiSystem().CanChangeScreen() && !MCScreenChange::Running())
     {
-        MCScreenChange::Start({.Name = "from the movie", .FadeOut = MCScreenChange::MCFadeOut::FromBlack});
+        const std::shared_ptr<MCLogObject> shown = Logistics != nullptr ? Logistics->CurrentScreen() : nullptr;
+        const bool toMainMenu = shown != nullptr && Logistics->MainScreen.Is(*shown);
+        std::vector<MCScreenChange::MCPiece> job;
+        std::vector<MCScreenChange::MCPiece> dark;
+
+        if (toMainMenu)
+        {
+            job = MCMainMenuScreens::Prepare(MCMainPanel::Main);
+            dark.push_back({.Part = "menus.main", .Until = [] { return MCMainMenuScreens::Ready(MCMainPanel::Main); }});
+        }
+
+        MCScreenChange::Start({.Name = "from the movie",
+                               .Job = std::move(job),
+                               .FadeOut = MCScreenChange::MCFadeOut::FromBlack,
+                               .Dark = std::move(dark)});
     }
 
     if (toLogistics)
@@ -1737,7 +1754,14 @@ auto MCMission::EndScenarioLeavingWayBack() -> std::function<void()>
                 State = MCMissionState::Logistics;
                 MCScreenFlow::Land({MCMenuScreens::Main(), MCMenuScreens::Solo()});
                 logistics.CurrentScreen()->ShowGuiWindow(false);
-                SoloLoadScreen();
+
+                // Port-only (stage 7): the remade SOLO MISSIONS, in the main menu's panel; the main menu where it
+                // can't show.
+                if (!MCMainMenuScreens::ShowNow(MCMainPanel::Solo))
+                {
+                    logistics.SetUpMainScreen(true);
+                }
+
                 MCScreenFlow::Noted();
                 Solo = false;
             };

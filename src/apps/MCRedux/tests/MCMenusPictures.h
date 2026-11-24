@@ -216,4 +216,49 @@ namespace MCMenusPictures
 
         CHECK_EQ(MenusProblems(), "");
     }
+
+    /// <summary>
+    /// The game window's picture as the display reads it now, as "WxH: 0x&lt;its hash&gt;"; saved by --shots as
+    /// <c>&lt;name&gt;_WxH</c>.
+    /// </summary>
+    inline std::string WindowNow(MCDisplay& display, std::string_view name)
+    {
+        const auto window = display.ReadWindow();
+        REQUIRE(window.has_value());
+
+        if (const std::optional<std::filesystem::path> path =
+                ShotPath(std::format("{}_{}x{}", name, window->Width, window->Height));
+            path.has_value())
+        {
+            REQUIRE(display.SaveWindowScreenshot(*path).has_value());
+        }
+
+        return std::format("{}x{}: {:#010x}", window->Width, window->Height, PictureHash(*window));
+    }
+
+    /// <summary>
+    /// The game window drawn as <paramref name="name"/> at each recorded frame's window (4:3, 16:9, 5:4), each picture's
+    /// hash checked against <paramref name="hashes"/> (--shots saves them), <paramref name="settle"/> run after each
+    /// change of size (the menus laid out again, a frame drawn); the window's size put back after.
+    /// </summary>
+    inline void CheckWindowFrames(MCDisplay& display, std::string_view name,
+                                  const std::array<uint32_t, FrameWindows.size()>& hashes,
+                                  const std::function<void()>& settle)
+    {
+        const MCTest::Scope scope{std::string(name)};
+        int width = 0;
+        int height = 0;
+        REQUIRE(SDL_GetWindowSizeInPixels(&display.Window(), &width, &height));
+
+        for (size_t i = 0; i < FrameWindows.size(); ++i)
+        {
+            const MCWindowSize window = FrameWindows[i];
+            REQUIRE(SetWindowPixels(display, window.Width, window.Height));
+            settle();
+            CHECK_EQ(WindowNow(display, name), std::format("{}x{}: {:#010x}", window.Width, window.Height, hashes[i]));
+        }
+
+        REQUIRE(SetWindowPixels(display, width, height));
+        settle();
+    }
 }

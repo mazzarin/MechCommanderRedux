@@ -17,6 +17,7 @@
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
@@ -110,62 +111,19 @@ namespace
 
 void ConnectScreen()
 {
-    EnsureRegistryVersion();
-    MCGenericScreen& screen = *GlobalLog()->MultiplayerScreen;
-
-    if (MultiPlayer() == nullptr)
+    // Port-only (SPEC-menus.md's stage 7): MULTIPLAYER remade in the main menu's panel (logistics/MCMainMenuScreen.h),
+    // which makes the multiplayer game as it shows: INTERNET and LAN, or "No network connection." The original's
+    // connection screen (a modem, a serial cable and the internet lobbies of 1999) isn't made. Shown at once: the old
+    // code's way to it runs in a change's dark work, the screen shown hidden, logistics' own the main screen under it.
+    if (const std::shared_ptr<MCLogObject> shown = GlobalLog()->CurrentScreen(); shown != nullptr)
     {
-        // The multiplayer object is network/'s (P3-net gives it an owner).
-        MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
-        MultiPlayer()->Start();
+        shown->ShowGuiWindow(false);
     }
 
-    GlobalLog()->MainScreen->ShowGuiWindow(false);
-
-    // Port-only (the personal build): MULTIPLAYER opens the local network's games. The original's connection screen
-    // also offered a modem, a serial cable and the internet lobbies of 1999 (Mplayer.com, the MSN Gaming Zone), none
-    // of which exists now; it shows only when this machine can't use the network at all.
-    if (MultiPlayer()->SessionManager != nullptr && MultiPlayer()->SessionManager->IsTcpAvailable())
+    if (!MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer))
     {
-        // Port (Redux HD): INTERNET and LAN, when this game has internet games.
-        if (HasInternetGames())
-        {
-            ShowAccessScreen();
-            return;
-        }
-
-        ShowLanScreen();
-        return;
-    }
-
-    ShowOriginalAccessButtons();
-    GlobalLog()->MultiplayerScreen->ShowGuiWindow(true);
-    GlobalLog()->SetCurrentScreen(GlobalLog()->MultiplayerScreen);
-    GlobalLog()->LogisticsState = 10;
-
-    // The connection buttons: modem, serial, LAN, internet; each is enabled when the machine has it.
-    auto modemButton = screen.Element<MCLogButton>(2);
-    auto serialButton = screen.Element<MCLogButton>(3);
-    auto lanButton = screen.Element<MCLogButton>(4);
-    auto internetButton = screen.Element<MCLogButton>(5);
-    modemButton->Disabled = true;
-    serialButton->Disabled = true;
-    lanButton->Disabled = true;
-    internetButton->Disabled = true;
-
-    if (MultiPlayer()->SessionManager != nullptr)
-    {
-        MCSessionManager& manager = *MultiPlayer()->SessionManager;
-        modemButton->Disabled = manager.IsModemAvailable() == 0;
-        serialButton->Disabled = (manager.AvailableProtocols & 4) == 0;
-        lanButton->Disabled = manager.IsIpxAvailable() == 0 && manager.IsTcpAvailable() == 0;
-        internetButton->Disabled = (manager.AvailableProtocols & 0x10) == 0;
-    }
-
-    // Less than 32 MB: multiplayer may not run well.
-    if (MCPort::TotalPhysicalMemory() < 32000000)
-    {
-        ShowMenuMessage(0x371);
+        SDL_Log("Menus: MULTIPLAYER can't show: the main menu instead");
+        GlobalLog()->SetUpMainScreen(true);
     }
 }
 
@@ -181,11 +139,19 @@ void CancelToConnect()
     // Port (Redux HD): an internet game's room goes back to the INTERNET screen.
     const bool fromInternetGame = fromRoom && MultiPlayer()->SessionManager->Internet != nullptr;
     WhackTimer = true;
-    GlobalLog()->ModemScreen->ShowBlock(0);
     // Original behaviour (OB-167): the same timer is removed twice (team 2's is left).
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
+
+    // Port-only (SPEC-menus.md, "In the room"): a host's goodbye to its room goes behind its way out (network/MCRoomEnd.h's
+    // CloseRoom), which leaves the session at once: the leave below then finds none to leave.
+    if (fromRoom)
+    {
+        MCRoomEnd::CloseRoom();
+    }
+
     MultiPlayer()->LeaveSession();
+
     GlobalLog()->ResetPlayerLights();
 
     // The room's own: its timer, and its chat (the next room's starts empty, as from the main menu).
@@ -210,9 +176,8 @@ void CancelToConnect()
         return;
     }
 
-    GlobalLog()->MultiplayerScreen->ShowGuiWindow(true);
-    GlobalLog()->SetCurrentScreen(GlobalLog()->MultiplayerScreen);
-    GlobalLog()->LogisticsState = 10;
+    // Port-only (stage 7): the remade MULTIPLAYER (the modem's and serial's screens aren't made).
+    ConnectScreen();
 }
 
 void CancelToMPlayer()
@@ -222,19 +187,8 @@ void CancelToMPlayer()
 
 void LeaveRoom(std::string line)
 {
-    // Port-only (Redux HD): a host tells its guests the room closes, and leaves once they have (network/MCRoomEnd.h).
-    if (MCRoomEnd::CloseRoom())
-    {
-        if (!line.empty())
-        {
-            ShowMenuMessage(line);
-        }
-
-        return;
-    }
-
-    // Port-only (SPEC-menus.md's stage 2): the way out through the flow, with the one fade (the host's wait for its
-    // guests above stays live, its EXIT disabled, as its games come through the flow too).
+    // Port-only (SPEC-menus.md's stage 2): the way out through the flow, with the one fade; (SPEC-menus.md, "In the
+    // room") a host's goodbye to its guests goes behind it, nothing waiting for it (CancelToConnect).
     MCScreenFlow::Change("room back",
                          [line = std::move(line)]
                          {

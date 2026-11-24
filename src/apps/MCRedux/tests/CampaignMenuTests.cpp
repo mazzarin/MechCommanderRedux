@@ -1174,7 +1174,7 @@ TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its f
     CHECK(GlobalLog()->BriefingScreen->ShowWindow == 0);
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
     CHECK_EQ(screen.Eyebrow(), std::string("Solo"));
-    CHECK_EQ(screen.Title(), std::string("Destroy all aces"));
+    CHECK_EQ(screen.Title(), std::string("Destroy All Aces"));
     CHECK_EQ(screen.Objectives().size(), size_t{5});
     CHECK(ResourcePoints > 0);
 

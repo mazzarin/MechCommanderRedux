@@ -265,6 +265,14 @@ void MCInternetGame::SetRoom(MCServiceRoom room)
     }
 }
 
+void MCInternetGame::Unlist()
+{
+    if (_Hosting && _Signaling != nullptr)
+    {
+        _Signaling->Unlist();
+    }
+}
+
 std::optional<MCInternetPlace> MCInternetGame::Place()
 {
     if (!_Hosting || _Signaling == nullptr)

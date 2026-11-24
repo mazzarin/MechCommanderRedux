@@ -1,0 +1,27 @@
+<template name="main-menu" content="menu-list">
+<head>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="main_menu.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "Main menu"; stage 7): the main menu's frame, the style frames' main_menu_frame.rml: the
+     painting whole, the menu where 1998 cut its window, the version line and UPDATE at the menu's foot, the legal lines
+     along the window's foot. The main menu and its submenus (main_menu*.rml) fill its list (logistics/MCMainMenuScreen). -->
+<body class="painting">
+    <div class="screen43">
+        <div id="menu" class="panel glass">
+            <div id="menu-list"></div>
+            <div id="foot" class="row">
+                <div class="fine grey grow nowrap" id="version">{{version}}</div>
+                <div class="button small" id="update" data-if="canUpdate">{{update}}</div>
+            </div>
+        </div>
+    </div>
+    <div id="legal" class="bar glass">
+        <div class="stage16">
+            <div class="content">
+                <p class="fine grey centre">© 1999 Microsoft Corp. Developed by Microsoft Corporation. Published by MicroProse. BattleTech material © 1998-1999 FASA Corporation. Used under license. MicroProse is a registered trademark of MicroProse, Inc. or its affiliated companies. All trademarks are the property of their respective holders. This program is protected by U.S. and international copyright laws as described in Help/About. Use of this product is subject to the terms of a license agreement found in the product's ReadMe file.</p>
+            </div>
+        </div>
+    </div>
+</body>
+</template>

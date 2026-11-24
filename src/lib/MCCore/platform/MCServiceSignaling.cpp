@@ -457,6 +457,21 @@ void MCServiceSignaling::SetRoom(const MCServiceRoom& room)
     SendRoom();
 }
 
+void MCServiceSignaling::Unlist()
+{
+    const std::scoped_lock lock(_Lock);
+
+    if (!_Room.has_value() || !_Room->Public)
+    {
+        return;
+    }
+
+    // The service frees a room's place on the list as it turns private; its guests' links stay relayed (it was public).
+    _Room->Public = false;
+    _RoomDue = true;
+    SendRoom();
+}
+
 bool MCServiceSignaling::NameRefused()
 {
     const std::scoped_lock lock(_Lock);

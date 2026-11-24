@@ -78,11 +78,9 @@ void NewMcxCampaign()
 
 void ShowMultiPlayer()
 {
-    GlobalLog()->MainScreen->ShowGuiWindow(false);
-    GlobalLog()->MultiplayerScreen->ShowGuiWindow(true);
-    Solo = false;
-    GlobalLog()->SetCurrentScreen(GlobalLog()->MultiplayerScreen);
-    GlobalLog()->LogisticsState = 10;
+    // Port-only (SPEC-menus.md's stage 7): 1998's MULTIPLAYER screen (mpscreen.fit) isn't made; its button opens the
+    // remade one, in the main menu's panel.
+    ConnectScreen();
 }
 
 void ReplayCinema()

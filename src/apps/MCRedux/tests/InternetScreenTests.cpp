@@ -114,7 +114,7 @@ namespace
     {
         ConnectScreen();
         Settle();
-        Click(InternetX, InternetY);
+        MCTestGuest::PressInternet();
         REQUIRE(SettleUntil([] { return OnInternet(); }));
         list.Send(Listing(Json::array(), 1, 0));
         REQUIRE(SettleUntil(CountsAre("1 online, 0 in games")));
@@ -277,7 +277,8 @@ namespace
     }
 }
 
-TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERNET lists the service's public games")
+TEST_CASE_ISOLATED("game: MULTIPLAYER offers INTERNET, with how many are online, and LAN, and INTERNET lists the "
+                   "service's public games")
 {
     if (!MCTestGame::Available())
     {
@@ -290,21 +291,22 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
                                       MCServiceScript::Answering(R"({"online":37})", asked), Service, Version);
     REQUIRE(MCTestGame::StartLogistics());
 
-    // MULTIPLAYER: INTERNET and LAN, the count under INTERNET once the service answers.
+    // MULTIPLAYER (the main menu's panel): INTERNET and LAN, the count under INTERNET once the service answers.
     ConnectScreen();
-    REQUIRE(SettleUntil([] { return AccessCountShown() == "37 ONLINE"; }));
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MultiplayerScreen);
+    REQUIRE(SettleUntil(
+        [] { return OnAccess() && MCTestGuest::Panel(MCMainPanel::Multiplayer).OnlineLine() == "37 players online"; }));
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
     CHECK(asked == CountUrl);
-    SaveShot("internet 0 access", ScreenHash());
+    SaveShownShot("internet 0 access");
 
     // LAN opens the LAN games, and their BACK (a click) comes back.
-    Click(LanX, LanY);
+    MCTestGuest::PressLan();
     REQUIRE(SettleUntil([] { return OnLan(); }));
     RealClickOn(*ElementOf(*MCTestGuest::Games(MCGamesWhere::Lan), "back"));
     REQUIRE(SettleUntil(OnAccess));
 
     // INTERNET opens the service's list: looking for games until it answers, JOIN GAME off.
-    Click(InternetX, InternetY);
+    MCTestGuest::PressInternet();
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     REQUIRE(list.Opened.size() == 1);
     MCGamesScreen& screen = Internet();
@@ -391,7 +393,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER ACCESS offers INTERNET and LAN, and INTERN
     CHECK(list.ClosedByGame);
 
     // No open games: it says so, alone (the week's busiest hours heard, not shown).
-    Click(InternetX, InternetY);
+    MCTestGuest::PressInternet();
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     REQUIRE(list.Opened.size() == 2);
     list.Send(EmptyListingBusySaturday());
@@ -511,7 +513,7 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     REQUIRE(MCTestGame::StartLogistics());
     ConnectScreen();
     Settle();
-    Click(InternetX, InternetY);
+    MCTestGuest::PressInternet();
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     MCGamesScreen& screen = Internet();
     screen.SetPlayerName("Commander");
@@ -519,25 +521,25 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     // No internet (before the list answers), then RETRY: the games, one picked.
     list.Drop("The Internet connection appears to be offline.");
     REQUIRE(SettleUntil([&] { return screen.Seen().Empty == "No internet connection."; }));
-    CheckMenusFrames("internet offline", {0xbcda1407, 0xd80aab20, 0xec36b47d});
+    CheckMenusFrames("internet offline", {0xd0627c57, 0x0c4bfeb3, 0x0b3e3d20});
     screen.PressRetry();
     REQUIRE(SettleUntil([&] { return list.Opened.size() == 2; }));
     list.Send(EveryKindOfGame(37, 12));
     REQUIRE(SettleUntil(CountsAre("37 online, 12 in games")));
     screen.PickKey("K7QF");
     Settle();
-    CheckMenusFrames("internet", {0x96869a34, 0x5ffa65d3, 0x3bfec4b2});
+    CheckMenusFrames("internet", {0x622e7ce4, 0x02d244a0, 0xd778e6ab});
 
     // From the keys: the focus's ring on the game picked.
     RealKey(SDL_SCANCODE_DOWN);
     RealKey(SDL_SCANCODE_UP);
     Settle();
-    CheckMenusFrames("internet keys", {0xa5182ef4, 0xcd953973, 0xc75617f2});
+    CheckMenusFrames("internet keys", {0x8158c9e4, 0x8e0b1180, 0x623afe2b});
 
     screen.PressHost();
     Settle();
     REQUIRE(screen.HostWindow());
-    CheckMenusFrames("internet host", {0x0e27b2c0, 0x3c61903b, 0x06323abf});
+    CheckMenusFrames("internet host", {0xd1231097, 0x13ad1c68, 0xa6fbbf42});
     screen.HostWindow()->Hide();
     Settle();
 
@@ -546,35 +548,35 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     screen.PressJoin();
     Settle();
     REQUIRE_EQ(DialogHeading(), "Needs version 0.7.0");
-    CheckMenusFrames("internet join update", {0x7c75f675, 0x9a534c27, 0xd004883e});
+    CheckMenusFrames("internet join update", {0xe9b629b6, 0x81ef53bc, 0xe5945793});
     PressDialogCancel();
 
     REQUIRE(MCRmlDialogs::Message("No game has the code M3VD."));
     Settle();
-    CheckMenusFrames("internet message", {0x817b0ac8, 0xad0a409b, 0xca229668});
+    CheckMenusFrames("internet message", {0x072194db, 0x8be6c178, 0x2d4d5699});
     PressDialogOk();
 
     // No games: "No open games." alone, the week's busiest hours heard but not drawn.
     list.Send(EmptyListingBusySaturday());
     REQUIRE(SettleUntil(CountsAre("3 online, 0 in games")));
-    CheckMenusFrames("internet empty", {0x23580b37, 0xa43a3daf, 0x35aaf54e});
+    CheckMenusFrames("internet empty", {0x4e99e1a7, 0x39062e24, 0x2c916e4b});
     CHECK_EQ(MenusProblems(), "");
 
     // LAN: no games on this network, then its HOST GAME's window.
     screen.Back();
     REQUIRE(SettleUntil(OnAccess));
-    Click(LanX, LanY);
+    MCTestGuest::PressLan();
     REQUIRE(SettleUntil([] { return OnLan(); }));
     // Its search asks only where no game is (another test's game on this machine stays out of its list).
     MultiPlayer()->SessionManager->ConnectTcp(NoLanGameAddress);
     MCGamesScreen& lan = *MCTestGuest::Games(MCGamesWhere::Lan);
     lan.SetPlayerName("Commander");
     REQUIRE(SettleUntil([&] { return lan.Seen().Empty == "No games on this network."; }));
-    CheckMenusFrames("lan", {0x14816c5a, 0x4202cc29, 0x0ba6782e});
+    CheckMenusFrames("lan", {0xe32d17ea, 0x6791dcba, 0xbcbfe80b});
     lan.PressHost();
     Settle();
     REQUIRE(lan.HostWindow());
-    CheckMenusFrames("lan host", {0x833b7620, 0x15d1cceb, 0x13ea97df});
+    CheckMenusFrames("lan host", {0x6ac200ab, 0x3a4b05c4, 0xdca239ba});
 }
 
 /// <summary>
@@ -596,7 +598,7 @@ TEST_CASE_ISOLATED("game: INTERNET says why it can't list games, and RETRY tries
     REQUIRE(MCTestGame::StartLogistics());
     ConnectScreen();
     Settle();
-    Click(InternetX, InternetY);
+    MCTestGuest::PressInternet();
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     MCGamesScreen& screen = Internet();
 
@@ -619,7 +621,7 @@ TEST_CASE_ISOLATED("game: INTERNET says why it can't list games, and RETRY tries
     // Its socket closed before it listed again: not answering, RETRY (Enter).
     screen.Back();
     REQUIRE(SettleUntil(OnAccess));
-    Click(InternetX, InternetY);
+    MCTestGuest::PressInternet();
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     list.Drop("closed (1006)");
     REQUIRE(SettleUntil([&] { return screen.Seen().Empty == "The games list isn't answering."; }));
@@ -638,7 +640,7 @@ TEST_CASE_ISOLATED("game: INTERNET says why it can't list games, and RETRY tries
     // Blocked.
     screen.Back();
     REQUIRE(SettleUntil(OnAccess));
-    Click(InternetX, InternetY);
+    MCTestGuest::PressInternet();
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     list.Send(Json{{"t", "banned"}});
     REQUIRE(SettleUntil([&] { return screen.Seen().Empty == "This copy is blocked from online games."; }));
@@ -1035,7 +1037,6 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
     CHECK(!OnInternet());
     const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
     REQUIRE(update != nullptr);
-    CHECK_EQ(MCRemadeTest::Words(*update, "place"), std::string("Internet"));
     MCUpdater::Answer(MCUpdater::MCAnswer::Install);
     MCUpdater::Ready();
     Settle();

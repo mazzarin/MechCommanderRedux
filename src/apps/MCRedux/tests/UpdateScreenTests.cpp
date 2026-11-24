@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCFakeUpdaterBackend.h"
+#include "MCTestGuest.h"
 #include "MCTest.h"
 #include "RemadeScreens.h"
 #include "ScreenInput.h"
@@ -97,12 +98,10 @@ namespace
         return pixelWidth == width && pixelHeight == height;
     }
 
-    /// <summary>The main menu's UPDATE (ORIGINAL CINEMA's place) clicked as a player does.</summary>
+    /// <summary>The main menu's UPDATE (at its foot) clicked as a player does.</summary>
     void PressUpdate()
     {
-        const std::shared_ptr<MCLogButton> update = GlobalLog()->MainScreen->CinemaButton.Lock();
-        REQUIRE(update != nullptr);
-        MCScreenInput::RealClick(update->GlobalX() + update->Width() / 2, update->GlobalY() + update->Height() / 2);
+        MCTestGuest::ClickOn(MCMainPanel::Main, "update");
         RunWhileChanging();
     }
 
@@ -116,7 +115,7 @@ namespace
         REQUIRE(update != nullptr);
         CHECK(MCUpdateScreen::Shows());
         CHECK(UpdatePageShown());
-        CHECK(!GlobalLog()->MainScreen->IsShowing());
+        CHECK(!MCMainMenuScreens::Shown(MCMainPanel::Main));
         return update;
     }
 
@@ -125,7 +124,7 @@ namespace
     {
         RunWhileChanging();
         CHECK(StackNow() == std::vector{MCMenuScreens::Main()});
-        CHECK(GlobalLog()->MainScreen->IsShowing());
+        CHECK(MCMainMenuScreens::MainOnTop());
         CHECK(!MCUpdateScreen::Shows());
     }
 
@@ -210,7 +209,6 @@ TEST_CASE_ISOLATED("game: UPDATE opens remade through the flow: INSTALL, the dow
     RunFrames(SettleFrames);
 
     std::shared_ptr<MCUpdateScreen> update = OpenUpdate();
-    CHECK_EQ(MCRemadeTest::Words(*update, "place"), "Main menu");
     CHECK_EQ(MCRemadeTest::Words(*update, "running"),
              std::format("Running {}", ReleaseOf(MCTestUpdater::FakeRunningVersion)));
     CHECK_EQ(MCRemadeTest::Words(*update, "version"), "Version 0.2.2");

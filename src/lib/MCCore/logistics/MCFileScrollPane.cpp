@@ -6,8 +6,8 @@
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
-#include "lib/MCPacketFile.h"
 #include "logistics/MCGenericScreen.h"
+#include "logistics/MCSaves.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
@@ -33,16 +33,16 @@ namespace
 
     /// <summary>
     /// The operation and mission of scenario <paramref name="scenario"/> in a planet's master mission file (its
-    /// OpInfo block current).
+    /// OpInfo block current); 0 for each it doesn't name.
     /// </summary>
-    void ReadOpInfo(MCFitIniFile& master, int32_t scenario, MCFileScrollPane::File& file)
+    /// <returns>Whether it names both.</returns>
+    bool ReadOpInfo(MCFitIniFile& master, int32_t scenario, MCFileScrollPane::File& file)
     {
         const MCFitResult<int32_t> operation = master.Read<int32_t>(std::format("Scenario{}Operation", scenario));
-        Assert(operation.has_value(), 0, " could not find operation number in master mission file ");
         const MCFitResult<int32_t> mission = master.Read<int32_t>(std::format("Scenario{}Mission", scenario));
-        Assert(mission.has_value(), 0, " could not find mission number in master mission file ");
         file.Operation = operation.value_or(0);
         file.Mission = mission.value_or(0);
+        return operation.has_value() && mission.has_value();
     }
 }
 
@@ -341,7 +341,9 @@ auto MCFileScrollPane::GetAllFiles(std::string_view extension, bool sort) -> voi
         {
             File& slot = Files.emplace_back();
             slot.Name = EmptyFile;
-            ReadOpInfo(masterFiles[CurPlanet == 0 ? 0 : 1], GlobalLog()->CurrentMission, slot);
+            // The campaign's own mission is in its master file (the original asserted each number).
+            const bool named = ReadOpInfo(masterFiles[CurPlanet == 0 ? 0 : 1], GlobalLog()->CurrentMission, slot);
+            Assert(named, 0, " could not find operation or mission number in master mission file ");
             slot.ResourcePoints = static_cast<uint32_t>(ResourcePoints);
         }
     }
@@ -359,57 +361,27 @@ auto MCFileScrollPane::GetAllFiles(std::string_view extension, bool sort) -> voi
             continue;
         }
 
-        // Every save in the folder is read as the screen opens. One that can't be read, or names a planet the game
-        // doesn't have, is listed without its operation, mission and points (issue #25: the original went on reading
-        // a file it couldn't open, and indexed the two master files with the save's Setting).
-        MCPacketFile saveFile;
-        MCFitIniFile saveFit;
-        int32_t result = saveFile.Open(GamePath(StartDirectory, file.Name, extension));
-        Assert(result == 0, result, " Could not find save game file ");
+        // Every save in the folder is read as the screen is made (each start makes the load and save screens) and as
+        // it opens. A damaged one (it can't be read, or names a planet the game doesn't have, no mission or no points,
+        // or a mission its master file lacks) is logged by its name and listed without its operation, mission and
+        // points, as the saves list does (issue #25: the original went on reading a file it couldn't open, and
+        // indexed the two master files with the save's Setting). The original asserted on each: a damaged save's
+        // asserts came at every start.
+        const std::optional<MCSaves::MCSettings> settings =
+            MCSaves::ReadSettings(GamePath(StartDirectory, file.Name, extension));
 
-        if (result == 0)
-        {
-            result = saveFile.SeekPacket(0);
-            Assert(result == 0, 0, " could not find packet 0 in save game file ");
-        }
-
-        if (result == 0)
-        {
-            result = saveFit.Open(saveFile, static_cast<uint32_t>(saveFile.GetPacketSize()));
-            Assert(result == 0, 0, " could not open save game file ");
-        }
-
-        if (result != 0)
+        if (!settings.has_value())
         {
             continue;
         }
 
-        int32_t planet = 0;
+        file.ResourcePoints = settings->ResourcePoints;
 
-        if (saveFit.SeekBlock("Planet") == 0)
+        if (!ReadOpInfo(masterFiles[static_cast<size_t>(settings->Campaign)], settings->MissionNumber, file))
         {
-            planet = saveFit.Read<int32_t>("Setting").value_or(0);
+            SDL_Log("MCFileScrollPane: the save %s's mission %d isn't in its campaign's master mission file",
+                    file.Name.c_str(), settings->MissionNumber);
         }
-
-        result = saveFit.SeekBlock("General");
-        Assert(result == 0, 0, " could not find General Block in campaign file ");
-        const MCFitResult<int32_t> missionNumber = saveFit.Read<int32_t>("MissionNumber");
-        Assert(missionNumber.has_value(), 0, " Could not find MissionNumber in save game file ");
-        result = saveFit.SeekBlock("ResourcePoints");
-        Assert(result == 0, 0, " could not find ResourcePoints Block in save game file ");
-        const MCFitResult<uint32_t> points = saveFit.Read<uint32_t>("numPoints");
-        Assert(points.has_value(), 0, " Could not find numPoints in save game file ");
-        file.ResourcePoints = points.value_or(0);
-        saveFit.Close();
-        saveFile.Close();
-
-        if (planet < 0 || static_cast<size_t>(planet) >= masterFiles.size())
-        {
-            SDL_Log("MCFileScrollPane: %s names planet %d", file.Name.c_str(), planet);
-            continue;
-        }
-
-        ReadOpInfo(masterFiles[static_cast<size_t>(planet)], missionNumber.value_or(0), file);
     }
 
     masterFiles[0].Close();

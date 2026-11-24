@@ -3,6 +3,7 @@
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "ui/MCRmlDialog.h"
+#include "ui/MCRmlFlow.h"
 #include "fakes/MCManualClock.h"
 #include "camera/MCCamera.h"
 #include "gui/MCGuiSmackerWindow.h"
@@ -13,6 +14,7 @@
 #include "lib/MCFastFileSet.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCFileScrollPane.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogComboBox.h"
 #include "logistics/MCLogInvScreen.h"
@@ -128,6 +130,16 @@ namespace MCTestGame
                 }
             }
         }
+    }
+
+    OldMainMenu::OldMainMenu()
+    {
+        MCMainMenuScreens::SetOldForTests(true);
+    }
+
+    OldMainMenu::~OldMainMenu()
+    {
+        MCMainMenuScreens::SetOldForTests(false);
     }
 
     std::filesystem::path UserFolder()
@@ -668,6 +680,10 @@ namespace MCTestGame
     {
         bool Boot(std::string commandLine)
         {
+            // The menus stopped as the run ends, while RmlUi's own statics are all there, as the game stops them before
+            // it exits (left to the statics' end, one test's crashed as RmlUi's style sheets went).
+            MCTest::AtEnd([] { MCRmlFlow::Stop(); });
+
             // The game writes its saves and settings under the user folder; keep them out of the real one.
             const std::filesystem::path userRoot = UserFolder();
             std::filesystem::create_directories(userRoot);

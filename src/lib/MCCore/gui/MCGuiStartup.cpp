@@ -20,6 +20,7 @@
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCRejoinNote.h"
+#include "network/MCRoomEnd.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
@@ -1001,6 +1002,10 @@ auto RunGame(std::string_view commandLine, std::chrono::milliseconds internetLea
 
     // Port-only (Redux HD): a benchmark's run lets go of the mission's units while the game is still there.
     MCBenchmark::Release();
+
+    // Port-only (SPEC-menus.md, "In the room"): a host's goodbye to its room (a launcher's LEAVE, or a LEAVE just before
+    // quitting) reaches its guests before the game ends, the window gone first: nothing on the screen waits for it.
+    MCRoomEnd::FinishGoodbye(internetLeaveWait);
 
     // Port (Redux HD): an internet game's leaving reaches the service before the session goes (its place freed, a
     // host's game ended or handed on), and the internet screens let go of their requests.

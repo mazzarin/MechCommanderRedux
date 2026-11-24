@@ -43,6 +43,36 @@ namespace
     constexpr uint32_t EnumSessionFlags =
         DPENUMSESSIONS_AVAILABLE | DPENUMSESSIONS_ASYNC | DPENUMSESSIONS_PASSWORDREQUIRED | DPENUMSESSIONS_RETURNSTATUS;
 
+    /// <summary>Port-only (Redux HD): how long the game's end waits between pumps of a goodbye's links (FinishGoodbye).</summary>
+    constexpr std::chrono::milliseconds GoodbyePumpEvery{2};
+    /// <summary>The first buffer a goodbye's messages are read into (and dropped); a bigger one grows it.</summary>
+    constexpr size_t GoodbyeReadSize = 0x200;
+
+    /// <summary>Takes in and drops what has come for <paramref name="directPlay"/>'s players.</summary>
+    void DropReceived(MCDirectPlay& directPlay)
+    {
+        std::vector<uint8_t> buffer(GoodbyeReadSize);
+
+        for (;;)
+        {
+            uint32_t from = 0;
+            uint32_t to = 0;
+            auto size = static_cast<uint32_t>(buffer.size());
+            const uint32_t result = directPlay.Receive(from, to, DPRECEIVE_ALL, buffer, size);
+
+            if (result == DPERR_BUFFERTOOSMALL)
+            {
+                buffer.resize(size);
+                continue;
+            }
+
+            if (result != DP_OK)
+            {
+                return;
+            }
+        }
+    }
+
     /// <summary>
     /// Waits up to <paramref name="ms"/> with the window kept responsive: false when the player gave up (Escape, or
     /// closing the window).
@@ -68,6 +98,165 @@ namespace
     }
 }
 
+// ---- a host's goodbye ----------------------------------------------------------------------------------------------
+
+namespace
+{
+    /// <summary>Port-only (SPEC-menus.md, "In the room"): a host's goodbye under way (LeaveAfterGoodbye).</summary>
+    struct MCGoodbye
+    {
+        std::unique_ptr<MCDirectPlay> DirectPlay;
+        /// <summary>The internet game the session's links ride, if it is one.</summary>
+        std::unique_ptr<MCInternetGame> Internet;
+        /// <summary>The players told, by id: the goodbye ends when none is left in the session.</summary>
+        std::vector<uint32_t> Told;
+        std::chrono::steady_clock::time_point Until;
+    };
+
+    /// <summary>The goodbye under way, and the DirectPlay objects its end closed whose joiners' links linger.</summary>
+    struct MCGoodbyes
+    {
+        std::optional<MCGoodbye> Saying;
+        std::vector<std::unique_ptr<MCDirectPlay>> Closed;
+    };
+
+    /// <summary>
+    /// The process's goodbye, apart from any game: a way back to the main menu drops the game that said it. Made once
+    /// and never destroyed: one the process ends with (a test's) is cut off with it, where a static's end would close
+    /// its sockets after the statics they need had gone. On the game's thread only.
+    /// </summary>
+    MCGoodbyes& Goodbyes()
+    {
+        static MCGoodbyes* const goodbyes = new MCGoodbyes();
+        return *goodbyes;
+    }
+
+    /// <summary>
+    /// The goodbye ended now, as a host's leave that hands nothing on: its joiners told the session ends, their links
+    /// held open until they've read it, unless they ride the internet game, which ends with it (its leaving waiting up to
+    /// <paramref name="internetWait"/>).
+    /// </summary>
+    void EndGoodbye(std::chrono::milliseconds internetWait = {})
+    {
+        MCGoodbyes& goodbyes = Goodbyes();
+
+        if (!goodbyes.Saying.has_value())
+        {
+            return;
+        }
+
+        MCGoodbye goodbye = std::move(*goodbyes.Saying);
+        goodbyes.Saying.reset();
+        goodbye.DirectPlay->Close();
+
+        if (goodbye.DirectPlay->Lingering())
+        {
+            goodbyes.Closed.push_back(std::move(goodbye.DirectPlay));
+        }
+
+        if (goodbye.Internet != nullptr)
+        {
+            goodbye.Internet->End(internetWait);
+        }
+    }
+
+    /// <summary>The goodbye ended now if it rides an internet game (the sockets opened from now on would be its).</summary>
+    void EndInternetGoodbye()
+    {
+        if (const std::optional<MCGoodbye>& saying = Goodbyes().Saying;
+            saying.has_value() && saying->Internet != nullptr)
+        {
+            SDL_Log("MCSessionManager: a new connection ends the goodbye, whose internet game its sockets would ride");
+            EndGoodbye();
+        }
+    }
+
+    /// <summary>
+    /// The goodbye moved along: its links tended, what came in dropped, the players gone noted; ended (its internet
+    /// game's leaving waiting up to <paramref name="internetWait"/>) when none is left or its time is up.
+    /// </summary>
+    void PumpSaying(std::chrono::milliseconds internetWait)
+    {
+        std::optional<MCGoodbye>& saying = Goodbyes().Saying;
+
+        if (!saying.has_value())
+        {
+            return;
+        }
+
+        MCGoodbye& goodbye = *saying;
+
+        if (goodbye.Internet != nullptr)
+        {
+            goodbye.Internet->Update();
+        }
+
+        goodbye.DirectPlay->Pump();
+        DropReceived(*goodbye.DirectPlay);
+        std::vector<uint32_t> inSession;
+        goodbye.DirectPlay->EnumPlayers(
+            [&inSession](uint32_t id, uint32_t /*playerType*/, const DPNAME& /*name*/, uint32_t /*flags*/)
+            {
+                inSession.push_back(id);
+                return true;
+            },
+            0);
+        std::erase_if(goodbye.Told, [&inSession](uint32_t id) { return !std::ranges::contains(inSession, id); });
+
+        if (goodbye.Told.empty())
+        {
+            SDL_Log("MCSessionManager: every player told has left; the goodbye ends");
+            EndGoodbye(internetWait);
+        }
+        else if (std::chrono::steady_clock::now() >= goodbye.Until)
+        {
+            SDL_Log("MCSessionManager: not waiting longer for %zu players to leave; the goodbye ends",
+                    goodbye.Told.size());
+            EndGoodbye(internetWait);
+        }
+    }
+
+    /// <summary>The links the goodbye's end closed, each dropped once its joiners have closed theirs.</summary>
+    void PumpGoodbyeLinks()
+    {
+        std::vector<std::unique_ptr<MCDirectPlay>>& closed = Goodbyes().Closed;
+
+        for (const std::unique_ptr<MCDirectPlay>& directPlay : closed)
+        {
+            directPlay->Pump();
+        }
+
+        std::erase_if(closed, [](const std::unique_ptr<MCDirectPlay>& directPlay) { return !directPlay->Lingering(); });
+    }
+}
+
+bool MCSessionManager::SaysGoodbye()
+{
+    return Goodbyes().Saying.has_value();
+}
+
+bool MCSessionManager::GoodbyeLingers()
+{
+    const MCGoodbyes& goodbyes = Goodbyes();
+    return goodbyes.Saying.has_value() || !goodbyes.Closed.empty();
+}
+
+void MCSessionManager::PumpGoodbye()
+{
+    PumpSaying({});
+    PumpGoodbyeLinks();
+}
+
+void MCSessionManager::FinishGoodbye(std::chrono::milliseconds internetWait)
+{
+    while (GoodbyeLingers())
+    {
+        PumpSaying(internetWait);
+        PumpGoodbyeLinks();
+        std::this_thread::sleep_for(GoodbyePumpEvery);
+    }
+}
+
 uint32_t MCSessionManager::TicksPerMs()
 {
     return static_cast<uint32_t>(MCPort::PerformanceFrequency()) / 1000;
@@ -85,6 +274,7 @@ MCSessionManager::MCSessionManager(const _GUID& appGUID) : _AppGuid(appGUID)
 MCSessionManager::~MCSessionManager()
 {
     std::scoped_lock lock(CriticalSection);
+    // Port-only (SPEC-menus.md, "In the room"): a host's goodbye still under way goes on after this game (PumpGoodbye).
     // Port (Redux HD): an internet game ends here, while the network it's on is sure to be there.
     EndInternet();
     DestroyDirectPlayInterface();
@@ -118,6 +308,12 @@ void MCSessionManager::DestroyDirectPlayInterface()
 
 void MCSessionManager::PumpClosed()
 {
+    PumpGoodbye();
+    PumpClosedLinks();
+}
+
+void MCSessionManager::PumpClosedLinks()
+{
     for (const std::unique_ptr<MCDirectPlay>& closed : _Closed)
     {
         closed->Pump();
@@ -129,6 +325,41 @@ void MCSessionManager::PumpClosed()
 bool MCSessionManager::KeepsClosedLinks() const
 {
     return !_Closed.empty();
+}
+
+void MCSessionManager::LeaveAfterGoodbye(std::vector<uint32_t> told, std::chrono::milliseconds wait)
+{
+    const std::shared_ptr<MCFidpSession> session = CurrentSession();
+
+    if (session == nullptr || !IsHost || DirectPlay == nullptr || told.empty())
+    {
+        HandsOn = false;
+        LeaveSession();
+        return;
+    }
+
+    EndGoodbye();
+    SDL_Log("MCSessionManager: leaving \"%s\"; its goodbye to %zu players goes on apart", session->Name.c_str(),
+            told.size());
+    // No one new comes in while it says goodbye: the LAN's searches (for available sessions) no longer list it, nor
+    // does the service's list (its links kept).
+    session->SessionDesc.dwFlags |= DPSESSION_NEWPLAYERSDISABLED;
+    DirectPlay->SetSessionDesc(session->SessionDesc, 0);
+
+    if (Internet != nullptr)
+    {
+        Internet->Unlist();
+    }
+
+    HandsOn = true;
+    ForgetSession();
+    Goodbyes().Saying = MCGoodbye{.DirectPlay = std::move(DirectPlay),
+                                  .Internet = std::move(Internet),
+                                  .Told = std::move(told),
+                                  .Until = std::chrono::steady_clock::now() + wait};
+    // As DestroyDirectPlayInterface leaves it, then a DirectPlay object for the next session.
+    CurrentConnection = MCNetProtocol::None;
+    CreateDirectPlayInterface();
 }
 
 // ---- message queues ------------------------------------------------------------------------------------------------
@@ -248,6 +479,8 @@ int32_t MCSessionManager::SetCurrentConnection(MCNetProtocol type)
         return -1;
     }
 
+    // Port-only (Redux HD): a goodbye riding an internet game ends first (the sockets opened from now on would be its).
+    EndInternetGoodbye();
     // Port fix: recreating the DirectPlay object below re-enumerates the connections, which frees the data just found
     // (the original went on using it); a copy is kept.
     std::vector<uint8_t> copy = (*found)->ConnectionBuffer;
@@ -333,6 +566,8 @@ int32_t MCSessionManager::ConnectComPort(uint32_t port, uint32_t baudRate, uint3
 
 int32_t MCSessionManager::InitializeConnection(std::span<const DPCOMPOUNDADDRESSELEMENT> elements)
 {
+    EndInternetGoodbye();
+
     if (CurrentConnection != MCNetProtocol::None)
     {
         DestroyDirectPlayInterface();
@@ -556,6 +791,8 @@ bool MCSessionManager::BeginInternet(bool host, std::string_view code, bool isPu
     }
 
     EndInternet();
+    // Port-only (Redux HD): one internet game on the network at a time: a goodbye riding one ends first.
+    EndInternetGoodbye();
     Internet = !host   ? MCInternetGame::Join(net->get(), code, isPublic)
                : place ? MCInternetGame::HostAgain(net->get(), isPublic, *place)
                        : MCInternetGame::Host(net->get(), isPublic);
@@ -900,6 +1137,8 @@ std::shared_ptr<MCFidpSession> MCSessionManager::FindMatchingSession(const _GUID
 int32_t MCSessionManager::HostSession(const MCFidpSession& session, std::string_view playerName)
 {
     Assert(DirectPlay != nullptr, 0, "Can't host session.  No DirectPlayObject");
+    // Port-only (Redux HD): the last room's goodbye ends first: it holds the port, which this session may take.
+    EndGoodbye();
     IsHost = true;
     // Port-only (Redux HD): a room hosted again for a rematch (MCRoomEnd) is listed out of battle, as its guests can
     // join it: the last match's start was that session's.
@@ -986,10 +1225,8 @@ bool MCSessionManager::LeaveHandsOn() const
     return HandsOn && DirectPlay != nullptr && DirectPlay->HasSuccessor();
 }
 
-bool MCSessionManager::LeaveSession()
+bool MCSessionManager::ForgetSession()
 {
-    const bool handOn = std::exchange(HandsOn, true);
-
     if (CurrentSession() == nullptr || MyPlayer() == nullptr)
     {
         return false;
@@ -1001,6 +1238,18 @@ bool MCSessionManager::LeaveSession()
     HasPlayerNumber = false;
     _CurrentSession.reset();
     _MyPlayer.reset();
+    PlayersByLatency = {0, 1, 2, 3, 4, 5};
+    return true;
+}
+
+bool MCSessionManager::LeaveSession()
+{
+    const bool handOn = std::exchange(HandsOn, true);
+
+    if (!ForgetSession())
+    {
+        return false;
+    }
 
     // Port-only (Redux HD): a host leaving hands its session on to another machine, as DirectPlay migrated a host
     // (MCDirectPlay::Leave), unless its battle is over (HandsOn).
@@ -1017,7 +1266,6 @@ bool MCSessionManager::LeaveSession()
     // Port (Redux HD): an internet game ends with its session (its links, its place on the service).
     EndInternet();
     CreateDirectPlayInterface();
-    PlayersByLatency = {0, 1, 2, 3, 4, 5};
     return true;
 }
 

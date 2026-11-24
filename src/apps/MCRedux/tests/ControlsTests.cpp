@@ -18,6 +18,7 @@
 #include "main/MCSystemConfig.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
+#include "ui/MCRmlDialog.h"
 
 // The player's key bindings (iface/MCKeyBindings) and the preferences' CONTROLS panel that edits them: the defaults
 // are the original's, every command a player can bind is listed once, the names read back, a key moves from the
@@ -488,16 +489,18 @@ TEST_CASE_ISOLATED("game: a player who uses LIGHTS' new key for another command 
 
     REQUIRE(MCTestGame::StartLogistics());
     StartWithOldPrefs();
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-    REQUIRE(dialog.IsShowing());
-    CHECK_EQ(dialog.Text, std::string("LIGHTS is new and takes N, but N is your EJECT key. Press a key for LIGHTS, or "
-                                      "OK to leave it without one: CONTROLS can set it later."));
+    // Port-only (SPEC-menus.md's stage 7): over the remade main menu the remade dialog asks, taking the key itself.
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    REQUIRE(MCRmlDialogs::Shown());
+    CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text,
+             std::string("LIGHTS is new and takes N, but N is your EJECT key. Press a key for LIGHTS, or "
+                         "OK to leave it without one: CONTROLS can set it later."));
     CHECK_EQ(LightsKey(), MCKeyBindings::NoKey);
 
     // JUMP's key is refused.
     MCScreenInput::RealKey(SDL_SCANCODE_J);
-    CHECK(dialog.IsShowing());
-    CHECK_EQ(dialog.Text,
+    CHECK(MCRmlDialogs::Shown());
+    CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text,
              std::string("J is your JUMP key. Press another key for LIGHTS, or OK to leave it without one."));
     CHECK_EQ(LightsKey(), MCKeyBindings::NoKey);
 
@@ -506,27 +509,27 @@ TEST_CASE_ISOLATED("game: a player who uses LIGHTS' new key for another command 
                MCKeyCommand::Unused);
     MCScreenInput::RealKey(SDL_SCANCODE_Y);
     Frames();
-    CHECK(!dialog.IsShowing());
+    CHECK(!MCRmlDialogs::Shown());
     CHECK_EQ(LightsKey(), FreeKey);
     CHECK_EQ(SavedLights(), MCFitResult<std::string>("Y"));
 
     // The next start keeps it and asks nothing.
     ReadPrefsFile();
     Frames();
-    CHECK(!dialog.IsShowing());
+    CHECK(!MCRmlDialogs::Shown());
     CHECK_EQ(LightsKey(), FreeKey);
 
     // OK leaves LIGHTS without a key, and PREFS keeps that too.
     StartWithOldPrefs();
-    REQUIRE(dialog.IsShowing());
+    REQUIRE(MCRmlDialogs::Shown());
     MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
     Frames();
-    CHECK(!dialog.IsShowing());
+    CHECK(!MCRmlDialogs::Shown());
     CHECK_EQ(LightsKey(), MCKeyBindings::NoKey);
     CHECK_EQ(SavedLights(), MCFitResult<std::string>("NONE"));
     ReadPrefsFile();
     Frames();
-    CHECK(!dialog.IsShowing());
+    CHECK(!MCRmlDialogs::Shown());
 
     std::filesystem::remove(PrefsPath());
 }
@@ -545,14 +548,15 @@ TEST_CASE_ISOLATED("game: a lobby's session screen asks for a LIGHTS key")
     REQUIRE(MCTestGame::StartLobby("-host -port 28975 -player BOB"));
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     StartWithOldPrefs();
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-    REQUIRE(dialog.IsShowing());
-    CHECK(dialog.Text.starts_with("LIGHTS is new and takes N"));
+    // Port-only (SPEC-menus.md's stages 4 and 7): over the remade room the remade dialog asks, taking the key itself.
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    REQUIRE(MCRmlDialogs::Shown());
+    CHECK(MCRmlDialogs::Dialog()->Said().Text.starts_with("LIGHTS is new and takes N"));
     REQUIRE_EQ(MCKeyBindings::FindCommand(MCKeyBindings::Player(), FreeKey, MCKeyCommand::Unused),
                MCKeyCommand::Unused);
     MCScreenInput::RealKey(SDL_SCANCODE_Y);
     Frames();
-    CHECK(!dialog.IsShowing());
+    CHECK(!MCRmlDialogs::Shown());
     CHECK_EQ(LightsKey(), FreeKey);
     CHECK_EQ(SavedLights(), MCFitResult<std::string>("Y"));
     std::filesystem::remove(PrefsPath());

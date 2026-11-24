@@ -30,6 +30,7 @@
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCLogChatInput.h"
 #include "logistics/MCMechPurchaseBlock.h"
@@ -400,44 +401,9 @@ auto MCLogistics::Start() -> void
 
     if (InDemo == 0)
     {
-        const std::optional<std::string> userName = MyGetUserName();
-        MakeScreen(MultiplayerScreen, "mpscreen", " No Connection Screen FIT File ",
-                   " Unable to start connect screen ");
-        // Port (Redux HD): MULTIPLAYER ACCESS's LAN and INTERNET. Port-only (SPEC-menus.md's stage 3): the LAN and
+        // Port-only (SPEC-menus.md's stage 7): MULTIPLAYER remade in the main menu's panel (logistics/MCMainMenuScreen.h):
+        // 1998's MULTIPLAYER ACCESS (mpscreen.fit) and its modem and serial screens aren't made. Stage 3: the LAN and
         // INTERNET screens are remade (logistics/MCGamesScreen); the 1998 LAN screen (lanscreen.fit) isn't made.
-        SetUpAccessScreen(*MultiplayerScreen);
-
-        {
-            MakeScreen(ModemScreen, "modem", " No modem Screen FIT File ", " Unable to start modemScreen screen ");
-            MCSplashScreen& screen = *ModemScreen;
-            screen.SetEventRoutine(ModemScreenHandleEvent);
-            const std::shared_ptr<MCLogTextObject> nameField = SetUpTextField(screen, 4);
-            const std::shared_ptr<MCLogTextObject> phoneField = SetUpTextField(screen, 5);
-            nameField->InitBuffer(0x10, MCLogInputType::Text);
-            phoneField->InitBuffer(0x18, MCLogInputType::Text);
-            nameField->SetStringBuffer(userName.value_or("Player"));
-            auto modems = ScreenElement<MCLogScrollTextObject>(screen, 10);
-            modems->FontIndex = 1;
-            modems->HighlightColor[0] = 0x14;
-            modems->HighlightLine[0] = 0;
-            modems->SetEventRoutine(ModemListHandleEvent);
-            screen.ShowBlock(0);
-        }
-
-        {
-            // The serial screen reuses the modem screen's messages.
-            MakeScreen(SerialScreen, "serial", " No modem Screen FIT File ", " Unable to start modemScreen screen ");
-            MCSplashScreen& screen = *SerialScreen;
-            const std::shared_ptr<MCLogTextObject> nameField = SetUpTextField(screen, 4);
-            nameField->InitBuffer(0x10, MCLogInputType::Text);
-            nameField->SetStringBuffer(userName.value_or("Player"));
-            const std::shared_ptr<MCLogTextObject> portField = SetUpTextField(screen, 5);
-            portField->InitBuffer(2, MCLogInputType::Digits);
-            portField->SetEventRoutine(ComPortTextHandleEvent);
-            portField->SetStringBuffer("1");
-            screen.SetEventRoutine(SerialScreenHandleEvent);
-        }
-
         {
             MakeScreen(ConnectScreen, "readyroom", " No Ready Room Screen FIT File ",
                        " Unable to start readyRoomScreen screen ");
@@ -1131,9 +1097,13 @@ auto MCLogistics::ShowLogScreen(bool show, bool redraw) const -> void
         GuiSystem().ActivatePaletteFromTga(ArtPath + "logart\\lsrupm05.tga");
     }
 
-    // Port-only (SPEC-menus.md's stage 4): a launcher's join shows on the painting (logistics/MCRoomScreen), the 1998
-    // ready room hidden in its place.
-    if (show && ConnectScreen && ConnectScreen.Is(*CurrentScreen()) && ShowLauncherScreen())
+    // Port-only (SPEC-menus.md's stage 7): the main menu remade shows in the 1998 one's place, which stays logistics'
+    // screen, hidden (logistics/MCMainMenuScreen.h); the 1998 one when RmlUi can't start. Port-only (stage 4): a
+    // launcher's join shows on the painting (logistics/MCRoomScreen), the 1998 ready room hidden in its place.
+    const bool remade = show && ((MainScreen.Is(*CurrentScreen()) && MCMainMenuScreens::ShowMain()) ||
+                                 (ConnectScreen && ConnectScreen.Is(*CurrentScreen()) && ShowLauncherScreen()));
+
+    if (remade)
     {
         CurrentScreen()->ShowGuiWindow(false);
         return;

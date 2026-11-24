@@ -14,10 +14,10 @@ namespace
     constexpr const char* OperationsKey = "operations";
     constexpr const char* MissionsKey = "missions";
     /// <summary>
-    /// The marks of the line a briefing names its operation on, before the word (its operation's, then a slash): the
-    /// Inner Sphere's, and the Clans' (two of the expansion's solo missions).
+    /// The line a briefing names its operation on, before the word (its operation's, then a slash): the Inner Sphere's
+    /// FEDCOM, or STARCOM in the single missions played against a Clan's aces (ACEHUNT's, PAREDUX's).
     /// </summary>
-    constexpr std::array<std::string_view, 2> DispatchMarks = {"FEDCOM:", "STARCOM:"};
+    constexpr std::array<std::string_view, 2> OperationMarks = {"FEDCOM:", "STARCOM:"};
     /// <summary>The dispatch's starred head over every briefing ("****CLASSIFIED****"), never its mission's title.</summary>
     constexpr std::string_view ClassifiedHead = "CLASSIFIED";
     /// <summary>The most a data file may hold (it is a few kilobytes): a larger one isn't read.</summary>
@@ -30,6 +30,30 @@ namespace
         std::unordered_map<std::string, std::string> Operations;
         std::unordered_map<std::string, std::string> Missions;
     };
+
+    /// <summary>What follows the operation's mark on a briefing's line; none when the line has none.</summary>
+    std::optional<std::string_view> AfterMark(std::string_view line)
+    {
+        for (const std::string_view mark : OperationMarks)
+        {
+            if (const size_t at = line.find(mark); at != std::string_view::npos)
+            {
+                return line.substr(at + mark.size());
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="plain"/> is a dispatch's sender line: its words, a colon, then a code with a slash
+    /// ("COMMAND DESIGNATION:GAMBIT/7PRDN3", a match's; the campaigns' FEDCOM line the same form).
+    /// </summary>
+    bool IsSenderLine(std::string_view plain)
+    {
+        const size_t colon = plain.find(':');
+        return colon != std::string_view::npos && colon > 0 && plain.find('/', colon) != std::string_view::npos;
+    }
 
     MCNames& Names()
     {
@@ -148,33 +172,6 @@ namespace
     }
 }
 
-namespace
-{
-    /// <summary>Where the operation's word starts on <paramref name="line"/>, after its dispatch mark; none without one.</summary>
-    std::optional<size_t> AfterMark(std::string_view line)
-    {
-        for (const std::string_view mark : DispatchMarks)
-        {
-            if (const size_t at = line.find(mark); at != std::string_view::npos)
-            {
-                return at + mark.size();
-            }
-        }
-
-        return std::nullopt;
-    }
-
-    /// <summary>
-    /// Whether <paramref name="plain"/> is a dispatch's sender line: its words, a colon, then a code with a slash
-    /// ("COMMAND DESIGNATION:GAMBIT/7PRDN3", a match's; the campaigns' FEDCOM line the same form).
-    /// </summary>
-    bool IsSenderLine(std::string_view plain)
-    {
-        const size_t colon = plain.find(':');
-        return colon != std::string_view::npos && colon > 0 && plain.find('/', colon) != std::string_view::npos;
-    }
-}
-
 auto MCMissionNames::FromBriefing(std::string_view text) -> MCWritten
 {
     MCWritten written = FromBriefing(text, true);
@@ -191,7 +188,7 @@ auto MCMissionNames::FromBriefing(std::string_view text) -> MCWritten
 auto MCMissionNames::FromBriefing(std::string_view text, bool marked) -> MCWritten
 {
     MCWritten written;
-    bool afterFedcom = !marked;
+    bool afterMark = !marked;
     std::vector<std::string> title;
 
     for (size_t start = 0; start <= text.size();)
@@ -200,15 +197,15 @@ auto MCMissionNames::FromBriefing(std::string_view text, bool marked) -> MCWritt
         const std::string visible = Visible(text.substr(start, end - start));
         start = end + 1;
 
-        if (const std::optional<size_t> mark = afterFedcom ? std::nullopt : AfterMark(visible); mark.has_value())
+        if (const std::optional<std::string_view> rest = afterMark ? std::nullopt : AfterMark(visible);
+            rest.has_value())
         {
-            const std::string_view rest = std::string_view(visible).substr(*mark);
-            written.Operation = std::string(Trimmed(rest.substr(0, rest.find('/'))));
-            afterFedcom = true;
+            written.Operation = std::string(Trimmed(rest->substr(0, rest->find('/'))));
+            afterMark = true;
             continue;
         }
 
-        if (!afterFedcom)
+        if (!afterMark)
         {
             continue;
         }

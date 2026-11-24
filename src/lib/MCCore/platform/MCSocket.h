@@ -201,4 +201,10 @@ public:
     /// nothing when it doesn't watch it (as <see cref="KeepAlive"/> left it).
     /// </summary>
     static std::optional<MCSocket::KeepAliveTimes> KeepAliveOf(MCSocket::Handle socket);
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's MULTIPLAYER): whether this computer is on a network, an IPv4 address on an interface
+    /// that's up and isn't the loopback (sockets starting says nothing of a cable or Wi-Fi).
+    /// </summary>
+    static bool HasNetwork();
 };

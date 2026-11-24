@@ -335,12 +335,6 @@ auto MCSplashScreen::OnDestroy() -> void
 
 auto MCSplashScreen::ShowGuiWindow(bool show) -> void
 {
-    // Port (Redux HD): MULTIPLAYER ACCESS's count and INTERNET CONNECTION's list stop as they go out of sight.
-    if (!show && GlobalLog()->MultiplayerScreen.Is(*this))
-    {
-        AccessScreenHidden();
-    }
-
     // The connection screens poll while shown: the connect screen through its element 3. Port: a poll doesn't wait for
     // answers (they're listed by the next), so the first question goes as the screen shows and the first poll lists its
     // answers. Not on a lobby's game's connect screen, its waiting screen: there the question would catch the room the

@@ -90,6 +90,18 @@ namespace MCTest
         Registry().push_back({name, std::move(body), file, line, isolated});
     }
 
+    /// <summary>What <see cref="AtEnd"/> registered, in its order.</summary>
+    std::vector<std::function<void()>>& EndRuns()
+    {
+        static std::vector<std::function<void()>> runs;
+        return runs;
+    }
+
+    void AtEnd(std::function<void()> run)
+    {
+        EndRuns().push_back(std::move(run));
+    }
+
     Scope::Scope(std::string_view text)
     {
         State().Scopes.emplace_back(text);
@@ -785,6 +797,11 @@ int main(int argc, char** argv)
                 besideFailed = std::format("{}' process, which failed after them", besideCommand->Name);
             }
         }
+    }
+
+    for (const std::function<void()>& run : MCTest::EndRuns())
+    {
+        run();
     }
 
     const auto totalMs =

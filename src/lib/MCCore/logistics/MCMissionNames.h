@@ -2,8 +2,7 @@
 
 // Port-only (SPEC-menus.md, stage 5): the campaigns' operations and missions by the names the remade menus show them.
 // A briefing's text names its mission in capitals on starred lines under its FEDCOM line ("FEDCOM:SKYHOOK/02PRDN03",
-// STARCOM in two of the expansion's solo missions),
-// "***DESTROY ENEMY CONVOY***"); the app's data file (ui/missions.json) gives each the case the approved frames show
+// "***DESTROY ENEMY CONVOY***"; STARCOM in two single missions); the app's data file (ui/missions.json) gives each the case the approved frames show
 // ("Skyhook", "Destroy enemy convoy"), keyed by the briefing's file and the operation's word. One not in it shows as the
 // briefing writes it. LOAD GAME and SAVE GAME name saves by them; the briefing and the loading screen will (stage 8).
 

@@ -183,11 +183,14 @@ namespace MCSavesMenu
     /// <summary>The flow's kind for LOAD GAME (<paramref name="mode"/> Load, named "load") or SAVE GAME ("save").</summary>
     MCScreenFlow::MCScreenKind Kind(MCSavesScreen::MCMode mode);
 
-    /// <summary>RP as the menus write it, in thousands ("12,400").</summary>
-    std::string PointsText(uint32_t points);
-
     /// <summary>The screen, while the game's menus have it (made by the first kind's Prepare).</summary>
     MCOptionalRef<MCSavesScreen> Screen();
+
+    /// <summary>
+    /// Port-only (stage 7): LOAD GAME opened through the flow on <paramref name="campaign"/>'s saves (a campaign's LOAD
+    /// in CAMPAIGNS); every campaign's without one, as the main menu's LOAD GAME opens.
+    /// </summary>
+    void OpenLoad(std::optional<MCSaves::MCCampaign> campaign);
 
     /// <summary>
     /// The words: "This save couldn't be loaded.", the save's, the name's, the disk's and the delete's refusals, the saved

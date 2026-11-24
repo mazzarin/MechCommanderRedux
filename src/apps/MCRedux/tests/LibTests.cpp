@@ -24,6 +24,7 @@
 #include "main/MCGameContext.h"
 #include "main/MCSystemConfig.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCRegistry.h"
 #include "platform/MCThreadPriority.h"
 
 namespace
@@ -763,6 +764,69 @@ TEST_CASE("file: deleting a save removes the install's copy too")
     const std::vector<std::string> left = MCFileSystem::FindFiles("data\\savegame\\*.sav");
     REQUIRE_EQ(left.size(), size_t{1});
     CHECK_EQ(left[0], std::string("other.sav"));
+}
+
+/// <summary>
+/// The registry's values (registry.cfg) read back as soon as they're written, the file saved behind on a thread of its
+/// own, so the writer (a menu's button) waits for no disk; a value as stored already isn't saved again, and each user
+/// folder reads its own file.
+/// </summary>
+TEST_CASE("file: the registry's values read back at once and are saved behind the writer")
+{
+    constexpr std::string_view Key = "Software\\Fasa Interactive\\MechCommander Expansion";
+    constexpr std::string_view NameValue = "Player Name";
+    constexpr std::string_view Name = "Firestorm";
+    constexpr std::string_view Renamed = "Hammer";
+    constexpr std::string_view Version = "MCX v1.8 1234.";
+    ScratchFolder folder("registry");
+    const std::filesystem::path file = folder.Path() / "user/registry.cfg";
+    const auto text = [&file]
+    {
+        const std::vector<uint8_t> bytes = ReadFile(file);
+        return std::string(bytes.begin(), bytes.end());
+    };
+
+    // The file's lines, by key and value name lower-cased, in order.
+    const auto stored = [](std::string_view name, std::string_view version)
+    {
+        return std::format("software\\fasa interactive\\mechcommander expansion|player name={}\n"
+                           "software\\fasa interactive\\mechcommander expansion|version={}\n",
+                           name, version);
+    };
+
+    MCTestContextScope scope;
+    scope.Context().SetFiles(std::make_unique<MCDiskFileSource>());
+    MCFileSystem::SetGameRoot(folder.Path() / "install");
+    MCFileSystem::SetUserRoot(folder.Path() / "user");
+    CHECK(!MCRegistry::Read(Key, NameValue).has_value());
+
+    // Held as a slow disk holds it: the values read back, the file not there yet.
+    {
+        const MCRegistry::MCSavesHeld held;
+        MCRegistry::Write(Key, NameValue, Name);
+        MCRegistry::Write(Key, "Version", Version);
+        CHECK(MCRegistry::Read(Key, "PLAYER NAME") == std::optional<std::string>(Name));
+        CHECK(MCRegistry::Read(Key, "Version") == std::optional<std::string>(Version));
+        CHECK(!std::filesystem::exists(file));
+    }
+
+    MCRegistry::WaitForSaves();
+    CHECK_EQ(text(), stored(Name, Version));
+
+    // Another user folder reads its own file, and the first's values come back with it.
+    MCFileSystem::SetUserRoot(folder.Path() / "other");
+    CHECK(!MCRegistry::Read(Key, NameValue).has_value());
+    MCFileSystem::SetUserRoot(folder.Path() / "user");
+    CHECK(MCRegistry::Read(Key, NameValue) == std::optional<std::string>(Name));
+
+    // A value as stored isn't saved again (the file gone stays gone); a new one is.
+    std::filesystem::remove(file);
+    MCRegistry::Write(Key, NameValue, Name);
+    MCRegistry::WaitForSaves();
+    CHECK(!std::filesystem::exists(file));
+    MCRegistry::Write(Key, NameValue, Renamed);
+    MCRegistry::WaitForSaves();
+    CHECK_EQ(text(), stored(Renamed, Version));
 }
 
 /// <summary>

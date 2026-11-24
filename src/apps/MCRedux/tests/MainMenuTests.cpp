@@ -18,6 +18,7 @@
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPrefsScreen.h"
+#include "logistics/MCRegistrySettings.h"
 #include "logistics/MCSaves.h"
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCUpdateModel.h"
@@ -28,7 +29,9 @@
 #include "main/MCUpdater.h"
 #include "mission/MCMission.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
+#include "platform/MCRegistry.h"
 #include "ui/MCRmlChecks.h"
 #include "ui/MCRmlFlow.h"
 #include "ui/MCRmlMenus.h"
@@ -52,6 +55,11 @@ namespace
     /// <summary>The game's names for its own "before the mission" saves (Port Arthur's), as the game writes them.</summary>
     constexpr uint32_t PortArthurBefore = 0x37b;
     constexpr int SaveNameLength = 199;
+    /// <summary>The game's string of its build's version (the registry's "Version", a dot after it).</summary>
+    constexpr uint32_t BuildVersionString = 0x282;
+    constexpr int BuildVersionLength = 99;
+    /// <summary>Another build's version, as the registry holds it after an update.</summary>
+    constexpr std::string_view OtherBuildVersion = "MCX v0.0 0000.";
     /// <summary>The games service the count is asked of, and how many it says are online.</summary>
     constexpr std::string_view Service = "wss://games.test";
     constexpr std::string_view ServiceVersion = "0.6.0 (812)";
@@ -531,6 +539,51 @@ TEST_CASE_ISOLATED("game: the main menu and its submenus work from the keys")
     CHECK(QuitQuestion() == nullptr);
     CHECK(OnMainMenu());
     CHECK(!Mission()->GameOver);
+}
+
+/// <summary>
+/// NEW CAMPAIGN's press stores the build's version (registry.cfg's, as each menu action does) without waiting for the
+/// file: the press done and its change begun while the save is held, the version read back at once, the file written
+/// after. Reading the file back as the press wrote it froze the press 1.2-1.3 s on the A10 (Defender scanning it).
+/// </summary>
+TEST_CASE_ISOLATED("game: NEW CAMPAIGN's press waits for no file, the build's version saved behind it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    REQUIRE(OnMainMenu());
+
+    // Another build's version stored, as after an update.
+    MCRegistry::Write(GameRegistryKey, "Version", OtherBuildVersion);
+    MCRegistry::WaitForSaves();
+    REQUIRE(!CheckRegistryVersionNumber());
+    const std::filesystem::path file = MCFileSystem::ResolveWrite("registry.cfg");
+    const auto text = [&file]
+    {
+        std::ifstream in(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+
+    const std::string before = text();
+    REQUIRE(before.contains(std::format("|version={}\n", OtherBuildVersion)));
+
+    {
+        const MCRegistry::MCSavesHeld held;
+        NewCampaign();
+        CHECK(MCScreenChange::Running());
+        CHECK(CheckRegistryVersionNumber());
+        CHECK_EQ(text(), before);
+    }
+
+    MCRegistry::WaitForSaves();
+    CHECK(text().contains(std::format("|version={}.\n", LoadGameString(BuildVersionString, BuildVersionLength))));
+    RunWhileChanging();
+    RequireBriefing();
 }
 
 /// <summary>

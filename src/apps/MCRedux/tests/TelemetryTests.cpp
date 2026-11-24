@@ -1115,14 +1115,15 @@ TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice onc
     MCScreenInput::SaveWindowShot("reports notice session screen");
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     MCTestGuest::Settle();
-    CHECK(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
+    // Over the remade room (stage 4), the room stays on top: the notice is gone.
+    CHECK(RemadeNotice() == nullptr);
     CHECK_EQ(GReports, 1);
     CHECK(MCTelemetry::Reporting());
 
     REQUIRE(guest.Join(*MultiPlayer()->SessionManager->DirectPlay, "127.0.0.1:28899"));
     REQUIRE(MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(guest.Id()); }));
     MCTestGuest::Settle();
-    CHECK(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
+    CHECK(RemadeNotice() == nullptr);
     CHECK(!GlobalLog()->MessageDialog->IsShowing());
     CHECK_EQ(GReports, 1);
 }

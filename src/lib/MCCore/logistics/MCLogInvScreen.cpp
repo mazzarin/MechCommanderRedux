@@ -119,7 +119,6 @@ namespace
     /// The store's components that get a row: sort orders 0..49 (each component's place in <c>objsort.rsp</c>; the
     /// original numbered the rows over these only).
     /// </summary>
-    constexpr int32_t StoreSortOrders = 50;
 
     /// <summary>The mech store: a row per mech type for sale, newest first.</summary>
     MCListSource<MCPurMech> MechStoreSource()
@@ -150,7 +149,7 @@ namespace
         source.Items = []() -> const std::vector<std::shared_ptr<MCLogInventoryItem>>&
         { return GlobalLog()->PurchaseComponents->Items; };
         source.Filter = [](const MCLogInventoryItem& item)
-        { return item.SortOrder >= 0 && item.SortOrder < StoreSortOrders; };
+        { return item.SortOrder >= 0 && item.SortOrder < MCLogInvScreen::StoreSortOrders; };
         source.Sort = [](const MCLogInventoryItem& first, const MCLogInventoryItem& second)
         { return first.SortOrder < second.SortOrder; };
         source.MakeRow = [](MCListView& list, std::shared_ptr<MCLogInventoryItem> item)
@@ -387,7 +386,7 @@ auto MCLogInvScreen::CreateVhclInvBlock() -> void
     }
 }
 
-auto MCLogInvScreen::CreatePilotInvBlock() const -> void
+auto MCLogInvScreen::CreatePilotInvBlock() -> void
 {
     // The original also painted every pilot's row into a new tab picture; the list draws the rows now.
     int32_t index = 0;

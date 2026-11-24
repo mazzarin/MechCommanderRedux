@@ -219,6 +219,7 @@
     <ClCompile Include="logistics\MCLogDialogButton.cpp" />
     <ClCompile Include="logistics\MCLogGroupBox.cpp" />
     <ClCompile Include="logistics\MCLogInvScreen.cpp" />
+    <ClCompile Include="logistics\MCLogisticsTabs.cpp" />
     <ClCompile Include="logistics\MCLogKeyList.cpp" />
     <ClCompile Include="logistics\MCLogLabel.cpp" />
     <ClCompile Include="logistics\MCLogMenus.cpp" />
@@ -781,6 +782,7 @@
     <ClInclude Include="logistics\MCLogDialogButton.h" />
     <ClInclude Include="logistics\MCLogGroupBox.h" />
     <ClInclude Include="logistics\MCLogInvScreen.h" />
+    <ClInclude Include="logistics\MCLogisticsTabs.h" />
     <ClInclude Include="logistics\MCLogKeyList.h" />
     <ClInclude Include="logistics\MCLogLabel.h" />
     <ClInclude Include="logistics\MCLogMenus.h" />

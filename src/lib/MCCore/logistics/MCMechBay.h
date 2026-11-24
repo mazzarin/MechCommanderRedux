@@ -2,7 +2,7 @@
 
 // Port-only (SPEC-menus.md's stage 8): the 'MECH BAY's rules, the original's (logistics\logrep.cpp's RepairScreen and
 // mrblock.cpp's MechRepairBlock, the inventory blocks' drops on it), in one place both the 1998 repair screen's blocks
-// and the remade 'MECH BAY (logistics/MCMechBayTab) call: the repair knobs (armour, internal structure, the engine: where
+// and the remade 'MECH BAY (logistics/MCLogisticsTabs) call: the repair knobs (armour, internal structure, the engine: where
 // the mech arrived is the floor, a knob moved back refunds), REPAIR ALL (the engine, then structure, then armour, as
 // far as the resource points go), the refit (each damaged part swapped for a spare, what has none stripped), what
 // fits in a mech and why not, a part fitted, taken out and put back, a MechWarrior boarding and leaving, a unit joining
@@ -31,6 +31,9 @@ namespace MCMechBay
 
     /// <summary>The most engine damage the knob shows (an engine past it is set to it).</summary>
     inline constexpr uint8_t MostEngineHits = 3;
+
+    /// <summary>The engine knob's place for engine damage <paramref name="hits"/> (0 whole, to 3).</summary>
+    int32_t EngineKnob(uint8_t hits);
 
     /// <summary>Where a mech's knobs start (where it arrived) and how many track pixels a point takes.</summary>
     struct MCKnobs

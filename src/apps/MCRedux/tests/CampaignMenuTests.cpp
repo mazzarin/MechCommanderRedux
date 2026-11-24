@@ -17,11 +17,14 @@
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLoadingMenu.h"
 #include "logistics/MCLogChat.h"
+#include "logistics/MCLogInvScreen.h"
+#include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMatchMaps.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCOperationVideo.h"
-#include "logistics/MCPurchaseScreen.h"
-#include "logistics/MCRepairScreen.h"
+#include "logistics/MCPurMechList.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCSessionScreen.h"
@@ -30,7 +33,12 @@
 #include "gui/MCUpdateDisplay.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
+#include "main/MCInventoryList.h"
+#include "main/MCLogMech.h"
+#include "main/MCLogMechList.h"
 #include "main/MCLogPart.h"
+#include "main/MCLogVehicleList.h"
+#include "main/MCLogWarriorList.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
@@ -55,6 +63,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include "object/MCMasterComponent.h"
 
 // Port-only (SPEC-menus.md's stage 8): the campaign's screens remade, BRIEFING and DEPLOY (logistics/MCCampaignMenu),
 // over the 1998 briefing, with DEPLOY's rules the 1998 briefing's own (logistics/MCDeploy).
@@ -368,28 +377,65 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     MCTestGame::RunFrame(FlowFrame);
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
 
-    // E: the 1998 PURCHASING, through a change; its BRIEFING button back to the tab left on.
+    // E: PURCHASING, the same screen (no change of screens; the 1998 briefing stays logistics' screen).
     MCScreenInput::RealKey(SDL_SCANCODE_E);
-    RunWhileChanging();
-    CHECK(!MCCampaignMenu::Shown());
-    CHECK(logistics->CurrentScreen() == logistics->PurchaseScreen);
-    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
-    logistics->SetUpBriefingScreen(true);
-    RunWhileChanging();
+    MCTestGame::RunFrame(FlowFrame);
     CHECK(MCCampaignMenu::Shown());
-    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
     CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
+    MCLogisticsTabs& tabs = screen.Logistics();
+    CHECK_EQ(tabs.ForceCards().size(),
+             logistics->ForceMechList->Mechs.size() + logistics->ForceVehicleList->Vehicles.size());
+    CHECK_EQ(tabs.StoreGoods().size(), logistics->PurMechList->Mechs.size());
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!tabs.DetailsName().empty());
 
-    // From DEPLOY, Q: the 1998 'MECH BAY; back to DEPLOY.
+    for (const MCMenusPictures::MCWindowSize& size : MCMenusPictures::FrameWindows)
+    {
+        REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
+        Shot("purchase");
+    }
+
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
+    const auto inStore =
+        std::ranges::find_if(tabs.StoreGoods(), [](const MCLogisticsTabs::MCGood& good) { return !good.Off; });
+    REQUIRE(inStore != tabs.StoreGoods().end());
+    // The first mission gives no resource points: enough for the buy window's picture.
+    constexpr int32_t ShotPoints = 48600;
+    ResourcePoints = ShotPoints;
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, static_cast<size_t>(inStore - tabs.StoreGoods().begin()));
+    MCTestGame::RunFrame(FlowFrame);
+    Shot("purchase_parts");
+    tabs.PressDeal();
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(tabs.DealOpen());
+    Shot("purchase_buy");
+    tabs.DealCancel();
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
+
+    // E: the 'MECH BAY, on the force's first 'Mech.
+    MCScreenInput::RealKey(SDL_SCANCODE_E);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::MechBay);
+    CHECK(tabs.LabUnit() == logistics->ForceMechList->Mechs.front());
+    CHECK(!tabs.LabName().empty());
+
+    for (const MCMenusPictures::MCWindowSize& size : MCMenusPictures::FrameWindows)
+    {
+        REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
+        Shot("mechbay");
+    }
+
+    // From DEPLOY, Q: the 'MECH BAY; Q again, PURCHASING.
     screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
     MCScreenInput::RealKey(SDL_SCANCODE_Q);
-    RunWhileChanging();
-    CHECK(!MCCampaignMenu::Shown());
-    CHECK(logistics->CurrentScreen() == logistics->RepairScreen);
-    logistics->SetUpBriefingScreen(true);
-    RunWhileChanging();
-    CHECK(MCCampaignMenu::Shown());
-    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::MechBay);
+    MCScreenInput::RealKey(SDL_SCANCODE_Q);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
 
     // Escape: the main menu.
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
@@ -1136,14 +1182,18 @@ TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its f
     screen.ChooseTab(MCCampaignScreen::MCTab::Briefing);
     MCTestGame::RunFrame(FlowFrame);
 
-    // E: 1998's PURCHASING, its BRIEFING button back.
+    // E: PURCHASING, the same screen: no force yet, the store's 'Mechs to buy with the mission's RP; Q back.
     MCScreenInput::RealKey(SDL_SCANCODE_E);
-    RunWhileChanging();
-    CHECK(!MCCampaignMenu::Shown());
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen);
-    GlobalLog()->SetUpBriefingScreen(true);
-    RunWhileChanging();
+    MCTestGame::RunFrame(FlowFrame);
     REQUIRE(MCCampaignMenu::Shown());
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
+    MCLogisticsTabs& tabs = screen.Logistics();
+    CHECK(tabs.ForceCards().empty());
+    CHECK(!tabs.StoreGoods().empty());
+    MCScreenInput::RealKey(SDL_SCANCODE_Q);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
     CHECK(Solo);
 }
 
@@ -1527,4 +1577,362 @@ TEST_CASE_ISOLATED("game: a match's remade briefing whose link is lost goes back
     CHECK(MCTestGuest::OnLan());
     CHECK_EQ(MCTestGuest::DialogText(), std::string("Lost the connection to the host's game."));
     IsMPlayerGame = false;
+}
+
+namespace
+{
+    /// <summary>The store's parts in PURCHASING's order (1998's: those it sorts, by their sort order).</summary>
+    std::vector<std::shared_ptr<MCLogInventoryItem>> StoreParts()
+    {
+        std::vector<std::shared_ptr<MCLogInventoryItem>> parts;
+
+        for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->PurchaseComponents->Items)
+        {
+            if (item->SortOrder >= 0 && item->SortOrder < MCLogInvScreen::StoreSortOrders)
+            {
+                parts.push_back(item);
+            }
+        }
+
+        std::ranges::stable_sort(parts, {}, &MCLogInventoryItem::SortOrder);
+        return parts;
+    }
+
+    /// <summary>The spare parts in the INVENTORY's order (1998's rows).</summary>
+    std::vector<std::shared_ptr<MCLogInventoryItem>> SpareParts()
+    {
+        std::vector<std::shared_ptr<MCLogInventoryItem>> parts;
+
+        for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->ComponentInventory->Items)
+        {
+            if (item->ListIndex >= 0)
+            {
+                parts.push_back(item);
+            }
+        }
+
+        std::ranges::stable_sort(parts, {}, &MCLogInventoryItem::ListIndex);
+        return parts;
+    }
+
+    /// <summary>The spare part with master id <paramref name="masterID"/>: its row in the INVENTORY.</summary>
+    std::optional<size_t> SpareRow(uint8_t masterID)
+    {
+        const std::vector<std::shared_ptr<MCLogInventoryItem>> parts = SpareParts();
+        const auto found = std::ranges::find(parts, masterID, &MCLogInventoryItem::MasterID);
+        return found != parts.end() ? std::optional(static_cast<size_t>(found - parts.begin())) : std::nullopt;
+    }
+
+    int32_t SpareCount(uint8_t masterID)
+    {
+        const std::vector<std::shared_ptr<MCLogInventoryItem>> parts = SpareParts();
+        const auto found = std::ranges::find(parts, masterID, &MCLogInventoryItem::MasterID);
+        return found != parts.end() ? (*found)->Count : 0;
+    }
+
+    /// <summary>The key <paramref name="key"/> pressed with the focus on <paramref name="element"/>.</summary>
+    void KeyOn(Rml::Element& element, SDL_Scancode key, int32_t times = 1)
+    {
+        element.Focus(true);
+
+        for (int32_t press = 0; press < times; press++)
+        {
+            MCScreenInput::RealKey(key);
+            MCTestGame::RunFrame(FlowFrame);
+        }
+    }
+
+    /// <summary>1998's knob place for <paramref name="current"/> points of <paramref name="maximum"/> (61 pixels).</summary>
+    int32_t KnobFor(int32_t current, int32_t maximum)
+    {
+        constexpr double Track = 61.0;
+        return MCMechBay::KnobLeft + static_cast<int32_t>(static_cast<double>(current) / maximum * Track);
+    }
+}
+
+/// <summary>
+/// PURCHASING buys and sells by 1998's rules (logistics/MCStore): two of a store's part bought from the buy window (the
+/// right button, the stepper's Right, Enter), a spare part sold back (dragged onto the store), a store 'Mech bought into
+/// SPARE and sold for half its worth; a force 'Mech dragged onto the store refused with its reason; a spare into the force
+/// by the right button and out again by ENTER.
+/// </summary>
+TEST_CASE_ISOLATED("game: PURCHASING buys and sells by 1998's rules, from the mouse and the keys")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    constexpr int32_t Points = 200000;
+    ResourcePoints = Points;
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
+    MCTestGame::RunFrame(FlowFrame);
+
+    // Two of a part the store has two or more of.
+    const std::vector<std::shared_ptr<MCLogInventoryItem>> store = StoreParts();
+    const auto stocked = std::ranges::find_if(store, [](const auto& item) { return item->Count >= 2; });
+    REQUIRE(stocked != store.end());
+    const std::shared_ptr<MCLogInventoryItem> part = *stocked;
+    const int32_t inStore = part->Count;
+    const int32_t each = MasterComponentList[part->MasterID].ResourcePoints;
+    const int32_t spares = SpareCount(part->MasterID);
+    REQUIRE_EQ(tabs.StoreGoods().size(), store.size());
+    ClickOn(ElementOf(screen, std::format("store{}", stocked - store.begin())), SDL_BUTTON_RIGHT);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.DealOpen());
+    CHECK_EQ(tabs.DealWord(), std::string("Buy"));
+    MCScreenInput::RealKey(SDL_SCANCODE_RIGHT);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(tabs.DealCountShown(), 2);
+    CHECK_EQ(tabs.DealTotal(), std::format("{} RP", MCGroupedPoints(each * 2)));
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!tabs.DealOpen());
+    CHECK_EQ(ResourcePoints, Points - each * 2);
+    CHECK_EQ(part->Count, inStore - 2);
+    CHECK_EQ(SpareCount(part->MasterID), spares + 2);
+
+    // One sold back, dragged from the INVENTORY (the left column with COMPONENTS) onto the store: half its price.
+    const std::optional<size_t> row = SpareRow(part->MasterID);
+    REQUIRE(row.has_value());
+    DragTo(ElementOf(screen, std::format("stock{}", *row)), ElementOf(screen, "store0"));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.DealOpen());
+    CHECK_EQ(tabs.DealWord(), std::string("Sell"));
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(ResourcePoints, Points - each * 2 + each / 2);
+    CHECK_EQ(SpareCount(part->MasterID), spares + 1);
+
+    // A store 'Mech: into SPARE for its price; dragged back onto the store, sold for half its worth.
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
+    MCTestGame::RunFrame(FlowFrame);
+    const std::shared_ptr<MCPurMech> purMech = logistics->PurMechList->Mechs.front();
+    MCPurMechData& data = *purMech->Variants[static_cast<size_t>(purMech->CurVariant)];
+    data.NumAvailable = 2;
+    const size_t sparesBefore = logistics->MechList->Mechs.size();
+    const int32_t before = ResourcePoints;
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+    ClickOn(ElementOf(screen, "deal"));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.DealOpen());
+    ClickOn(ElementOf(screen, "deal-confirm"));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(logistics->MechList->Mechs.size(), sparesBefore + 1);
+    CHECK_EQ(ResourcePoints, before - data.Cost);
+    CHECK_EQ(data.NumAvailable, 1);
+    REQUIRE_EQ(tabs.SpareCards().size(), logistics->MechList->Mechs.size() + logistics->VehicleList->Vehicles.size());
+    MCTestGame::RunFrame(FlowFrame);
+    Shot("purchase_spare");
+
+    const std::shared_ptr<MCLogMech> bought = logistics->MechList->Mechs.back();
+    bought->CalcMechCost(false);
+    const int32_t worth = bought->ResourcePoints;
+    const int32_t afterBuy = ResourcePoints;
+    DragTo(ElementOf(screen, std::format("spare{}", logistics->MechList->Mechs.size() - 1)),
+           ElementOf(screen, "store0"));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.DealOpen());
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(logistics->MechList->Mechs.size(), sparesBefore);
+    CHECK_EQ(ResourcePoints, afterBuy + worth / 2);
+
+    // A force 'Mech onto the store: refused, its reason on its card.
+    const size_t force = logistics->ForceMechList->Mechs.size();
+    DragTo(ElementOf(screen, "force0"), ElementOf(screen, "store0"));
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!tabs.DealOpen());
+    CHECK_EQ(logistics->ForceMechList->Mechs.size(), force);
+    REQUIRE(!tabs.ForceCards().empty());
+    CHECK_EQ(tabs.ForceCards()[0].Why, std::string("In your force"));
+
+    // Bought again, then into the force by the right button and out by ENTER.
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+    tabs.PressDeal();
+    tabs.DealConfirm();
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(logistics->MechList->Mechs.size(), sparesBefore + 1);
+    ClickOn(ElementOf(screen, std::format("spare{}", logistics->MechList->Mechs.size() - 1)), SDL_BUTTON_RIGHT);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(logistics->ForceMechList->Mechs.size(), force + 1);
+    CHECK_EQ(logistics->MechList->Mechs.size(), sparesBefore);
+    KeyOn(ElementOf(screen, std::format("force{}", logistics->ForceMechList->Mechs.size() - 1)), SDL_SCANCODE_RETURN);
+    CHECK_EQ(logistics->ForceMechList->Mechs.size(), force);
+    CHECK_EQ(logistics->MechList->Mechs.size(), sparesBefore + 1);
+}
+
+/// <summary>
+/// The 'MECH BAY's sliders repair and undo point by point as 1998's knobs (MCMechBay::MoveKnob, each move undone to where
+/// the 'Mech arrived and repaired again to the knob's place): armour ten steps right repairs what ten of 1998's pixels
+/// do, ten steps back refunds it all; short of points it stops where they run out; the engine a level a step; REPAIR ALL
+/// the rest at 1998's prices.
+/// </summary>
+TEST_CASE_ISOLATED("game: the 'MECH BAY's sliders repair and undo point by point as 1998's knobs")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    const std::shared_ptr<MCLogMech> mech = logistics->ForceMechList->Mechs.front();
+
+    // It arrived 30 armour points short and its engine two levels down.
+    constexpr int32_t Short = 30;
+    constexpr uint8_t EngineHits = 2;
+    int32_t missing = Short;
+
+    for (size_t location = 0; location < mech->Armor.size(); location++)
+    {
+        MCLogMech::ArmorPoints& armor = mech->Armor[location];
+        const auto taken = static_cast<uint8_t>(std::min<int32_t>(armor.CurArmor, missing));
+        armor.CurArmor = static_cast<uint8_t>(armor.CurArmor - taken);
+        missing -= taken;
+        mech->Arrived.Armor[location] = armor.CurArmor;
+    }
+
+    REQUIRE_EQ(missing, 0);
+    MCMechBay::EngineOf(*mech)->Hits = EngineHits;
+    mech->Arrived.EngineHits = EngineHits;
+    MCMechBay::PlaceKnobs(*mech);
+    constexpr int32_t Points = 100000;
+    ResourcePoints = Points;
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.LabUnit() == mech);
+
+    // 1998's knob: from where it arrived, a point each 61/total pixels.
+    const int32_t total = MCMechBay::Points(mech->Armor, true);
+    const int32_t arrived = MCMechBay::Points(mech->Armor, false);
+    const int32_t start = KnobFor(arrived, total);
+    const auto scale = static_cast<float>(61.0 / total);
+    constexpr int32_t Steps = 10;
+    const auto wanted = static_cast<int32_t>(static_cast<double>(Steps) / static_cast<double>(scale));
+    CHECK_EQ(tabs.ArmorRepair().Knob, start);
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, Steps);
+    CHECK_EQ(tabs.ArmorRepair().Knob, start + Steps);
+    CHECK_EQ(MCMechBay::Points(mech->Armor, false), arrived + wanted);
+    CHECK_EQ(ResourcePoints, Points - wanted * logistics->ArmorCost);
+    Shot("mechbay_repair");
+
+    // Back to where it arrived: every point refunded.
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_LEFT, Steps);
+    CHECK_EQ(MCMechBay::Points(mech->Armor, false), arrived);
+    CHECK_EQ(ResourcePoints, Points);
+    // Not past where it arrived.
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_LEFT);
+    CHECK_EQ(tabs.ArmorRepair().Knob, start);
+    CHECK_EQ(ResourcePoints, Points);
+
+    // Short of points: as far as they go, the knob where they ran out.
+    constexpr int32_t Affordable = 3;
+    ResourcePoints = logistics->ArmorCost * Affordable + 1;
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, Steps);
+    CHECK_EQ(MCMechBay::Points(mech->Armor, false), arrived + Affordable);
+    CHECK_EQ(ResourcePoints, 1);
+    CHECK_EQ(tabs.ArmorRepair().Knob,
+             static_cast<int32_t>(static_cast<double>(Affordable) * static_cast<double>(scale) + start));
+    KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_LEFT, Steps);
+    CHECK_EQ(ResourcePoints, logistics->ArmorCost * Affordable + 1);
+
+    // The engine: a level a step, each at the engine's cost, and back.
+    ResourcePoints = Points;
+    KeyOn(ElementOf(screen, "engine"), SDL_SCANCODE_RIGHT);
+    CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, EngineHits - 1);
+    CHECK_EQ(ResourcePoints, Points - logistics->EngineCost);
+    KeyOn(ElementOf(screen, "engine"), SDL_SCANCODE_RIGHT);
+    CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, 0);
+    KeyOn(ElementOf(screen, "engine"), SDL_SCANCODE_LEFT, 2);
+    CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, EngineHits);
+    CHECK_EQ(ResourcePoints, Points);
+
+    // REPAIR ALL: the engine, the structure and the armour whole at their prices.
+    ClickOn(ElementOf(screen, "repair-all"));
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(MCMechBay::Points(mech->Armor, false), total);
+    CHECK_EQ(MCMechBay::EngineOf(*mech)->Hits, 0);
+    CHECK_EQ(ResourcePoints, Points - Short * logistics->ArmorCost - EngineHits * logistics->EngineCost);
+}
+
+/// <summary>
+/// The 'MECH BAY moves parts and MechWarriors as 1998's drags: a fitted part taken out by the right button goes to the
+/// INVENTORY, its tons freed; ENTER on its INVENTORY card fits it back; a part too heavy is dim with its reason and
+/// stays; the MechWarrior out by the right button joins the INVENTORY's MechWarriors and boards again by its card.
+/// </summary>
+TEST_CASE_ISOLATED("game: the 'MECH BAY fits and takes out parts and moves MechWarriors as 1998's drags")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    const std::shared_ptr<MCLogMech> mech = logistics->ForceMechList->Mechs.front();
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.LabUnit() == mech);
+    REQUIRE(!tabs.FittedRows().empty());
+
+    // The first fitted part out: to the spares, its tons freed.
+    const std::string name = tabs.FittedRows()[0].Name;
+    const auto item = std::ranges::find(mech->Inventory->Items, name, &MCLogInventoryItem::Name);
+    REQUIRE(item != mech->Inventory->Items.end());
+    const uint8_t masterID = (*item)->MasterID;
+    const int32_t spares = SpareCount(masterID);
+    const float used = mech->UsedTonnage;
+    const size_t fitted = tabs.FittedRows().size();
+    ClickOn(ElementOf(screen, "fit0"), SDL_BUTTON_RIGHT);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(SpareCount(masterID), spares + 1);
+    CHECK_EQ(tabs.FittedRows().size(), fitted - 1);
+    CHECK(mech->UsedTonnage < used);
+
+    // ENTER on its INVENTORY card fits it back.
+    const std::optional<size_t> row = SpareRow(masterID);
+    REQUIRE(row.has_value());
+    REQUIRE(*row < tabs.StockGoods().size());
+    CHECK(!tabs.StockGoods()[*row].Off);
+    Rml::ElementList cards;
+    screen.Document()->get().GetElementById("inventory")->GetElementsByTagName(cards, "div");
+    const auto card = std::ranges::find_if(cards, [&row](const Rml::Element* element)
+                                           { return element->GetId() == std::format("stock{}", *row); });
+    REQUIRE(card != cards.end());
+    KeyOn(**card, SDL_SCANCODE_RETURN);
+    CHECK_EQ(SpareCount(masterID), spares);
+    CHECK_EQ(tabs.FittedRows().size(), fitted);
+    CHECK_EQ(mech->UsedTonnage, used);
+    Shot("mechbay_parts");
+
+    // The MechWarrior out: into the INVENTORY's MechWarriors; its card boards the 'Mech again.
+    const size_t pilots = logistics->WarriorList->Warriors.size();
+    REQUIRE(mech->PilotIndex >= 0);
+    ClickOn(ElementOf(screen, "pilot"), SDL_BUTTON_RIGHT);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(mech->PilotIndex < 0);
+    // Its card and the lab show no MechWarrior (not the list's first).
+    REQUIRE(!tabs.ForceCards().empty());
+    CHECK(tabs.ForceCards()[0].Who.empty());
+    REQUIRE_EQ(logistics->WarriorList->Warriors.size(), pilots + 1);
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(tabs.StockGoods().size(), pilots + 1);
+    CHECK(!tabs.StockGoods()[0].Off);
+    Shot("mechbay_pilots");
+    tabs.Send(MCLogisticsTabs::MCPlace::Stock, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(mech->PilotIndex >= 0);
+    CHECK_EQ(logistics->WarriorList->Warriors.size(), pilots);
 }

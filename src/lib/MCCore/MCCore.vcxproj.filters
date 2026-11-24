@@ -588,6 +588,9 @@
     <ClCompile Include="logistics\MCLogInvScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCLogisticsTabs.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCLogKeyList.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2183,6 +2186,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCLogInvScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCLogisticsTabs.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCLogKeyList.h">

@@ -31,11 +31,6 @@ namespace
     /// <summary>The engine knob for engine damage <paramref name="hits"/> (0..3).</summary>
     constexpr std::array<int32_t, 4> EngineKnobs = {MCMechBay::KnobRight, 0x113, 0xff, 0xeb};
 
-    int32_t EngineKnob(uint8_t hits)
-    {
-        return EngineKnobs[std::min<size_t>(hits, EngineKnobs.size() - 1)];
-    }
-
     /// <summary>Where the engine knob's levels part (a position under each is the level past it).</summary>
     constexpr int32_t EngineThreeBelow = 0xf5;
     constexpr int32_t EngineTwoBelow = 0x109;
@@ -88,6 +83,11 @@ namespace
         ResourcePoints = ResourcePoints - cost * affordable;
         return static_cast<int32_t>(static_cast<double>(affordable) * static_cast<double>(scale) + start);
     }
+}
+
+int32_t MCMechBay::EngineKnob(uint8_t hits)
+{
+    return EngineKnobs[std::min<size_t>(hits, EngineKnobs.size() - 1)];
 }
 
 int32_t MCMechBay::Points(std::span<const MCLogMech::ArmorPoints> points, bool maximum)

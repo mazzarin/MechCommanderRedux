@@ -84,6 +84,8 @@ public:
     static constexpr int32_t UnitBlockHeight = 0x70;
     /// <summary>The height of an inventory block.</summary>
     static constexpr int32_t InvBlockHeight = 0x2b;
+    /// <summary>The store lists the components whose sort order is under this.</summary>
+    static constexpr int32_t StoreSortOrders = 50;
 
     /// <summary>Forgets the screen (see <see cref="ForgetInfoSource"/>).</summary>
     ~MCLogInvScreen() override;
@@ -126,7 +128,7 @@ public:
     static void CreateVhclInvBlock();
 
     /// <summary>Numbers the pilots' inventory rows (their <c>ListIndex</c>, the order of the pilot list).</summary>
-    void CreatePilotInvBlock() const;
+    static void CreatePilotInvBlock();
 
     /// <summary>
     /// Re-indexes the spare components (their rows) and refreshes the component rows shown (see

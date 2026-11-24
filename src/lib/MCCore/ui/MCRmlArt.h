@@ -37,6 +37,8 @@ namespace MCRmlArt
 
     /// <summary>The <c>unit:</c> source of <paramref name="part"/>'s outline as it stands.</summary>
     std::string UnitSource(const MCLogPart& part);
+    /// <summary>The <c>unit:</c> source of a whole unit's outline (the store's): a mech's or a vehicle's, by name index.</summary>
+    std::string WholeUnitSource(bool mech, int32_t nameIndex);
     /// <summary>
     /// Port-only (SPEC-menus.md's stage 4): a map's briefing picture by its map file, <c>terrain:&lt;map&gt;</c> (the
     /// room's and CHOOSE MAP's), its <c>&lt;map&gt;.log.tga</c> under the game's TerrainPath, read and drawn as

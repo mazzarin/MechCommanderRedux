@@ -137,6 +137,15 @@ auto OpenPurchaseDialog(int32_t purchaseType, int32_t unitCost, int32_t maxQuant
     dialog.Activate();
 }
 
+auto InternalClassString(int32_t internals) -> uint32_t
+{
+    return internals < 0x24   ? 100u
+           : internals < 0x38 ? 0x4fu
+           : internals < 0x51 ? 0x65u
+           : internals < 0x79 ? 0x51u
+                              : 0x66u;
+}
+
 auto WeightClassString(float tonnage) -> uint32_t
 {
     if (tonnage < 40.0f)

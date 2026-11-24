@@ -37,6 +37,9 @@ namespace MCBriefingText
     /// <summary>The parts of <paramref name="text"/>, a briefing's text as its file holds it.</summary>
     MCRead Read(std::string_view text);
 
+    /// <summary><paramref name="text"/> (a description, in MCSmuti's codes) as plain words, its lines run together.</summary>
+    std::string Plain(std::string_view text);
+
     /// <summary>
     /// The fire support in a line: what is given, in the order the briefing lists it ("4 small artillery, 1 sensor
     /// probe"); "None" when it gives nothing.

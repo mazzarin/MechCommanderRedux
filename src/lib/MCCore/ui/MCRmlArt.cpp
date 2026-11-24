@@ -469,6 +469,12 @@ namespace MCRmlArt
         return std::format("{}{}/{}/{}", UnitScheme, VehicleKind, vehicle.NameIndex, states);
     }
 
+    std::string WholeUnitSource(bool mech, int32_t nameIndex)
+    {
+        const std::string states(static_cast<size_t>(mech ? MechLocations : VehicleLocations), StateMark(-1));
+        return std::format("{}{}/{}/{}", UnitScheme, mech ? MechKind : VehicleKind, nameIndex, states);
+    }
+
     std::string HdPath(std::string_view path)
     {
         const std::filesystem::path file(path);

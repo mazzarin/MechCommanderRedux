@@ -313,12 +313,7 @@ auto MCMechPurchaseBlock::OnRefresh() -> void
         internals += points;
     }
 
-    uint32_t internalId = internals < 0x24   ? 100u
-                          : internals < 0x38 ? 0x4fu
-                          : internals < 0x51 ? 0x65u
-                          : internals < 0x79 ? 0x51u
-                                             : 0x66u;
-    InternalText = LoadGameString(internalId, 0xfe);
+    InternalText = LoadGameString(InternalClassString(internals), 0xfe);
     SetBar();
 
     if (data.Description.empty() && data.DescIndex > -1)

@@ -1,0 +1,195 @@
+/* Port-only (SPEC-menus.md, stage 8): the game's copy of tools/menus-frames/frames/logistics.rcss, with the remade
+   screens' own rules after it (logistics/MCLogisticsTabs). PURCHASING and the 'MECH BAY (with campaign.rcss: the bar,
+   the ground, the cards, the chat). One document holds the four tabs, so every rule is scoped to these two tabs' own
+   elements: #logistics, the lifted card and the buy window. The force keeps the left side on PURCHASING, the 'MECH BAY
+   and DEPLOY, so a tab changes what is beside it, never where it is. */
+
+/* A list's switch under its column's name (PURCHASING's kinds under STORE, 1998's tabs MECHS, MECHWARRIORS,
+   COMPONENTS, VEHICLES, choosing what both lists show; the inventory's under INVENTORY), so the force never moves. */
+#logistics .kinds { display: flex; flex-direction: row; margin-bottom: 8dp; }
+#logistics .kinds > * { flex: 0 0 auto; }
+
+/* The columns: the force, the store (or the lab) and the details (or the inventory), 16 apart. */
+#logistics.cols, #logistics .cols { flex: 1 1 0; display: flex; flex-direction: row; align-items: stretch; }
+#logistics.cols > *, #logistics .cols > * { flex: 0 0 auto; }
+#logistics .side { flex: 0 0 288dp; display: flex; flex-direction: column; }
+#logistics .side > * { flex: 0 0 auto; }
+#logistics .side > .scroller { flex: 1 1 0; }
+#logistics.cols > .gap, #logistics .cols > .gap { flex: 0 0 16dp; }
+#logistics .grid { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4dp; }
+#logistics .grid > .card { flex: 0 0 136dp; }
+#logistics .stack { display: flex; flex-direction: column; gap: 4dp; }
+#logistics .stack > * { flex: 0 0 auto; }
+
+/* A thing as a card (PURCHASING's goods, the inventory's parts): its picture in a 24-unit column, then its name, what it
+   is, and its price or count in cream. Picked by the player: card teal. Out of reach: campaign.rcss's .off. */
+#logistics .card .pic, .card.lifted .pic { flex: 0 0 24dp; height: 38dp; }
+#logistics .card .pic.part, .card.lifted .pic.part { height: 24dp; margin-top: 7dp; }
+/* A thing's name in its own case (a unit's callsign is in capitals). */
+#logistics .good .who, .card.lifted .who { text-transform: none; letter-spacing: 0.01em; }
+#logistics .switch > .off { color: #6c7a88; }
+#logistics .card .row-t { display: flex; flex-direction: row; font-size: 9.51dp; line-height: 12dp; font-weight: 600; letter-spacing: 0.02em; white-space: nowrap; }
+#logistics .card .row-t > * { flex: 0 0 auto; }
+#logistics .card .row-t > .grow { flex: 1 1 0; }
+
+/* The details beside the lists: what is under the pointer, else what was picked. */
+#logistics #info { flex: 1 1 0; display: flex; flex-direction: column; }
+#logistics #info > * { flex: 0 0 auto; }
+#logistics #info > .grow { flex: 1 1 0; }
+#logistics .variant { margin-bottom: 8dp; }
+#logistics .spec { display: flex; flex-direction: row; align-items: flex-start; }
+#logistics .spec > * { flex: 0 0 auto; }
+#logistics .spec > .stats { flex: 1 1 0; margin-left: 10dp; }
+#logistics .schematic { width: 56dp; height: 87dp; }
+#logistics .stat { display: flex; flex-direction: row; height: 14dp; font-size: 9.51dp; line-height: 14dp; white-space: nowrap; }
+#logistics .stat > * { flex: 0 0 auto; }
+#logistics .stat > .label { flex: 0 0 64dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; }
+#logistics .stat > .value { flex: 1 1 0; }
+#logistics .blueprint { height: 92dp; margin-bottom: 8dp; }
+/* In multiplayer the details stand on the chat: the blueprint shorter, so BUY stays above it. */
+#logistics .mp .blueprint { height: 60dp; }
+#logistics .section { margin-top: 10dp; }
+#logistics .kit-row { font-size: 11.63dp; line-height: 15dp; white-space: nowrap; }
+#logistics .kit-row .n { display: inline-block; width: 14dp; font-weight: 600; color: #fcfcb8; }
+#logistics .desc { font-size: 9.51dp; line-height: 13dp; color: #a4b0bc; margin-top: 8dp; }
+#logistics .rating { margin-top: 8dp; }
+#logistics .rating .meter { margin-top: 3dp; }
+/* The price and BUY at the details' foot, as DEPLOY's weight and BEGIN MISSION: the number left, the button right. */
+#logistics .deal { padding-top: 8dp; border-top: 1dp #2a3742; display: flex; flex-direction: row; align-items: flex-end; }
+#logistics .deal > * { flex: 0 0 auto; }
+#logistics .deal > .grow { flex: 1 1 0; }
+#logistics .deal .cost { font-size: 14.8dp; line-height: 18dp; font-weight: 600; letter-spacing: 0.02em; color: #fcfcb8; white-space: nowrap; }
+#logistics .deal .in-store { margin-left: 10dp; }
+
+/* The buy (or sell) window: 1998's purchase dialog (each, how many, what is left), over the screen. */
+#deal-window { flex: 0 0 248dp; display: flex; flex-direction: column; }
+#deal-window > * { flex: 0 0 auto; }
+#deal-window .deal-thing { display: flex; flex-direction: row; align-items: center; margin-bottom: 8dp; }
+#deal-window .deal-thing > * { flex: 0 0 auto; }
+#deal-window .deal-thing > .pic { width: 30dp; height: 30dp; margin-right: 10dp; }
+#deal-window .deal-row { display: flex; flex-direction: row; align-items: center; height: 24dp; border-bottom: 1dp #141e26; }
+#deal-window .deal-row > * { flex: 0 0 auto; }
+#deal-window .deal-row > .grow { flex: 1 1 0; }
+#deal-window .deal-name { font-size: 9.51dp; line-height: 12dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; white-space: nowrap; }
+#deal-window .deal-value { font-size: 11.63dp; line-height: 15dp; font-weight: 600; letter-spacing: 0.02em; color: #fcfcb8; white-space: nowrap; }
+#deal-window .deal-row .step-value { width: 40dp; font-size: 11.63dp; color: #fcfcb8; }
+#deal-window .deal-foot { display: flex; flex-direction: row; align-items: center; gap: 8dp; margin-top: 12dp; }
+#deal-window .deal-foot > * { flex: 0 0 auto; }
+#deal-window .deal-foot > .grow { flex: 1 1 0; }
+
+/* The 'MECH BAY's lab, the picked mech: its schematic coloured for damage beside its repairs, its pilot, its payload. */
+#logistics #lab { flex: 1 1 0; display: flex; flex-direction: column; }
+#logistics #lab > * { flex: 0 0 auto; }
+#logistics #lab > .grow { flex: 1 1 0; }
+#logistics .lab-body { display: flex; flex-direction: column; }
+#logistics .lab-body > * { flex: 0 0 auto; }
+#logistics .lab-top { display: flex; flex-direction: row; align-items: flex-start; }
+#logistics .lab-top > * { flex: 0 0 auto; }
+#logistics .lab-top > .repairs { flex: 1 1 0; margin-left: 12dp; }
+#logistics .lab .schematic { width: 66dp; height: 102dp; }
+#logistics .repair { margin-bottom: 8dp; }
+#logistics .repair-line { display: flex; flex-direction: row; font-size: 9.51dp; line-height: 13dp; white-space: nowrap; margin-bottom: 3dp; }
+#logistics .repair-line > * { flex: 0 0 auto; }
+#logistics .repair-line > .grow { flex: 1 1 0; }
+#logistics .repair-line .label { font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; margin-right: 8dp; }
+#logistics .repair-line .cost { font-weight: 600; color: #fcfcb8; }
+#logistics .pilot { display: flex; flex-direction: row; align-items: flex-start; margin-top: 12dp; padding-top: 8dp; border-top: 1dp #2a3742; }
+#logistics .pilot > * { flex: 0 0 auto; }
+#logistics .pilot > .skills { flex: 1 1 0; margin-left: 12dp; }
+#logistics .pilot .pics { display: flex; flex-direction: column; }
+#logistics .pilot .pics > * { flex: 0 0 auto; }
+#logistics .pilot img { width: 24dp; height: 32dp; }
+#logistics .pilot .health { display: flex; flex-direction: row; gap: 1dp; width: 24dp; height: 3dp; margin-bottom: 2dp; }
+#logistics .pilot .pip { box-sizing: border-box; flex: 0 0 3dp; height: 3dp; background-color: #f26b55; }
+#logistics .pilot .pip.lost { background-color: transparent; border: 1dp #6c7a88; }
+#logistics .pilot .name { margin-left: 8dp; width: 64dp; }
+#logistics .skills { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4dp 12dp; }
+#logistics .skill { flex: 0 0 76dp; }
+#logistics .skill .repair-line { margin-bottom: 2dp; }
+#logistics .payload { margin-top: 12dp; }
+#logistics .payload .ramp { margin-bottom: 6dp; }
+#logistics .fit-row { box-sizing: border-box; display: flex; flex-direction: row; align-items: center; height: 18dp; padding: 0dp 4dp; border-bottom: 1dp #141e26; font-size: 11.63dp; line-height: 17dp; white-space: nowrap; }
+#logistics .fit-row > * { flex: 0 0 auto; }
+#logistics .fit-row > .grow { flex: 1 1 0; }
+#logistics .fit-row.hover { background-color: #1b2c38; }
+#logistics .fit-row .range { width: 52dp; font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+#logistics .fit-row .t { width: 60dp; text-align: right; font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #fcfcb8; }
+#logistics .fit-row .state { width: 60dp; text-align: right; font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #f26b55; }
+/* The free row: an open place, sunk a step (DEPLOY's open slot), edged cyan while a part would drop into it. */
+#logistics .fit-row.open { background-color: #0f171e; border-bottom-width: 0dp; margin-top: 4dp; }
+#logistics .fit-row.open .free { font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+#logistics .fit-row.target { border: 1dp #7cd4ec; }
+#logistics .fit-row.coming { color: #7cd4ec; }
+#logistics .fit-row.coming .t { color: #7cd4ec; }
+#logistics .lab-foot { display: flex; flex-direction: row; align-items: center; gap: 10dp; margin-top: 10dp; }
+#logistics .lab-foot > * { flex: 0 0 auto; }
+#logistics .lab-foot > .grow { flex: 1 1 0; }
+#logistics #inventory { flex: 0 0 168dp; }
+
+/* A part being dragged from the inventory (campaign.rcss lifts it): the inventory's width. */
+.good.dragged { width: 168dp; }
+
+/* Multiplayer: the middle and right columns stand on the chat (its newest two lines and the line being typed), so the
+   force keeps the whole left side, as on DEPLOY, where the chat sits under the groups. */
+#logistics .over-band { flex: 1 1 0; display: flex; flex-direction: column; }
+#logistics .over-band > * { flex: 0 0 auto; }
+#logistics .over-band > .cols { flex: 1 1 0; }
+#logistics .chat.band { flex: 0 0 auto; margin-top: 8dp; padding-top: 8dp; border-top: 1dp #2a3742; }
+#logistics .chat.band .chat-lines { flex: 0 0 auto; }
+
+/* 16:10 and narrower: the lists a little narrower, the gaps 12. */
+@media (max-aspect-ratio: 17/10) {
+    #logistics .side { flex-basis: 268dp; }
+    #logistics .grid > .card { flex-basis: 127dp; }
+    #logistics.cols > .gap, #logistics .cols > .gap { flex-basis: 12dp; }
+    #logistics #inventory { flex-basis: 160dp; }
+}
+
+/* 2:1 and wider (21:9): the lists three cards a row; the lab's payload a column beside its repairs and pilot. */
+@media (min-aspect-ratio: 2/1) {
+    #logistics .side { flex-basis: 426dp; }
+    #logistics #inventory { flex-basis: 200dp; }
+    #logistics .lab-body { flex-direction: row; }
+    #logistics .lab-body > * { flex: 1 1 0; }
+    #logistics .lab-body > .payload { margin-top: 0dp; margin-left: 24dp; }
+}
+
+/* The game's own: the lists scroll in their columns, SPARE's head under the force, a lifted card, the pilot's picture. */
+#logistics .side > .scroll-box { flex: 1 1 0; }
+#logistics .spare-head { margin-top: 10dp; }
+#logistics .card .row-t .note { margin-left: 3dp; }
+.good.dragged.lifted { width: 168dp; }
+#logistics .pilot .portrait { width: 24dp; height: 32dp; }
+#logistics .pilot-name { font-weight: 600; }
+#deal-window .deal-name-line { font-weight: 600; }
+#logistics .payload-head { margin-bottom: 4dp; }
+#logistics .repair .slider { margin-top: 2dp; }
+#logistics .button.dark, #logistics .button.dark:hover, #logistics .button.dark:active { color: #6c7a88; border-color: #1e2a34; }
+#logistics .fit-row { tab-index: auto; nav: auto; focus: auto; }
+/* A fitted part's first column: a weapon's range, or Equipment (the INVENTORY cards' word) whole at every size. */
+#logistics .fit-row .range { width: 62dp; }
+#logistics .fit-row.open { tab-index: none; }
+#logistics .pilot { tab-index: auto; nav: auto; focus: auto; }
+/* The lists repeat a cell holding each card (campaign.rml's lists that change length). */
+#logistics .grid > .card-cell { flex: 0 0 136dp; }
+#logistics .stack > .card-cell { flex: 0 0 auto; }
+@media (max-aspect-ratio: 17/10) {
+    #logistics .grid > .card-cell { flex-basis: 127dp; }
+}
+/* A good's count and what it is (LEFT, OWNED) in the cards' capitals. */
+#logistics .card .row-t > .grey, #logistics .card .row-t .note { text-transform: uppercase; letter-spacing: 0.06em; }
+/* The lab's repairs: the sliders the repair line's width; its parts scroll under its repairs, its foot kept in view. */
+#logistics .repair input.range.slider { width: 100%; }
+#logistics #lab > .lab-body { flex: 1 1 0; overflow-y: auto; }
+#logistics #lab > .grow { display: none; }
+/* Port-only (the frames are 16:10 and wider): 4:3 and 5:4, a third narrower than 16:9, the lists one card a row (as
+   DEPLOY's READY AREA), so the details and the lab keep their room. */
+@media (max-aspect-ratio: 3/2) {
+    #logistics .side { flex-basis: 148dp; }
+    #logistics #inventory { flex-basis: 148dp; }
+    #logistics.cols > .gap, #logistics .cols > .gap { flex-basis: 12dp; }
+    #logistics .grid > .card-cell { flex-basis: 136dp; }
+    /* The columns' switches (the store's kinds, the INVENTORY's) wrap onto a second row, sharing their borders. */
+    #logistics .side .switch { flex-wrap: wrap; padding-bottom: 1dp; }
+    #logistics .side .switch > div { flex: 1 1 auto; text-align: center; margin-bottom: -1dp; }
+}

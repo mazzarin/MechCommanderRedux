@@ -369,6 +369,21 @@ auto MCBriefingText::Read(std::string_view text) -> MCRead
     return read;
 }
 
+auto MCBriefingText::Plain(std::string_view text) -> std::string
+{
+    std::string plain;
+
+    for (const MCLine& line : Lines(text))
+    {
+        if (!line.Text.empty())
+        {
+            plain += plain.empty() ? line.Text : " " + line.Text;
+        }
+    }
+
+    return plain;
+}
+
 auto MCBriefingText::FireSupportText(const MCFireSupport& support) -> std::string
 {
     std::vector<std::string> given;

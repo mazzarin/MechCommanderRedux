@@ -20,6 +20,7 @@ namespace Rml
 }
 
 class MCLogPart;
+class MCLogisticsTabs;
 class MCRmlModel;
 
 /// <summary>BRIEFING and DEPLOY.</summary>
@@ -84,6 +85,8 @@ public:
         /// <summary>The pilot's health pips kept, of six.</summary>
         int Health = 0;
         bool Off = false;
+        /// <summary>Picked (PURCHASING's details, the 'MECH BAY's lab show it).</summary>
+        bool Picked = false;
         bool Target = false;
         bool Refuse = false;
         /// <summary>Why the unit carried can't go where it's held, under it.</summary>
@@ -120,11 +123,11 @@ public:
     MCCampaignScreen();
     ~MCCampaignScreen() override;
 
-    /// <summary>The screen set up for the mission logistics has now, on tab <paramref name="tab"/> (BRIEFING or DEPLOY).</summary>
+    /// <summary>The screen set up for the mission logistics has now, on tab <paramref name="tab"/>.</summary>
     void SetUp(MCTab tab);
 
     MCTab Tab() const { return static_cast<MCTab>(_Tab); }
-    /// <summary>A tab pressed: BRIEFING and DEPLOY here, PURCHASING and the 'MECH BAY the 1998 screens, by a change.</summary>
+    /// <summary>A tab pressed (Q and E, a click).</summary>
     void ChooseTab(MCTab tab);
 
     /// <summary>What shows (the tests read it).</summary>
@@ -182,6 +185,13 @@ public:
     void OnFrame() override;
     void OnDestroy() override;
 
+    /// <summary>PURCHASING and the 'MECH BAY (logistics/MCLogisticsTabs).</summary>
+    MCLogisticsTabs& Logistics() const { return *_Logistics; }
+    /// <summary>The card of <paramref name="part"/> (in READY AREA, the force's lists, or in slot <paramref name="slot"/>).</summary>
+    MCCard UnitCard(const MCLogPart& part, int slot) const;
+    /// <summary>The keys the hint line names, as the tab and the carry stand.</summary>
+    void SetKeys();
+
     /// <summary>The document's mouse (an Rml::EventListener's).</summary>
     class MCEvents;
 
@@ -227,11 +237,7 @@ private:
     void FillWeight();
     /// <summary>The bar's RP and clock as they are now; whether they changed.</summary>
     bool FillBar();
-    /// <summary>The card of <paramref name="part"/> (in READY AREA, or in slot <paramref name="slot"/>).</summary>
-    MCCard UnitCard(const MCLogPart& part, int slot) const;
     MCWeight Weighed() const;
-    /// <summary>The keys the hint line names, as the tab and the carry stand.</summary>
-    void SetKeys();
     /// <summary>The bar's tabs marked at the tab shown (or left on), however it was chosen: Q and E step from it.</summary>
     void MarkTab();
     void Changed();
@@ -265,6 +271,7 @@ private:
 
     std::unique_ptr<MCRmlModel> _Model;
     std::unique_ptr<MCEvents> _Events;
+    std::unique_ptr<MCLogisticsTabs> _Logistics;
     int _Tab = 0;
     /// <summary>The units READY AREA's cards stand for, in the cards' order.</summary>
     std::vector<std::weak_ptr<MCLogPart>> _ReadyUnits;
@@ -379,6 +386,14 @@ namespace MCCampaignMenu
 
     /// <summary><paramref name="tons"/> in words: "1 ton", "25 tons".</summary>
     std::string TonsText(int32_t tons);
+    /// <summary><paramref name="units"/> in words: "1 unit", "20 units".</summary>
+    std::string UnitsText(int32_t units);
+    /// <summary>A picture's source as a card's decorator (none for none).</summary>
+    std::string Pictured(std::string_view source);
+    /// <summary>A MechWarrior's picture (its file, as the logistics data names it) as an <c>art:</c> source.</summary>
+    std::string PilotSource(std::string_view picture);
+    /// <summary>The number after <paramref name="prefix"/> in an element's id (slot3, force12); none without one.</summary>
+    std::optional<size_t> NumberAfter(std::string_view id, std::string_view prefix);
     /// <summary>The eyebrow over a campaign mission's title: its operation and its number in it.</summary>
     inline constexpr std::string_view EyebrowFormat = "{} · Mission {}";
     /// <summary>The operation's video's eyebrow: the operation's number and name.</summary>

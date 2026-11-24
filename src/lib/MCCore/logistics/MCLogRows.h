@@ -47,6 +47,9 @@ uint32_t WeightClassString(float tonnage);
 /// <summary>The string table index of the armor rating of <paramref name="armorTonnage"/>.</summary>
 uint32_t ArmorClassString(float armorTonnage);
 
+/// <summary>The string table index of the structure word for <paramref name="internals"/> internal structure points.</summary>
+uint32_t InternalClassString(int32_t internals);
+
 /// <summary>
 /// Whether the event is inside a pane, left of its scroll bar (all edges out): the position comes from
 /// <paramref name="posPane"/>, the width from <paramref name="widthPane"/> and the height from

@@ -7,6 +7,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCChatView.h"
+#include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCMissionNames.h"
 #include "logistics/MCOperationVideo.h"
@@ -116,27 +117,9 @@ namespace
     MCCampaignScreen::MCTab LeftOn = MCCampaignScreen::MCTab::Briefing;
     bool ComingBack = false;
 
-    /// <summary>A picture as a decorator, kept whole in its place (the frames' <c>contain</c>).</summary>
-    std::string Pictured(std::string_view source)
-    {
-        return source.empty() ? std::string(MCCampaignScreen::NoPicture)
-                              : std::format("image({} contain center bottom)", source);
-    }
-
-    /// <summary>The art: source of a pilot's picture (its file under ArtPath, as warrior->Picture names it).</summary>
-    std::string PilotSource(std::string_view picture)
-    {
-        constexpr std::string_view Tga = ".tga";
-        std::string name(picture);
-
-        if (name.size() > Tga.size() && MCMissionNames::Lowered(name.substr(name.size() - Tga.size())) == Tga)
-        {
-            name.resize(name.size() - Tga.size());
-        }
-
-        std::ranges::replace(name, '\\', '/');
-        return name.empty() ? std::string() : std::string(MCRmlArt::Scheme) + name;
-    }
+    using MCCampaignMenu::NumberAfter;
+    using MCCampaignMenu::Pictured;
+    using MCCampaignMenu::PilotSource;
 
     int32_t Tons(float tons)
     {
@@ -204,20 +187,6 @@ namespace
     {
         return document.has_value() ? document->get().GetElementById(id) : nullptr;
     }
-
-    /// <summary>The number after <paramref name="prefix"/> in <paramref name="id"/> ("slot7": 7); none for another id.</summary>
-    std::optional<size_t> NumberAfter(std::string_view id, std::string_view prefix)
-    {
-        if (!id.starts_with(prefix) || id.size() == prefix.size())
-        {
-            return std::nullopt;
-        }
-
-        size_t number = 0;
-        const std::string_view digits = id.substr(prefix.size());
-        const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), number);
-        return error == std::errc() && end == digits.data() + digits.size() ? std::optional(number) : std::nullopt;
-    }
 }
 
 /// <summary>The document's mouse: presses, releases and moves over DEPLOY's cards.</summary>
@@ -235,12 +204,19 @@ private:
 MCCampaignScreen::MCCampaignScreen()
 {
     SetDocument(ScreenDocument);
+    _Logistics = std::make_unique<MCLogisticsTabs>(*this);
     Back = [this]
     {
-        // Escape puts a carried unit back; else the campaign's way back (the main menu, or a match's question).
+        // Escape puts a carried unit back, or closes PURCHASING's deal window; else the campaign's way back (the main
+        // menu, or a match's question).
         if (_Carry.has_value())
         {
             PutBack();
+            return;
+        }
+
+        if (_Logistics->Back())
+        {
             return;
         }
 
@@ -287,8 +263,8 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
                std::pair{"outline", &MCCard::Outline}, std::pair{"pilot", &MCCard::Pilot},
                std::pair{"piloted", &MCCard::Piloted}, std::pair{"condition", &MCCard::Condition},
                std::pair{"shade", &MCCard::Shade}, std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
-               std::pair{"target", &MCCard::Target}, std::pair{"refuse", &MCCard::Refuse},
-               std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot});
+               std::pair{"picked", &MCCard::Picked}, std::pair{"target", &MCCard::Target},
+               std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot});
     model.List("carried", _Carried, std::pair{"kind", &MCCard::Kind});
     model.List("groups", _Groups, std::pair{"name", &MCGroup::Name}, std::pair{"tons", &MCGroup::Tons},
                std::pair{"closed", &MCGroup::Closed}, std::pair{"cards", &MCGroup::Cards});
@@ -301,6 +277,7 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("playerCount", _PlayerCount);
     _Chat.Bind(model, "chat");
     model.Value("say", _Say);
+    _Logistics->Bind(model);
 }
 
 void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
@@ -309,6 +286,20 @@ void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
     OnClick("begin", [this] { PressBegin(); });
     OnClick("play", [this] { PlayVideo(); });
     OnChange(TabsId, [this](int tab) { ChooseTab(static_cast<MCTab>(tab)); });
+    // PURCHASING's and the 'MECH BAY's controls.
+    OnChange("kinds", [this](int kind) { _Logistics->ChooseKind(static_cast<MCLogisticsTabs::MCKind>(kind)); });
+    OnChange("stock-kinds",
+             [this](int stock) { _Logistics->ChooseStock(static_cast<MCLogisticsTabs::MCStock>(stock)); });
+    OnChange("variants", [this](int variant) { _Logistics->ChooseVariant(variant); });
+    OnChange("deal-count", [this](int choice) { _Logistics->DealCount(choice + 1); });
+    OnChange("armor", [this](int place) { _Logistics->MoveSlider(MCMechBay::MCKnob::Armor, place); });
+    OnChange("structure", [this](int place) { _Logistics->MoveSlider(MCMechBay::MCKnob::Internal, place); });
+    OnChange("engine", [this](int level) { _Logistics->MoveSlider(MCMechBay::MCKnob::Engine, level); });
+    OnClick("deal", [this] { _Logistics->PressDeal(); });
+    OnClick("deal-cancel", [this] { _Logistics->DealCancel(); });
+    OnClick("deal-confirm", [this] { _Logistics->DealConfirm(); });
+    OnClick("repair-all", [this] { _Logistics->RepairAll(); });
+    OnClick("refit-all", [this] { _Logistics->RefitAll(); });
 
     // A match's chat: each place's line sent on Enter, its switch followed by the others.
     for (const char* id : SayIds)
@@ -363,8 +354,9 @@ void MCCampaignScreen::OnHide()
 {
     // However it hides (a 1998 screen showing hides the remade ones), the way back comes to this tab.
     LeftOn = Tab();
-    // The operation's video goes with the briefing (a mission begun, the main menu).
+    // The operation's video goes with the briefing (a mission begun, the main menu); a deal or a drag with its tab.
     MCVideoMenu::Close();
+    _Logistics->Leave();
 
     // Nothing carried is kept past the screen (a mission's teardown takes the units).
     if (_Carry.has_value())
@@ -393,7 +385,7 @@ void MCCampaignScreen::SetUp(MCTab tab)
 {
     _Carry.reset();
     _WhyCard.reset();
-    _Tab = static_cast<int>(tab == MCTab::Deploy ? MCTab::Deploy : MCTab::Briefing);
+    _Tab = static_cast<int>(tab);
     _Multiplayer = MultiPlayer() != nullptr;
     ReadBriefing();
     FillBar();
@@ -403,6 +395,12 @@ void MCCampaignScreen::SetUp(MCTab tab)
     FillWeight();
     _ShownOn = SegmentsOf(Weighed().Base);
     _ShownMore = _ShownOn;
+
+    if (tab == MCTab::Purchasing || tab == MCTab::MechBay)
+    {
+        _Logistics->Show(tab);
+    }
+
     SetKeys();
     MarkTab();
     Changed();
@@ -559,8 +557,9 @@ MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int s
     {
         warrior = mech.NetworkPilot.lock();
     }
-    else if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
+    else if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr && mech.PilotIndex >= 0)
     {
+        // As 1998's blocks: none for a 'Mech without one (the list gives its first for a negative index).
         logistics->AssignedWarriorList->GetWarriorInfo(mech.PilotIndex, warrior);
     }
 
@@ -753,6 +752,10 @@ void MCCampaignScreen::SetKeys()
     {
         Keys = {{"Enter", "Into the first open slot"}, {"Space", "Carry"}, {"Q E", "Change tab"}};
     }
+    else if (Tab() == MCTab::Purchasing || Tab() == MCTab::MechBay)
+    {
+        Keys = _Logistics->Keys();
+    }
     else if (_Video)
     {
         Keys = {{"Space", "Play video"}, {"Q E", "Change tab"}};
@@ -787,34 +790,18 @@ void MCCampaignScreen::ChooseTab(MCTab tab)
         PutBack();
     }
 
-    if (tab == MCTab::Briefing || tab == MCTab::Deploy)
+    // PURCHASING and the 'MECH BAY read the logistics data afresh as they show; a deal or a drag goes with its tab.
+    _Logistics->Leave();
+    _Tab = static_cast<int>(tab);
+
+    if (tab == MCTab::Purchasing || tab == MCTab::MechBay)
     {
-        _Tab = static_cast<int>(tab);
-        SetKeys();
-        MarkTab();
-        Changed();
-        return;
+        _Logistics->Show(tab);
     }
 
-    // PURCHASING and the 'MECH BAY: the 1998 screens until step 2, through a change; their BRIEFING button comes back
-    // to the tab left on (kept as the screen hides). The tabs show the one left on meanwhile.
+    SetKeys();
     MarkTab();
-
-    const bool purchasing = tab == MCTab::Purchasing;
-    MCScreenFlow::Change(purchasing ? "purchasing" : "mech bay",
-                         [purchasing]
-                         {
-                             MCCampaignMenu::Hide();
-
-                             if (purchasing)
-                             {
-                                 GlobalLog()->SetUpPurchaseScreen(false);
-                             }
-                             else
-                             {
-                                 GlobalLog()->SetUpRepairScreen(false);
-                             }
-                         });
+    Changed();
 }
 
 void MCCampaignScreen::Answer(MCDeploy::MCRefusal refusal, const MCLogPart& part, std::optional<size_t> card)
@@ -1231,6 +1218,12 @@ void MCCampaignScreen::PlaceCarried()
 
 void MCCampaignScreen::OnMouse(Rml::Event& event)
 {
+    if (Tab() == MCTab::Purchasing || Tab() == MCTab::MechBay)
+    {
+        _Logistics->OnMouse(event);
+        return;
+    }
+
     const auto x = event.GetParameter<float>("mouse_x", 0.0f);
     const auto y = event.GetParameter<float>("mouse_y", 0.0f);
     const int button = event.GetParameter<int>("button", LeftButton);
@@ -1358,6 +1351,11 @@ bool MCCampaignScreen::OnKey(int key, int /*modifiers*/)
         }
 
         return false;
+    }
+
+    if (Tab() == MCTab::Purchasing || Tab() == MCTab::MechBay)
+    {
+        return _Logistics->OnKey(key, Layer().Context().GetFocusElement());
     }
 
     if (Tab() != MCTab::Deploy)
@@ -1498,6 +1496,11 @@ void MCCampaignScreen::OnFrame()
 
     changed = StepRamp(now) || changed;
 
+    if (Tab() == MCTab::Purchasing || Tab() == MCTab::MechBay)
+    {
+        changed = _Logistics->OnFrame() || changed;
+    }
+
     if (changed && _Model != nullptr)
     {
         _Model->Changed();
@@ -1632,6 +1635,44 @@ MCCampaignMenu::MCMissionRead MCCampaignMenu::ReadMission()
     const std::string scenario = Scenario();
     read.MapSource = scenario.empty() ? std::string() : std::string(MCRmlArt::MapScheme) + scenario;
     return read;
+}
+
+std::string MCCampaignMenu::Pictured(std::string_view source)
+{
+    return source.empty() ? std::string(MCCampaignScreen::NoPicture)
+                          : std::format("image({} contain center bottom)", source);
+}
+
+std::string MCCampaignMenu::PilotSource(std::string_view picture)
+{
+    constexpr std::string_view Tga = ".tga";
+    std::string name(picture);
+
+    if (name.size() > Tga.size() && MCMissionNames::Lowered(name.substr(name.size() - Tga.size())) == Tga)
+    {
+        name.resize(name.size() - Tga.size());
+    }
+
+    std::ranges::replace(name, '\\', '/');
+    return name.empty() ? std::string() : std::string(MCRmlArt::Scheme) + name;
+}
+
+std::optional<size_t> MCCampaignMenu::NumberAfter(std::string_view id, std::string_view prefix)
+{
+    if (!id.starts_with(prefix) || id.size() == prefix.size())
+    {
+        return std::nullopt;
+    }
+
+    size_t number = 0;
+    const std::string_view digits = id.substr(prefix.size());
+    const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), number);
+    return error == std::errc() && end == digits.data() + digits.size() ? std::optional(number) : std::nullopt;
+}
+
+std::string MCCampaignMenu::UnitsText(int32_t units)
+{
+    return units == 1 ? std::string("1 unit") : std::format("{} units", units);
 }
 
 std::string MCCampaignMenu::TonsText(int32_t tons)

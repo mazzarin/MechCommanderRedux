@@ -1059,7 +1059,9 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     GRenderer = static_cast<int>(MCRendererKind::Software);
-    REQUIRE(MCTestGame::StartLogistics());
+    // The saves pinned (none): the menu under the dialog the same whatever earlier tests left.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
     reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
@@ -1126,7 +1128,9 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     MCFakeReports reports;
     reports.Log->Countries = {"DE"};
     GRenderer = static_cast<int>(MCRendererKind::Software);
-    REQUIRE(MCTestGame::StartLogistics());
+    // The saves pinned (none): the menu under the dialog the same whatever earlier tests left.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(reports.Log->Requests.empty());
     // Port-only (SPEC-menus.md's stage 6): the question remade, a dialog over the main menu, DON'T SEND with the focus.
@@ -1219,10 +1223,9 @@ TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and 
     reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
     MCTestGame::RunFrame(1.0f / 15.0f);
     std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    MCReusableDialog& notice = *logistics->MessageDialog;
-    REQUIRE(notice.IsShowing());
-    MCScreenInput::RealClick(notice.OkButton->GlobalX() + notice.OkButton->Width() / 2,
-                             notice.OkButton->GlobalY() + notice.OkButton->Height() / 2);
+    // Port-only (SPEC-menus.md's stage 7): the notice is the remade dialog over the remade main menu.
+    REQUIRE(MCRmlDialogs::Shown());
+    MCRmlDialogs::Dialog()->PressMain();
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE(MCTelemetry::Reporting());
     NewCampaign();

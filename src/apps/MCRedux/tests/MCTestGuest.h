@@ -11,6 +11,7 @@
 #include "logistics/MCGameList.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCLogTextObject.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
@@ -1007,6 +1008,21 @@ namespace MCTestGuest
     inline void PressLan()
     {
         ClickOn(MCMainPanel::Multiplayer, "lan");
+    }
+
+    /// <summary>
+    /// The LAN games as a player opens them: MULTIPLAYER (the network taken as there: the room tests play on the
+    /// loopback), then its LAN.
+    /// </summary>
+    inline void OpenLan()
+    {
+        MCMainMenuModel::SetNetworkForTests(true);
+        ConnectScreen();
+        const bool access = SettleUntil(OnAccess);
+        MCMainMenuModel::SetNetworkForTests(std::nullopt);
+        REQUIRE(access);
+        PressLan();
+        REQUIRE(SettleUntil(OnLan));
     }
 
     /// <summary>Whether the main menu shows with nothing over it, the change that showed it over.</summary>

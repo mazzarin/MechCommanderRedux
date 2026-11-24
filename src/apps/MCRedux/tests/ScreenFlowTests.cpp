@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
@@ -140,9 +141,18 @@ namespace
         MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     }
 
-    /// <summary>Whether the message dialog shows text <paramref name="text"/>.</summary>
+    /// <summary>
+    /// Whether <paramref name="text"/> is asked: by the remade question over a remade screen (the main menu's QUIT, its
+    /// heading the words), else by 1998's message box.
+    /// </summary>
     bool Asks(std::string_view text)
     {
+        if (const std::shared_ptr<MCRmlScreen> top = MCRemadeTest::OnTop<MCRmlScreen>();
+            top != nullptr && MCRemadeTest::Words(*top, "heading") == text)
+        {
+            return true;
+        }
+
         MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
         return dialog.IsShowing() && dialog.Text == text;
     }
@@ -245,6 +255,7 @@ TEST_CASE_ISOLATED("screen flow: Escape goes back one screen, and on the main me
     CHECK(Asks(MCMenuScreens::QuitQuestion));
     PressEscape();
     MCTestGame::RunFrame(FrameSeconds);
+    CHECK(!Asks(MCMenuScreens::QuitQuestion));
     CHECK(!GlobalLog()->MessageDialog->IsShowing());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
     CHECK(StackNow() == std::vector{main});

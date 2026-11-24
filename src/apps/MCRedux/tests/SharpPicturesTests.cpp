@@ -432,6 +432,9 @@ TEST_CASE_ISOLATED("game: a screen rehearsed shows nothing, and its first frame 
         return;
     }
 
+    // 1998's main menu under the briefing's fade, as its sharp pictures were (the remade one is drawn by the menus' own
+    // layer; stage 8 remakes the briefing).
+    const MCTestGame::OldMainMenu oldMenu;
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     const std::vector<uint8_t> menu = ShownBytes();
 

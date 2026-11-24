@@ -57,6 +57,12 @@ namespace MCTest
     /// </summary>
     std::optional<std::string_view> Option(std::string_view name);
 
+    /// <summary>
+    /// <paramref name="run"/> run once this process's tests are done, before the program's statics go (the game's
+    /// menus stopped while RmlUi's own statics are all there, as the game stops them before it exits).
+    /// </summary>
+    void AtEnd(std::function<void()> run);
+
     /// <summary>A peer process's end: whether its test passed, and what it printed.</summary>
     using PeerResult = std::pair<bool, std::string>;
 

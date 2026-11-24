@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
+#include "MCTestGuest.h"
 #include "MCTestArchive.h"
 #include "lib/MCPacketFile.h"
 #include "ScreenInput.h"
@@ -279,10 +280,11 @@ TEST_CASE_ISOLATED("game: the main menu opens its screens in their states, and c
     CHECK(logistics->CurrentScreen() == logistics->MainScreen);
     CHECK_EQ(logistics->LogisticsState, 10);
     CHECK(!Solo);
-    Cancel();
+    MCTestGuest::ClickOn(MCMainPanel::Multiplayer, "back");
     Settle();
     CHECK(logistics->CurrentScreen() == logistics->MainScreen);
     CHECK(MCMainMenuScreens::Shown(MCMainPanel::Main));
+    CHECK_EQ(logistics->LogisticsState, 1);
 
     // A new campaign opens on the briefing screen, and the menu's return goes back there.
     NewCampaign();

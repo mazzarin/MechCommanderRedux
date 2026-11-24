@@ -71,6 +71,9 @@ public:
     /// <summary>Hidden as answered or ended (MCRmlDialogs::Close, EndWait): it won't say itself again.</summary>
     void End();
 
+    /// <summary>Port-only (stage 9): the layer it was made on (MCRmlDialogs::Dialog), where a say a change hid comes back.</summary>
+    void SetLayer(MCRmlFlow::MCOn on) { _On = on; }
+
     bool TakesKeys() const override;
     bool OnRawKey(const SDL_KeyboardEvent& key) override;
 
@@ -89,6 +92,8 @@ private:
     MCSay _Say;
     /// <summary>Shown, and not yet answered or ended: hidden now, a change of screens hid it.</summary>
     bool _Standing = false;
+    /// <summary>Port-only (stage 9): its layer (MCRmlDialogs::Dialog), where a say a change hid comes back.</summary>
+    MCRmlFlow::MCOn _On = MCRmlFlow::MCOn::Menus;
 };
 
 namespace MCRmlDialogs

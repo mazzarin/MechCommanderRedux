@@ -62,6 +62,13 @@ namespace
     }
 
     /// <summary>A say that stands, hidden by a change of screens, to say itself again (MCRmlDialogs::Tend).</summary>
+    /// <summary>The layer the displaced say was said on (MCRmlDialogs::Tend says it there again).</summary>
+    MCRmlFlow::MCOn& DisplacedOn()
+    {
+        static MCRmlFlow::MCOn on = MCRmlFlow::MCOn::Menus;
+        return on;
+    }
+
     std::optional<MCRmlDialog::MCSay>& Displaced()
     {
         static std::optional<MCRmlDialog::MCSay> displaced;
@@ -245,6 +252,7 @@ void MCRmlDialog::OnHide()
     if (std::exchange(_Standing, false) && _Say.Stands())
     {
         Displaced() = _Say;
+        DisplacedOn() = _On;
     }
 }
 
@@ -305,7 +313,7 @@ MCGuiHandle<MCRmlDialog> MCRmlDialogs::Dialog(MCRmlFlow::MCOn on)
     }
 
     MCRmlLayer& layer = on == MCRmlFlow::MCOn::Mission ? menus->get().Mission() : menus->get().Menus();
-    kept = layer.CreateChild<MCRmlDialog>([](MCRmlDialog&) {});
+    kept = layer.CreateChild<MCRmlDialog>([on](MCRmlDialog& made) { made.SetLayer(on); });
     return kept;
 }
 
@@ -404,7 +412,7 @@ void MCRmlDialogs::Tend()
     MCRmlDialog::MCSay say = *std::exchange(Displaced(), std::nullopt);
     const std::function<void()> lost = say.OnLost;
 
-    if (Show(std::move(say)))
+    if (Show(std::move(say), DisplacedOn()))
     {
         return;
     }

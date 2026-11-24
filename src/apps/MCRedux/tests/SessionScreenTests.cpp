@@ -797,8 +797,7 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     CHECK(MCPort::Milliseconds() - pinged < 1000);
     // The room and the mission go to ANN again as well: on its own link, so not always by the time CAL has its (under
     // a loaded machine ANN's came a frame later: the suite's 12 jobs failed here one run in a few).
-    REQUIRE(SettleUntil([&]
-                        { return cal.MissionsLoaded() == 1 && ann.MissionsLoaded() == 2 && !dialog.IsShowing(); }));
+    REQUIRE(SettleUntil([&] { return cal.MissionsLoaded() == 1 && ann.MissionsLoaded() == 2 && !dialog.IsShowing(); }));
     CHECK_EQ(ann.SessionScreens(), 2);
     CHECK_EQ(ann.MissionsLoaded(), 2);
     CHECK(room.Team1Players[0] == hostId);

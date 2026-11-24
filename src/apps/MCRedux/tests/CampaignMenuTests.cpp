@@ -32,6 +32,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCLogPart.h"
 #include "main/MCLogistics.h"
+#include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
 #include "linkup/MCFidpMessage.h"
@@ -1148,8 +1149,11 @@ TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its f
 
 namespace
 {
-    /// <summary>The match's port, its own so the test runs beside the others (--jobs).</summary>
-    constexpr std::string_view MatchPort = "28962";
+    /// <summary>Each match test's port, its own so the tests run beside each other and the others (--jobs).</summary>
+    constexpr std::string_view BriefingMatchPort = "28985";
+    constexpr std::string_view GuestLoadingPort = "28987";
+    constexpr std::string_view HostLoadingPort = "28989";
+    constexpr std::string_view LostLoadingPort = "28993";
     constexpr std::string_view MatchMission = "ARENA";
     /// <summary>A player's light once they've pressed BEGIN MISSION (MCMPPlayerLights' status 2).</summary>
     constexpr int32_t ReadyLight = 2;
@@ -1157,16 +1161,16 @@ namespace
     constexpr int AllChoice = 1;
 
     /// <summary>
-    /// A LAN match hosted as COMMANDER (team 1) with <paramref name="ann"/> (the tests' player, team 2), its mission's
-    /// file hers too, and the room's BEGIN PLANNING pressed: the match's remade briefing.
+    /// A LAN match hosted as COMMANDER (team 1) on <paramref name="port"/> with <paramref name="ann"/> (the tests'
+    /// player, team 2), its mission's file hers too, and the room's BEGIN PLANNING pressed: the match's remade briefing.
     /// </summary>
-    MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann)
+    MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann, std::string_view port)
     {
         MCCampaignMenu::Remade() = true;
         REQUIRE(MCTestGame::StartLogistics());
         ConnectScreen();
         MCTestGuest::Settle();
-        const std::string address = std::format("127.0.0.1:{}", MatchPort);
+        const std::string address = std::format("127.0.0.1:{}", port);
         MCTestGuest::HostFromLan(address, "COMMANDER", "COMMANDER'S GAME", 4);
         MCTestGuest::Settle();
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
@@ -1194,8 +1198,8 @@ namespace
     }
 
     /// <summary>
-    /// The bar's clock hidden for the pictures: the game's clock moves a frame at a time, and the network's waits take
-    /// however many frames they take.
+    /// The bar's clock out of the pictures: the game's clock moves a frame at a time, and the network's waits take
+    /// however many frames they take (hidden in place, its digits' widths moved RP beside it).
     /// </summary>
     void HideClock(const MCCampaignScreen& screen)
     {
@@ -1203,7 +1207,50 @@ namespace
         Rml::ElementList money;
         screen.Document()->get().QuerySelectorAll(money, ".tabs-row .money");
         REQUIRE(!money.empty());
-        money.back()->SetProperty("visibility", "hidden");
+        money.back()->SetProperty("display", "none");
+    }
+
+    /// <summary>
+    /// A game's word to the host <paramref name="hostId"/> of <paramref name="type"/> (its BEGIN MISSION's, or its load
+    /// done), sent for <paramref name="guest"/>, the match's player number <paramref name="number"/>.
+    /// </summary>
+    void SendCheckIn(MCTestGuest::Guest& guest, uint32_t hostId, MCMPMessageType type, int32_t number)
+    {
+        MCMPPlayerCheckInMessage message{};
+        message.Header = PlainHeader(type);
+        message.CheckInId = static_cast<int8_t>(number);
+        guest.SendTo(hostId, message);
+    }
+
+    /// <summary>
+    /// A LAN match planned on <paramref name="port"/> (<see cref="PlanMatch"/>) and every player's BEGIN MISSION sent
+    /// (this game's as the 1998 button sends it, then <paramref name="ann"/>'s): the load behind the loading screen,
+    /// until this game's load is done, the battlefield entered behind it and the match waiting for her game. Her player
+    /// number.
+    /// </summary>
+    int32_t LoadToTheWait(MCTestGuest::Guest& ann, std::string_view port)
+    {
+        PlanMatch(ann, port);
+        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+        const std::shared_ptr<MCFidpPlayer> her = manager.GetPlayer(ann.Id());
+        REQUIRE(her != nullptr);
+        MultiPlayer()->SendReadyForBattle();
+        SendCheckIn(ann, manager.MyPlayerID, MCMPMessageType::ReadyForBattle, her->PlayerNumber);
+        REQUIRE(MCTestGuest::SettleUntil([] { return MCLoadingMenu::Shown(); }));
+        REQUIRE(MCLoadingMenu::Screen().has_value());
+        const MCLoadingScreen& loading = MCLoadingMenu::Screen()->get();
+        REQUIRE(MCTestGuest::SettleUntil([&loading] { return loading.What() != MCLoadingMenu::LoadingText; }));
+        MCTestGame::RunFrame(FlowFrame);
+        return her->PlayerNumber;
+    }
+
+    /// <summary>The system's word that this game's session is lost (DPSYS_SESSIONLOST), as the session manager gives it.</summary>
+    void LoseSession()
+    {
+        DPMSG_GENERIC lost{.dwType = DPSYS_SESSIONLOST};
+        MCFidpMessage message(0, sizeof(lost));
+        message.SetMessageBuffer(LinkupBytes(lost));
+        MultiPlayerSystemCallback(message);
     }
 
     /// <summary>A line typed in the chat's box <paramref name="box"/> and sent with Enter, as a player does.</summary>
@@ -1221,7 +1268,8 @@ namespace
 /// first, each a light and the name in the player's colour, and how many are ready of how many; the chat under the
 /// orders and under DEPLOY's groups, each line its sayer's name in their colour, a team's line marked; a line typed and
 /// sent with Enter goes to the team (TEAM, the switch's first), the box emptied; ALL chosen in one place holds in every
-/// other. The same on every machine at the frames' sizes, and laid out at every window the players' reports name.
+/// other. The same on every machine at the frames' sizes, and laid out at every window the players' reports name. A
+/// player leaving goes from the bar, the chat saying so as the room's does, no dialog over it.
 /// </summary>
 TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team with their lights, and its chat")
 {
@@ -1232,7 +1280,7 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
 
     GRenderer = static_cast<int>(MCRendererKind::Software);
     MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
-    MCCampaignScreen& screen = PlanMatch(ann);
+    MCCampaignScreen& screen = PlanMatch(ann, BriefingMatchPort);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     const std::shared_ptr<MCFidpPlayer> me = manager.GetPlayer(manager.MyPlayerID);
     const std::shared_ptr<MCFidpPlayer> her = manager.GetPlayer(ann.Id());
@@ -1287,7 +1335,7 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
     REQUIRE(display != nullptr);
     REQUIRE(display->RendererKind() == MCRendererKind::Software);
     HideClock(screen);
-    DrawnEach(*display, clock, "briefing_mp", {0xc96aed18, 0x80371cff, 0x89cac24d});
+    DrawnEach(*display, clock, "briefing_mp", {0x19d01778, 0xf75dfc6b, 0x35d84ec5});
     CheckLaidOut(menus, "briefing mp");
 
     // DEPLOY: ALL chosen under the groups holds in every place; a line then goes to all.
@@ -1308,8 +1356,149 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
     REQUIRE(!screen.ChatLines().empty());
     CHECK_EQ(screen.ChatLines().back(),
              (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "Good luck, all."}));
-    DrawnEach(*display, clock, "deploy_mp", {0xcb3f77ee, 0x26a6f614, 0x86ef4c2f});
+    DrawnEach(*display, clock, "deploy_mp", {0x25c84f0e, 0x33d343b8, 0x2210d70f});
     CheckLaidOut(menus, "deploy mp");
+
+    // ANN leaves: gone from the bar, the chat saying so as the room's does (the host's line,
+    // MCMultiPlayer::PlayerLeftGame); no dialog (the 1998 one's "Returning you to the Main Menu" returned nowhere).
+    ann.Leave();
+    REQUIRE(MCTestGuest::SettleUntil([&screen] { return screen.OtherTeam().empty(); }));
+    MCTestGuest::Settle();
+    CHECK_EQ(screen.PlayerCount(), std::string("1"));
+    REQUIRE(!screen.ChatLines().empty());
+    CHECK_EQ(screen.ChatLines().back(),
+             (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "ANN has left the game."}));
+    CHECK(MCTestGuest::DialogText().empty());
+    CHECK(MCCampaignMenu::Shown());
+}
+
+/// <summary>
+/// A match's loading screen on a guest's game (SPEC-menus.md, "Into a mission and back"): the match's room over the
+/// title, the players under the map, its own lit once its load is done and the foot "Waiting for the others."; the
+/// others' loads aren't told to a guest (only the host is), so theirs have no word and there's no count.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's loading screen on a guest lights only its own game, once loaded")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    PlanMatch(ann, GuestLoadingPort);
+    // This game as a guest's: no game's load is told to it (MCMultiPlayer::SendPlayerCheckIn goes to the host).
+    MultiPlayer()->IsServer = false;
+    REQUIRE(MCLoadingMenu::Show());
+    REQUIRE(MCLoadingMenu::Screen().has_value());
+    const MCLoadingScreen& loading = MCLoadingMenu::Screen()->get();
+    CHECK_EQ(loading.Eyebrow(), std::string("LAN · COMMANDER'S GAME"));
+    CHECK_EQ(loading.Title(), std::string("Arena combat"));
+    REQUIRE_EQ(loading.Players().size(), size_t{2});
+    CHECK_EQ(loading.Players()[0].Name, std::string("COMMANDER"));
+    CHECK(!loading.Players()[0].In);
+    CHECK(loading.Players()[0].Word.empty());
+    CHECK(loading.Count().empty());
+    CHECK_EQ(loading.What(), std::string(MCLoadingMenu::LoadingText));
+
+    MCLoadingMenu::Loaded();
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(loading.Players()[0].In);
+    CHECK_EQ(loading.Players()[0].Word, std::string(MCLoadingMenu::InWord));
+    CHECK(!loading.Players()[1].In);
+    CHECK(loading.Players()[1].Word.empty());
+    CHECK(loading.Count().empty());
+    CHECK_EQ(loading.What(), std::string(MCLoadingMenu::WaitingForOthersText));
+    MCLoadingMenu::Hide();
+    MultiPlayer()->IsServer = true;
+}
+
+/// <summary>
+/// A match's way in on the host (loading_mp): every player's BEGIN MISSION starts the load behind the loading screen,
+/// the match's room over the title, the players under the map; this game in once its load is done ("1/2 in", "Loaded.
+/// Waiting for ANN"), the battlefield entered behind it and waiting for ANN's game; the same on every machine at the
+/// frames' sizes and laid out at every window. ANN's game in, the match starts behind the loading screen, which fades
+/// out to the battle.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's loading screen lights each game as it's in, and the match starts behind it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    const int32_t herNumber = LoadToTheWait(ann, HostLoadingPort);
+    const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayerID;
+    const MCLoadingScreen& loading = MCLoadingMenu::Screen()->get();
+    CHECK_EQ(loading.Eyebrow(), std::string("LAN · COMMANDER'S GAME"));
+    CHECK_EQ(loading.Title(), std::string("Arena combat"));
+
+    // The load done: this game in, the battlefield entered behind the loading screen, the match waiting for ANN's game.
+    CHECK(MCLoadingMenu::Shown());
+    CHECK(Scenario() != nullptr);
+    CHECK(Mission()->State == MCMissionState::Scenario);
+    CHECK(!MultiPlayer()->InMission);
+    CHECK(GlobalLog() == nullptr);
+    REQUIRE_EQ(loading.Players().size(), size_t{2});
+    CHECK_EQ(loading.Players()[0], (MCLoadingScreen::MCPlayerRow{.Name = "COMMANDER",
+                                                                 .Colour = loading.Players()[0].Colour,
+                                                                 .In = true,
+                                                                 .Word = std::string(MCLoadingMenu::InWord)}));
+    CHECK_EQ(loading.Players()[1], (MCLoadingScreen::MCPlayerRow{.Name = "ANN",
+                                                                 .Colour = loading.Players()[1].Colour,
+                                                                 .Word = std::string(MCLoadingMenu::LoadingWord)}));
+    CHECK_EQ(loading.Count(), std::string("1/2 in"));
+    CHECK_EQ(loading.What(), std::string("Loaded. Waiting for ANN"));
+
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    double clock = 0.0;
+    menus.SetClock([&clock] { return clock; });
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    REQUIRE(display->RendererKind() == MCRendererKind::Software);
+    DrawnEach(*display, clock, "loading_mp", {0x3226e1dd, 0x4db6789e, 0x5facba25});
+    CheckLaidOut(menus, "loading mp");
+    CHECK(MCLoadingMenu::Shown());
+    CHECK(!MultiPlayer()->InMission);
+
+    // ANN's game in: the host starts the match, the loading screen fades out, the battle plays.
+    SendCheckIn(ann, hostId, MCMPMessageType::PlayerCheckIn, herNumber);
+    REQUIRE(MCTestGuest::SettleUntil([] { return MultiPlayer() != nullptr && MultiPlayer()->InMission; }));
+    RunWhileChanging();
+    CHECK(!MCLoadingMenu::Shown());
+    CHECK(!LoadingScreenUp);
+    CHECK(Scenario() != nullptr);
+    CHECK(Mission()->State == MCMissionState::Scenario);
+    CHECK(Turn > 1);
+}
+
+/// <summary>
+/// A match whose session is lost while its loading screen waits for the others: the scenario's own wait takes the loss
+/// (MCScenario::Run, as it did on the battlefield), the loading screen fades out and the game goes back to the LAN
+/// games, saying so; no player is left on the loading screen.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match whose session is lost as its loading screen waits goes back to the LAN games")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    LoadToTheWait(ann, LostLoadingPort);
+    REQUIRE(MCLoadingMenu::Shown());
+    REQUIRE(!MultiPlayer()->InMission);
+
+    LoseSession();
+    REQUIRE(MCTestGuest::SettleUntil([] { return MCTestGuest::OnLan(); }));
+    RunWhileChanging();
+    CHECK(!MCLoadingMenu::Shown());
+    CHECK(!LoadingScreenUp);
+    CHECK(Scenario() == nullptr);
+    CHECK(Mission()->State == MCMissionState::Logistics);
+    CHECK_EQ(MCTestGuest::DialogText(), std::string("Lost the connection to COMMANDER's game."));
 }
 
 /// <summary>
@@ -1331,11 +1520,7 @@ TEST_CASE_ISOLATED("game: a match's remade briefing whose link is lost goes back
     game->SessionManager->CurrentConnection = MCNetProtocol::TcpIp;
     IsMPlayerGame = true;
 
-    // The system's word (DPSYS_SESSIONLOST).
-    DPMSG_GENERIC lost{.dwType = DPSYS_SESSIONLOST};
-    MCFidpMessage message(0, sizeof(lost));
-    message.SetMessageBuffer(LinkupBytes(lost));
-    MultiPlayerSystemCallback(message);
+    LoseSession();
     RunWhileChanging();
 
     CHECK(!MCCampaignMenu::Shown());

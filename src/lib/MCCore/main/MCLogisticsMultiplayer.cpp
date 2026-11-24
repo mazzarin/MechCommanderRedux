@@ -12,6 +12,7 @@
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingBox.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogMenus.h"
@@ -536,6 +537,15 @@ auto MCLogistics::HandleLostPlayer(uint32_t playerID, int) const -> void
     // "<player> has left the game" (or, in a lobby game, the variant that ends it).
     const std::string text = LoadGameString(LaunchedFromLobby == 0 || MultiPlayer() == nullptr ? 0x35f : 0x365, 0xfe);
     HoldString = std::format("{} {}", MultiPlayer()->SessionManager->GetPlayer(playerID)->Name, text).substr(0, 0xff);
+
+    // Port-only (SPEC-menus.md's stage 8): over the remade briefing the chat says it, as in the room: the host's line
+    // to every game (MCMultiPlayer::PlayerLeftGame). The dialog's "Returning you to the Main Menu" returned nowhere.
+    if (MCCampaignMenu::Shown())
+    {
+        SDL_Log("MCLogistics: %s (the chat says so over the remade briefing)", HoldString.c_str());
+        return;
+    }
+
     MCReusableDialog& dialog = *MessageDialog;
 
     // A dialog already up whose button exits keeps showing; the message follows once it is answered.

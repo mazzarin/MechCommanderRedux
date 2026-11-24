@@ -6,7 +6,7 @@
 </head>
 <!-- Port-only (SPEC-menus.md, "Into a mission and back"; stage 8): the loading screen after BEGIN MISSION
      (logistics/MCLoadingMenu): the mission's name, its objectives and the orders' first lines, its map, the load's
-     progress along the foot; nothing to press. -->
+     progress along the foot; nothing to press. In a match the players under the map, each lit once in. -->
 <body class="painting" data-model="loading">
     <div class="stage16">
         <div id="frame" class="content">
@@ -18,7 +18,11 @@
                         <div class="obj-line" data-for="line : objectives"><div class="n">{{line.num}}</div><div class="grow">{{line.text}}</div></div>
                         <div class="orders"><p data-for="line : orders">{{line.text}}</p></div>
                     </div>
-                    <div class="load-side"><div id="load-map" class="load-map picture" data-style-decorator="map"></div></div>
+                    <div class="load-side">
+                        <div id="load-map" class="load-map picture" data-style-decorator="map"></div>
+                        <div class="list-head row" data-if="match"><div class="cell grow first">Players</div><div class="cell" data-if="count != ''">{{count}}</div></div>
+                        <div class="load-row" data-for="who : players"><div class="light" data-class-ready="who.in"></div><div class="who grow" data-attr-class="'who grow ' + who.colour">{{who.name}}</div><div class="pc" data-class-grey="!who.in">{{who.word}}</div></div>
+                    </div>
                 </div>
                 <div id="progress"><div class="what">{{what}}</div><div class="meter"><div class="meter-fill cream" data-style-width="percent + '%'"></div></div><div class="pc">{{percent}}%</div></div>
             </div>

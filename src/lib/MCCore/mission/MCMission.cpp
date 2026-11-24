@@ -1528,6 +1528,27 @@ auto MCMission::StartIntoTheBattle(const std::string& scenarioName) -> void
         EnterScenario();
     };
 
+    // Port-only (SPEC-menus.md's stage 8): a match's start waits behind the loading screen as designed, each player lit
+    // once in. The battlefield is entered behind it as the load ends (as before the fade), the scenario waiting for the
+    // host's start as it does (MCScenario::Run); the loading screen fades out once the match starts or the scenario ends.
+    if (MCLoadingMenu::HoldsForMatch() &&
+        MCScreenChange::Start({.Name = std::string(IntoTheBattleChange),
+                               .After = std::string(IntoTheMissionChange),
+                               .Job = {{.Part = {}, .Run = load},
+                                       {.Part = "change.into play",
+                                        .Run =
+                                            [this]
+                                        {
+                                            MCLoadingMenu::Loaded();
+                                            EnterScenario();
+                                        }},
+                                       {.Part = {}, .Until = [this] { return MatchStartedOrEnded(); }}},
+                               .FadeOut = MCScreenChange::MCFadeOut::AfterJob,
+                               .Dark = {{.Part = {}, .Run = [this] { TakeDownLoadingScreen(); }}}}))
+    {
+        return;
+    }
+
     // The load runs as the change's job, live (it draws its own frames, the loading screen's bar).
     if (MCScreenChange::Start({.Name = std::string(IntoTheBattleChange),
                                .After = std::string(IntoTheMissionChange),
@@ -1540,6 +1561,12 @@ auto MCMission::StartIntoTheBattle(const std::string& scenarioName) -> void
 
     load();
     enter();
+}
+
+auto MCMission::MatchStartedOrEnded() const -> bool
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+    return game == nullptr || game->InMission || Scenario() == nullptr || State != MCMissionState::Scenario;
 }
 
 auto MCMission::TakeDownLoadingScreen() -> void

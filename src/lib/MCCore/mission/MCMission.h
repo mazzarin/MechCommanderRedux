@@ -270,6 +270,11 @@ private:
     /// <summary>Port-only: the loading screen taken down (its shape let go of), the battlefield next.</summary>
     void TakeDownLoadingScreen();
     /// <summary>
+    /// Port-only (SPEC-menus.md's stage 8): whether a match entered behind the loading screen has started (the host's
+    /// start), or its scenario ended (a lost session, the match left) or the match is gone: the loading screen goes.
+    /// </summary>
+    bool MatchStartedOrEnded() const;
+    /// <summary>
     /// Port-only: the results closed while the screen is dark, a piece a frame: <see cref="CloseResultsScreen"/>'s way
     /// back (the scenario ended, the menus made again), then what a fade into the screen it shows does (IntoScreenPieces).
     /// </summary>

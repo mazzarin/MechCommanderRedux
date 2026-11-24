@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "logistics/MCLoadingMenu.h"
 #include "logistics/MCCampaignMenu.h"
+#include "logistics/MCRoomScreen.h"
+#include "main/MCLogistics.h"
+#include "network/MCMultiPlayer.h"
 #include "ui/MCRmlFlow.h"
 #include "ui/MCRmlModel.h"
 
@@ -41,6 +44,10 @@ void MCLoadingScreen::MakeModels(Rml::Context& context)
     model.Value("map", _Map);
     model.Value("what", _What);
     model.Value("percent", _Percent);
+    model.Value("match", _Match);
+    model.List("players", _Players, std::pair{"name", &MCPlayerRow::Name}, std::pair{"colour", &MCPlayerRow::Colour},
+               std::pair{"in", &MCPlayerRow::In}, std::pair{"word", &MCPlayerRow::Word});
+    model.Value("count", _Count);
 }
 
 void MCLoadingScreen::OnDestroy()
@@ -74,11 +81,106 @@ void MCLoadingScreen::SetUp()
                                      : std::format("image({} contain center top)", mission.MapSource);
     _What = MCLoadingMenu::LoadingText;
     _Percent = 0;
+    _Loaded = false;
+    _Who.clear();
+    _Players.clear();
+    _Count.clear();
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    _Match = game != nullptr && logistics != nullptr;
+
+    // A match: its room over the title, its players read while the room's model is there (logistics goes in the load).
+    if (_Match)
+    {
+        _Host = game->IsServer;
+        _Eyebrow = std::format(MCLoadingMenu::MatchEyebrowFormat, RoomPlace(), logistics->Room.Name());
+
+        for (const MCCampaignMenu::MCMatchPlayer& player : MCCampaignMenu::MatchPlayers())
+        {
+            _Who.push_back(MCWho{.Id = player.Id, .Me = player.Me});
+            _Players.push_back(MCPlayerRow{.Name = player.Name, .Colour = player.Colour});
+        }
+
+        FillPlayers();
+    }
 
     if (_Model != nullptr)
     {
         _Model->Changed();
     }
+}
+
+void MCLoadingScreen::SetLoaded()
+{
+    _Loaded = true;
+
+    if (FillPlayers() && _Model != nullptr)
+    {
+        _Model->Changed();
+    }
+}
+
+void MCLoadingScreen::OnFrame()
+{
+    if (_Match && FillPlayers() && _Model != nullptr)
+    {
+        _Model->Changed();
+    }
+}
+
+bool MCLoadingScreen::FillPlayers()
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+    // The match gone (left, or lost): the screen stays as it was until it fades out.
+    if (!_Match || game == nullptr)
+    {
+        return false;
+    }
+
+    std::vector<MCPlayerRow> players = _Players;
+    std::vector<std::string> waitingFor;
+    size_t in = 0;
+
+    for (size_t at = 0; at < players.size(); ++at)
+    {
+        const MCWho& who = _Who[at];
+        MCPlayerRow& row = players[at];
+        // Once in, in (the host's count is cleared as the match starts); the start says every game is.
+        row.In =
+            row.In || game->InMission ||
+            (_Host ? std::ranges::contains(game->PlayerCheckedIn, static_cast<int32_t>(who.Id)) : who.Me && _Loaded);
+        row.Word = std::string(row.In  ? MCLoadingMenu::InWord
+                               : _Host ? MCLoadingMenu::LoadingWord
+                                       : std::string_view());
+        in += row.In ? 1 : 0;
+
+        if (!row.In)
+        {
+            waitingFor.push_back(row.Name);
+        }
+    }
+
+    std::string count = _Host ? std::format(MCLoadingMenu::CountFormat, in, players.size()) : std::string();
+    std::string what = _What;
+
+    // The foot once this game is in, until the match starts (it keeps its words as the screen fades out).
+    if (_Loaded && !game->InMission)
+    {
+        what = _Host && !waitingFor.empty() ? std::format(MCLoadingMenu::WaitingForFormat, MCNamesJoined(waitingFor))
+               : _Host                      ? _What
+                                            : std::string(MCLoadingMenu::WaitingForOthersText);
+    }
+
+    if (players == _Players && count == _Count && what == _What)
+    {
+        return false;
+    }
+
+    _Players = std::move(players);
+    _Count = std::move(count);
+    _What = std::move(what);
+    return true;
 }
 
 void MCLoadingScreen::SetProgress(int percent)
@@ -115,6 +217,19 @@ bool MCLoadingMenu::Show()
     screen.Layer().Context().Update();
     screen.Show();
     return true;
+}
+
+void MCLoadingMenu::Loaded()
+{
+    if (const MCOptionalRef<MCLoadingScreen> screen = Screen(); screen.has_value() && screen->get().Shown())
+    {
+        screen->get().SetLoaded();
+    }
+}
+
+bool MCLoadingMenu::HoldsForMatch()
+{
+    return Shown() && MultiPlayer() != nullptr;
 }
 
 void MCLoadingMenu::Progress(int percent)

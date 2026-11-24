@@ -1,6 +1,7 @@
 /* Port-only: the loading screen (SPEC-menus.md, "Into a mission and back"), the game's copy of the frames' loading.rcss:
    the painting, a panel at its window's place: the mission's name, what it asks (its objectives and the orders' first
-   lines) and its map, the load's progress along the foot; nothing to press. */
+   lines) and its map, the load's progress along the foot; nothing to press. In a match the players under the map,
+   each lit green once in, the match starting when the last is in. */
 #frame { padding-top: 90dp; }
 #loading { height: 346dp; display: flex; flex-direction: column; }
 #loading > * { flex: 0 0 auto; }
@@ -18,6 +19,14 @@
 .load-side { width: 236dp; box-sizing: border-box; padding-left: 12dp; border-left: 1dp #2a3742; display: flex; flex-direction: column; }
 .load-side > * { flex: 0 0 auto; }
 .load-side > .load-map { flex: 1 1 0; }
+.load-side .list-head { margin-top: 8dp; }
+.load-side .list-head .first { padding-left: 0; }
+.load-row { display: flex; flex-direction: row; align-items: center; gap: 8dp; height: 18dp; font-size: 11.63dp; line-height: 18dp; border-bottom: 1dp #141e26; }
+.load-row > * { flex: 0 0 auto; }
+.load-row .who.grow { flex: 1 1 0; width: auto; }
+.load-row .light { box-sizing: border-box; width: 6dp; height: 6dp; border-radius: 3dp; border: 1dp #6c7a88; }
+.load-row .light.ready { background-color: #00cc98; border-color: #00cc98; }
+.load-row .pc { width: 48dp; font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; text-align: right; }
 .meter-fill.cream { background-color: #fcfcb8; }
 #progress { margin-top: 8dp; padding-top: 8dp; border-top: 1dp #2a3742; display: flex; flex-direction: row; align-items: center; gap: 12dp; }
 #progress > * { flex: 0 0 auto; }

@@ -13,6 +13,7 @@ class MCLogPort;
 // the menu, in the preferences pages' style: the new version and the one running, what it brings, its INSTALL and SKIP;
 // then the download's progress, and RESTART once it is in (quitting installs it too). DONE closes the page and leaves
 // the update waiting. Port-only (Redux HD): the main menu also names the version running, under its window.
+// What they say, and RESTART, are logistics/MCUpdateModel.h's (the remade UPDATE reads the same).
 
 /// <summary>The pictures of a main menu button: up (also lit), pressed and grayed.</summary>
 struct MCMenuButtonPictures
@@ -42,28 +43,6 @@ void AddUpdatePage(MCGenericScreen& mainScreen);
 /// copyright lines' orange; nothing shows without a running version.
 /// </summary>
 void AddVersionLine(MCGenericScreen& mainScreen);
-
-/// <summary>
-/// What the version line says for the running version as shown, <paramref name="running"/>: "Redux HD 0.6.3" for
-/// "0.6.3 (899)"; nothing without one.
-/// </summary>
-std::string VersionLineText(std::string_view running);
-
-/// <summary>The release a version as shown names, without its build: "0.6.3" for "0.6.3 (899)".</summary>
-std::string_view ReleaseOf(std::string_view shown);
-
-/// <summary>
-/// Whether RESTART is offered for the update ready: only where what the game starts outlives it, not for a setup waiting
-/// for the player's own start, and in a lobby's room only when every game there can rejoin (the old page's and the remade
-/// UPDATE's, logistics/MCUpdateScreen.h).
-/// </summary>
-bool UpdateRestartOffered();
-
-/// <summary>
-/// RESTART: the game quits so the update installs, its next start skipping the intro (the note); in a lobby's room, it
-/// comes back to the room.
-/// </summary>
-void RestartForUpdate();
 
 /// <summary>UPDATE: the main menu's page shows (each screen that shows the page has its own, all showing the updater).</summary>
 void ShowUpdatePage();
@@ -100,14 +79,5 @@ void HideUpdatePageViews();
 /// <summary>Whether the UPDATE page is showing (or the remade UPDATE).</summary>
 bool UpdatePageShown();
 
-/// <summary>The page's status line now (what the update is doing).</summary>
-std::string UpdatePageStatus();
-
 /// <summary>The lines the page shows of what the update brings, as wrapped.</summary>
 std::vector<std::string> UpdatePageLines();
-
-/// <summary>
-/// Port-only (Redux HD): what the line saying an update waits says now (the main menu's under QUIT, and a lobby's
-/// session screen's); empty when none waits.
-/// </summary>
-std::string UpdateLineText();

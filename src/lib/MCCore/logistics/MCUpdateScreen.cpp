@@ -5,6 +5,7 @@
 #include "logistics/MCRoomScreen.h"
 #include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
+#include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdatePage.h"
 #include "network/MCLobbyUpdate.h"
 

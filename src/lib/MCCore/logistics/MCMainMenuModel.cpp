@@ -9,7 +9,7 @@
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCRegistrySettings.h"
-#include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateModel.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"

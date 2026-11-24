@@ -282,6 +282,7 @@
     <ClCompile Include="logistics\MCTicker.cpp" />
     <ClCompile Include="logistics\MCTickerLine.cpp" />
     <ClCompile Include="logistics\MCUnitLimits.cpp" />
+    <ClCompile Include="logistics\MCUpdateModel.cpp" />
     <ClCompile Include="logistics\MCUpdatePage.cpp" />
     <ClCompile Include="logistics\MCUpdateScreen.cpp" />
     <ClCompile Include="logistics\MCVehicleInventoryBlock.cpp" />
@@ -853,6 +854,7 @@
     <ClInclude Include="logistics\MCTicker.h" />
     <ClInclude Include="logistics\MCTickerLine.h" />
     <ClInclude Include="logistics\MCUnitLimits.h" />
+    <ClInclude Include="logistics\MCUpdateModel.h" />
     <ClInclude Include="logistics\MCUpdatePage.h" />
     <ClInclude Include="logistics\MCUpdateScreen.h" />
     <ClInclude Include="logistics\MCVehicleInventoryBlock.h" />

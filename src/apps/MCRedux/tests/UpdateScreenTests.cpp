@@ -12,6 +12,7 @@
 #include "logistics/MCLogButton.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdatePage.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCLogistics.h"

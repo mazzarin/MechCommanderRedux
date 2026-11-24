@@ -777,6 +777,9 @@
     <ClCompile Include="logistics\MCUnitLimits.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCUpdateModel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCUpdatePage.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2399,6 +2402,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCUnitLimits.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCUpdateModel.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCUpdatePage.h">

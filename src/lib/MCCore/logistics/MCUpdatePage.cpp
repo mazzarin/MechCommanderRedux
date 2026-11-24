@@ -1,7 +1,4 @@
 #include "stdafx.h"
-#include "network/MCIntroNote.h"
-#include "platform/MCFileSystem.h"
-#include "network/MCRejoinNote.h"
 #include "logistics/MCUpdatePage.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
@@ -17,9 +14,9 @@
 #include "logistics/MCLogScrollList.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPrefsPage.h"
+#include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCUpdater.h"
-#include "network/MCLobbyUpdate.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -606,83 +603,13 @@ namespace
     constexpr std::string_view FoundTitle = "NEW: {}";
     constexpr std::string_view RunningTitle = "RUNNING: {}";
 
-    /// <summary>What the status line says of an update ready, by how it goes in (main/MCUpdater.h's MCGoesIn).</summary>
-    std::string ReadyText(const MCStatus& status)
-    {
-        switch (status.GoesIn)
-        {
-            case MCUpdater::MCGoesIn::NextStart:
-                return MCUpdater::CanStartAgain()
-                           ? std::format("VERSION {} IS IN. RESTART TO PLAY IT.", status.Version)
-                           : std::format("VERSION {} IS IN. IT PLAYS WHEN THE GAME STARTS AGAIN.", status.Version);
-            case MCUpdater::MCGoesIn::PlayersStart:
-                return std::format("VERSION {} INSTALLS WHEN YOU START REDUX HD YOURSELF.", status.Version);
-            case MCUpdater::MCGoesIn::AsItQuits:
-                break;
-        }
-
-        return std::format("VERSION {} INSTALLS AS YOU QUIT.", status.Version);
-    }
-
-    /// <summary>What's in of a download: of the whole once that's known ("2.1 OF 7.4 GB"), else what's in.</summary>
-    std::string InHandText(const MCStatus& status)
-    {
-        return status.Expected == 0 ? MCUpdateWork::SizeText(status.Received)
-                                    : MCUpdateWork::ProgressText(status.Received, status.Expected);
-    }
-
-    /// <summary>What the status line says the update is doing.</summary>
-    std::string StatusText(const MCStatus& status)
-    {
-        switch (status.Stage)
-        {
-            case MCStage::None:
-                return {};
-            case MCStage::Found:
-            {
-                if (status.Expected == 0)
-                {
-                    return "A NEWER VERSION IS OUT.";
-                }
-
-                return std::format("A NEWER VERSION IS OUT: {} TO DOWNLOAD.", MCUpdateWork::SizeText(status.Expected));
-            }
-            case MCStage::Downloading:
-                return std::format("DOWNLOADING: {}.", InHandText(status));
-            case MCStage::Ready:
-            {
-                // In a lobby's room, what RESTART does there (network/MCLobbyUpdate.h).
-                if (std::string room = MCLobbyUpdate::ReadyText(); !room.empty())
-                {
-                    return room;
-                }
-
-                return ReadyText(status);
-            }
-            case MCStage::Installing:
-                return "INSTALLING. THE GAME WILL RESTART BY ITSELF.";
-            case MCStage::Failed:
-            {
-                std::string text = std::format("THE UPDATE FAILED: {}", status.Error);
-                std::ranges::transform(text, text.begin(), [](char c)
-                                       { return static_cast<char>(std::toupper(static_cast<unsigned char>(c))); });
-                return text;
-            }
-        }
-
-        return {};
-    }
-
     /// <summary>
     /// Port-only: the UPDATE page's list, in the preferences lists' style: the version found and the one running as its
     /// column titles, what the update brings a line a row (wrapped, in capitals as the fonts write), and what the update
     /// is doing on the status line. It draws every frame from the updater.
     /// </summary>
     /// <summary>RESTART shown as the update's stage and a lobby's room allow (with the page's buttons, below).</summary>
-    void ShowRestart(MCStage stage);
-
-    /// <summary>Whether the page offers RESTART at the update's <paramref name="stage"/> (<see cref="ShowRestart"/>).</summary>
-    bool RestartOffered(MCStage stage);
+    void ShowRestart();
 
     class MCLogUpdateNotes : public MCLogScrollList
     {
@@ -706,9 +633,9 @@ namespace
             }
 
             const MCStatus& status = MCUpdater::Status();
-            DrawFrame(StatusText(status), status.Stage == MCStage::Ready || status.Stage == MCStage::Failed);
+            DrawFrame(UpdatePageStatus(), status.Stage == MCStage::Ready || status.Stage == MCStage::Failed);
             // A room's players and match change without the updater: RESTART follows them every frame.
-            ShowRestart(status.Stage);
+            ShowRestart();
 
             const int32_t textRight = ScrollBarLeft() - HeadingLeft;
             const std::string running = std::format(RunningTitle, MCUpdater::RunningVersion());
@@ -811,47 +738,6 @@ namespace
     constexpr int32_t RowsUnderQuit = 23;
 
     /// <summary>
-    /// Port-only (Redux HD): what the line says of the new HD art a program installed alone came for
-    /// (MCUpdater::DueArt), the game showing the old art until it's in: while it downloads (what's in of the whole), then
-    /// once it's in, asking for a restart when the page offers RESTART.
-    /// </summary>
-    constexpr std::string_view DueArtDownloadingLine = "NEW HD ART DOWNLOADING: {}";
-    constexpr std::string_view DueArtRestartLine = "NEW HD ART READY: PLEASE RESTART";
-    constexpr std::string_view DueArtReadyLine = "NEW HD ART READY";
-
-    /// <summary>What the line under QUIT says while an update waits.</summary>
-    std::string NoticeText(const MCStatus& status)
-    {
-        switch (status.Stage)
-        {
-            case MCStage::None:
-                return {};
-            case MCStage::Found:
-                return std::format("VERSION {} IS OUT", status.Version);
-            case MCStage::Downloading:
-                return MCUpdater::DueArt() ? std::format(DueArtDownloadingLine, InHandText(status))
-                                           : std::format("DOWNLOADING VERSION {}", status.Version);
-            case MCStage::Ready:
-            {
-                if (MCUpdater::DueArt())
-                {
-                    return std::string(RestartOffered(status.Stage) ? DueArtRestartLine : DueArtReadyLine);
-                }
-
-                return status.GoesIn == MCUpdater::MCGoesIn::NextStart
-                           ? std::format("VERSION {} IS IN", status.Version)
-                           : std::format("VERSION {} IS READY TO INSTALL", status.Version);
-            }
-            case MCStage::Installing:
-                return std::format("INSTALLING VERSION {}", status.Version);
-            case MCStage::Failed:
-                return "THE UPDATE FAILED";
-        }
-
-        return {};
-    }
-
-    /// <summary>
     /// A screen's UPDATE page (the main menu's, and a lobby's session screen's): each shows the updater (the model);
     /// it goes with its screen.
     /// </summary>
@@ -913,7 +799,7 @@ namespace
 
         void Draw() override
         {
-            const std::string text = NoticeText(MCUpdater::Status());
+            const std::string text = UpdateLineText();
 
             if (text.empty() || UpdatePageShown() || !Shown())
             {
@@ -976,12 +862,6 @@ namespace
 
     /// <summary>The first row of the main menu background's copyright lines (MM_BKGD), under its window.</summary>
     constexpr int32_t CopyrightTop = 444;
-
-    /// <summary>What the version line writes: Redux HD and the release running (<c>{}</c>).</summary>
-    constexpr std::string_view VersionLineFormat = "Redux HD {}";
-
-    /// <summary>Where the running version as shown ("0.6.3 (899)") gives its build: the release is what comes before.</summary>
-    constexpr std::string_view BuildOpening = " (";
 
     /// <summary>The white font's rows its capitals and digits fill (the two under them are for descenders).</summary>
     constexpr int32_t WhiteFontInkRows = 6;
@@ -1052,19 +932,9 @@ namespace
         }
     }
 
-    bool RestartOffered(MCStage stage)
+    void ShowRestart()
     {
-        // Port-only (stage 6): the remade UPDATE asks the same (UpdateRestartOffered).
-        // Only where what the game starts outlives it, and not for a setup waiting for the player's own start; in a
-        // lobby's room, only when every game there can rejoin, before the match (network/MCLobbyUpdate.h).
-        return stage == MCStage::Ready && MCUpdater::CanStartAgain() &&
-               MCUpdater::Status().GoesIn != MCUpdater::MCGoesIn::PlayersStart &&
-               (!MCLobbyUpdate::InRoom() || MCLobbyUpdate::CanRestart());
-    }
-
-    void ShowRestart(MCStage stage)
-    {
-        const bool shown = RestartOffered(stage);
+        const bool shown = UpdateRestartOffered();
 
         for (const MCUpdatePageView& view : LivePages())
         {
@@ -1092,7 +962,7 @@ namespace
             ShowButton(view.SkipButton, status.Stage == MCStage::Found);
         }
 
-        ShowRestart(status.Stage);
+        ShowRestart();
     }
 
     /// <summary>INSTALL: the download starts (after a failure, once a fresh check finds the update again).</summary>
@@ -1202,37 +1072,6 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     Refresh();
 }
 
-std::string VersionLineText(std::string_view running)
-{
-    const std::string_view release = ReleaseOf(running);
-    return release.empty() ? std::string() : std::format(VersionLineFormat, release);
-}
-
-std::string_view ReleaseOf(std::string_view shown)
-{
-    return shown.substr(0, shown.find(BuildOpening));
-}
-
-bool UpdateRestartOffered()
-{
-    return RestartOffered(MCUpdater::Status().Stage);
-}
-
-void RestartForUpdate()
-{
-    if (!MCLobbyUpdate::Restart())
-    {
-        // Port-only (SPEC-menus.md's "The intro movies"): the game starts itself again, so its next start skips the
-        // intro (network/MCIntroNote.h); a lobby's room's restart rejoins the room, with no intro.
-        if (const auto written = MCIntroNote::Write(MCFileSystem::UserRoot(), MCRejoinNote::Now()); !written)
-        {
-            SDL_Log("UPDATE: RESTART's intro note: %s", written.error().c_str());
-        }
-
-        MCUpdater::Answer(MCAnswer::Install);
-    }
-}
-
 void AddVersionLine(MCGenericScreen& mainScreen)
 {
     const std::shared_ptr<MCLogButton> cinema = mainScreen.CinemaButton.Lock();
@@ -1337,16 +1176,6 @@ bool UpdatePageShown()
                                    const std::shared_ptr<MCGuiObject> screen = view.Page->ParentObject();
                                    return view.Page->IsShowing() && (screen == nullptr || screen->IsShowing());
                                });
-}
-
-std::string UpdatePageStatus()
-{
-    return StatusText(MCUpdater::Status());
-}
-
-std::string UpdateLineText()
-{
-    return NoticeText(MCUpdater::Status());
 }
 
 std::vector<std::string> UpdatePageLines()

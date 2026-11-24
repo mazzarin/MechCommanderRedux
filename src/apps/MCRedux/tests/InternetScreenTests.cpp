@@ -25,6 +25,7 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdatePage.h"
 #include "logistics/MCUpdateScreen.h"
 #include "gui/MCGuiStartup.h"

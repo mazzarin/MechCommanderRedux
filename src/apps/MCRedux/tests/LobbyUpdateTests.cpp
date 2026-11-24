@@ -19,7 +19,7 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
-#include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"

@@ -10,6 +10,7 @@
 #include "logistics/MCLogPort.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCSplashScreen.h"
+#include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"

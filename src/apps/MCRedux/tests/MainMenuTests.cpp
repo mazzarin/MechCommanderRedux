@@ -20,7 +20,7 @@
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCSaves.h"
 #include "logistics/MCSavesMenu.h"
-#include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameStrings.h"

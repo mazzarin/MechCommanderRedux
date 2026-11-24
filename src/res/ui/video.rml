@@ -1,0 +1,36 @@
+<rml>
+<head>
+    <title>Operation video</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="campaign.rcss"/>
+    <link type="text/rcss" href="video.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, BRIEFING; stage 8): the operation's video over the briefing, which a veil dims
+     (logistics/MCOperationVideo): the picture 448 units wide, PAUSE, how far along and CLOSE under it; the operation's
+     picture while Betty says "incoming transmission". SPACE pauses, ESC closes. -->
+<body class="window-body video" data-model="video">
+    <div class="veil"></div>
+    <div class="stage16">
+        <div class="content player-place">
+            <div id="player" class="column">
+                <div class="eyebrow" data-if="eyebrow != ''">{{eyebrow}}</div>
+                <div class="heading caps">Operation briefing</div>
+                <div class="movie picture" data-style-height="height" data-style-decorator="still"><div class="frame" data-if="playing"></div></div>
+                <div class="controls row gap8">
+                    <div class="button small" id="pause" data-attr-data-hint="paused ? 'Play' : 'Pause'">{{paused ? 'Play' : 'Pause'}}</div>
+                    <div class="meter"><div class="meter-fill" data-style-width="percent + '%'"></div></div>
+                    <div class="data grey nowrap">{{time}}</div>
+                    <div class="button small" id="close" data-hint="Close" data-first>Close</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar">
+        <div class="stage16">
+            <div class="content">
+                <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

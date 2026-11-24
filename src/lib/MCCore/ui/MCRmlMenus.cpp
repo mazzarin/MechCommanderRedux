@@ -240,6 +240,11 @@ void MCRmlMenus::SetHd(bool hd)
     _Last.reset();
 }
 
+void MCRmlMenus::ShowLive(const std::string& source, std::shared_ptr<const MCUiTexture> picture)
+{
+    _Recorder->ShowLive(source, std::move(picture));
+}
+
 void MCRmlMenus::SetClock(std::function<double()> clock)
 {
     _System->SetClock(std::move(clock));

@@ -648,6 +648,9 @@
     <ClCompile Include="logistics\MCMissionNames.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCOperationVideo.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCPilotInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -2195,6 +2198,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCMissionNames.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCOperationVideo.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCPilotInventoryBlock.h">

@@ -152,11 +152,16 @@ public:
     /// <summary>BEGIN MISSION pressed.</summary>
     void PressBegin();
 
+    /// <summary>BRIEFING's PLAY (or Space): the operation's video in its window over the briefing.</summary>
+    void PlayVideo();
+    /// <summary>Whether BRIEFING has the operation's video to play (a campaign mission naming one).</summary>
+    bool HasVideo() const { return _Video; }
+
     bool OnKey(int key, int modifiers) override;
     void OnFrame() override;
     void OnDestroy() override;
 
-    /// <summary>The document's mouse and keys (an Rml::EventListener's).</summary>
+    /// <summary>The document's mouse (an Rml::EventListener's).</summary>
     class MCEvents;
 
 protected:
@@ -230,11 +235,6 @@ private:
     bool StepRamp(double now);
     /// <summary>A press, release or move of the mouse over the document.</summary>
     void OnMouse(Rml::Event& event);
-    /// <summary>
-    /// A key on its way up the document: DEPLOY's keys on a card (<see cref="OnKey"/>) taken before RmlUi's own
-    /// (Enter and Space click whatever has the focus).
-    /// </summary>
-    void OnKeyDown(Rml::Event& event);
 
     std::unique_ptr<MCRmlModel> _Model;
     std::unique_ptr<MCEvents> _Events;
@@ -264,6 +264,9 @@ private:
     std::string _WarningsHead;
     std::vector<MCLine> _Warnings;
     std::string _MapSource;
+    bool _Video = false;
+    /// <summary>The operation the video's window names ("Operation 1 · Beachhead").</summary>
+    std::string _VideoEyebrow;
     std::vector<MCCard> _Ready;
     std::vector<MCGroup> _Groups;
     std::vector<MCCard> _Carried;
@@ -321,6 +324,8 @@ namespace MCCampaignMenu
     std::string TonsText(int32_t tons);
     /// <summary>The eyebrow over a campaign mission's title: its operation and its number in it.</summary>
     inline constexpr std::string_view EyebrowFormat = "{} · Mission {}";
+    /// <summary>The operation's video's eyebrow: the operation's number and name.</summary>
+    inline constexpr std::string_view VideoEyebrowFormat = "Operation {} · {}";
 
     /// <summary>The mission logistics has now as its briefing and the campaign name it (BRIEFING's, the loading screen's).</summary>
     struct MCMissionRead

@@ -7,6 +7,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Input.h>
 
 namespace
 {
@@ -310,6 +311,30 @@ bool MCRmlScreen::OnChange(const std::string& id, std::function<void(int value)>
 bool MCRmlScreen::OnKey(int /*key*/, int /*modifiers*/)
 {
     return false;
+}
+
+void MCRmlScreen::TakeKeysFirst()
+{
+    if (_Document == nullptr)
+    {
+        SDL_Log("Menus: %s has no document to take its keys from", _Path.c_str());
+        return;
+    }
+
+    auto action = std::make_shared<MCAction>(weak_from_this(),
+                                             [this](Rml::Event& event)
+                                             {
+                                                 const int key =
+                                                     event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+
+                                                 if (OnKey(key, event.GetParameter<int>("modifiers", 0)))
+                                                 {
+                                                     event.StopPropagation();
+                                                 }
+                                             });
+    _Document->AddEventListener(Rml::EventId::Keydown, action.get());
+    _Listening.push_back(MCListening{
+        .Element = _Document, .Event = static_cast<int>(Rml::EventId::Keydown), .Action = std::move(action)});
 }
 
 void MCRmlScreen::Destroy()

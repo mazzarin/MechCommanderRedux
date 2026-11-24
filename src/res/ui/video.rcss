@@ -1,0 +1,14 @@
+/* Port-only (SPEC-menus.md, BRIEFING; stage 8): the operation's video playing (tools/menus-frames/frames/
+   briefing_b_video.rml's style block): over the briefing, which a veil dims; the picture as large as reads well (448
+   units, the HD video's 704 pixels 1.4 times at 1080p), its height the movie's own shape, PAUSE, how far along, CLOSE
+   under it; the player in the middle of the window above the hint line. */
+.video .veil { background-color: #040404f2; }
+.video .player-place { padding-bottom: 34dp; justify-content: center; align-items: center; }
+#player { width: 448dp; flex: 0 0 auto; }
+#player > * { flex: 0 0 auto; }
+#player .heading { margin-bottom: 8dp; }
+#player > .movie { position: relative; background-color: #000000; }
+#player > .movie > .frame { position: absolute; left: 0; top: 0; right: 0; bottom: 0; decorator: image(live:video fill); }
+#player .controls { margin-top: 8dp; }
+#player .controls > * { flex: 0 0 auto; }
+#player .meter { flex: 1 1 0; }

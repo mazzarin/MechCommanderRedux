@@ -79,7 +79,19 @@ void MCRmlRecorder::RenderGeometry(Rml::CompiledGeometryHandle geometry, Rml::Ve
 
     MCUiDraw draw{.Geometry = found->second, .X = translation.x, .Y = translation.y};
 
-    if (texture != 0)
+    if (const auto live = _LiveOf.find(texture); live != _LiveOf.end())
+    {
+        const auto shown = _Live.find(live->second);
+
+        // A live picture not given one yet draws nothing.
+        if (shown == _Live.end() || shown->second == nullptr)
+        {
+            return;
+        }
+
+        draw.Texture = shown->second;
+    }
+    else if (texture != 0)
     {
         const auto picture = _Textures.find(texture);
 
@@ -114,6 +126,17 @@ Rml::TextureHandle MCRmlRecorder::Keep(std::shared_ptr<const MCUiTexture> textur
 
 Rml::TextureHandle MCRmlRecorder::LoadTexture(Rml::Vector2i& textureDimensions, const Rml::String& source)
 {
+    if (source.starts_with(LiveScheme))
+    {
+        // Its size as it shows now, else a pixel's (its box is sized by the style sheet).
+        const auto shown = _Live.find(source);
+        const bool has = shown != _Live.end() && shown->second != nullptr;
+        textureDimensions = has ? Rml::Vector2i(shown->second->Width, shown->second->Height) : Rml::Vector2i(1, 1);
+        const Rml::TextureHandle handle = _NextHandle++;
+        _LiveOf.emplace(handle, source);
+        return handle;
+    }
+
     std::expected<MCLoaded, std::string> loaded = _Loader ? _Loader(source) : std::unexpected("no picture loader");
 
     if (!loaded)
@@ -147,6 +170,18 @@ Rml::TextureHandle MCRmlRecorder::GenerateTexture(Rml::Span<const Rml::byte> sou
 void MCRmlRecorder::ReleaseTexture(Rml::TextureHandle texture)
 {
     _Textures.erase(texture);
+    _LiveOf.erase(texture);
+}
+
+void MCRmlRecorder::ShowLive(const std::string& source, std::shared_ptr<const MCUiTexture> picture)
+{
+    if (picture == nullptr)
+    {
+        _Live.erase(source);
+        return;
+    }
+
+    _Live.insert_or_assign(source, std::move(picture));
 }
 
 void MCRmlRecorder::EnableScissorRegion(bool enable)

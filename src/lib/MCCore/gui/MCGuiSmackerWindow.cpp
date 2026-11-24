@@ -83,34 +83,7 @@ auto MCGuiSmackerWindow::OpenHdMovie() -> void
     HdMovie.reset();
     HdDropped.reset();
     HdNextFrame = 0;
-    const std::optional<std::filesystem::path> path = MCHdArt::FindMovie(Movie->FileName);
-
-    // Off a sharp screen the frames wouldn't be seen: none are decoded.
-    if (!path.has_value() || !MCRenderer::ShowsHdPictures())
-    {
-        return;
-    }
-
-    const MCSmackerPlayer& player = *Movie->Player;
-    std::expected<std::unique_ptr<MCHdMovie>, std::string> opened = MCHdMovie::Open(*path);
-
-    if (!opened)
-    {
-        SDL_Log("HD movie: %s; the original plays", opened.error().c_str());
-        return;
-    }
-
-    const MCHdMovie& movie = **opened;
-
-    if (!movie.ScaleOver(player.Width(), player.Height()).has_value() || movie.Frames() != player.Frames())
-    {
-        SDL_Log("HD movie: %s's %u frames of %dx%d don't fit the movie's %u of %dx%d; the original plays",
-                Movie->FileName.c_str(), movie.Frames(), movie.Width(), movie.Height(), player.Frames(), player.Width(),
-                player.Height());
-        return;
-    }
-
-    HdMovie = std::move(*opened);
+    HdMovie = MCHdMovie::Over(*Movie);
 }
 
 auto MCGuiSmackerWindow::ShowHdFrame(MCTexture& texture, const MCRect& rect, uint32_t shown) -> void

@@ -136,6 +136,12 @@ protected:
     bool OnClick(const std::string& id, std::function<void()> act);
     /// <summary>Calls <paramref name="act"/> with the element <paramref name="id"/>'s change event's value.</summary>
     bool OnChange(const std::string& id, std::function<void(int value)> act);
+    /// <summary>
+    /// Port-only (stage 8): the document's keys go to <see cref="OnKey"/> before RmlUi's own presses (Enter and Space
+    /// click what has the focus), a key it takes going no further (DEPLOY's cards, the video's Space); call it from
+    /// <see cref="OnLoaded"/>.
+    /// </summary>
+    void TakeKeysFirst();
 
 private:
     friend class MCRmlLayer;

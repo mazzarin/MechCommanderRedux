@@ -94,6 +94,12 @@ public:
     /// <summary>Turns HD art on or off: the pictures read again.</summary>
     void SetHd(bool hd);
 
+    /// <summary>
+    /// Port-only (stage 8): the picture the live source <paramref name="source"/> (MCRmlRecorder::LiveScheme) draws from
+    /// the next frame on; none: nothing.
+    /// </summary>
+    void ShowLive(const std::string& source, std::shared_ptr<const MCUiTexture> picture);
+
     /// <summary>Reads the time from <paramref name="clock"/> (seconds; none: the game's clock): tests' frames repeat.</summary>
     void SetClock(std::function<double()> clock);
 

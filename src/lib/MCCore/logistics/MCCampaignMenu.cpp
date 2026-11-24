@@ -8,6 +8,7 @@
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCMissionNames.h"
+#include "logistics/MCOperationVideo.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCSaves.h"
 #include "logistics/MCSavesMenu.h"
@@ -80,9 +81,8 @@ namespace
     /// <summary>The mouse's buttons in RmlUi's events.</summary>
     constexpr int LeftButton = 0;
     constexpr int RightButton = 1;
-    /// <summary>The document's events the screen listens to: the mouse's for the drag, the keys' for DEPLOY's keys.</summary>
-    constexpr std::array ListenedEvents = {Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Mousemove,
-                                           Rml::EventId::Keydown};
+    /// <summary>The document's events the screen listens to: the mouse's for the drag (its keys: TakeKeysFirst).</summary>
+    constexpr std::array ListenedEvents = {Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Mousemove};
 
     double RmlNow()
     {
@@ -188,17 +188,7 @@ class MCCampaignScreen::MCEvents final : public Rml::EventListener
 public:
     explicit MCEvents(MCCampaignScreen& screen) : _Screen(screen) {}
 
-    void ProcessEvent(Rml::Event& event) override
-    {
-        if (event.GetId() == Rml::EventId::Keydown)
-        {
-            _Screen.OnKeyDown(event);
-        }
-        else
-        {
-            _Screen.OnMouse(event);
-        }
-    }
+    void ProcessEvent(Rml::Event& event) override { _Screen.OnMouse(event); }
 
 private:
     MCCampaignScreen& _Screen;
@@ -248,6 +238,7 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("weightMore", _WeightMore);
     model.Value("weightOver", _WeightOver);
     model.Value("canBegin", _CanBegin);
+    model.Value("video", _Video);
     model.Value("keysCarry", _KeysCarry);
     model.List("objectives", _Objectives, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
     model.List("orders", _Orders, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
@@ -270,8 +261,11 @@ void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
 {
     OnClick("mainmenu", [] { MCMenuScreens::LeaveCampaign(); });
     OnClick("begin", [this] { PressBegin(); });
+    OnClick("play", [this] { PlayVideo(); });
     OnChange(TabsId, [this](int tab) { ChooseTab(static_cast<MCTab>(tab)); });
     _Events = std::make_unique<MCEvents>(*this);
+    // DEPLOY's keys on a card before RmlUi's (Enter and Space click what has the focus); BRIEFING's Space plays the video.
+    TakeKeysFirst();
 
     for (const Rml::EventId event : ListenedEvents)
     {
@@ -300,6 +294,9 @@ void MCCampaignScreen::OnShow()
 
 void MCCampaignScreen::OnHide()
 {
+    // The operation's video goes with the briefing (a mission begun, the main menu).
+    MCVideoMenu::Close();
+
     // Nothing carried is kept past the screen (a mission's teardown takes the units).
     if (_Carry.has_value())
     {
@@ -379,6 +376,11 @@ void MCCampaignScreen::ReadBriefing()
     }
 
     _MapSource = mission.MapSource;
+    // The operation's video: a campaign mission's (a match has none: 1998's video tab was its chat).
+    _Video = !_Multiplayer && GlobalLog() != nullptr && !GlobalLog()->OperationCinema.empty();
+    _VideoEyebrow = mission.Mission > 0
+                        ? std::format(MCCampaignMenu::VideoEyebrowFormat, mission.Operation, mission.OperationName)
+                        : mission.OperationName;
 
     if (Rml::Element* map = ElementOf(Document(), MapId); map != nullptr)
     {
@@ -623,6 +625,10 @@ void MCCampaignScreen::SetKeys()
     else if (Tab() == MCTab::Deploy)
     {
         Keys = {{"Enter", "Into the first open slot"}, {"Space", "Carry"}, {"Q E", "Change tab"}};
+    }
+    else if (_Video)
+    {
+        Keys = {{"Space", "Play video"}, {"Q E", "Change tab"}};
     }
     else
     {
@@ -1204,8 +1210,30 @@ void MCCampaignScreen::OnMouse(Rml::Event& event)
     }
 }
 
+void MCCampaignScreen::PlayVideo()
+{
+    if (!_Video || MCVideoMenu::Shown())
+    {
+        return;
+    }
+
+    MCVideoMenu::Open(GlobalLog()->OperationCinema, _VideoEyebrow);
+}
+
 bool MCCampaignScreen::OnKey(int key, int /*modifiers*/)
 {
+    // BRIEFING: Space plays the operation's video, wherever the focus is.
+    if (Tab() == MCTab::Briefing)
+    {
+        if (key == Rml::Input::KI_SPACE && _Video)
+        {
+            PlayVideo();
+            return true;
+        }
+
+        return false;
+    }
+
     if (Tab() != MCTab::Deploy)
     {
         return false;
@@ -1280,17 +1308,6 @@ bool MCCampaignScreen::OnKey(int key, int /*modifiers*/)
         }
         default:
             return false;
-    }
-}
-
-void MCCampaignScreen::OnKeyDown(Rml::Event& event)
-{
-    const int key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
-    const int modifiers = event.GetParameter<int>("modifiers", 0);
-
-    if (OnKey(key, modifiers))
-    {
-        event.StopPropagation();
     }
 }
 

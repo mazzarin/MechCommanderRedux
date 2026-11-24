@@ -31,8 +31,8 @@
 
 /* The hint line along the foot of the night screens: what the thing under the pointer does at the left, the
    screen's keys at the right; its words 15 to 26 units over the bottom, as on the paintings' glass bar. */
-.night #hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 34dp; }
-.night #hintbar .content { padding-top: 8dp; }
+.night #hintbar, .video #hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 34dp; }
+.night #hintbar .content, .video #hintbar .content { padding-top: 8dp; }
 #page > .row { flex: 1 1 0; align-items: stretch; }
 
 /* 2:1 and wider (21:9): the campaign's screens take the window less its margins (1115 units at 21:9), and each grows
@@ -40,6 +40,12 @@
 @media (min-aspect-ratio: 2/1) {
     .night .content { flex: 0 1 1115dp; }
 }
+
+/* BRIEFING's operation video, one an operation and seen once: a quiet row under the orders, PLAY opening it. */
+.video-row { flex: 0 0 auto; margin-top: 8dp; }
+.video-row > * { flex: 0 0 auto; }
+.video-row > .grow { flex: 1 1 0; }
+.video-label { line-height: 20dp; margin-right: 8dp; }
 
 /* An objective, numbered as its pin on the map (the pins' red). */
 .objective { margin-top: 4dp; font-size: 11.63dp; line-height: 15dp; }

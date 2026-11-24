@@ -26,6 +26,13 @@ public:
     /// <summary>What <see cref="LoadTexture"/> reads a picture's source with.</summary>
     using MCLoader = std::function<std::expected<MCLoaded, std::string>(std::string_view source)>;
 
+    /// <summary>
+    /// Port-only (stage 8): the scheme of a picture the game changes as it shows (<c>live:video</c>, the operation's
+    /// video): RmlUi keeps one handle for it, and each draw takes the picture <see cref="ShowLive"/> gave it last (none
+    /// yet: nothing drawn). A style sheet sizes its box, since RmlUi reads its size once, when it is first drawn.
+    /// </summary>
+    static constexpr std::string_view LiveScheme = "live:";
+
     explicit MCRmlRecorder(MCLoader loader);
     ~MCRmlRecorder() override;
 
@@ -38,6 +45,12 @@ public:
     /// <summary>A picture of <paramref name="pixels"/> (RGBA8, premultiplied), numbered anew.</summary>
     static std::shared_ptr<const MCUiTexture> MakeTexture(int32_t width, int32_t height, std::vector<uint8_t> pixels,
                                                           bool smooth);
+
+    /// <summary>
+    /// The live picture <paramref name="source"/> (<see cref="LiveScheme"/>) draws from now on; none: nothing (the
+    /// picture let go of).
+    /// </summary>
+    void ShowLive(const std::string& source, std::shared_ptr<const MCUiTexture> picture);
 
     /// <summary>The geometry and pictures kept (tests: none once RmlUi has let go of them).</summary>
     size_t GeometryKept() const { return _Geometry.size(); }
@@ -61,6 +74,9 @@ private:
     MCLoader _Loader;
     std::unordered_map<Rml::CompiledGeometryHandle, std::shared_ptr<const MCUiGeometry>> _Geometry;
     std::unordered_map<Rml::TextureHandle, std::shared_ptr<const MCUiTexture>> _Textures;
+    /// <summary>The live pictures' handles, by the source each stands for, and what each source shows now.</summary>
+    std::unordered_map<Rml::TextureHandle, std::string> _LiveOf;
+    std::unordered_map<std::string, std::shared_ptr<const MCUiTexture>> _Live;
     /// <summary>The next handle given out (0 is none, to RmlUi).</summary>
     uintptr_t _NextHandle = 1;
     /// <summary>The frame being recorded; none between frames.</summary>

@@ -12,6 +12,7 @@
 #include "logistics/MCLoadingMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
+#include "logistics/MCOperationVideo.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -186,6 +187,29 @@ namespace
         MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(held->CurTonnage) - 1;
         DragTo(ElementOf(screen, "ready0"), ElementOf(screen, std::format("slot{}", slot)), false);
         REQUIRE(screen.Carried() == held);
+    }
+
+    /// <summary>
+    /// The first briefing's operation video opened by Space, run until it has shown <paramref name="frames"/> frames
+    /// (Betty's line first); the window.
+    /// </summary>
+    MCOperationVideoWindow& PlayVideoTo(uint32_t frames)
+    {
+        constexpr int32_t MostFrames = 2400;
+        MCScreenInput::RealKey(SDL_SCANCODE_SPACE);
+        MCTestGame::RunFrame(FlowFrame);
+        REQUIRE(MCVideoMenu::Shown());
+        MCOperationVideoWindow& window = MCVideoMenu::Window()->get();
+        REQUIRE(window.Video().has_value());
+
+        for (int32_t frame = 0; frame < MostFrames && window.Video()->get().Shown() < frames; frame++)
+        {
+            MCTestGame::RunFrame(FlowFrame);
+        }
+
+        REQUIRE(window.Video().has_value());
+        REQUIRE_EQ(window.Video()->get().Shown(), frames);
+        return window;
     }
 
     /// <summary>The screen's BRIEFING showing the campaign's briefing <paramref name="file"/> (a file in the game's missions).</summary>
@@ -431,7 +455,7 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY draw the same on every machine")
     };
 
     constexpr std::array<MCDrawn, 3> Drawn = {{
-        {"briefing", {0x68d30a18, 0x1de01535, 0x490e3adb}},
+        {"briefing", {0x90f15c0d, 0x82e3cd26, 0xbdcabc1b}},
         {"deploy", {0xd9a96ad1, 0x84209082, 0xb5314cc1}},
         {"deploy_heavy", {0xce5965c8, 0x662c22f0, 0x95431918}},
     }};
@@ -646,4 +670,138 @@ TEST_CASE_ISOLATED("game: the loading screen draws the same on every machine and
     }
 
     MCLoadingMenu::Hide();
+}
+
+/// <summary>
+/// BRIEFING's operation video (a campaign mission's, OPVID1 here: 176x128, 732 frames at 15 a second): Space opens it
+/// over the briefing, after Betty's "incoming transmission"; its frames come as the clock reaches them, how far along
+/// under it; Space holds it (no frame comes, its time stays) and lets it go on; Q and E change no tab under it; Escape
+/// closes it, back to BRIEFING as it was; the mouse's PLAY and CLOSE do the same.
+/// </summary>
+TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space holds it and Escape closes it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr uint32_t FramesPlayed = 30;
+    constexpr int32_t HeldFrames = 60;
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    REQUIRE(screen.HasVideo());
+    // Before its first frame (Betty's line), the operation's picture (held there, saved with --shots).
+    screen.PlayVideo();
+    REQUIRE(MCVideoMenu::Shown());
+    MCVideoMenu::Window()->get().TogglePause();
+    Shot("video_incoming");
+    REQUIRE(MCVideoMenu::Window()->get().Video().has_value());
+    CHECK_EQ(MCVideoMenu::Window()->get().Video()->get().Shown(), 0u);
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(!MCVideoMenu::Shown());
+    MCOperationVideoWindow& window = PlayVideoTo(FramesPlayed);
+    const MCOperationVideo& video = window.Video()->get();
+    CHECK_EQ(video.Width(), 176);
+    CHECK_EQ(video.Height(), 128);
+    CHECK_EQ(video.Frames(), 732u);
+    CHECK(!video.Incoming());
+    CHECK(video.Picture() != nullptr);
+    CHECK_EQ(window.TimeText(), std::string("0:01 of 0:49"));
+    CHECK_EQ(window.Percent(), 4);
+
+    // Space holds it, and lets it go on.
+    MCScreenInput::RealKey(SDL_SCANCODE_SPACE);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(video.Paused());
+    const uint32_t held = video.Shown();
+
+    for (int32_t frame = 0; frame < HeldFrames; frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    CHECK_EQ(video.Shown(), held);
+    MCScreenInput::RealKey(SDL_SCANCODE_SPACE);
+
+    for (int32_t frame = 0; frame < HeldFrames; frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    CHECK(!video.Paused());
+    CHECK(video.Shown() > held);
+
+    // Q and E: no tab changes under it.
+    MCScreenInput::RealKey(SDL_SCANCODE_Q);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(MCVideoMenu::Shown());
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
+
+    // Escape closes it: BRIEFING as it was, and Escape there still the way to the main menu.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!MCVideoMenu::Shown());
+    CHECK(!window.Video().has_value());
+    CHECK(MCCampaignMenu::Shown());
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
+    CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
+
+    // The mouse: PLAY, then CLOSE.
+    ClickOn(ElementOf(screen, "play"));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(MCVideoMenu::Shown());
+    ClickOn(ElementOf(MCVideoMenu::Window()->get(), "close"));
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!MCVideoMenu::Shown());
+    CHECK(MCCampaignMenu::Shown());
+}
+
+/// <summary>
+/// The operation's video held at its sixtieth frame over the briefing: on the software renderer, the whole window at
+/// 640x480, 1280x720 and 1280x1024, the hashes recorded; at every window the players' reports name, laid out and
+/// legible (MCRmlChecks). With <c>--shots</c> each picture is saved.
+/// </summary>
+TEST_CASE_ISOLATED("game: the operation's video draws the same on every machine and lays out at every window")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr uint32_t HeldAt = 60;
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    StartFirstBriefing();
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    REQUIRE(display->RendererKind() == MCRendererKind::Software);
+    static_cast<void>(Shown());
+    MCOperationVideoWindow& window = PlayVideoTo(HeldAt);
+    window.TogglePause();
+    REQUIRE(window.Video()->get().Paused());
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    double clock = 0.0;
+    menus.SetClock([&clock] { return clock; });
+    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xa83abd2c, 0x8b3dc24f, 0x2c1ebcbb};
+
+    for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
+    {
+        const MCMenusPictures::MCWindowSize& size = MCMenusPictures::FrameWindows[i];
+        REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
+        clock += SettleSeconds;
+        CHECK_EQ(DrawnWindow("video"), std::format("video {}x{}: {:#010x}", size.Width, size.Height, Hashes[i]));
+    }
+
+    for (const MCMenusPictures::MCWindowSize& size : MCMenusPictures::PlayersWindows)
+    {
+        menus.SetWindow(size.Width, size.Height);
+        menus.Frame();
+        const float unit = MCRmlMenus::MenusUnit(size.Width, size.Height);
+        const std::string where = std::format("video {}x{}: ", size.Width, size.Height);
+        CHECK_EQ(where + MCRmlChecks::BoxProblems(menus.Menus().Context()), where);
+        CHECK_EQ(where + MCRmlChecks::Illegible(menus.Menus().Context(), unit), where);
+    }
+
+    window.Close();
 }

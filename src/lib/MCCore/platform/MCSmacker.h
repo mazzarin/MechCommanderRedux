@@ -317,12 +317,20 @@ public:
 
     /// <summary>
     /// Whether the caller should still wait before doing the next frame (<c>SmackWait</c>): true until
-    /// the next frame's time has come. With sound, the clock follows the sound actually played.
+    /// the next frame's time has come (always while <see cref="Pause"/>d). With sound, the clock follows the sound
+    /// actually played.
     /// </summary>
     bool Wait();
 
     /// <summary>The time the next frame is due, in microseconds from the first <see cref="DoFrame"/>.</summary>
     uint64_t NextFrameTime() const;
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 8: the operation's video's PAUSE): holds the movie where it is, its clock and its
+    /// sound stopped (<see cref="Wait"/> waits on), or lets it go on from there. RAD's player had none.
+    /// </summary>
+    void Pause(bool paused);
+    bool Paused() const { return _Paused; }
 
 private:
     uint64_t ElapsedMicroseconds() const;
@@ -335,6 +343,9 @@ private:
     uint64_t _FramesDone = 0;
     uint64_t _StartTicks = 0;
     bool _Started = false;
+    /// <summary>Held (<see cref="Pause"/>), and the clock's time when it was.</summary>
+    bool _Paused = false;
+    uint64_t _PausedAt = 0;
 
     std::vector<uint8_t> _RemapPalette;
     std::array<uint8_t, 256> _Remap{};

@@ -1324,7 +1324,34 @@ void MCSmackerPlayer::NextFrame()
 
 uint64_t MCSmackerPlayer::ElapsedMicroseconds() const
 {
-    return NowMicroseconds() - _StartTicks;
+    return (_Paused ? _PausedAt : NowMicroseconds()) - _StartTicks;
+}
+
+void MCSmackerPlayer::Pause(bool paused)
+{
+    if (paused == _Paused)
+    {
+        return;
+    }
+
+    const uint64_t now = NowMicroseconds();
+
+    // The time held isn't the movie's: its clock goes on from where it stopped.
+    if (paused)
+    {
+        _PausedAt = now;
+    }
+    else if (_Started)
+    {
+        _StartTicks += now - _PausedAt;
+    }
+
+    _Paused = paused;
+
+    if (_Stream)
+    {
+        _Stream->Pause(paused);
+    }
 }
 
 uint64_t MCSmackerPlayer::NextFrameTime() const
@@ -1334,6 +1361,12 @@ uint64_t MCSmackerPlayer::NextFrameTime() const
 
 bool MCSmackerPlayer::Wait()
 {
+    // Held: no frame is due.
+    if (_Paused)
+    {
+        return true;
+    }
+
     if (!_Started)
     {
         return false;

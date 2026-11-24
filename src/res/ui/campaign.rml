@@ -51,6 +51,11 @@
                         </div>
                         <div class="fade"></div>
                     </div>
+                    <div class="row video-row" data-if="video">
+                        <div class="data grey caps nowrap video-label">Operation briefing video</div>
+                        <div class="button small" id="play" data-hint="Play">Play</div>
+                        <div class="grow"></div>
+                    </div>
                 </div>
             </div>
 

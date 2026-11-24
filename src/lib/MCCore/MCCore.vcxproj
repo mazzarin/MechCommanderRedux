@@ -239,6 +239,7 @@
     <ClCompile Include="logistics\MCMenuScreens.cpp" />
     <ClCompile Include="logistics\MCMissionLogisticsBridge.cpp" />
     <ClCompile Include="logistics\MCMissionNames.cpp" />
+    <ClCompile Include="logistics\MCOperationVideo.cpp" />
     <ClCompile Include="logistics\MCPilotInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCPilotPurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCPlayerNameObject.cpp" />
@@ -782,6 +783,7 @@
     <ClInclude Include="logistics\MCMenuScreens.h" />
     <ClInclude Include="logistics\MCMissionLogisticsBridge.h" />
     <ClInclude Include="logistics\MCMissionNames.h" />
+    <ClInclude Include="logistics\MCOperationVideo.h" />
     <ClInclude Include="logistics\MCPilotInventoryBlock.h" />
     <ClInclude Include="logistics\MCPilotPurchaseBlock.h" />
     <ClInclude Include="logistics\MCPlayerNameObject.h" />

@@ -3,6 +3,8 @@
 #include "lib/MCDiskFile.h"
 #include "lib/MCFirstUse.h"
 #include "main/MCTelemetry.h"
+#include "platform/MCRenderer.h"
+#include "platform/MCSmacker.h"
 #include "platform/MCUtf8Path.h"
 
 #include <condition_variable>
@@ -487,6 +489,37 @@ auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::un
     impl.Worker = std::jthread([&impl, width = movie->_Width, height = movie->_Height](std::stop_token stop)
                                { impl.Decode(stop, width, height); });
     return movie;
+}
+
+auto MCHdMovie::Over(const MCSmackTag& movie) -> std::unique_ptr<MCHdMovie>
+{
+    const std::optional<std::filesystem::path> path = MCHdArt::FindMovie(movie.FileName);
+
+    if (!path.has_value() || !MCRenderer::ShowsHdPictures())
+    {
+        return nullptr;
+    }
+
+    const MCSmackerPlayer& player = *movie.Player;
+    std::expected<std::unique_ptr<MCHdMovie>, std::string> opened = Open(*path);
+
+    if (!opened)
+    {
+        SDL_Log("HD movie: %s; the original plays", opened.error().c_str());
+        return nullptr;
+    }
+
+    const MCHdMovie& hd = **opened;
+
+    if (!hd.ScaleOver(player.Width(), player.Height()).has_value() || hd.Frames() != player.Frames())
+    {
+        SDL_Log("HD movie: %s's %u frames of %dx%d don't fit the movie's %u of %dx%d; the original plays",
+                movie.FileName.c_str(), hd.Frames(), hd.Width(), hd.Height(), player.Frames(), player.Width(),
+                player.Height());
+        return nullptr;
+    }
+
+    return std::move(*opened);
 }
 
 auto MCHdMovie::ScaleOver(int32_t width, int32_t height) const -> std::optional<int32_t>

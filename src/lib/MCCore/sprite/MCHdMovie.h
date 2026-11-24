@@ -2,6 +2,8 @@
 
 #include "sprite/MCHdArt.h"
 
+struct MCSmackTag;
+
 /// <summary>
 /// Port-only (HD movies): how a frame's Y, U and V make its colours, as SDL's own conversion makes them
 /// (src/lib/SDL-release-3.4.12/src/video/yuv2rgb: yuv_rgb_internal.h's YUV2RGB, in 6-bit fixed point): red is
@@ -30,6 +32,13 @@ class MCHdMovie
 public:
     /// <summary>Opens the movie at <paramref name="path"/>, reading its header, and starts decoding it.</summary>
     static std::expected<std::unique_ptr<MCHdMovie>, std::string> Open(const std::filesystem::path& path);
+
+    /// <summary>
+    /// The HD art pack's frames for <paramref name="movie"/> (<see cref="MCHdArt::FindMovie"/>), opened from the first,
+    /// when the pack has them, they are as many as the movie's, its size scaled by a whole number, and the screen is
+    /// sharp (off one they wouldn't be seen); none else (the log says why when the pack has them).
+    /// </summary>
+    static std::unique_ptr<MCHdMovie> Over(const MCSmackTag& movie);
     ~MCHdMovie();
     MCHdMovie(const MCHdMovie&) = delete;
     MCHdMovie& operator=(const MCHdMovie&) = delete;

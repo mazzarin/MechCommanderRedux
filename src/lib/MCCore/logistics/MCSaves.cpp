@@ -248,6 +248,56 @@ namespace
     {
         return settings.SeekBlock(block) == 0 ? settings.Read<int32_t>(count).value_or(0) : 0;
     }
+
+    /// <summary>
+    /// <paramref name="settings"/>' entry <paramref name="name"/> in its block <paramref name="block"/>; none without the
+    /// block. (A default MCFitResult holds a 0: a save cut short before its points read as one with 0 RP.)
+    /// </summary>
+    template <MCFitValue T> MCFitResult<T> ReadIn(MCFitIniFile& settings, std::string_view block, std::string_view name)
+    {
+        if (settings.SeekBlock(block) != 0)
+        {
+            return std::unexpected(MCFitError::BlockNotFound);
+        }
+
+        return settings.Read<T>(name);
+    }
+
+    /// <summary>A save's mission number (its General block's) and its points (its ResourcePoints block's).</summary>
+    std::pair<MCFitResult<int32_t>, MCFitResult<uint32_t>> MissionAndPoints(MCFitIniFile& settings)
+    {
+        return {ReadIn<int32_t>(settings, "General", "MissionNumber"),
+                ReadIn<uint32_t>(settings, "ResourcePoints", "numPoints")};
+    }
+}
+
+auto MCSaves::ReadSettings(const std::string& gamePath) -> std::optional<MCSettings>
+{
+    MCPacketFile packets;
+    MCFitIniFile settings;
+
+    if (!OpenSettings(gamePath, packets, settings))
+    {
+        return std::nullopt;
+    }
+
+    const int32_t planet = ReadIn<int32_t>(settings, "Planet", "Setting").value_or(0);
+    const auto [mission, points] = MissionAndPoints(settings);
+
+    if (planet < 0 || static_cast<size_t>(planet) >= MasterFiles.size())
+    {
+        SDL_Log("MCSaves: the save %s names campaign %d, which the game doesn't have", gamePath.c_str(), planet);
+        return std::nullopt;
+    }
+
+    if (!mission.has_value() || !points.has_value())
+    {
+        SDL_Log("MCSaves: the save %s names no mission or no points", gamePath.c_str());
+        return std::nullopt;
+    }
+
+    return MCSettings{
+        .Campaign = static_cast<MCCampaign>(planet), .MissionNumber = *mission, .ResourcePoints = *points};
 }
 
 auto MCSaves::ReadScenarios(std::string_view master) -> std::vector<MCScenario>
@@ -323,38 +373,25 @@ void MCSaves::Refresh()
 void MCSaves::ReadSave(MCSave& save, std::span<const std::vector<MCScenario>> campaigns,
                        std::unordered_map<std::string, MCNamed>& named) const
 {
-    MCPacketFile packets;
-    MCFitIniFile settings;
+    // A damaged save is listed by its name alone, off CONTINUE and CAMPAIGNS (Latest).
+    const std::optional<MCSettings> settings = ReadSettings(SaveFile(save.Name));
 
-    if (!OpenSettings(SaveFile(save.Name), packets, settings))
+    if (!settings.has_value())
     {
         return;
     }
 
-    const int32_t planet = settings.SeekBlock("Planet") == 0 ? settings.Read<int32_t>("Setting").value_or(0) : 0;
-    const MCFitResult<int32_t> missionNumber =
-        settings.SeekBlock("General") == 0 ? settings.Read<int32_t>("MissionNumber") : MCFitResult<int32_t>();
-    const MCFitResult<uint32_t> points =
-        settings.SeekBlock("ResourcePoints") == 0 ? settings.Read<uint32_t>("numPoints") : MCFitResult<uint32_t>();
-
-    if (planet < 0 || static_cast<size_t>(planet) >= campaigns.size() || !missionNumber.has_value() ||
-        !points.has_value())
-    {
-        SDL_Log("MCSaves: the save %s names campaign %d and no mission or points the game has", save.Name.c_str(),
-                planet);
-        return;
-    }
-
-    const size_t campaign = static_cast<size_t>(planet);
+    const size_t campaign = static_cast<size_t>(settings->Campaign);
     const std::vector<MCScenario>& scenarios = campaigns[campaign];
-    save.Campaign = static_cast<MCCampaign>(campaign);
-    save.ResourcePoints = *points;
+    save.Campaign = settings->Campaign;
+    save.ResourcePoints = settings->ResourcePoints;
+    const int32_t missionNumber = settings->MissionNumber;
     // The game's own saves name their mission (the one begun or played); a named save is the briefing's it was made at.
     std::optional<size_t> scenario;
 
-    if (*missionNumber >= 0 && static_cast<size_t>(*missionNumber) < scenarios.size())
+    if (missionNumber >= 0 && static_cast<size_t>(missionNumber) < scenarios.size())
     {
-        scenario = static_cast<size_t>(*missionNumber);
+        scenario = static_cast<size_t>(missionNumber);
         // Port-only (stage 7): the mission it opens on is its number's (an after save's, the next one).
         save.OpensOperation = scenarios[*scenario].Operation;
         save.OpensMission = scenarios[*scenario].Mission;
@@ -390,7 +427,7 @@ void MCSaves::ReadSave(MCSave& save, std::span<const std::vector<MCScenario>> ca
 
     if (!scenario.has_value())
     {
-        SDL_Log("MCSaves: the save %s's mission %d isn't in its campaign", save.Name.c_str(), *missionNumber);
+        SDL_Log("MCSaves: the save %s's mission %d isn't in its campaign", save.Name.c_str(), missionNumber);
         return;
     }
 
@@ -453,10 +490,7 @@ auto MCSaves::ReadSolo(std::string name) -> MCSolo
         return solo;
     }
 
-    const MCFitResult<int32_t> missionNumber =
-        settings.SeekBlock("General") == 0 ? settings.Read<int32_t>("MissionNumber") : MCFitResult<int32_t>();
-    const MCFitResult<uint32_t> points =
-        settings.SeekBlock("ResourcePoints") == 0 ? settings.Read<uint32_t>("numPoints") : MCFitResult<uint32_t>();
+    const auto [missionNumber, points] = MissionAndPoints(settings);
     // Its campaign of one mission, as the game loads it (MCLogistics::ReadCampaign's "campaign" and its name).
     const std::vector<MCScenario> scenarios = ReadScenarios(std::string(SoloMasterPrefix) + solo.Name);
 

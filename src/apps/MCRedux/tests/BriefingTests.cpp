@@ -312,13 +312,10 @@ TEST_CASE_ISOLATED("game: the main menu offers LOAD MISSION while there are save
     std::shared_ptr<MCLogistics> logistics = GlobalLog();
     CHECK(!logistics->MainScreen->Element<MCLogButton>(MCTestGame::MainMenuLoadButton)->Disabled);
 
-    {
-        // The pinned saves are empty files: reading each as the screen opens reports it, and lists it by name.
-        MCTest::ExpectAssert emptySaves("could not find packet 0 in save game file",
-                                        static_cast<int32_t>(Saves.size()));
-        LoadScreen();
-        Settle();
-    }
+    // The pinned saves are empty files: reading each as the screen opens logs it by name (no assert), and lists it by
+    // name.
+    LoadScreen();
+    Settle();
 
     REQUIRE(logistics->CurrentScreen() == logistics->LoadScreen);
     const std::vector<MCFileScrollPane::File>& files = logistics->LoadScreen->FilePane->Files;
@@ -1274,7 +1271,10 @@ TEST_CASE_ISOLATED("game: a save naming a mission the campaign doesn't have is r
         return;
     }
 
-    REQUIRE(MCTestGame::StartLogistics());
+    // Its saves in a folder of its own, gone with it whatever its result: a refused one left behind would be the
+    // next test's to read.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     Settle();
     NewCampaign();
     Settle();
@@ -1295,8 +1295,6 @@ TEST_CASE_ISOLATED("game: a save naming a mission the campaign doesn't have is r
     REQUIRE_EQ(logistics->SaveCampaign("p3badmission"), 0);
     CHECK_EQ(logistics->LoadCampaign("p3badmission", ".sav", false, true), 0);
     CHECK_EQ(logistics->CurrentMission, goodMission);
-    MCFileSystem::RemoveFile(GamePath(SavePath, "p3badmission", ".sav"));
-    MCFileSystem::RemoveFile(GamePath(SavePath, "p3badmission", ".pur"));
 }
 
 namespace
@@ -1372,7 +1370,9 @@ TEST_CASE_ISOLATED("game: a save asking for more copies of a spare mech than a c
     // The most copies a save's unit entry may ask for (MCLogisticsCampaign.cpp's MostCopies).
     constexpr int32_t MostCopies = 1000;
     constexpr std::string_view Save = "p3copies";
-    REQUIRE(MCTestGame::StartLogistics());
+    // Its save in a folder of its own, gone with it whatever its result.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     Settle();
     NewCampaign();
     Settle();
@@ -1411,9 +1411,6 @@ TEST_CASE_ISOLATED("game: a save asking for more copies of a spare mech than a c
     askFor(MostCopies + 1);
     CHECK(logistics->LoadCampaign(Save, ".sav", false, true) != 0);
     CHECK_EQ(logistics->MechList->GetMechCount(), 0);
-
-    MCFileSystem::RemoveFile(GamePath(SavePath, Save, ".sav"));
-    MCFileSystem::RemoveFile(GamePath(SavePath, Save, ".pur"));
 }
 
 namespace
@@ -1453,7 +1450,10 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         return;
     }
 
-    REQUIRE(MCTestGame::StartLogistics());
+    // Its saves in a folder of its own, gone with it whatever its result: the refused one left behind (as a failed run
+    // left it, 24 Nov) was every later test's in its worker to read as the game started.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     Settle();
     std::shared_ptr<MCLogistics> logistics = GlobalLog();
     REQUIRE(logistics->PurMechList != nullptr);
@@ -1519,12 +1519,224 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         logistics->SetUpMainScreen(false);
         Settle();
     }
+}
 
-    for (const std::string_view save : {"p3good", "p3refused"})
+namespace
+{
+    /// <summary>The good save beside the damaged ones, and how long before them it was written.</summary>
+    constexpr std::string_view GoodSave = "Kaio, good";
+    constexpr int64_t GoodSaveHoursAgo = 2;
+    constexpr int64_t SecondsPerHour = 60 * 60;
+    /// <summary>A foreign file's length and the pattern of its bytes (no packet file's header).</summary>
+    constexpr size_t ForeignBytes = 256;
+    constexpr uint32_t ForeignStep = 37;
+    constexpr uint32_t ForeignStart = 11;
+    /// <summary>How much of its settings a short save has lost.</summary>
+    constexpr size_t ShortBy = 40;
+    /// <summary>A mission number no campaign has, and a campaign (the [Planet] Setting) the game hasn't.</summary>
+    constexpr int32_t NoSuchMission = 9999;
+    constexpr int32_t NoSuchCampaign = 5;
+
+    /// <summary>
+    /// The settings (a save's first packet) of campaign <paramref name="setting"/>'s mission <paramref name="mission"/>
+    /// (without its General block for none).
+    /// </summary>
+    std::string SettingsOf(int32_t setting, std::optional<int32_t> mission)
     {
-        MCFileSystem::RemoveFile(GamePath(SavePath, save, ".sav"));
-        MCFileSystem::RemoveFile(GamePath(SavePath, save, ".pur"));
+        const std::string general =
+            mission.has_value() ? std::format("[General]\r\nl MissionNumber={}\r\n", *mission) : std::string();
+        return std::format(
+            "FITini\r\n[Planet]\r\nl Setting={}\r\n{}[ResourcePoints]\r\nul numPoints=1000\r\nFITend\r\n", setting,
+            general);
     }
+
+    /// <summary>Writes <paramref name="bytes"/> as save <paramref name="name"/>'s whole file.</summary>
+    void WriteSaveFile(std::string_view name, std::span<const uint8_t> bytes)
+    {
+        MCFile file;
+        REQUIRE_EQ(file.Create(GamePath(SavePath, name, ".sav")), 0);
+        REQUIRE_EQ(file.Write(bytes), static_cast<int32_t>(bytes.size()));
+    }
+
+    /// <summary>Writes save <paramref name="name"/> as a packet file whose one packet is <paramref name="settings"/>.</summary>
+    void WriteSettingsSave(std::string_view name, std::string_view settings)
+    {
+        MCPacketFile out;
+        REQUIRE_EQ(out.Create(GamePath(SavePath, name, ".sav")), 0);
+        out.Reserve(1);
+        out.WritePacket(0, std::span(reinterpret_cast<const uint8_t*>(settings.data()), settings.size()),
+                        MCPacketStorage::Raw);
+    }
+
+    /// <summary>Save <paramref name="name"/>'s whole file.</summary>
+    std::vector<uint8_t> SaveFileBytes(std::string_view name)
+    {
+        MCFile file;
+        REQUIRE_EQ(file.Open(GamePath(SavePath, name, ".sav")), 0);
+        std::vector<uint8_t> bytes(file.FileSize());
+        REQUIRE_EQ(file.Read(bytes), static_cast<int32_t>(bytes.size()));
+        return bytes;
+    }
+
+    /// <summary>
+    /// The damaged saves a player's folder can hold, by name: an empty file, a foreign one, a packet file whose settings
+    /// aren't a FIT file, one cut short inside its settings (its points gone), one naming no mission, and ones naming a
+    /// campaign the game hasn't and missions their campaign hasn't (below it, and past it).
+    /// </summary>
+    std::vector<std::string> WriteDamagedSaves()
+    {
+        std::vector<std::string> names;
+        const auto named = [&names](std::string_view name) -> std::string_view { return names.emplace_back(name); };
+
+        WriteSaveFile(named("Damaged, empty"), {});
+        std::vector<uint8_t> foreign(ForeignBytes);
+
+        for (size_t index = 0; index < foreign.size(); index++)
+        {
+            foreign[index] = static_cast<uint8_t>(ForeignStart + ForeignStep * index);
+        }
+
+        WriteSaveFile(named("Damaged, foreign"), foreign);
+        WriteSettingsSave(named("Damaged, not settings"),
+                          std::string_view(reinterpret_cast<const char*>(foreign.data()), foreign.size()));
+        WriteSettingsSave("Damaged, short", SettingsOf(0, 0));
+        std::vector<uint8_t> whole = SaveFileBytes(named("Damaged, short"));
+        REQUIRE(whole.size() > ShortBy);
+        whole.resize(whole.size() - ShortBy);
+        WriteSaveFile("Damaged, short", whole);
+        WriteSettingsSave(named("Damaged, no mission"), SettingsOf(0, std::nullopt));
+        WriteSettingsSave(named("Damaged, campaign"), SettingsOf(NoSuchCampaign, 0));
+        WriteSettingsSave(named("Damaged, mission below"), SettingsOf(0, -1));
+        WriteSettingsSave(named("Damaged, mission past"), SettingsOf(0, NoSuchMission));
+        return names;
+    }
+}
+
+/// <summary>
+/// Damaged saves in the save folder (a player's, or one a test left: the refused test's naming the campaign's end, which
+/// tripped 1998's load and save screens' asserts in every later test of its worker as each start made them, 24 Nov)
+/// don't stop the menus reading the others: each is logged by its name, kept off CONTINUE and CAMPAIGNS, and listed by
+/// its name alone, on LOAD GAME (whose LOAD says it couldn't be loaded) and 1998's screens. The good save beside them
+/// still shows and plays. They're there before the main menu first shows.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: damaged saves are left off CONTINUE and CAMPAIGNS and named on LOAD GAME; the rest still play")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    std::vector<std::string> damaged;
+    REQUIRE(MCTestGame::StartLogistics(
+        [&]
+        {
+            pinned.emplace();
+            damaged = WriteDamagedSaves();
+        }));
+    Settle();
+    std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    // As the game starts: no CONTINUE (no save can be read).
+    CHECK(MCTestGuest::Panel(MCMainPanel::Main).ContinueLine().empty());
+
+    // A good save, older than the damaged ones, and the game's own save of the campaign's end (the refused test's).
+    NewCampaign();
+    Settle();
+    const int32_t goodMission = logistics->CurrentMission;
+    REQUIRE_EQ(logistics->SaveCampaign(GoodSave), 0);
+    std::filesystem::last_write_time(MCFileSystem::Resolve(GamePath(SavePath, GoodSave, ".sav")),
+                                     std::filesystem::file_time_type::clock::now() -
+                                         std::chrono::seconds(GoodSaveHoursAgo * SecondsPerHour));
+    logistics->CurrentMission = static_cast<int32_t>(Mission()->Scenarios.size());
+    REQUIRE_EQ(logistics->SaveCampaign("Damaged, the campaign's end"), 0);
+    damaged.emplace_back("Damaged, the campaign's end");
+    logistics->CurrentMission = goodMission;
+
+    // 1998's load and save screens, as each start makes them (the leftover refused save tripped their asserts in every
+    // later test of its worker, 24 Nov): every save in their lists, the damaged ones by name alone.
+    for (const std::shared_ptr<MCSplashScreen>& screen : {logistics->LoadScreen.Lock(), logistics->SaveScreen.Lock()})
+    {
+        REQUIRE(screen != nullptr);
+        REQUIRE(screen->FilePane != nullptr);
+        screen->FilePane->SetStartDirectory(SavePath);
+        std::vector<MCFileScrollPane::File>& files = screen->FilePane->Files;
+
+        for (const std::string& name : damaged)
+        {
+            MCTest::Scope entry(std::format("1998's list, {}", name));
+            const auto file = std::ranges::find(files, name, &MCFileScrollPane::File::Name);
+            REQUIRE(file != files.end());
+            CHECK_EQ(file->Operation, 0);
+        }
+
+        const auto good = std::ranges::find(files, std::string(GoodSave), &MCFileScrollPane::File::Name);
+        REQUIRE(good != files.end());
+        CHECK_EQ(good->Operation, 1);
+        CHECK_EQ(good->Mission, 1);
+        CHECK_EQ(good->ResourcePoints, static_cast<uint32_t>(ResourcePoints));
+    }
+
+    // The main menu as a start finds it (no campaign loaded): CONTINUE the good save.
+    logistics->SetUpMainScreen(false);
+    Settle();
+    logistics->CurrentMission = -1;
+    MCTestGuest::Panel(MCMainPanel::Main).Refresh();
+    Settle();
+    MCSaves& saves = MCSaves::Game();
+    REQUIRE(saves.Latest().has_value());
+    CHECK_EQ(saves.Latest()->get().Name, std::string(GoodSave));
+    CHECK_EQ(MCTestGuest::Panel(MCMainPanel::Main).ContinueLine(), "Original campaign · Operation 1, mission 1");
+
+    for (const std::string& name : damaged)
+    {
+        MCTest::Scope entry(name);
+        const MCOptionalRef<const MCSaves::MCSave> save = saves.Find(name);
+        REQUIRE(save.has_value());
+        CHECK(!save->get().Read);
+    }
+
+    // CAMPAIGNS: the original's CONTINUE the good save; the expansion not started.
+    const MCMainMenuModel::MCCampaignList campaigns = MCMainMenuModel::Campaigns();
+    REQUIRE_EQ(campaigns.Rows.size(), size_t{2});
+    CHECK_EQ(campaigns.Rows[0].Line, "MechCommander · Operation 1, mission 1");
+    CHECK_EQ(campaigns.Latest[0], std::string(GoodSave));
+    CHECK_EQ(campaigns.Rows[1].Line, "Desperate Measures · Not started");
+    CHECK(campaigns.Latest[1].empty());
+
+    // LOAD GAME: every save, the damaged ones by name alone; LOAD on one says it couldn't be loaded.
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    Settle();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& loadGame = MCSavesMenu::Screen()->get();
+    REQUIRE_EQ(loadGame.Saves().size(), damaged.size() + 1);
+
+    for (size_t row = 0; row < loadGame.Saves().size(); row++)
+    {
+        MCTest::Scope entry(loadGame.Saves()[row]);
+        // A named save is listed by its name too, with its campaign, as every save the game can read.
+        const bool good = loadGame.Saves()[row] == GoodSave;
+        CHECK_EQ(loadGame.Rows()[row].Mission, loadGame.Saves()[row]);
+        CHECK_EQ(loadGame.Rows()[row].Campaign, std::string(good ? "Original" : ""));
+    }
+
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    Settle();
+    LoadFromScreen("Damaged, the campaign's end");
+    REQUIRE(loadGame.Dialog());
+    CHECK(loadGame.Dialog()->Shown());
+    CHECK_EQ(loadGame.Dialog()->Saying().Question, std::string(MCSavesMenu::RefusedText));
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    Settle();
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    Settle();
+
+    // The good one plays.
+    LoadFromScreen(GoodSave);
+    CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
+    CHECK_EQ(logistics->CurrentMission, goodMission);
+    logistics->SetUpMainScreen(false);
+    Settle();
 }
 
 namespace

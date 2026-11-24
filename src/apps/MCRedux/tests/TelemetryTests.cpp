@@ -1140,7 +1140,7 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
     // Port-only (stage 7): over the remade main menu, at the recorded frames' windows.
     MCScreenInput::RealMove(0, 0);
     MCMenusPictures::CheckWindowFrames(*MCInput::Display(), "main_menu_reports_notice",
-                                       {0x648a1cdb, 0xfacd7593, 0xd500388d}, SettleMenusWindow);
+                                       {0xfa1efc70, 0x70293fd0, 0x252f245e}, SettleMenusWindow);
     REQUIRE(MCRemadeTest::Press(*notice, "yes"));
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(MCMainMenuScreens::MainOnTop());
@@ -1283,7 +1283,7 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     // Port-only (stage 7): over the remade main menu, at the recorded frames' windows.
     MCScreenInput::RealMove(0, 0);
     MCMenusPictures::CheckWindowFrames(*MCInput::Display(), "main_menu_reports_question",
-                                       {0xe3e5ec71, 0x3b5e4814, 0x52bdd4cd}, SettleMenusWindow);
+                                       {0x64cb4c3a, 0x26198167, 0x9aad576e}, SettleMenusWindow);
     REQUIRE(MCRemadeTest::Press(*question, "no"));
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(MCRemadeTest::OnTop<MCRmlScreen>() != question);
@@ -1355,7 +1355,10 @@ TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and 
     constexpr int32_t componentEntries = 50;
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
-    REQUIRE(MCTestGame::StartLogistics());
+    // Its saves in a folder of its own, gone with it whatever its result: a refused one left behind would be the next
+    // test's to read.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
     reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
@@ -1418,11 +1421,4 @@ TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and 
     CHECK_EQ(logistics->LoadCampaign("p3reported", ".sav", false, true), 0);
     CHECK_EQ(logistics->CurrentMission, good);
     CHECK_EQ(reports.Log->Requests.size(), reported);
-
-    for (const std::string_view save : {"p3reported", "p3past", "p3end", "p3damaged"})
-    {
-        MCFileSystem::RemoveFile(GamePath(SavePath, save, ".sav"));
-    }
-
-    MCFileSystem::RemoveFile(GamePath(SavePath, "p3reported", ".pur"));
 }

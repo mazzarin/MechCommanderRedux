@@ -14,8 +14,7 @@
 class MCUpdateScreen final : public MCRmlScreen
 {
 public:
-    /// <summary><paramref name="place"/>: where it opened, over the name ("Main menu", "Internet").</summary>
-    explicit MCUpdateScreen(std::string place);
+    MCUpdateScreen();
 
     /// <summary>
     /// The main menu's UPDATE pressed: the remade screen opened through the screens' flow over the screen shown; the old
@@ -29,12 +28,6 @@ public:
     /// the game to join once it's in (network/MCLobbyUpdate.h).
     /// </summary>
     static bool Open();
-
-    /// <summary>
-    /// Where UPDATE opens from now, as its eyebrow names it: the screen the flow shows ("Internet", "LAN", else "Main
-    /// menu").
-    /// </summary>
-    static std::string PlaceOfShown();
 
     /// <summary>Whether the remade UPDATE shows (the reports' and the due art's notices wait for it).</summary>
     static bool Shows();
@@ -72,7 +65,6 @@ private:
     /// <summary>A button pressed: what it does now.</summary>
     void Press(MCAct act);
 
-    std::string _Place;
     MCAct _Main = MCAct::None;
     MCAct _Second = MCAct::None;
     /// <summary>The notes and status last written (RmlUi lays the document out again for a change).</summary>

@@ -349,7 +349,7 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
     CHECK_EQ(std::string(again.Team1RPText->Text()), std::to_string(Team1Points));
     CHECK_EQ(std::string(again.Team2RPText->Text()), std::to_string(Team2Points));
-    CHECK_EQ(again.StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
+    CHECK_EQ(MCSessionScreen::Room().StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
     CHECK_EQ(MCLobbyUpdate::StartQuestion(), std::string("ANN ISN'T BACK YET. START WITHOUT ANN?"));
     SaveShot("rematch 0 room again", ScreenHash());
 
@@ -360,7 +360,7 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
         [&]
         { return MCTestGuest::RoomShows(annAgain.Id()) && MCSessionScreen::Room().Team2Players[1] == annAgain.Id(); }));
     Settle();
-    CHECK(again.StartWaits.empty());
+    CHECK(MCSessionScreen::Room().StartWaits.empty());
     CHECK(MCLobbyUpdate::StartQuestion().empty());
     CHECK(MCSessionScreen::Room().Team1Players[0] == manager.MyPlayerID);
     SaveShot("rematch 1 guest back", ScreenHash());
@@ -425,7 +425,7 @@ TEST_CASE_ISOLATED("game: a host's REMATCH from its match's results hosts the ro
     CHECK(MultiPlayer()->IsHost);
     CHECK_EQ(manager.CurrentSession()->Name, std::string("COMMANDER'S GAME"));
     CHECK_EQ(manager.GetPlayers(nullptr).size(), 1u);
-    CHECK_EQ(GlobalLog()->SessionScreen->StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
+    CHECK_EQ(GlobalLog()->Room.StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
     SaveShot("rematch 3 room again from the results", ScreenHash());
     IsMPlayerGame = false;
 }

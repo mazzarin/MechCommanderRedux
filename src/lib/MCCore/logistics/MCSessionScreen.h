@@ -168,13 +168,21 @@ public:
     /// <summary>
     /// Lights the start button when every player is on a team and a mission is loaded. Port-only (the personal build):
     /// and every player in the session is on the screen (a player who just joined is shown first), and no guest is
-    /// away updating, for a while at most in all (network/MCLobbyUpdate.h); while one is, <see cref="StartWaits"/>
-    /// says whom the room waits for, in the update's line's place.
+    /// away updating, for a while at most in all (network/MCLobbyUpdate.h); while one is, the room model's
+    /// <see cref="MCRoomModel::StartWaits"/> says whom the room waits for, in the update's line's place.
     /// </summary>
     void CheckGoodToGo();
 
     /// <summary>Sets team <paramref name="team"/>'s tech base (1 Inner Sphere, -1 Clan) and its toggles.</summary>
     void SetTeamTechBase(int8_t team, int8_t techBase);
+
+    /// <summary>
+    /// A tech base toggle's press: sets team <paramref name="team"/>'s tech base and, on the host, tells the others.
+    /// </summary>
+    void PickTechBase(int8_t team, int8_t techBase);
+
+    /// <summary>The start button's press: starts the loaded mission (asking first while a guest is away updating).</summary>
+    void Begin();
 
     /// <summary>Enables the host's controls.</summary>
     void ControlsOn();
@@ -213,8 +221,6 @@ public:
     MCGuiHandle<MCLogSpinnerButton> Team2RPUp;
     /// <summary>Lowers team 2's resource points.</summary>
     MCGuiHandle<MCLogSpinnerButton> Team2RPDown;
-    /// <summary>The loaded mission's time ("m:ss"), drawn beside the mission name; empty without one.</summary>
-    std::string MissionLabel;
     /// <summary>Team 1's Inner Sphere tech base toggle.</summary>
     MCGuiHandle<MCLogToolButton> Team1ISButton;
     /// <summary>Team 1's Clan tech base toggle.</summary>
@@ -256,11 +262,6 @@ public:
     /// Null in other games, and in a build that doesn't update itself.
     /// </summary>
     MCGuiHandle<MCLogObject> UpdateLine;
-    /// <summary>
-    /// Port-only (the personal build): whom the room waits for, guests away updating ("WAITING FOR ANN TO REJOIN."), as
-    /// <see cref="CheckGoodToGo"/> last found; empty when it waits for no one.
-    /// </summary>
-    std::string StartWaits;
 
     /// <summary>Port: draws the map box (<see cref="MapPicture"/>) into <paramref name="target"/>.</summary>
     void DrawMap(const MCPane& target) const;
@@ -272,7 +273,7 @@ private:
     /// <summary>Lays the names of the players on no team down the unassigned list (see the callers for the skips).</summary>
     void LayOutUnassigned(uint32_t skipId, size_t names, bool skipEmpty);
 
-    /// <summary>Port-only (the personal build): <see cref="StartWaits"/>' line, in the update's line's place.</summary>
+    /// <summary>Port-only (the personal build): the room model's StartWaits line, in the update's line's place.</summary>
     void DrawStartWaits(const MCPane& frame);
 
     /// <summary>The spinners' and tech toggles' live state (the host's, or an unlocked mission's).</summary>
@@ -312,13 +313,6 @@ private:
     bool _Pinging = false;
     /// <summary>Port-only (Redux HD): the room has rolled over to this game, whose next look takes it (TakeOverRoom).</summary>
     bool _TakingOver = false;
-    /// <summary>
-    /// Port-only (the personal build): the name the host loaded its mission by, while one is loaded (Port-only, Redux HD:
-    /// on a guest too, for a room rolled over to it).
-    /// </summary>
-    std::string _LoadedMission;
-    /// <summary>Port-only (the personal build): the loaded mission fixes its points and tech bases (its Lock block).</summary>
-    bool _MissionLocked = false;
     /// <summary>
     /// Port-only (the personal build): the host's guests whose game was up (they had pinged) when they were last shown
     /// the room; one shown before it was up is shown it again once it is.

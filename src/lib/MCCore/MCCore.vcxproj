@@ -249,6 +249,7 @@
     <ClCompile Include="logistics\MCRepairScreen.cpp" />
     <ClCompile Include="logistics\MCReportsNotice.cpp" />
     <ClCompile Include="logistics\MCReusableDialog.cpp" />
+    <ClCompile Include="logistics\MCRoomModel.cpp" />
     <ClCompile Include="logistics\MCSessionScreen.cpp" />
     <ClCompile Include="logistics\MCSmuti.cpp" />
     <ClCompile Include="logistics\MCSplashScreen.cpp" />

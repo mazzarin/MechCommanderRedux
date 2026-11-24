@@ -678,6 +678,9 @@
     <ClCompile Include="logistics\MCReusableDialog.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCRoomModel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCSessionScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>

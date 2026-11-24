@@ -701,7 +701,10 @@ TEST_CASE_ISOLATED("game: SAVE GAME saves under the name typed, asks before writ
     CHECK(!screen.Dialog()->Shown());
     CHECK(screen.Shown());
     MCSaves::Game().Refresh();
-    CHECK_EQ(MCSaves::Game().Find(first)->get().Saved, written);
+    // Not written again: its time as it was, to the second (MCSaves reads a file's time through the file clock's and
+    // the system clock's now, a microsecond or so apart from one read to the next; written again it'd be an hour on).
+    constexpr SDL_Time ReadBackSlack = SDL_NS_PER_SECOND;
+    CHECK(std::llabs(MCSaves::Game().Find(first)->get().Saved - written) < ReadBackSlack);
     screen.PressMain();
     screen.Dialog()->Answer();
     CHECK_EQ(screen.Dialog()->Saying().Question, std::string(MCSavesMenu::SavedText));

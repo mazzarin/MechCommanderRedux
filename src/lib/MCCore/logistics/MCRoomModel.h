@@ -178,6 +178,11 @@ public:
     bool CanChangeTeams() const { return Hosting() && HostControls; }
     /// <summary>Whether the host may set the teams' tech bases and points (and the mission doesn't fix them).</summary>
     bool CanChangeForces() const { return CanChangeTeams() && !Locked; }
+    /// <summary>
+    /// Whether the host's room is closing (network/MCRoomEnd's WaitsForGuests: closed, or gone for its rematch) and
+    /// waits for its guests to leave first: nothing more to press on it meanwhile, LEAVE and BEGIN PLANNING held.
+    /// </summary>
+    bool Closing() const;
 
     // ---- What the room's views ask (the host's, as the 1998 screen's controls did; each sent as it was) ----
 
@@ -191,7 +196,7 @@ public:
     void SetPoints(int8_t team, int32_t points);
     /// <summary>Loads the multiplayer mission <paramref name="mission"/> (its packet's name), asking everyone for it.</summary>
     void ChooseMission(std::string_view mission);
-    /// <summary>Starts the match (the host's BEGIN PLANNING), when it can start.</summary>
+    /// <summary>Starts the match (the host's BEGIN PLANNING), when it can start and the room isn't closing.</summary>
     void BeginPlanning();
 
     /// <summary>

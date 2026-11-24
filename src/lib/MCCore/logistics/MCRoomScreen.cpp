@@ -129,7 +129,8 @@ MCRoomScreen::MCRoomScreen()
 {
     SetDocument(RoomDocument);
     Keys = {{"ENTER", "Say"}, {"ESC", "Leave"}};
-    Back = [] { MCScreenFlow::Back(); };
+    // Escape is LEAVE's, held as it is while the room closes.
+    Back = [this] { PressLeave(); };
 }
 
 MCRoomScreen::~MCRoomScreen() = default;
@@ -180,6 +181,7 @@ void MCRoomScreen::MakeModels(Rml::Context& context)
     model.Value("wait_colour", _WaitColour);
     model.Value("wait_what", _WaitWhat);
     model.Value("can_begin", _CanBegin);
+    model.Value("closing", _Closing);
 
     // A card's TEAM 1 and TEAM 2, and its drag onto a team's place or back to the players on no team.
     const auto argument = [](const Rml::VariantList& arguments, size_t at)
@@ -524,7 +526,10 @@ void MCRoomScreen::ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players)
     Keep("wait_colour", _WaitColour, host != players.end() ? MCChatView::ColourOf(host->Number) : std::string());
     Keep("wait_what", _WaitWhat,
          std::string(!room.MissionFile.empty() && placed && !players.empty() ? ToPlanning : ToChoose));
-    Keep("can_begin", _CanBegin, room.Hosting() && room.CanStart && game != nullptr);
+    // The host's room closing waits for its guests to leave (network/MCRoomEnd): LEAVE and BEGIN PLANNING held, as
+    // the 1998 room's EXIT and START were.
+    Keep("closing", _Closing, room.Closing());
+    Keep("can_begin", _CanBegin, room.Hosting() && room.CanStart && !room.Closing() && game != nullptr);
 }
 
 void MCRoomScreen::ShowControls()
@@ -575,7 +580,8 @@ MCRoomScreen::MCSeen MCRoomScreen::Seen() const
                 .Map = _HasMap ? _MapTitle : std::string(),
                 .UpdateLine = _UpdateLine,
                 .Hosting = _Hosting,
-                .CanBegin = _CanBegin};
+                .CanBegin = _CanBegin,
+                .Closing = _Closing};
     std::vector<std::string> facts;
 
     if (!_Access.empty())
@@ -640,7 +646,7 @@ MCRoomScreen::MCSeen MCRoomScreen::Seen() const
 
 void MCRoomScreen::PressBegin()
 {
-    if (_CanBegin)
+    if (_CanBegin && GlobalLog() != nullptr)
     {
         Room().BeginPlanning();
     }
@@ -648,10 +654,14 @@ void MCRoomScreen::PressBegin()
 
 void MCRoomScreen::PressLeave()
 {
-    if (Back)
+    // A second LEAVE while the room closes would leave at once (MCRoomEnd::CloseRoom takes only the first), and the
+    // guests waited for would lose the link instead of being told.
+    if (GlobalLog() == nullptr || Room().Closing())
     {
-        Back();
+        return;
     }
+
+    MCScreenFlow::Back();
 }
 
 void MCRoomScreen::PressJoin(uint32_t playerId, int8_t team)

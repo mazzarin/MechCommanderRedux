@@ -253,14 +253,10 @@ namespace
 }
 
 /// <summary>
-/// Port: why an option is held names every player whose game doesn't have it, then (for a line too narrow for them
-/// all) fewer and the rest counted, down to none named.
-/// </summary>
-/// <summary>
 /// The remade room's boxes take what the 1998 room's did. The chat sends what the 1998 chat box could
 /// (MCLogChatInput): its characters one byte each, the accented 0xbf-0xfd as those bytes, '%' (the chat formatter's
-/// code) and the rest left out, and shows that line back with its accents. The points take seven digits at most, as
-/// the 1998 RP box (whose tick would send more cut to seven).
+/// code) and the rest left out, and shows that line back with its accents, as it does the chat's names and its own
+/// lines. The points take seven digits at most, as the 1998 RP box (whose tick would send more cut to seven).
 /// </summary>
 TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's boxes did")
 {
@@ -287,6 +283,14 @@ TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's b
     const std::vector<std::string> chat = room.Seen().Chat;
     CHECK(std::ranges::find(chat, std::string("Bob: Ol\xc3\xa9, 100 sure !")) != chat.end());
 
+    // A name with the chat's accented bytes (an MCO player's "René") and a game's line with one: shown in UTF-8 too.
+    GlobalLog()->Chat->AddLine(std::format("%fc{}", GlobalLog()->PlayerColors[0]) + "Ren\xe9: %fc6hi");
+    GlobalLog()->Chat->AddLine("Ren\xe9 joined.");
+    Settle();
+    const std::vector<std::string> accented = room.Seen().Chat;
+    CHECK(std::ranges::find(accented, std::string("Ren\xc3\xa9: hi")) != accented.end());
+    CHECK(std::ranges::find(accented, std::string("Ren\xc3\xa9 joined.")) != accented.end());
+
     room.TypePoints(MCRoomModel::Team1, "9,999,999");
     Settle();
     CHECK_EQ(room.Seen().Points1, std::string("9,999,999"));
@@ -296,6 +300,10 @@ TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's b
     CHECK_EQ(room.Seen().Points1, std::string("9,999,999"));
 }
 
+/// <summary>
+/// Port: why an option is held names every player whose game doesn't have it, then (for a line too narrow for them
+/// all) fewer and the rest counted, down to none named.
+/// </summary>
 TEST_CASE("session screen: a held match option tells whose game doesn't have it to upgrade")
 {
     CHECK(MatchTellToUpgrade({}).empty());

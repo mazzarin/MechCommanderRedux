@@ -12,6 +12,7 @@
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"
@@ -276,6 +277,80 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
     clock.Advance(MCRoomEnd::LeaveWait);
     REQUIRE(SettleUntil([] { return OnLan(); }));
     CHECK(!InSession());
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 4): while the host's remade room closes and waits for its guests to leave, LEAVE,
+/// Escape and BEGIN PLANNING are held, as the 1998 room's EXIT and START were. A second LEAVE would leave at once, its
+/// guests losing the link instead of being told; BEGIN PLANNING would start a match in a closing room.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a LAN host's remade room holds LEAVE, Escape and BEGIN PLANNING while it waits for its guests")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28959";
+    constexpr std::string_view Mission = "ARENA";
+    const std::string address = std::format("127.0.0.1:{}", Port);
+    // The wait's clock held, so the room waits for ANN however long the presses take.
+    ManualClock clock;
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    HostFromLan(Port);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.HandsOn = false;
+    const uint32_t sameData = MCMissionDataHash(GamePath(SavePath, Mission, ".mpk"));
+    REQUIRE(sameData != 0);
+
+    // ANN on team 2 with the mission's file: BEGIN PLANNING lit.
+    Guest ann("ANN", MCMatchRule::Supported);
+    REQUIRE(ann.Join(*manager.DirectPlay, address));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
+    REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
+    ann.AnswerFiles(sameData);
+    MCSessionScreen& room = *GlobalLog()->SessionScreen;
+    room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
+    room.AssignPlayer(ann.Id(), 2, 0, false);
+    room.LoadMission(Mission);
+    REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && DialogText().empty(); }));
+    Settle();
+    const MCGuiHandle<MCRoomScreen> remade = RoomScreen();
+    REQUIRE(remade);
+    REQUIRE(remade->Seen().CanBegin);
+    CHECK(!remade->Seen().Closing);
+
+    // LEAVE: ANN is told and the room waits for her, LEAVE and BEGIN PLANNING greyed.
+    MCTestGuest::PressInRoom("leave");
+    REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
+    Settle();
+    CHECK(MCRoomEnd::WaitsForGuests());
+    CHECK(remade->Seen().Closing);
+    CHECK(!remade->Seen().CanBegin);
+    SaveShot("room end 3 closing", ScreenHash());
+
+    // LEAVE again, Escape and BEGIN PLANNING, clicked and pressed: still the room, waiting for ANN, no match.
+    MCTestGuest::PressInRoom("leave");
+    RealKey(SDL_SCANCODE_ESCAPE);
+    Settle();
+    MCTestGuest::PressInRoom("begin");
+    remade->PressLeave();
+    remade->PressBegin();
+    Settle();
+    CHECK(OnScreen(GlobalLog()->SessionScreen));
+    CHECK(InSession());
+    CHECK(!manager.SessionLocked());
+    CHECK(MCRoomEnd::WaitsForGuests());
+    CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Closed)});
+
+    // She leaves: the host goes back to the LAN games, nothing said.
+    ann.Leave();
+    REQUIRE(SettleUntil([] { return OnLan(); }));
+    CHECK(!InSession());
+    CHECK(DialogText().empty());
 }
 
 /// <summary>

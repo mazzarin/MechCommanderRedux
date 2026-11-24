@@ -102,7 +102,7 @@
                 </div>
             </div>
             <div id="foot" class="row">
-                <div class="button" id="leave" data-hint="Leave">Leave</div>
+                <div class="button" id="leave" data-class-off="closing" data-hint="Leave">Leave</div>
                 <div class="grow"></div>
                 <div class="status update-line" id="update" data-if="update_line != ''" data-hint="Update">{{update_line}}</div>
                 <div class="status" data-if="waits != ''">{{waits}}</div>

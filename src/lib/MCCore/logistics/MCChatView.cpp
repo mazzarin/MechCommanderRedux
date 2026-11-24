@@ -115,7 +115,8 @@ std::vector<MCChatView::MCLine> MCChatView::Read(const MCLogChat& chat)
     const std::string nameEnd = std::format("{}{}", NameEnd, ColourCode);
 
     // A player's line is "%fc<their colour>name: %fc<text colour>text" (MCLogChat::ProcessChatString); the rest are the
-    // game's own (who joined, who left, the code).
+    // game's own (who joined, who left, the code). Names, text and the game's lines all in UTF-8: a name can hold the
+    // chat's accented bytes too (an MCO player's).
     for (const MCLogChat::HistoryLine& history : chat.Lines)
     {
         const std::string_view text = history.Text;
@@ -126,17 +127,19 @@ std::vector<MCChatView::MCLine> MCChatView::Read(const MCLogChat& chat)
 
         if (!said || !number.has_value())
         {
-            lines.push_back(MCLine{
-                .Game = true, .Colour = std::string(GameColour), .Text = MCRmlDialogs::AsSentence(Uncoded(text))});
+            lines.push_back(MCLine{.Game = true,
+                                   .Colour = std::string(GameColour),
+                                   .Text = MCRmlDialogs::AsSentence(AsUtf8(Uncoded(text)))});
             continue;
         }
 
         const size_t textColourAt = split + nameEnd.size();
-        lines.push_back(MCLine{.Game = false,
-                               .Name = Uncoded(text.substr(ColourCode.size() + 1, split - ColourCode.size() - 1)),
-                               .Colour = ColourOf(*number),
-                               .Text = AsUtf8(Uncoded(text.substr(textColourAt + 1))),
-                               .Team = text[textColourAt] == TeamTextColour});
+        lines.push_back(
+            MCLine{.Game = false,
+                   .Name = AsUtf8(Uncoded(text.substr(ColourCode.size() + 1, split - ColourCode.size() - 1))),
+                   .Colour = ColourOf(*number),
+                   .Text = AsUtf8(Uncoded(text.substr(textColourAt + 1))),
+                   .Team = text[textColourAt] == TeamTextColour});
     }
 
     return lines;

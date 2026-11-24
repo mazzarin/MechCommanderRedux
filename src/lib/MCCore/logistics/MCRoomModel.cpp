@@ -8,6 +8,7 @@
 #include "main/MCLogistics.h"
 #include "network/MCInternetGame.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRoomEnd.h"
 
 namespace
 {
@@ -234,9 +235,15 @@ auto MCRoomModel::ChooseMission(std::string_view mission) -> void
     }
 }
 
+auto MCRoomModel::Closing() const -> bool
+{
+    return MCRoomEnd::WaitsForGuests();
+}
+
 auto MCRoomModel::BeginPlanning() -> void
 {
-    if (const MCOptionalRef<MCSessionScreen> screen = Screen(); screen.has_value() && Hosting() && CanStart)
+    if (const MCOptionalRef<MCSessionScreen> screen = Screen();
+        screen.has_value() && Hosting() && CanStart && !Closing())
     {
         screen->get().Begin();
     }

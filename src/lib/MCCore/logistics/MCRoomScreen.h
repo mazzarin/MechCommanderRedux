@@ -49,6 +49,8 @@ public:
         std::string UpdateLine;
         bool Hosting = false;
         bool CanBegin = false;
+        /// <summary>The host's room closing (its guests waited for): LEAVE and BEGIN PLANNING held.</summary>
+        bool Closing = false;
     };
 
     MCSeen Seen() const;
@@ -172,6 +174,7 @@ private:
     std::string _WaitColour;
     std::string _WaitWhat;
     bool _CanBegin = false;
+    bool _Closing = false;
 };
 
 /// <summary>

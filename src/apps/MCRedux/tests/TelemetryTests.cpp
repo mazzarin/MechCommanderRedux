@@ -1285,7 +1285,10 @@ TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and 
     constexpr int32_t componentEntries = 50;
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
-    REQUIRE(MCTestGame::StartLogistics());
+    // Its saves in a folder of its own, gone with it whatever its result: a refused one left behind would be the next
+    // test's to read.
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     MCTestGame::RunFrame(1.0f / 15.0f);
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
     reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
@@ -1348,11 +1351,4 @@ TEST_CASE_ISOLATED("game: each refused load is reported at once, saying why and 
     CHECK_EQ(logistics->LoadCampaign("p3reported", ".sav", false, true), 0);
     CHECK_EQ(logistics->CurrentMission, good);
     CHECK_EQ(reports.Log->Requests.size(), reported);
-
-    for (const std::string_view save : {"p3reported", "p3past", "p3end", "p3damaged"})
-    {
-        MCFileSystem::RemoveFile(GamePath(SavePath, save, ".sav"));
-    }
-
-    MCFileSystem::RemoveFile(GamePath(SavePath, "p3reported", ".pur"));
 }

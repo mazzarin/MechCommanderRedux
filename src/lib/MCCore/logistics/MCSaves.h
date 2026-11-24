@@ -93,6 +93,23 @@ public:
         int32_t Units = 0;
     };
 
+    /// <summary>What a campaign save's settings (its first packet) say of it.</summary>
+    struct MCSettings
+    {
+        /// <summary>Its [Planet] Setting (Port Arthur's without one).</summary>
+        MCCampaign Campaign = MCCampaign::Original;
+        /// <summary>Its MissionNumber: the scenario of its campaign's master mission file it opens on.</summary>
+        int32_t MissionNumber = 0;
+        uint32_t ResourcePoints = 0;
+    };
+
+    /// <summary>
+    /// The settings of the save <paramref name="gamePath"/>, as the saves list and 1998's load and save screens read
+    /// them; none, and the log told naming it, when the file can't be read (empty, cut short, not a save), or they name
+    /// a campaign the game doesn't have, or no mission or points. Such a save is damaged: listed by its name alone.
+    /// </summary>
+    static std::optional<MCSettings> ReadSettings(const std::string& gamePath);
+
     /// <summary>The single missions on disk, read now, by their files' names.</summary>
     static std::vector<MCSolo> SoloMissions();
 

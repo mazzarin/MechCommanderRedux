@@ -548,14 +548,15 @@ TEST_CASE_ISOLATED("game: a lobby's session screen asks for a LIGHTS key")
     REQUIRE(MCTestGame::StartLobby("-host -port 28975 -player BOB"));
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     StartWithOldPrefs();
-    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-    REQUIRE(dialog.IsShowing());
-    CHECK(dialog.Text.starts_with("LIGHTS is new and takes N"));
+    // Port-only (SPEC-menus.md's stages 4 and 7): over the remade room the remade dialog asks, taking the key itself.
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    REQUIRE(MCRmlDialogs::Shown());
+    CHECK(MCRmlDialogs::Dialog()->Said().Text.starts_with("LIGHTS is new and takes N"));
     REQUIRE_EQ(MCKeyBindings::FindCommand(MCKeyBindings::Player(), FreeKey, MCKeyCommand::Unused),
                MCKeyCommand::Unused);
     MCScreenInput::RealKey(SDL_SCANCODE_Y);
     Frames();
-    CHECK(!dialog.IsShowing());
+    CHECK(!MCRmlDialogs::Shown());
     CHECK_EQ(LightsKey(), FreeKey);
     CHECK_EQ(SavedLights(), MCFitResult<std::string>("Y"));
     std::filesystem::remove(PrefsPath());

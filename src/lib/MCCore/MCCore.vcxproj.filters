@@ -504,6 +504,12 @@
     <ClCompile Include="logistics\MCCampaignMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCChatView.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCChooseMapWindow.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCCompInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -624,7 +630,13 @@
     <ClCompile Include="logistics\MCMainMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCMatchMaps.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCMatchOptionsTab.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCMatchOptionsWindow.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCMechBriefBlock.cpp">
@@ -703,6 +715,12 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCReusableDialog.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCRoomModel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCRoomScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCSaves.cpp">
@@ -2077,6 +2095,12 @@
     <ClInclude Include="logistics\MCCampaignMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCChatView.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCChooseMapWindow.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCCompInventoryBlock.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2197,7 +2221,13 @@
     <ClInclude Include="logistics\MCMainMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCMatchMaps.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCMatchOptionsTab.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCMatchOptionsWindow.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCMechBriefBlock.h">
@@ -2276,6 +2306,12 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCReusableDialog.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCRoomModel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCRoomScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCSaves.h">

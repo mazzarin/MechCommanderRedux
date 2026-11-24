@@ -2,6 +2,8 @@
 #include "logistics/MCUpdateScreen.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCMenuScreens.h"
+#include "logistics/MCRoomScreen.h"
+#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
 #include "logistics/MCUpdatePage.h"
 #include "network/MCLobbyUpdate.h"
@@ -90,6 +92,15 @@ namespace
         if (std::string joining = MCLobbyUpdate::JoinAfterLine(); !joining.empty())
         {
             return joining;
+        }
+
+        // Port-only (stage 4): over a room, what RESTART does there (network/MCLobbyUpdate.h), as a sentence.
+        if (MCLobbyUpdate::InRoom())
+        {
+            if (const std::string room = MCLobbyUpdate::ReadyText(); !room.empty())
+            {
+                return MCRmlDialogs::AsSentence(room);
+            }
         }
 
         switch (status.GoesIn)
@@ -228,6 +239,12 @@ std::string MCUpdateScreen::PlaceOfShown()
     if (shown == MCMenuScreens::Internet())
     {
         return std::string(InternetPlace);
+    }
+
+    // Port-only (stage 4): over the room, the room's place (a launcher's room's UPDATE line).
+    if (shown == MCMenuScreens::Room())
+    {
+        return RoomPlace();
     }
 
     return std::string(shown == MCMenuScreens::Lan() ? LanPlace : MainMenuPlace);

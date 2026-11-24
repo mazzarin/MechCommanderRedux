@@ -5,6 +5,7 @@
 #include "main/MCHdSettings.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
+#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlScreen.h"
 
@@ -225,6 +226,8 @@ void MCRmlFlow::Tend()
     {
         running->get().Menus().Tend();
         running->get().Mission().Tend();
+        // A dialog's say a change of screens hid comes back once the screens have changed.
+        MCRmlDialogs::Tend();
     }
 }
 

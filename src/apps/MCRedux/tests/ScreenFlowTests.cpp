@@ -1,11 +1,14 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "MCMenusPictures.h"
+#include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
+#include "linkup/MCSessionManager.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCLoadSaveMenu.h"
@@ -13,13 +16,16 @@
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
+#include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "network/MCIntroNote.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
+#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlProbe.h"
@@ -139,9 +145,19 @@ namespace
         MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     }
 
-    /// <summary>Whether the message dialog shows text <paramref name="text"/>.</summary>
+    /// <summary>Whether a dialog asks <paramref name="text"/>: the remade one (its heading or its line), or the 1998 one.</summary>
     bool Asks(std::string_view text)
     {
+        if (MCRmlDialogs::Shown())
+        {
+            const MCRmlDialog::MCSay& said = MCRmlDialogs::Dialog()->Said();
+
+            if (said.Heading == text || said.Text == text)
+            {
+                return true;
+            }
+        }
+
         MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
         return dialog.IsShowing() && dialog.Text == text;
     }
@@ -472,8 +488,88 @@ TEST_CASE_ISOLATED("screen flow: a launcher's room is the stack's end, and asks 
     CHECK(Asks(MCMenuScreens::LeaveGameQuestion));
     PressEscape();
     MCTestGame::RunFrame(FrameSeconds);
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(!Asks(MCMenuScreens::LeaveGameQuestion));
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+}
+
+/// <summary>
+/// SPEC-menus.md's stage 4, a launcher's way out: its room's LEAVE asks "Leave the game?" over the room, drawn on the
+/// software path at 640x480, 1280x720 and 1280x1024 (--shots saves them), and laid out and read at every window the
+/// players' reports name.
+/// </summary>
+TEST_CASE_ISOLATED("screen flow: a launcher's LEAVE draws its frames, and lays out and reads at every players' window")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    using MCMenusPictures::CheckMenusFrames;
+    REQUIRE(MCTestGame::StartLobby("-host -port 28979 -player BOB"));
+    RunWhileChanging();
+    REQUIRE(RoomScreenShown());
+
+    // A dialog the room opens with (a new key's question) answered first.
+    while (GlobalLog()->MessageDialog->IsShowing() && !Asks(MCMenuScreens::LeaveGameQuestion))
+    {
+        GlobalLog()->MessageDialog->Deactivate(0);
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    MCTestGuest::PressInRoom("leave");
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(Asks(MCMenuScreens::LeaveGameQuestion));
+    CheckMenusFrames("launcher leave", {0xd59bb7a3, 0x1c973fb7, 0x660c23d0});
+    PressEscape();
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK(!Asks(MCMenuScreens::LeaveGameQuestion));
+    CHECK(RoomScreenShown());
+}
+
+/// <summary>
+/// SPEC-menus.md's stage 4, a launcher's way in: before its first room, the join's dialog on the painting in the 1998
+/// ready room's place, "Joining Steel Rain..." as the launcher's -session names the room (a bare -join's "Joining the
+/// game..." until the room's name is known), drawn at the frames' three window sizes and laid out and read at every
+/// players' window; its CANCEL ends the game.
+/// </summary>
+TEST_CASE_ISOLATED("screen flow: a launcher's join draws its frames, and its CANCEL ends the game")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    using MCMenusPictures::CheckMenusFrames;
+    REQUIRE(MCTestGame::StartLogistics());
+    RunWhileChanging();
+    // A launcher's game never shows the main menu: the join's screen alone.
+    MCRmlFlow::Menus()->get().Menus().HideAll();
+    LobbyLaunchArgs.IsHost = false;
+    LobbyLaunchArgs.SessionName = "Steel Rain";
+    REQUIRE(ShowLauncherScreen());
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(LauncherScreenShown());
+    REQUIRE(Asks("Joining Steel Rain..."));
+    CheckMenusFrames("launcher join", {0xf5df255e, 0x0d120b81, 0xc148cdc7});
+
+    // A bare -join: the game's own words until the session found names the room.
+    LobbyLaunchArgs.SessionName.clear();
+    CHECK_EQ(MCLauncherScreen::JoinLine(), std::string("Joining the game..."));
+
+    // CANCEL ends the game.
+    bool ended = false;
+
+    try
+    {
+        MCRmlDialogs::Dialog()->PressOther();
+    }
+    catch (const MCGameQuit& quit)
+    {
+        ended = quit.ExitCode == 0;
+    }
+
+    CHECK(ended);
 }
 
 /// <summary>

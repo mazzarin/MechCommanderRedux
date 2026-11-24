@@ -1,5 +1,7 @@
 #pragma once
 
+#include "logistics/MCRoomModel.h"
+
 #include "gui/MCGuiRef.h"
 #include "logistics/MCLogObject.h"
 #include "logistics/MCLogOptionList.h"
@@ -23,16 +25,16 @@ class MCSessionScreen : public MCLogObject
 {
 public:
     /// <summary>The most players in a session (a game rule: the name slots and the player lights).</summary>
-    static constexpr size_t MaxPlayers = 6;
+    static constexpr size_t MaxPlayers = MCRoomModel::MaxPlayers;
     /// <summary>The slots of a team (a game rule).</summary>
-    static constexpr size_t TeamSlots = 3;
+    static constexpr size_t TeamSlots = MCRoomModel::TeamSlots;
     /// <summary>A player id that stands for no player (an empty slot).</summary>
-    static constexpr uint32_t NoPlayer = 0xffffffff;
+    static constexpr uint32_t NoPlayer = MCRoomModel::NoPlayer;
 
     /// <summary>Makes the buttons, the RP spinners and texts, the tech base toggles and the six name slots.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
 
-    /// <summary>Forgets the drop targets, the mission and the map.</summary>
+    /// <summary>Forgets the drop targets and the map's picture.</summary>
     void OnDestroy() override;
 
     /// <summary>
@@ -51,6 +53,9 @@ public:
     /// <summary>Port: what the screen shows of the shared places.</summary>
     MCLogScreenChrome ScreenChrome;
 
+    /// <summary>Port-only (SPEC-menus.md's stage 4): the 1998 room shows for the UPDATE page over it (ShowUpdateOver).</summary>
+    bool UpdateOver = false;
+
     /// <summary>Name drops, the ping/resource point timer, and (port-only) a click on a tab.</summary>
     void HandleEvent(MCGuiEvent& event) override;
 
@@ -66,8 +71,17 @@ public:
     /// <summary>
     /// Port-only: the screen hidden with MATCH OPTIONS in front puts the chat back in front first, so the next screen's
     /// chat shows (each screen's chat window takes the shown state of the one before, MCLogistics::ShowChatOn).
+    /// Port-only (SPEC-menus.md's stage 4): shown, the remade room (logistics/MCRoomScreen) shows in its place and the
+    /// screen stays hidden, logistics' screen still; only where the remade room can't show (the menus can't start), the
+    /// 1998 room. Hidden, the remade room hides with it.
     /// </summary>
     void ShowGuiWindow(bool show) override;
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): the remade room's update line: the 1998 UPDATE page over the 1998 room, shown
+    /// in the remade room's place until the page closes (stage 6 remakes UPDATE).
+    /// </summary>
+    void ShowUpdateOver();
 
     /// <summary>
     /// Fills the screen from the session: the players, the teams and the controls for host or guest;
@@ -166,13 +180,21 @@ public:
     /// <summary>
     /// Lights the start button when every player is on a team and a mission is loaded. Port-only (the personal build):
     /// and every player in the session is on the screen (a player who just joined is shown first), and no guest is
-    /// away updating, for a while at most in all (network/MCLobbyUpdate.h); while one is, <see cref="StartWaits"/>
-    /// says whom the room waits for, in the update's line's place.
+    /// away updating, for a while at most in all (network/MCLobbyUpdate.h); while one is, the room model's
+    /// <see cref="MCRoomModel::StartWaits"/> says whom the room waits for, in the update's line's place.
     /// </summary>
     void CheckGoodToGo();
 
     /// <summary>Sets team <paramref name="team"/>'s tech base (1 Inner Sphere, -1 Clan) and its toggles.</summary>
     void SetTeamTechBase(int8_t team, int8_t techBase);
+
+    /// <summary>
+    /// A tech base toggle's press: sets team <paramref name="team"/>'s tech base and, on the host, tells the others.
+    /// </summary>
+    void PickTechBase(int8_t team, int8_t techBase);
+
+    /// <summary>The start button's press: starts the loaded mission (asking first while a guest is away updating).</summary>
+    void Begin();
 
     /// <summary>Enables the host's controls.</summary>
     void ControlsOn();
@@ -211,8 +233,6 @@ public:
     MCGuiHandle<MCLogSpinnerButton> Team2RPUp;
     /// <summary>Lowers team 2's resource points.</summary>
     MCGuiHandle<MCLogSpinnerButton> Team2RPDown;
-    /// <summary>The loaded mission's time ("m:ss"), drawn beside the mission name; empty without one.</summary>
-    std::string MissionLabel;
     /// <summary>Team 1's Inner Sphere tech base toggle.</summary>
     MCGuiHandle<MCLogToolButton> Team1ISButton;
     /// <summary>Team 1's Clan tech base toggle.</summary>
@@ -221,30 +241,13 @@ public:
     MCGuiHandle<MCLogToolButton> Team2ISButton;
     /// <summary>Team 2's Clan tech base toggle.</summary>
     MCGuiHandle<MCLogToolButton> Team2ClanButton;
-    /// <summary>Team 1's tech base: 1 Inner Sphere, -1 Clan.</summary>
-    int8_t Team1TechBase = 1;
-    /// <summary>Team 2's tech base.</summary>
-    int8_t Team2TechBase = -1;
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): the room's state, which this screen views (logistics' room model,
+    /// <see cref="MCLogistics::Room"/>).
+    /// </summary>
+    static MCRoomModel& Room();
     /// <summary>The name slots, one per player (top to bottom in the unassigned list).</summary>
     std::array<MCGuiHandle<MCPlayerNameObject>, MaxPlayers> PlayerNames;
-    /// <summary>The number of players in the session.</summary>
-    int32_t NumPlayers = 0;
-    /// <summary>The number of players on no team.</summary>
-    int32_t NumUnassigned = 0;
-    /// <summary>Team 1's players by slot (<see cref="NoPlayer"/> = empty).</summary>
-    std::array<uint32_t, TeamSlots> Team1Players = {};
-    /// <summary>Team 2's players by slot.</summary>
-    std::array<uint32_t, TeamSlots> Team2Players = {};
-    /// <summary>Team 1's resource points last sent.</summary>
-    int32_t Team1RP = 0;
-    /// <summary>Team 2's resource points last sent.</summary>
-    int32_t Team2RP = 0;
-    /// <summary>The loaded mission's name.</summary>
-    std::string MissionName;
-    /// <summary>The loaded mission's file; empty = none.</summary>
-    std::string MissionFile;
-    /// <summary>The loaded mission's map name.</summary>
-    std::string MapName;
 
     /// <summary>
     /// Port: the loaded mission's map picture, drawn stretched over the map box, or null. (The original stretched each
@@ -271,11 +274,6 @@ public:
     /// Null in other games, and in a build that doesn't update itself.
     /// </summary>
     MCGuiHandle<MCLogObject> UpdateLine;
-    /// <summary>
-    /// Port-only (the personal build): whom the room waits for, guests away updating ("WAITING FOR ANN TO REJOIN."), as
-    /// <see cref="CheckGoodToGo"/> last found; empty when it waits for no one.
-    /// </summary>
-    std::string StartWaits;
 
     /// <summary>Port: draws the map box (<see cref="MapPicture"/>) into <paramref name="target"/>.</summary>
     void DrawMap(const MCPane& target) const;
@@ -287,7 +285,7 @@ private:
     /// <summary>Lays the names of the players on no team down the unassigned list (see the callers for the skips).</summary>
     void LayOutUnassigned(uint32_t skipId, size_t names, bool skipEmpty);
 
-    /// <summary>Port-only (the personal build): <see cref="StartWaits"/>' line, in the update's line's place.</summary>
+    /// <summary>Port-only (the personal build): the room model's StartWaits line, in the update's line's place.</summary>
     void DrawStartWaits(const MCPane& frame);
 
     /// <summary>The spinners' and tech toggles' live state (the host's, or an unlocked mission's).</summary>
@@ -320,27 +318,6 @@ private:
     /// named and the mission is called off.
     /// </summary>
     void FilesAnswered();
-
-    /// <summary>Until when (the game clock) the screen keeps pinging after it opens.</summary>
-    uint32_t _PingUntil = 0;
-    /// <summary>The screen still pings.</summary>
-    bool _Pinging = false;
-    /// <summary>Port-only (Redux HD): the room has rolled over to this game, whose next look takes it (TakeOverRoom).</summary>
-    bool _TakingOver = false;
-    /// <summary>
-    /// Port-only (the personal build): the name the host loaded its mission by, while one is loaded (Port-only, Redux HD:
-    /// on a guest too, for a room rolled over to it).
-    /// </summary>
-    std::string _LoadedMission;
-    /// <summary>Port-only (the personal build): the loaded mission fixes its points and tech bases (its Lock block).</summary>
-    bool _MissionLocked = false;
-    /// <summary>
-    /// Port-only (the personal build): the host's guests whose game was up (they had pinged) when they were last shown
-    /// the room; one shown before it was up is shown it again once it is.
-    /// </summary>
-    std::set<uint32_t> _ShownReady;
-    /// <summary>Port-only (the personal build): when (the game clock) the host first saw each player in the session.</summary>
-    std::map<uint32_t, uint32_t> _SeenSince;
 };
 
 /// <summary>

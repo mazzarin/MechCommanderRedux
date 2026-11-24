@@ -3,6 +3,9 @@
 #include "ScreenInput.h"
 #include "MCScratchFolder.h"
 #include "MCTestGuest.h"
+#include "logistics/MCMatchMaps.h"
+#include "logistics/MCChooseMapWindow.h"
+#include "MCMenusPictures.h"
 #include "gui/MCScreenFlow.h"
 #include "gui/MCScreenChange.h"
 #include "logistics/MCGamesScreen.h"
@@ -23,6 +26,8 @@
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogSlider.h"
 #include "logistics/MCMatchOptionsTab.h"
+#include "logistics/MCMatchOptionsWindow.h"
+#include "logistics/MCRoomScreen.h"
 #include "main/MCWeaponBans.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCConnectMenu.h"
@@ -56,6 +61,8 @@ namespace
     constexpr std::string_view OptionsHostAddress = "127.0.0.1:28879";
     /// <summary>The game data check's test's, so it can run beside the others (--jobs).</summary>
     constexpr std::string_view DataHostAddress = "127.0.0.1:28881";
+    /// <summary>The room's chat test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view ChatHostAddress = "127.0.0.1:28884";
 
     /// <summary>Types <paramref name="text"/> into the text object that has the focus.</summary>
     void Type(std::string_view text)
@@ -69,99 +76,148 @@ namespace
 }
 
 /// <summary>
-/// Renderer phase 3 step 4g: the multiplayer session screen, its player names, ready lights, chat window and chat
-/// input draw from their state each frame. The game hosts a LAN session on the loopback, a second player joins from
-/// the test, and the host moves the players onto teams, changes the points and the tech base and chats. Each step's
-/// screen was recorded on the code before step 4 (when these drew into pictures at the time of each event).
+/// SPEC-menus.md's "Testing" for stage 4's screens: the room (the host's alone with a guest on no team, then the teams
+/// picked, points and tech bases set and a chat; with a map; a guest's), CHOOSE MAP's window (from the keys too) and
+/// MATCH OPTIONS' (FORCES, PLAY and WEAPONS, the host's and a guest's), each drawn on the software path at 640x480,
+/// 1280x720 and 1280x1024 (--shots saves them), and laid out and read at every window the players' reports name. CHOOSE
+/// MAP lists the game's room packets by name, each with its file, points and time limit, and CHOOSE loads the one picked
+/// into the room as 1998's LOAD MAP did.
 /// </summary>
-TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-renderer frames")
+TEST_CASE_ISOLATED(
+    "game: the room, CHOOSE MAP and MATCH OPTIONS draw their frames, and lay out and read at every players' window")
 {
     if (!MCTestGame::Available())
     {
         return;
     }
 
+    using MCMenusPictures::CheckMenusFrames;
     REQUIRE(MCTestGame::StartLogistics());
-
-    // The LAN games as MULTIPLAYER opens them, hosting on the loopback.
     ConnectScreen();
     Settle();
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(HostAddress);
-    // MULTIPLAYER opens the LAN games (the personal build).
-    MCTestGuest::HostOnLan("Commander", "Test game", 6);
+    MCTestGuest::HostOnLan("Bob", "Steel Rain", 6);
     Settle();
     REQUIRE(manager.CurrentSession() != nullptr);
     REQUIRE(manager.DirectPlay != nullptr);
-
-    // The host is in its room; the guest who joins is shown it (the personal build: no ready room, no GO).
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
-    Guest guest;
+    Guest guest("Ann");
     REQUIRE(guest.Join(*manager.DirectPlay, HostAddress));
-    // The same frames as the original's wait before its GO (so the same clock), the room shown within them.
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(guest.Id()); }));
     Settle();
-    REQUIRE(MCTestGuest::RoomShows(guest.Id()));
+    REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, guest.Id()));
+    const uint32_t hostId = manager.MyPlayer()->Id;
+    guest.SendRules(hostId, MCMatchRule::Supported);
+    Settle();
+    REQUIRE(RoomScreenShown());
+    MCRoomScreen& room = *RoomScreen();
+    CheckMenusFrames("room host", {0x7750c44d, 0x72d01dac, 0x76fb0409});
 
-    // Every frame presented from here on is folded into one more hash.
-    uint32_t presents = 0x811c9dc5;
-    MCTestGame::OnPresent = [&] { presents = (presents ^ ScreenHash()) * 0x01000193; };
+    // The teams picked, points and tech bases set, a line each way in the chat.
+    room.PressJoin(hostId, MCRoomModel::Team1);
+    room.PressJoin(guest.Id(), MCRoomModel::Team2);
+    room.TypePoints(MCRoomModel::Team1, "300,000");
+    room.TypePoints(MCRoomModel::Team2, "300000");
+    room.PickTechBase(MCRoomModel::Team2, MCRoomModel::Clan);
+    room.Say("Evening all. Map in a minute.", false);
+    // A guest's line as MCLogChat::ProcessChatString writes it: the name in the guest's colour, the text to all.
+    const char annColour = static_cast<char>('0' + GlobalLog()->PlayerColors[1]);
+    GlobalLog()->Chat->AddLine(std::format("%fc{}Ann: %fc6Clan for me, if nobody minds.", annColour));
+    Settle();
+    const MCRoomScreen::MCSeen teams = room.Seen();
+    CHECK(teams.Team1.front() == "Bob (host)");
+    CHECK(teams.Team2.front() == "Ann");
+    CHECK_EQ(teams.Points1, std::string("300,000"));
+    CHECK_EQ(teams.Tech2, std::string("Clan"));
+    CheckMenusFrames("room teams", {0x35271144, 0x79fdecce, 0x92749424});
 
-    struct Step
-    {
-        std::string_view Name;
-        std::function<void()> Action;
-        uint32_t Expected;
-    };
+    // CHOOSE MAP: the room packets by name, the first picked; from the keys, the next.
+    MCTestGuest::PressInRoom("choose-map");
+    REQUIRE(ChooseMapWindowShown());
+    MCChooseMapWindow& choose = *ChooseMapWindow();
+    REQUIRE(!choose.Maps().empty());
+    CHECK(std::ranges::is_sorted(choose.Maps(), {},
+                                 [](const MCMatchMap& map)
+                                 {
+                                     std::string name = map.Name;
+                                     std::ranges::transform(name, name.begin(), [](unsigned char c)
+                                                            { return static_cast<char>(std::tolower(c)); });
+                                     return name;
+                                 }));
+    CHECK_EQ(choose.Picked(), 0);
+    CheckMenusFrames("room choose map", {0x0836541b, 0x8563f464, 0xe368ce56});
+    // The keys' focus is on the picked map: Down picks the next.
+    MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
+    Settle();
+    CHECK_EQ(choose.Picked(), 1);
+    CheckMenusFrames("room choose map keys", {0x6b13d73c, 0xfb449dde, 0xd0b511ec});
 
-    // The cursor hasn't moved yet in the first step: at (0, 0) the original's over test (OB-129, fixed) took it as over
-    // every tool button, so its frame was 0x3d56c0c0 before the fix. Port-only: every frame has the MATCH OPTIONS tab
-    // behind MULTIPLAYER CHAT (3 Nov 2026; only its column differs from the frames before: 0xa6b1053f, 0x7548a837,
-    // 0xf143dbb4, 0x1a793ae4, 0xa6d18671, 0x4adcfb49, 0x74b8c0d0, 0x2d2edef8, 0x983fc7f9). Port-only (the personal
-    // build): the room shows from hosting, with no GO (6 Nov 2026): only the clock's seconds differ from the frames
-    // before (the tests' clock moves with each screen wipe's frames, and GO's wipe is gone: 0x0cc42d9a, 0x034cda12,
-    // 0xb3ef257d, 0x3b17d20d, 0xbcc94190, 0xec4846b8, 0x19fd5db9, 0x7342d1b5, 0xdfb618bc). Port-only (SPEC-menus.md's
-    // stage 2, 23 Nov 2026): the room shows through the flow's change of screen, its fade on frames of its own: only the
-    // clock's seconds differ from the frames before (0x1ec2ad5c, 0x835f1a11, 0x6a7049b5, 0xa372a3c5, 0x051c73ce,
-    // 0x18b1b165, 0x0f8826b3, 0x8ec3c175, 0x8bc88c88). Port-only (SPEC-menus.md's stage 3, 23 Nov 2026): hosted from
-    // the remade LAN screen: only the clock's seconds differ from the frames before (0xa081b283, 0xdeffc2e8, 0x6a7049b5, 0xa372a3c5, 0x825d1740, 0x2b2ce4ce, 0x54a64500, 0x49ead7a5, 0x5fb91fd0).
-    const Step steps[] = {
-        {"session", [] {}, 0x75074e57u},
-        {"first name to team 1", [] { Drag(0x15, 0x16a, 0x100, 0x13a); }, 0x033dd847u},
-        {"next name to team 2", [] { Drag(0x15, 0x16a, 0x1c4, 0x13a); }, 0x20db565cu},
-        {"team 1 points up", [] { Click(0x106, 0x186); }, 0xc99453e5u},
-        {"team 2 Inner Sphere", [] { Click(0x225, 0x112); }, 0xe219f804u},
-        {"hover a light", [] { SendMouse(7, 0xdc, 5, false); }, 0x7b832cd8u},
-        {"chat typed",
-         []
-         {
-             Click(0x40, 0x130);
-             Type("hello there");
-         },
-         0x9e88d21du},
-        {"chat sent", [] { SendKey(0xd); }, 0x37f5347fu},
-        {"name back off the team", [] { Drag(0x105, 0x13a, 0x40, 0x1c0); }, 0x8e846398u},
-    };
+    // Capture Base: its points and no time limit, CHOOSE loads it (the guest has the same file).
+    const auto capture = std::ranges::find(choose.Maps(), std::string("CPTRBASE"), &MCMatchMap::File);
+    REQUIRE(capture != choose.Maps().end());
+    CHECK_EQ(capture->Name, std::string("Capture Base"));
+    CHECK_EQ(MCChooseMapWindow::FactsOf(*capture), std::string("300,000 RP a team. No time limit."));
+    choose.Pick(static_cast<int>(capture - choose.Maps().begin()));
+    Settle();
+    CheckMenusFrames("room choose map picked", {0x25fe5524, 0x6129ac85, 0xc03036c1});
+    guest.AnswerFiles(MCMissionDataHash(GamePath(SavePath, "CPTRBASE", ".mpk")));
+    choose.PressChoose();
+    REQUIRE(SettleUntil([&] { return guest.MissionsLoaded() == 1; }));
+    Settle();
+    CHECK(!ChooseMapWindowShown());
+    CHECK_EQ(room.Seen().Map, std::string("Capture Base"));
+    CHECK(!room.Seen().MapText.empty());
+    CheckMenusFrames("room map", {0x61e18703, 0x764def3b, 0xe7ff55d0});
 
-    int32_t index = 0;
+    // CHANGE opens it again, the room's map picked; ENTER on it (the keys' focus there) chooses it again, as its row's
+    // ENTER does in every list.
+    MCTestGuest::PressInRoom("change-map");
+    REQUIRE(ChooseMapWindowShown());
+    CHECK_EQ(choose.Maps()[static_cast<size_t>(choose.Picked())].File, std::string("CPTRBASE"));
+    Settle();
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    REQUIRE(SettleUntil([&] { return guest.MissionsLoaded() == 2; }));
+    Settle();
+    CHECK(!ChooseMapWindowShown());
+    CHECK_EQ(room.Seen().Map, std::string("Capture Base"));
 
-    for (const Step& step : steps)
-    {
-        MCTest::Scope scope(step.Name);
-        step.Action();
-        const uint32_t hash = Settle();
-        SaveShot(std::format("session{:02} {}", index, step.Name), hash);
-        CHECK_EQ(hash, step.Expected);
-        index++;
-    }
+    // Escape cancels, the room's map kept.
+    MCTestGuest::PressInRoom("change-map");
+    REQUIRE(ChooseMapWindowShown());
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    Settle();
+    CHECK(!ChooseMapWindowShown());
+    CHECK_EQ(room.Seen().Map, std::string("Capture Base"));
 
-    MCTestGame::OnPresent = nullptr;
-    // 0xa176a052 before the OB-129 fix (the first step's frames), 0x87982e74 before the control audit (2026-10-04: the
-    // steps are unchanged; between them presses end at the release, and the ready lights' backing and the clock show
-    // at once; 0x8a6bba0e before the MATCH OPTIONS tab; 0xc78ee09f before the room showed from hosting, the clock's;
-    // 0x5e48015b before the room showed through the flow's change; 0xd7cf0a76 before it was hosted from the remade LAN
-    // screen, the clock's).
-    CHECK_EQ(presents, 0x04e0ba6eu);
+    // MATCH OPTIONS, the host's: FORCES, PLAY, WEAPONS.
+    MCTestGuest::PressInRoom("view-options");
+    REQUIRE(MatchOptionsWindowShown());
+    MCMatchOptionsWindow& options = *MatchOptionsWindow();
+    CheckMenusFrames("match options forces", {0xc6c446a9, 0x78ef9a72, 0xc4fd9bc2});
+    options.ShowTab(MCMatchOptionsWindow::MCTab::Play);
+    Settle();
+    CheckMenusFrames("match options play", {0x4395d487, 0xa38b9622, 0x8c139bc2});
+    // Q and E move the tabs, as the briefing's do.
+    MCScreenInput::RealKey(SDL_SCANCODE_E);
+    Settle();
+    CHECK(options.Tab() == MCMatchOptionsWindow::MCTab::Weapons);
+    CheckMenusFrames("match options weapons", {0xd51b87ca, 0x5a3deec6, 0x0e6ac3e3});
+    options.PressDone();
+    Settle();
+
+    // A guest's: the values, the host setting them; the guest's room waits for the host.
+    MultiPlayer()->IsHost = false;
+    Settle();
+    CheckMenusFrames("room guest", {0xef04f5cf, 0x8472c9b5, 0xf95098d5});
+    MCTestGuest::PressInRoom("view-options");
+    REQUIRE(MatchOptionsWindowShown());
+    options.ShowTab(MCMatchOptionsWindow::MCTab::Weapons);
+    Settle();
+    CheckMenusFrames("match options guest", {0xad5ff921, 0x3f8f9012, 0x7260d083});
+    options.PressDone();
+    MultiPlayer()->IsHost = true;
+    Settle();
 }
 
 namespace
@@ -194,37 +250,54 @@ namespace
 
         return rows;
     }
+}
 
-    /// <summary>A point on each tab (MCMatchOptionsTab.cpp's ChatTabArea and OptionsTabArea).</summary>
-    constexpr int32_t TabX = 0xca;
-    constexpr int32_t ChatTabY = 0x80;
-    constexpr int32_t OptionsTabY = 0xf0;
-
-    /// <summary>Clicks row <paramref name="row"/>'s setting box of <paramref name="list"/> <paramref name="times"/> times.</summary>
-    void ClickSetting(MCLogOptionList& list, int32_t row, int32_t times)
+/// <summary>
+/// The remade room's boxes take what the 1998 room's did. The chat sends what the 1998 chat box could
+/// (MCLogChatInput): its characters one byte each, the accented 0xbf-0xfd as those bytes, '%' (the chat formatter's
+/// code) and the rest left out, and shows that line back with its accents, as it does the chat's names and its own
+/// lines. The points take seven digits at most, as the 1998 RP box (whose tick would send more cut to seven).
+/// </summary>
+TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's boxes did")
+{
+    if (!MCTestGame::Available())
     {
-        // Scrolled until the row shows, as a player would (the list is taller than its window).
-        constexpr int32_t MostScrolls = 64;
-
-        if (!list.SettingCentre(row).has_value())
-        {
-            list.ScrollTo(0);
-
-            for (int32_t scroll = 0; scroll < MostScrolls && !list.SettingCentre(row).has_value(); scroll++)
-            {
-                list.ScrollTo(list.FirstRow() + 1);
-            }
-        }
-
-        const std::optional<std::pair<int32_t, int32_t>> centre = list.SettingCentre(row);
-        REQUIRE(centre.has_value());
-
-        for (int32_t click = 0; click < times; click++)
-        {
-            Click(centre->first, centre->second);
-            Settle();
-        }
+        return;
     }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(ChatHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Chat game", 6);
+    REQUIRE(SettleUntil([] { return RoomScreenShown(); }));
+    MCRoomScreen& room = *RoomScreen();
+
+    // "Olé" in UTF-8, a '%' and the euro sign, which the 1998 box hadn't.
+    room.Say("Ol\xc3\xa9, 100% sure \xe2\x82\xac!", false);
+    Settle();
+    REQUIRE(GlobalLog()->Chat != nullptr);
+    REQUIRE(!GlobalLog()->Chat->Lines.empty());
+    CHECK(GlobalLog()->Chat->Lines.back().Text.ends_with("Ol\xe9, 100 sure !"));
+    const std::vector<std::string> chat = room.Seen().Chat;
+    CHECK(std::ranges::find(chat, std::string("Bob: Ol\xc3\xa9, 100 sure !")) != chat.end());
+
+    // A name with the chat's accented bytes (an MCO player's "René") and a game's line with one: shown in UTF-8 too.
+    GlobalLog()->Chat->AddLine(std::format("%fc{}", GlobalLog()->PlayerColors[0]) + "Ren\xe9: %fc6hi");
+    GlobalLog()->Chat->AddLine("Ren\xe9 joined.");
+    Settle();
+    const std::vector<std::string> accented = room.Seen().Chat;
+    CHECK(std::ranges::find(accented, std::string("Ren\xc3\xa9: hi")) != accented.end());
+    CHECK(std::ranges::find(accented, std::string("Ren\xc3\xa9 joined.")) != accented.end());
+
+    room.TypePoints(MCRoomModel::Team1, "9,999,999");
+    Settle();
+    CHECK_EQ(room.Seen().Points1, std::string("9,999,999"));
+    room.TypePoints(MCRoomModel::Team1, "12,345,678");
+    Settle();
+    CHECK_EQ(GlobalLog()->Room.Team1Points, 9'999'999);
+    CHECK_EQ(room.Seen().Points1, std::string("9,999,999"));
 }
 
 /// <summary>
@@ -243,15 +316,15 @@ TEST_CASE("session screen: a held match option tells whose game doesn't have it 
 }
 
 /// <summary>
-/// Port: the session screen's MATCH OPTIONS tab, under MULTIPLAYER CHAT, brings the match's options in front in the
-/// chat's place (its pictures lettered from the art's tabs). The match plays the host's choices as far as every
-/// player's build plays them: while the guest's says nothing (as the original's) every option is held at the mission's
-/// own (or off), saying whose game hasn't it; a build of the braking's round frees braking; one of the first match
-/// options the weather, not the time of day (its sight is a rule of its own); one that plays them all, every option.
-/// The host's changes are the match's and go to the guest at once, as do the options when the screen opens; a guest's
-/// list is locked; MULTIPLAYER CHAT brings the chat back.
+/// Port: MATCH OPTIONS (SPEC-menus.md's stage 4: a window over the remade room, the room's CHANGE) shows the match's
+/// options on FORCES, PLAY and WEAPONS, the 1998 tab's rows and no others. The match plays the host's choices as far as
+/// every player's build plays them: while the guest's says nothing (as the original's) every option is held at the
+/// mission's own (or off), saying whose game hasn't it; a build of the braking's round frees braking; one of the first
+/// match options the weather, not the time of day (its sight is a rule of its own); one that plays them all, every
+/// option. The host's changes are the match's and go to the guest at once, as do the options when the room opens; a
+/// guest reads the values, the host setting them; DONE goes back to the room.
 /// </summary>
-TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match's options and sends them")
+TEST_CASE_ISOLATED("game: the room's MATCH OPTIONS sets the match's options and sends them")
 {
     if (!MCTestGame::Available())
     {
@@ -278,12 +351,9 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     game.MatchOptions = MCMatchOptions{
         .Weather = MCWeatherKind::Rain, .TimeOfDay = MCTimeOfDay::Night, .Rules = MCMatchRule::MechBraking};
     Settle();
-
-    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
-    REQUIRE(screen.MatchTabs[0] != nullptr);
-    REQUIRE(screen.MatchTabs[1] != nullptr);
-    CHECK(screen.FrontTab == MCSessionTab::Chat);
-    SaveShot("match options 0 chat in front", ScreenHash());
+    REQUIRE(RoomScreenShown());
+    CHECK(!MatchOptionsWindowShown());
+    SaveShot("match options 0 the room", ScreenHash());
 
     // Opened, the guest's build saying nothing: the mission's own and no rules went to it.
     const auto sentIs = [&guest](int8_t weather, int8_t time, uint32_t rules)
@@ -298,78 +368,49 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     constexpr int8_t MissionOwn = MCMPMatchOptionsMessage::MissionOwn;
     sentIs(MissionOwn, MissionOwn, 0);
 
-    Click(TabX, OptionsTabY);
-    Settle();
-    CHECK(screen.FrontTab == MCSessionTab::Options);
-    MCLogOptionList& list = *screen.MatchOptionsList;
-    CHECK(list.ShowWindow);
-    CHECK(!GlobalLog()->ChatWindowOn(screen)->ShowWindow);
-    CHECK(list.ChoiceName(WeatherRow) == "MISSION'S");
-    CHECK(list.ChoiceName(TimeRow) == "MISSION'S");
-    CHECK(list.ChoiceName(BrakingRow) == "OFF");
+    // The room's CHANGE opens the window at FORCES.
+    MCTestGuest::PressInRoom("view-options");
+    REQUIRE(MatchOptionsWindowShown());
+    MCMatchOptionsWindow& window = *MatchOptionsWindow();
+    CHECK(window.Tab() == MCMatchOptionsWindow::MCTab::Forces);
+    CHECK(MCMatchOptionsWindow::RowsOf(MCMatchOptionsWindow::MCTab::Forces) == std::vector{PilotRow});
+    const std::vector<int32_t> playRows = {WeatherRow, TimeRow,    BrakingRow, ArtilleryRow,
+                                           ProbesRow,  SensorsRow, MinesRow};
+    CHECK(MCMatchOptionsWindow::RowsOf(MCMatchOptionsWindow::MCTab::Play) == playRows);
+    CHECK_EQ(MCMatchOptionsWindow::RowsOf(MCMatchOptionsWindow::MCTab::Weapons).size(),
+             static_cast<size_t>(WeaponRows));
+    const auto value = [&window](int32_t row) { return window.Seen(row).Value; };
+    CHECK_EQ(value(WeatherRow), std::string("Mission's"));
+    CHECK_EQ(value(TimeRow), std::string("Mission's"));
+    CHECK_EQ(value(BrakingRow), std::string("Off"));
 
     for (const int32_t row : {ArtilleryRow, ProbesRow, SensorsRow, MinesRow})
     {
-        CHECK(list.ChoiceName(row) == "ON");
+        CHECK_EQ(value(row), std::string("On"));
     }
 
-    constexpr std::string_view NotInGuests = "TELL GUEST TO UPGRADE.";
-
-    // Every row's line fits it, and every option's name its place.
-    CHECK_EQ(list.OptionRows(), FirstWeaponRow + WeaponRows);
-    CHECK(list.IsHeading(WeaponsRow));
-
-    for (int32_t row = 0; row < list.OptionRows(); row++)
-    {
-        MCTest::Scope scope(list.Label(row));
-        CHECK(WhiteFont->Width(list.Description(row)) <= list.LineWidth());
-        CHECK((list.IsHeading(row) || WhiteFont->Width(list.Label(row)) <= list.NameWidth()));
-    }
-
-    CHECK(list.ChoiceName(PilotRow) == "ELITE");
+    CHECK_EQ(value(PilotRow), std::string("Elite"));
+    CHECK_EQ(window.Seen(PilotRow).Name, std::string("Most skilled pilot"));
+    CHECK_EQ(window.Seen(FirstWeaponRow + 1).Name, std::string("SRMs"));
+    constexpr std::string_view NotInGuests = "Tell Guest to upgrade.";
+    const auto held = [&window](int32_t row) { return window.Seen(row).Held ? window.Seen(row).Line : std::string(); };
 
     for (const int32_t row : HeldRows())
     {
-        CHECK(list.HeldReason(row) == NotInGuests);
+        if (row != WeaponsRow)
+        {
+            MCTest::Scope scope(std::to_string(row));
+            CHECK_EQ(held(row), std::string(NotInGuests));
+            CHECK(!window.Seen(row).Set);
+        }
     }
 
-    // The weapons are held by their heading: it says why, their own lines what they do.
-    CHECK(list.HeldLines(WeaponsRow).size() == 1);
-    CHECK(list.HeldLines(FirstWeaponRow).empty());
-    CHECK(list.ChoiceName(FirstWeaponRow) == "ON");
+    CHECK_EQ(value(FirstWeaponRow), std::string("On"));
 
-    // A reason too long for a line wraps over more, at spaces, each fitting, every name kept: here every other player of
-    // a full session with a long name. A word wider than a line is cut where it fills one.
-    constexpr std::string_view LongName = "[WOLF]BLACKBEARSRULE";
-    const std::vector<std::string> others(static_cast<size_t>(MaxLinkupPlayers - 1), std::string(LongName));
-    const std::string longReason = MatchTellToUpgrade(others);
-    list.SetHeld(MinesRow, longReason);
-    CHECK(list.HeldReason(MinesRow) == longReason);
-    CHECK(list.HeldLines(MinesRow).size() > 1);
-    std::string rejoined;
-
-    for (const std::string& line : list.HeldLines(MinesRow))
-    {
-        CHECK(WhiteFont->Width(line) <= list.LineWidth());
-        rejoined += rejoined.empty() ? line : " " + line;
-    }
-
-    CHECK(rejoined == longReason);
-    const std::string unbroken(80, 'W');
-    list.SetHeld(MinesRow, unbroken);
-    CHECK(list.HeldLines(MinesRow).size() > 1);
-
-    for (const std::string& line : list.HeldLines(MinesRow))
-    {
-        CHECK(WhiteFont->Width(line) <= list.LineWidth());
-    }
-
-    list.SetHeld(MinesRow, NotInGuests);
-    CHECK(list.HeldLines(MinesRow).size() == 1);
-
-    // A held option's click changes nothing.
-    ClickSetting(list, WeatherRow, 1);
-    CHECK(list.ChoiceName(WeatherRow) == "MISSION'S");
+    // A held option's step changes nothing.
+    window.Step(WeatherRow, 1);
+    Settle();
+    CHECK_EQ(value(WeatherRow), std::string("Mission's"));
     CHECK(game.MatchOptions.Weather == MCWeatherKind::Rain);
     SaveShot("match options 1 held", ScreenHash());
 
@@ -377,17 +418,18 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     const uint32_t hostId = manager.MyPlayer()->Id;
     guest.SendRules(hostId, MCMatchRule::MechBraking);
     Settle();
-    CHECK(list.HeldReason(BrakingRow).empty());
-    CHECK(list.ChoiceName(BrakingRow) == "ON");
-    CHECK(list.HeldReason(WeatherRow) == NotInGuests);
-    CHECK(list.HeldReason(TimeRow) == NotInGuests);
+    CHECK(held(BrakingRow).empty());
+    CHECK(window.Seen(BrakingRow).Set);
+    CHECK_EQ(value(BrakingRow), std::string("On"));
+    CHECK_EQ(held(WeatherRow), std::string(NotInGuests));
+    CHECK_EQ(held(TimeRow), std::string(NotInGuests));
     sentIs(MissionOwn, MissionOwn, MCMatchRule::MechBraking);
 
     // A build of the first match options: neither the weather (it hasn't its play) nor the time of day (its sight).
     guest.SendRules(hostId, MCMatchRule::MechBraking | MCMatchRule::MatchWeather | MCMatchRule::MatchTimeOfDay);
     Settle();
-    CHECK(list.HeldReason(WeatherRow) == NotInGuests);
-    CHECK(list.HeldReason(TimeRow) == NotInGuests);
+    CHECK_EQ(held(WeatherRow), std::string(NotInGuests));
+    CHECK_EQ(held(TimeRow), std::string(NotInGuests));
     sentIs(MissionOwn, MissionOwn, MCMatchRule::MechBraking);
 
     // A build of the time of day's sight (night's first version, without the lights): the time of day at that
@@ -395,29 +437,30 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     constexpr uint32_t sightRules = MCMatchRule::MechBraking | MCMatchRule::MatchWeather | MCMatchRule::TimeOfDayRules;
     guest.SendRules(hostId, sightRules);
     Settle();
-    CHECK(list.HeldReason(WeatherRow) == NotInGuests);
-    CHECK(list.HeldReason(TimeRow).empty());
-    CHECK(list.ChoiceName(TimeRow) == "NIGHT");
+    CHECK_EQ(held(WeatherRow), std::string(NotInGuests));
+    CHECK(held(TimeRow).empty());
+    CHECK_EQ(value(TimeRow), std::string("Night"));
     sentIs(MissionOwn, static_cast<int8_t>(MCTimeOfDay::Night), MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules);
 
     // A build of night's second version (the lights too): night at that version.
     guest.SendRules(hostId, sightRules | MCMatchRule::NightLights);
     Settle();
-    CHECK(list.HeldReason(WeatherRow) == NotInGuests);
-    CHECK(list.HeldReason(TimeRow).empty());
-    CHECK(list.ChoiceName(TimeRow) == "NIGHT");
+    CHECK_EQ(held(WeatherRow), std::string(NotInGuests));
+    CHECK(held(TimeRow).empty());
+    CHECK_EQ(value(TimeRow), std::string("Night"));
     sentIs(MissionOwn, static_cast<int8_t>(MCTimeOfDay::Night),
            MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules | MCMatchRule::NightLights);
 
     // A build of the match's first rules (3 Nov, 524): neither the most skilled pilot nor the weapons.
     guest.SendRules(hostId, MCMatchRule::Supported & ~(MCMatchRule::PilotRanks | MCMatchRule::WeaponBans));
     Settle();
-    CHECK(list.HeldReason(MinesRow).empty());
-    CHECK(list.HeldReason(PilotRow) == NotInGuests);
-    CHECK(list.HeldReason(WeaponsRow) == NotInGuests);
-    CHECK(list.HeldReason(FirstWeaponRow + WeaponRows - 1) == NotInGuests);
-    ClickSetting(list, FirstWeaponRow, 1);
-    CHECK(list.ChoiceName(FirstWeaponRow) == "ON");
+    CHECK(held(MinesRow).empty());
+    CHECK_EQ(held(PilotRow), std::string(NotInGuests));
+    CHECK_EQ(held(FirstWeaponRow), std::string(NotInGuests));
+    CHECK_EQ(held(FirstWeaponRow + WeaponRows - 1), std::string(NotInGuests));
+    window.Step(FirstWeaponRow, 1);
+    CHECK_EQ(value(FirstWeaponRow), std::string("On"));
+    window.ShowTab(MCMatchOptionsWindow::MCTab::Weapons);
     Settle();
     SaveShot("match options 1 weapons held", ScreenHash());
 
@@ -428,13 +471,13 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
 
     for (const int32_t row : HeldRows())
     {
-        CHECK(list.HeldReason(row).empty());
+        CHECK(held(row).empty());
     }
 
-    CHECK(list.HeldLines(WeaponsRow).empty());
-
-    CHECK(list.ChoiceName(WeatherRow) == "RAIN");
-    CHECK(list.ChoiceName(TimeRow) == "NIGHT");
+    CHECK_EQ(value(WeatherRow), std::string("Rain"));
+    CHECK_EQ(value(TimeRow), std::string("Night"));
+    // A family's row says what it covers once it's no longer held.
+    CHECK_EQ(window.Seen(FirstWeaponRow + 1).Line, std::string("Streak racks too."));
     sentIs(static_cast<int8_t>(MCWeatherKind::Rain), static_cast<int8_t>(MCTimeOfDay::Night),
            MCMatchRule::MechBraking | MCMatchRule::BrakingV2 | MCMatchRule::TimeOfDayRules | MCMatchRule::WeatherPlay |
                MCMatchRule::NightLights);
@@ -443,60 +486,90 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     REQUIRE(players.has_value());
     CHECK_EQ(players->Count, 2);
 
-    // RAIN, DOWNPOUR; NIGHT, MISSION'S; braking off; artillery off.
-    ClickSetting(list, WeatherRow, 1);
-    ClickSetting(list, TimeRow, 1);
-    ClickSetting(list, BrakingRow, 1);
-    ClickSetting(list, ArtilleryRow, 1);
-    CHECK(list.ChoiceName(ArtilleryRow) == "OFF");
-    CHECK(list.ChoiceName(ProbesRow) == "ON");
-    CHECK(list.ChoiceName(SensorsRow) == "ON");
-    CHECK(list.ChoiceName(WeatherRow) == "DOWNPOUR");
-    CHECK(list.ChoiceName(TimeRow) == "MISSION'S");
-    CHECK(list.ChoiceName(BrakingRow) == "OFF");
+    // RAIN, DOWNPOUR; NIGHT, MISSION'S; braking off; artillery off: as the host's controls move them.
+    window.ShowTab(MCMatchOptionsWindow::MCTab::Play);
+    Settle();
+    window.Step(WeatherRow, 1);
+    window.Step(TimeRow, 1);
+    window.Step(BrakingRow, 1);
+    window.Step(ArtilleryRow, 1);
+    Settle();
+    CHECK_EQ(value(ArtilleryRow), std::string("Off"));
+    CHECK_EQ(value(ProbesRow), std::string("On"));
+    CHECK_EQ(value(SensorsRow), std::string("On"));
+    CHECK_EQ(value(WeatherRow), std::string("Downpour"));
+    CHECK_EQ(value(TimeRow), std::string("Mission's"));
+    CHECK_EQ(value(BrakingRow), std::string("Off"));
     CHECK(game.MatchOptions.Weather == MCWeatherKind::Downpour);
     CHECK(!game.MatchOptions.TimeOfDay.has_value());
     CHECK_EQ(game.WantedRules() & MCMatchRule::MechBraking, 0u);
     sentIs(static_cast<int8_t>(MCWeatherKind::Downpour), MissionOwn,
            MCMatchRule::WeatherPlay | MCMatchRule::NoArtillery | MCMatchRule::NightLights);
+    SaveShot("match options 2 play", ScreenHash());
+
+    // A click on a switch's choice is the same change: ARTILLERY back on.
+    {
+        Rml::Element* artillery = window.Document()->get().GetElementById(std::format("opt-{}", ArtilleryRow));
+        REQUIRE(artillery != nullptr);
+        REQUIRE(artillery->GetNumChildren() == 2);
+        MCTestGuest::RealClickOn(*artillery->GetChild(1));
+        Settle();
+        CHECK_EQ(value(ArtilleryRow), std::string("On"));
+        CHECK_EQ(game.WantedRules() & MCMatchRule::NoArtillery, 0u);
+        window.Step(ArtilleryRow, 1);
+        Settle();
+        CHECK_EQ(value(ArtilleryRow), std::string("Off"));
+    }
 
     // VETERAN, then REGULAR; the first weapon family off.
-    ClickSetting(list, PilotRow, 1);
-    CHECK(list.ChoiceName(PilotRow) == "VETERAN");
-    ClickSetting(list, PilotRow, 1);
-    CHECK(list.ChoiceName(PilotRow) == "REGULAR");
-    ClickSetting(list, FirstWeaponRow, 1);
-    CHECK(list.ChoiceName(FirstWeaponRow) == "OFF");
-    CHECK(list.ChoiceName(FirstWeaponRow + 1) == "ON");
+    window.Step(PilotRow, 1);
+    CHECK_EQ(value(PilotRow), std::string("Veteran"));
+    window.Step(PilotRow, 1);
+    CHECK_EQ(value(PilotRow), std::string("Regular"));
+    window.Step(FirstWeaponRow, 1);
+    CHECK_EQ(value(FirstWeaponRow), std::string("Off"));
+    CHECK_EQ(value(FirstWeaponRow + 1), std::string("On"));
+    Settle();
     sentIs(static_cast<int8_t>(MCWeatherKind::Downpour), MissionOwn,
            MCMatchRule::WeatherPlay | MCMatchRule::NoArtillery | MCMatchRule::NightLights |
                MCPilotRankRules(MCPilotRank::Regular) | WeaponFamilies.front().Rule);
-    SaveShot("match options 2 weapons", ScreenHash());
-    list.ScrollTo(list.OptionRows());
+    window.ShowTab(MCMatchOptionsWindow::MCTab::Weapons);
     Settle();
-    SaveShot("match options 3 weapons to the end", ScreenHash());
-    SaveShot("match options 2 options in front", ScreenHash());
+    SaveShot("match options 3 weapons", ScreenHash());
 
-    // New chat while the options are in front: MULTIPLAYER CHAT blinks until it is in front again.
-    const size_t linesSeen = screen.ChatLinesSeen;
-    GlobalLog()->Chat->AddLine("%fc4Guest: %fc6ready");
+    // The room's options show what the match plays.
+    window.PressDone();
     Settle();
-    CHECK(GlobalLog()->Chat->LinesAdded > linesSeen);
+    CHECK(!MatchOptionsWindowShown());
+    CHECK(RoomScreenShown());
+    const std::vector<std::string> shown = RoomScreen()->Seen().Options;
+    CHECK(std::ranges::contains(shown, std::string("Weather | Downpour")));
+    CHECK(std::ranges::contains(shown, std::string("Most skilled pilot | Regular")));
+    CHECK(std::ranges::contains(shown, std::string("Weapons | 10 of 11")));
 
-    // A guest's list: locked, saying so.
+    // A guest's window: the values, and who sets them; its steps change nothing.
     game.IsHost = false;
     Settle();
-    ClickSetting(list, WeatherRow, 1);
-    CHECK(list.ChoiceName(WeatherRow) == "DOWNPOUR");
-    CHECK(list.Status() == "THE HOST SETS THESE.");
+    MCTestGuest::PressInRoom("view-options");
+    REQUIRE(MatchOptionsWindowShown());
+    window.ShowTab(MCMatchOptionsWindow::MCTab::Play);
+    Settle();
+    CHECK(!window.Seen(WeatherRow).Set);
+    window.Step(WeatherRow, 1);
+    Settle();
+    CHECK_EQ(value(WeatherRow), std::string("Downpour"));
+    Rml::Element* note = window.Document()->get().GetElementById("note");
+    REQUIRE(note != nullptr);
+    CHECK_EQ(note->GetInnerRML(), Rml::String("The host sets these."));
+    SaveShot("match options 4 guest", ScreenHash());
+
+    // Escape goes back to the room.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    Settle();
+    CHECK(!MatchOptionsWindowShown());
+    CHECK(RoomScreenShown());
     game.IsHost = true;
     Settle();
-
-    Click(TabX, ChatTabY);
-    Settle();
-    CHECK(screen.FrontTab == MCSessionTab::Chat);
-    CHECK(!list.ShowWindow);
-    CHECK(GlobalLog()->ChatWindowOn(screen)->ShowWindow);
 }
 
 namespace
@@ -545,9 +618,15 @@ namespace
         return value;
     }
 
-    /// <summary>Clicks <paramref name="dialog"/>'s OK.</summary>
+    /// <summary>Clicks <paramref name="dialog"/>'s OK (the remade dialog's, over the remade room).</summary>
     void ClickOk(MCReusableDialog& dialog)
     {
+        if (MCRmlDialogs::Shown())
+        {
+            MCRmlDialogs::Dialog()->PressMain();
+            return;
+        }
+
         MCLogDialogButton& ok = *dialog.OkButton;
         Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
     }
@@ -706,7 +785,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     room.LoadMission("ARENA");
     REQUIRE(SettleUntil([] { return !GlobalLog()->MessageDialog->IsShowing(); }));
     CHECK(!room.LoadMissionButton->Disabled);
-    ClickButton(*room.ExitButton);
+    MCTestGuest::PressInRoom("leave");
     CHECK(MCTestGuest::OnLan());
     CHECK(!room.IsShowing());
     CHECK(manager.CurrentSession() == nullptr);
@@ -795,16 +874,18 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(cal.Id()) && cal.SessionScreens() == 1; }));
     // Shown as its game is up: on the host's next look (twice a second), not its wait for a game that never says so.
     CHECK(MCPort::Milliseconds() - pinged < 1000);
-    REQUIRE(SettleUntil([&] { return cal.MissionsLoaded() == 1 && !dialog.IsShowing(); }));
+    // The room and the mission go to ANN again as well: on its own link, so not always by the time CAL has its (under
+    // a loaded machine ANN's came a frame later: the suite's 12 jobs failed here one run in a few).
+    REQUIRE(SettleUntil([&] { return cal.MissionsLoaded() == 1 && ann.MissionsLoaded() == 2 && !dialog.IsShowing(); }));
     CHECK_EQ(ann.SessionScreens(), 2);
     CHECK_EQ(ann.MissionsLoaded(), 2);
-    CHECK(room.Team1Players[0] == hostId);
-    CHECK(room.Team2Players[0] == ann.Id());
-    CHECK_EQ(room.Team1TechBase, 1);
-    CHECK_EQ(room.Team2TechBase, 1);
+    CHECK(MCSessionScreen::Room().Team1Players[0] == hostId);
+    CHECK(MCSessionScreen::Room().Team2Players[0] == ann.Id());
+    CHECK_EQ(MCSessionScreen::Room().Team1TechBase, 1);
+    CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
     CHECK_EQ(std::string(room.Team1RPText->Text()), "12000");
     CHECK_EQ(std::string(room.Team2RPText->Text()), "9000");
-    CHECK(!room.MissionFile.empty());
+    CHECK(!MCSessionScreen::Room().MissionFile.empty());
     SaveShot("room 0 a player joined", ScreenHash());
 
     // CAL unpicked holds START; on team 2 it lights.
@@ -818,8 +899,8 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     Settle();
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     CHECK(!dialog.IsShowing());
-    CHECK(room.Team2Players[0] == MCSessionScreen::NoPlayer);
-    CHECK(room.Team2Players[1] == cal.Id());
+    CHECK(MCSessionScreen::Room().Team2Players[0] == MCSessionScreen::NoPlayer);
+    CHECK(MCSessionScreen::Room().Team2Players[1] == cal.Id());
     CHECK(!room.StartButton->Disabled);
     CHECK(openToPlayers());
     SaveShot("room 1 a player left", ScreenHash());
@@ -849,12 +930,12 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     dan.Leave();
     REQUIRE(SettleUntil([&] { return !dialog.IsShowing() && cal.MissionsLoaded() == calMissions + 1; }));
     CHECK(!MCTestGuest::RoomShows(dan.Id()));
-    CHECK(!room.MissionFile.empty());
-    CHECK(room.Team2Players[1] == cal.Id());
+    CHECK(!MCSessionScreen::Room().MissionFile.empty());
+    CHECK(MCSessionScreen::Room().Team2Players[1] == cal.Id());
     CHECK(!room.StartButton->Disabled);
 
     // START closes the room.
-    ClickButton(*room.StartButton);
+    MCTestGuest::PressInRoom("begin");
     CHECK(GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen);
     CHECK(manager.SessionLocked());
     CHECK(!openToPlayers());
@@ -938,13 +1019,15 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can
     eve.SendRules(hostId, MCTestGuest::ReleaseOneRules);
     REQUIRE(SettleUntil([&] { return game.PlayersWithout(MCMatchRule::WeatherRules).empty(); }));
     CHECK(game.PlayersWithout(MCMatchRule::NightLights) == std::vector{eve.Id()});
-    Click(TabX, OptionsTabY);
+    MCTestGuest::PressInRoom("view-options");
+    REQUIRE(MatchOptionsWindowShown());
+    const MCMatchOptionsWindow& window = *MatchOptionsWindow();
+    CHECK(!window.Seen(TimeRow).Held);
+    CHECK(!window.Seen(WeatherRow).Held);
+    CHECK(window.Seen(ArtilleryRow).Held);
+    CHECK_EQ(window.Seen(ArtilleryRow).Line, std::string("Tell ANN to upgrade."));
+    MatchOptionsWindow()->PressDone();
     Settle();
-    REQUIRE(room.FrontTab == MCSessionTab::Options);
-    MCLogOptionList& list = *room.MatchOptionsList;
-    CHECK(list.HeldReason(TimeRow).empty());
-    CHECK(list.HeldReason(WeatherRow).empty());
-    CHECK_EQ(list.HeldReason(ArtilleryRow), std::string("TELL ANN TO UPGRADE."));
 
     // The host chooses night: played at version 1 (no lights). FAY's game, this build's, keeps version 1's play: let in.
     choose(MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night});
@@ -1012,8 +1095,8 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can
     REQUIRE(dan.Join(*manager.DirectPlay, JoinHostAddress));
     CHECK(dan.Refusal().empty());
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()) && sentTime(dan, MCTimeOfDay::Night, false); }));
-    CHECK(room.Team2Players[0] == ann.Id());
-    CHECK_EQ(list.HeldReason(ArtilleryRow), std::string("TELL ANN AND DAN TO UPGRADE."));
+    CHECK(MCSessionScreen::Room().Team2Players[0] == ann.Id());
+    CHECK_EQ(window.Seen(ArtilleryRow).Line, std::string("Tell ANN and DAN to upgrade."));
 }
 
 namespace
@@ -1110,7 +1193,8 @@ namespace
         room.AssignPlayer(cat, 2, 1, false);
         room.SetTeamTechBase(2, 1);
         room.LoadMission(RolloverMission);
-        REQUIRE(SettleLong([&] { return !GlobalLog()->MessageDialog->IsShowing() && !room.MissionFile.empty(); }));
+        REQUIRE(SettleLong(
+            [&] { return !GlobalLog()->MessageDialog->IsShowing() && !MCSessionScreen::Room().MissionFile.empty(); }));
         room.SetTeam1RP(12000);
         room.SetTeam2RP(9000);
         Settle();
@@ -1217,14 +1301,15 @@ TEST_CASE_ISOLATED(
     REQUIRE(SettleLong(
         [&]
         {
-            return room.Team2Players[0] == ann && room.Team2Players[1] == cat.Id() &&
-                   std::string(room.Team1RPText->Text()) == "12000" && !room.MissionName.empty();
+            return MCSessionScreen::Room().Team2Players[0] == ann &&
+                   MCSessionScreen::Room().Team2Players[1] == cat.Id() &&
+                   std::string(room.Team1RPText->Text()) == "12000" && !MCSessionScreen::Room().MissionName.empty();
         }));
-    const std::string missionName = room.MissionName;
+    const std::string missionName = MCSessionScreen::Room().MissionName;
     const std::shared_ptr<MCFidpPlayer> host = PlayerNamed("BOB");
     REQUIRE(host != nullptr);
     const uint32_t bobId = host->Id;
-    CHECK(room.Team1Players[0] == bobId);
+    CHECK(MCSessionScreen::Room().Team1Players[0] == bobId);
     CHECK(!MultiPlayer()->IsHost);
     const int32_t catScreens = cat.SessionScreens();
     bob.Seen();
@@ -1238,14 +1323,14 @@ TEST_CASE_ISOLATED(
     CHECK(manager.GetPlayer(bobId) == nullptr);
     CHECK(MCSameGuid(manager.CurrentSession()->SessionDesc.guidInstance, instance));
     CHECK(MCTestGuest::RoomShows(cat.Id()));
-    CHECK(room.Team1Players[0] == MCSessionScreen::NoPlayer);
-    CHECK(room.Team2Players[0] == ann);
-    CHECK(room.Team2Players[1] == cat.Id());
-    CHECK_EQ(room.Team2TechBase, 1);
+    CHECK(MCSessionScreen::Room().Team1Players[0] == MCSessionScreen::NoPlayer);
+    CHECK(MCSessionScreen::Room().Team2Players[0] == ann);
+    CHECK(MCSessionScreen::Room().Team2Players[1] == cat.Id());
+    CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
     CHECK_EQ(std::string(room.Team1RPText->Text()), "12000");
     CHECK_EQ(std::string(room.Team2RPText->Text()), "9000");
-    CHECK(!room.MissionFile.empty());
-    CHECK_EQ(room.MissionName, missionName);
+    CHECK(!MCSessionScreen::Room().MissionFile.empty());
+    CHECK_EQ(MCSessionScreen::Room().MissionName, missionName);
     CHECK(ChatSays("BOB has left the game."));
     CHECK(ChatSays("is now the server."));
 
@@ -1253,7 +1338,7 @@ TEST_CASE_ISOLATED(
     room.AssignPlayer(cat.Id(), 1, 0, false);
     Settle();
     REQUIRE(!room.StartButton->Disabled);
-    ClickButton(*room.StartButton);
+    MCTestGuest::PressInRoom("begin");
     CHECK(GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen);
     CHECK(manager.SessionLocked());
     CHECK_EQ(manager.DirectPlay->SetSessionDesc(manager.CurrentSession()->SessionDesc, 0), uint32_t{DP_OK});

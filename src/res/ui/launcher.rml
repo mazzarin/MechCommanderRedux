@@ -1,0 +1,21 @@
+<rml>
+<head>
+    <title>Joining</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <style>
+        #hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 40dp; }
+        #hintbar .content { padding-top: 14dp; }
+        #hintbar .hints { margin-top: 0; }
+    </style>
+</head>
+<!-- Port-only (SPEC-menus.md's stage 4, a launcher's way in): a launcher's game joins on the painting alone, its dialog
+     ("Joining Steel Rain..." with CANCEL, which ends the game) over it, until the room opens; 1998's ready room is
+     gone. -->
+<body class="painting">
+    <div id="hintbar" class="bar glass">
+        <div class="stage16">
+            <div class="content"><div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div></div>
+        </div>
+    </div>
+</body>
+</rml>

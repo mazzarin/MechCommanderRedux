@@ -153,6 +153,16 @@ protected:
     /// </summary>
     void TakeKeysFirst();
     /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): calls <paramref name="act"/> with the text box <paramref name="id"/>'s text
+    /// at each change, and whether ENTER made it (a chat line sent).
+    /// </summary>
+    bool OnText(const std::string& id, std::function<void(const std::string& text, bool enter)> act);
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): a change of any control inside element <paramref name="id"/> (rows put in
+    /// it again as the screen goes): <paramref name="act"/> with the control's id and its new choice.
+    /// </summary>
+    bool OnChangeIn(const std::string& id, std::function<void(const std::string& control, int value)> act);
+    /// <summary>
     /// Calls <paramref name="act"/> with each <paramref name="event"/> on the element <paramref name="id"/> or under it
     /// (a list's clicks, a box's right-click); false without one. Taken off the element before the document closes.
     /// </summary>

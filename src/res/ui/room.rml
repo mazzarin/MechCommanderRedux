@@ -1,0 +1,120 @@
+<rml>
+<head>
+    <title>Room</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="room.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md's stage 4, "The room"): the room on the campaign's night ground: its name along the top
+     with how it's found; who plays (the teams with their tech base and points, three places each, the players on no
+     team as cards the host drags onto a team or sends with TEAM 1 or TEAM 2), what is played (the map, CHOOSE MAP or
+     the host's CHANGE, the match options as played, VIEW or CHANGE opening MATCH OPTIONS) and the chat; along the
+     bottom LEAVE, whom the room waits for and the host's BEGIN PLANNING. The room's model (logistics/MCRoomModel). -->
+<body class="night" data-model="room">
+    <div class="stage16">
+        <div id="room" class="content">
+            <div id="head" class="row bottom">
+                <div class="grow"><div class="eyebrow">{{eyebrow}}</div><div class="title caps nowrap">{{name}}</div></div>
+                <div class="fact" data-if="access != ''">{{access}}</div>
+                <div class="fact" data-if="code != ''">Code <span class="code">{{code}}</span></div>
+                <div class="fact"><span class="white">{{count}}</span> of {{most}} players</div>
+            </div>
+            <div id="body" class="row">
+                <div id="teams" class="column">
+                    <div class="team">
+                        <div class="team-head">
+                            <div class="team-name">Team 1</div><div class="grow"></div>
+                            <div class="switch small" id="tech1" data-if="hosting" data-class-off="!can_forces" data-hint="Tech base"><div>Inner Sphere</div><div>Clan</div></div>
+                            <div class="rp-label" data-if="hosting">RP</div>
+                            <input type="text" class="field small rp-box" id="points1" data-if="hosting" maxlength="9"/>
+                            <div class="team-what" data-if="!hosting">{{tech1_name}}</div>
+                            <div class="team-what" data-if="!hosting"><span class="cream">{{points1}}</span> RP</div>
+                        </div>
+                        <div data-for="slot, s : slots1">
+                            <div class="slot" data-if="slot.open" data-event-dragdrop="drop(1, s)">Open</div>
+                            <div class="person in-team" data-if="!slot.open" data-class-me="slot.me" data-class-drags="can_teams"
+                                 data-event-dragstart="drag(slot.id)" data-event-dragdrop="drop(1, s)">
+                                <div data-attr-class="'name ' + slot.colour">{{slot.name}}</div>
+                                <div class="host" data-if="slot.host">Host</div>
+                                <div class="grow"></div>
+                                <div class="button small" data-if="can_teams" data-class-off="full2" data-event-click="join(slot.id, 2)" data-hint="To team 2">Team 2</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="team">
+                        <div class="team-head">
+                            <div class="team-name">Team 2</div><div class="grow"></div>
+                            <div class="switch small" id="tech2" data-if="hosting" data-class-off="!can_forces" data-hint="Tech base"><div>Inner Sphere</div><div>Clan</div></div>
+                            <div class="rp-label" data-if="hosting">RP</div>
+                            <input type="text" class="field small rp-box" id="points2" data-if="hosting" maxlength="9"/>
+                            <div class="team-what" data-if="!hosting">{{tech2_name}}</div>
+                            <div class="team-what" data-if="!hosting"><span class="cream">{{points2}}</span> RP</div>
+                        </div>
+                        <div data-for="slot, s : slots2">
+                            <div class="slot" data-if="slot.open" data-event-dragdrop="drop(2, s)">Open</div>
+                            <div class="person in-team" data-if="!slot.open" data-class-me="slot.me" data-class-drags="can_teams"
+                                 data-event-dragstart="drag(slot.id)" data-event-dragdrop="drop(2, s)">
+                                <div data-attr-class="'name ' + slot.colour">{{slot.name}}</div>
+                                <div class="host" data-if="slot.host">Host</div>
+                                <div class="grow"></div>
+                                <div class="button small" data-if="can_teams" data-class-off="full1" data-event-click="join(slot.id, 1)" data-hint="To team 1">Team 1</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="pool-drop" id="pool" data-if="pool.size > 0" data-event-dragdrop="drop(0, 0)">
+                        <div class="pool-head"><div class="pool-name">Not on a team</div><div class="grow"></div><div class="note" data-if="can_teams">Drag a player onto a team.</div></div>
+                        <div class="person" data-for="card : pool" data-class-me="card.me" data-class-drags="can_teams"
+                             data-event-dragstart="drag(card.id)">
+                            <div data-attr-class="'name ' + card.colour">{{card.name}}</div>
+                            <div class="host" data-if="card.host">Host</div>
+                            <div class="grow"></div>
+                            <div class="button small" data-if="can_teams" data-class-off="full1" data-event-click="join(card.id, 1)" data-hint="To team 1">Team 1</div>
+                            <div class="button small" data-if="can_teams" data-class-off="full2" data-event-click="join(card.id, 2)" data-hint="To team 2">Team 2</div>
+                        </div>
+                    </div>
+                </div>
+                <div id="match" class="column">
+                    <div class="map-empty" data-if="!has_map">
+                        <div class="map-word">No map yet</div>
+                        <div class="button main" id="choose-map" data-if="can_teams" data-hint="Choose map">Choose map</div>
+                    </div>
+                    <div class="map-chosen" data-if="has_map">
+                        <div class="map-top">
+                            <div class="map-pic"><img data-attr-src="map_pic"/></div>
+                            <div class="map-names">
+                                <div class="map-title">{{map_title}}</div>
+                                <div class="data grey" data-if="map_time != ''">{{map_time}}</div>
+                                <div class="map-change" data-if="can_teams"><div class="button small" id="change-map" data-hint="Choose map">Change</div></div>
+                            </div>
+                        </div>
+                        <div class="map-text"><div class="para" data-for="line : map_lines">{{line.text}}</div></div>
+                    </div>
+                    <div class="pool-head options-head"><div class="pool-name">Match options</div><div class="grow"></div><div class="button small" id="view-options" data-hint="Match options">{{options_word}}</div></div>
+                    <div class="opt" data-for="opt : opts"><div class="opt-name">{{opt.name}}</div><div class="grow"></div><div class="opt-value" data-class-grey="opt.off">{{opt.value}}</div></div>
+                </div>
+                <div id="talk" class="chat">
+                    <div class="chat-lines">
+                        <div class="chat-line" data-for="line : chat" data-class-game="line.game"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> Team</span><span data-if="!line.game">: </span>{{line.text}}</div>
+                    </div>
+                    <div class="chat-say">
+                        <div class="switch small" id="to" data-hint="Who reads it"><div data-class-off="!can_team_chat">Team</div><div>All</div></div>
+                        <input type="text" class="field" id="say" maxlength="255"/>
+                    </div>
+                </div>
+            </div>
+            <div id="foot" class="row">
+                <div class="button" id="leave" data-class-off="closing" data-hint="Leave">Leave</div>
+                <div class="grow"></div>
+                <div class="status update-line" id="update" data-if="update_line != ''" data-hint="Update">{{update_line}}</div>
+                <div class="status" data-if="waits != ''">{{waits}}</div>
+                <div class="status" data-if="!hosting &amp;&amp; waits == '' &amp;&amp; wait_name != ''">Waiting for <span data-attr-class="wait_colour">{{wait_name}}</span> {{wait_what}}</div>
+                <div class="button main" id="begin" data-if="hosting" data-class-off="!can_begin" data-hint="Begin planning">Begin planning</div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar" class="bar glass">
+        <div class="stage16">
+            <div class="content"><div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div></div>
+        </div>
+    </div>
+</body>
+</rml>

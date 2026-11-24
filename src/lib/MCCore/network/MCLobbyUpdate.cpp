@@ -2,6 +2,7 @@
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCMenuScreens.h"
 #include "network/MCLobbyUpdate.h"
+#include "ui/MCRmlFlow.h"
 #include "gui/MCGuiStartup.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
@@ -70,6 +71,12 @@ namespace
     /// <summary>Port-only (Redux HD): what START asks of a rematch's guest not back yet, and of several.</summary>
     constexpr std::string_view NotBackYetFormat = "{} ISN'T BACK YET. START WITHOUT {}?";
     constexpr std::string_view NotBackYetThemFormat = "{} AREN'T BACK YET. START WITHOUT THEM?";
+    /// <summary>Port-only (SPEC-menus.md's stage 4): the same over the remade room, as sentences, names as typed.</summary>
+    constexpr std::string_view StartWaitsSentence = "Waiting for {} to rejoin.";
+    constexpr std::string_view StartWithoutThemSentence = "{} are updating. Start without them?";
+    constexpr std::string_view StartWithoutOneSentence = "{} Start without {}?";
+    constexpr std::string_view NotBackYetSentence = "{} isn't back yet. Start without {}?";
+    constexpr std::string_view NotBackYetThemSentence = "{} aren't back yet. Start without them?";
     /// <summary>What the room's other games say of player <paramref name="name"/> whose restart into an update is off.</summary>
     constexpr std::string_view UpdateOffFormat = "{} ISN'T UPDATING AFTER ALL.";
     /// <summary>What the room's games say of player <paramref name="name"/> whose time to rejoin is over.</summary>
@@ -168,6 +175,12 @@ namespace
     /// <summary>What the room's other games say of player <paramref name="name"/> restarting into an update.</summary>
     std::string UpdatingText(std::string_view name)
     {
+        // Port-only (SPEC-menus.md's stage 4): over the remade screens, a sentence with the name as typed.
+        if (MCRmlFlow::Showing())
+        {
+            return std::format("{} is updating.", name);
+        }
+
         return std::format("{} IS UPDATING.", Upper(name));
     }
 
@@ -769,11 +782,29 @@ namespace
         return MCNamedPlayers(
             Coming, [](const MCComing&) { return true; }, [](const MCComing& coming) { return Upper(coming.Name); });
     }
+
+    /// <summary>Port-only (SPEC-menus.md's stage 4): the same as a sentence lists them, as typed ("Ann, Cal and Dan").</summary>
+    std::string ComingNamesTyped()
+    {
+        std::string joined;
+
+        for (size_t at = 0; at < Coming.size(); at++)
+        {
+            joined += std::format("{}{}", at == 0 ? "" : at + 1 == Coming.size() ? " and " : ", ", Coming[at].Name);
+        }
+
+        return joined;
+    }
 }
 
 auto MCLobbyUpdate::StartWaitsText() -> std::string
 {
     return Coming.empty() ? std::string() : std::format(StartWaitsFormat, ComingNames());
+}
+
+auto MCLobbyUpdate::StartWaitsLine() -> std::string
+{
+    return Coming.empty() ? std::string() : std::format(StartWaitsSentence, ComingNamesTyped());
 }
 
 auto MCLobbyUpdate::StartQuestion() -> std::string
@@ -783,17 +814,28 @@ auto MCLobbyUpdate::StartQuestion() -> std::string
         return {};
     }
 
-    const std::string names = ComingNames();
+    // Port-only (SPEC-menus.md's stage 4): over the remade room, sentences with the names as typed.
+    const bool sentences = MCRmlFlow::Showing();
+    const std::string names = sentences ? ComingNamesTyped() : ComingNames();
+    const bool one = Coming.size() == 1;
 
     // Port-only (Redux HD): a rematch's guests aren't updating.
     if (Coming.front().Rematch)
     {
-        return Coming.size() == 1 ? std::format(NotBackYetFormat, names, names)
-                                  : std::format(NotBackYetThemFormat, names);
+        const std::string_view format = one ? (sentences ? NotBackYetSentence : NotBackYetFormat)
+                                            : (sentences ? NotBackYetThemSentence : NotBackYetThemFormat);
+        return one ? std::vformat(format, std::make_format_args(names, names))
+                   : std::vformat(format, std::make_format_args(names));
     }
 
-    return Coming.size() == 1 ? std::format(StartWithoutOneFormat, UpdatingText(Coming.front().Name), names)
-                              : std::format(StartWithoutThemFormat, names);
+    if (one)
+    {
+        const std::string updating = UpdatingText(Coming.front().Name);
+        return std::vformat(sentences ? StartWithoutOneSentence : StartWithoutOneFormat,
+                            std::make_format_args(updating, names));
+    }
+
+    return std::vformat(sentences ? StartWithoutThemSentence : StartWithoutThemFormat, std::make_format_args(names));
 }
 
 auto MCLobbyUpdate::Away(uint32_t playerId) -> bool

@@ -17,14 +17,17 @@
 #include "main/MCHdSettings.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
+#include "logistics/MCChooseMapWindow.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
+#include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCPauseScreen.h"
 #include "logistics/MCPrefsScreen.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSettingsModel.h"
@@ -81,7 +84,8 @@
 //
 // Port-only (SPEC-menus.md's stage 3): --record-window-games 1 times INTERNET's and LAN's changes and windows instead of
 // the mission's, through a scripted games list and a stand-in service (tests/MCInternetSpots.h): MULTIPLAYER ACCESS's
-// INTERNET, HOST GAME's window and its HOST GAME into the room, the room's EXIT back, JOIN GAME's wait and its CANCEL,
+// INTERNET, HOST GAME's window and its HOST GAME into the room; in the room (stage 4) MATCH OPTIONS' window and its DONE,
+// CHOOSE MAP's window and its CHOOSE (the map into the room), and LEAVE back to INTERNET; JOIN GAME's wait and its CANCEL,
 // a newer game's JOIN GAME (its dialog) and UPDATE, UPDATE's way back, BACK, then LAN and its BACK. Each step's press to
 // the end of the first frame showing what it opened goes to the output and the frame log ("step <name>: ..."), beside
 // the changes' own lines; nothing is recorded.
@@ -1083,14 +1087,20 @@ namespace
         internet.PressHost();
         REQUIRE(RunPaced(time, hostShown, MostChangeSeconds));
         TimeStep(time, "host-to-room", [&internet] { internet.HostWindow()->PressHost(); }, InRoom);
+
+        // The room: MATCH OPTIONS' window and its DONE, CHOOSE MAP's window and its CHOOSE (the map shown in the room),
+        // then LEAVE back to INTERNET. Each the room's own press, as a click's (no frames of the test's own).
+        REQUIRE(RoomScreen());
+        MCRoomScreen& room = *RoomScreen();
+        TimeStep(time, "room-options", [&room] { room.PressOptions(); }, [] { return MatchOptionsWindowShown(); });
         TimeStep(
-            time, "room-exit",
-            []
-            {
-                MCGuiObject& exit = *GlobalLog()->SessionScreen->ExitButton;
-                MCScreenInput::Click(exit.GlobalX() + exit.Width() / 2, exit.GlobalY() + exit.Height() / 2);
-            },
-            OnInternet);
+            time, "room-options-done", [] { MatchOptionsWindow()->PressDone(); },
+            [] { return !MatchOptionsWindowShown(); });
+        TimeStep(time, "room-choose-map", [&room] { room.PressChooseMap(); }, [] { return ChooseMapWindowShown(); });
+        TimeStep(
+            time, "room-choose", [] { ChooseMapWindow()->PressChoose(); },
+            [&room] { return !ChooseMapWindowShown() && !room.Seen().Map.empty(); });
+        TimeStep(time, "room-leave", [&room] { room.PressLeave(); }, OnInternet);
 
         // JOIN GAME on Bob's game: the wait, its CANCEL. A newer game's JOIN GAME: its dialog, its UPDATE, and back.
         list.Send(EveryKindOfGame(ListedOnline, ListedInGames));

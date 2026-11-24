@@ -12,6 +12,7 @@
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
@@ -848,7 +849,7 @@ namespace MCTestGuest
     inline bool RoomShows(uint32_t id)
     {
         return std::ranges::any_of(GlobalLog()->SessionScreen->PlayerNames, [id](const auto& name)
-                                   { return name != nullptr && name->ShowWindow && name->PlayerId == id; });
+                                   { return name != nullptr && name->ShowWindow && name->PlayerId() == id; });
     }
 
     /// <summary>
@@ -908,10 +909,14 @@ namespace MCTestGuest
                logistics->MultiplayerScreen->IsShowing() && !OnInternet() && !OnLan() && !MCScreenChange::Running();
     }
 
-    /// <summary>Whether the room (the 1998 session screen) shows.</summary>
+    /// <summary>
+    /// Whether the room shows: the remade one (SPEC-menus.md's stage 4) in the 1998 session screen's place, logistics'
+    /// screen still; or the 1998 one where the remade one can't show.
+    /// </summary>
     inline bool InRoom()
     {
-        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen && GlobalLog()->SessionScreen->IsShowing();
+        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen &&
+               (RoomScreenShown() || GlobalLog()->SessionScreen->IsShowing());
     }
 
     /// <summary>The element <paramref name="id"/> in a remade screen's document; none while it isn't open.</summary>
@@ -975,6 +980,22 @@ namespace MCTestGuest
             MCInput::HandleEvent(button);
             Step();
         }
+    }
+
+    /// <summary>
+    /// A player's click on the remade room's element <paramref name="id"/> ("begin", "leave", "update"), and the game
+    /// settled: the room up to date first (its frame).
+    /// </summary>
+    inline void PressInRoom(const char* id)
+    {
+        const MCGuiHandle<MCRoomScreen> room = RoomScreen();
+        REQUIRE(room);
+        REQUIRE(room->Shown());
+        Step();
+        Rml::Element* element = ElementOf(*room, id);
+        REQUIRE(element != nullptr);
+        RealClickOn(*element);
+        Settle();
     }
 
     /// <summary>A player's typing of <paramref name="text"/> into the remade screen's box that has the keys (SDL's text event).</summary>

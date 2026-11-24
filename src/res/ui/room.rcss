@@ -1,0 +1,183 @@
+/* Port-only (SPEC-menus.md's stage 4): the game's copy of tools/menus-frames/frames/room.rcss (the style frames'), with
+   the controls live and the night's hint line (the campaign's sheet's). The workspace's frames stay the design. */
+
+/* The room (the session screen), on the campaign's night ground: the room's name along the top with how it's found
+   (where it's hosted, its code, how many are in it), then three columns: who plays (the teams with their tech base
+   and points, the players not on a team), what is played (the map, then the match options as played, a guest's VIEW
+   or the host's CHANGE opening MATCH OPTIONS over the room) and the chat; along the bottom LEAVE, what the room waits
+   for (a guest's) or the host's BEGIN PLANNING.
+   21:9 keeps the 16:9 widths, centred, the ground carried on. */
+
+#room { padding-top: 16dp; padding-bottom: 16dp; }
+#room > * { flex: 0 0 auto; }
+
+/* Along the top: what it belongs to in cyan over the room's name (the host's to type), and how it's found. */
+#head { padding-bottom: 6dp; border-bottom: 1dp #2a3742; margin-bottom: 12dp; gap: 16dp; }
+#head > * { flex: 0 0 auto; }
+#head > .grow { flex: 1 1 0; }
+.fact { font-size: 9.51dp; line-height: 12dp; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #a4b0bc; white-space: nowrap; }
+.fact .code { color: #fcfcb8; letter-spacing: 0.16em; margin-left: 4dp; }
+
+/* The columns: who plays as wide as the host's team row (the tech base switch, RP and its box); the chat the rest. */
+#room > #body { flex: 1 1 0; align-items: stretch; gap: 16dp; }
+#body > * { flex: 0 0 auto; }
+#teams { width: 256dp; }
+#match { width: 224dp; }
+#talk { flex: 1 1 0; }
+#teams > * { flex: 0 0 auto; }
+#match > * { flex: 0 0 auto; }
+@media (max-aspect-ratio: 17/10) {
+    #teams { width: 256dp; }
+    #match { width: 200dp; }
+}
+
+/* A group's name in cyan Data, as every screen's (OBJECTIVES, PAYLOAD); what it needs said (a note, or the host's
+   button) at its right. */
+.pool-head { display: flex; flex-direction: row; align-items: center; height: 16dp; margin-top: 4dp; margin-bottom: 2dp; }
+.pool-head > * { flex: 0 0 auto; }
+.pool-head > .grow { flex: 1 1 0; }
+.pool-name { font-size: 9.51dp; line-height: 16dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; white-space: nowrap; }
+.note { font-size: 8.75dp; line-height: 11dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; white-space: nowrap; }
+
+/* A team, a group on the night as every screen's, no box: its name, tech base and points along its top (the host's a
+   switch and a box), its three places under them (an open one sunk a step and marked OPEN, a player's their card). */
+.team { margin-bottom: 12dp; }
+.team > * { flex: 0 0 auto; }
+.team-head { display: flex; flex-direction: row; align-items: center; height: 16dp; gap: 6dp; margin-bottom: 4dp; }
+.team-head > * { flex: 0 0 auto; }
+.team-head > .grow { flex: 1 1 0; }
+.team-name { font-size: 9.51dp; line-height: 16dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; white-space: nowrap; }
+.team-what { font-size: 9.51dp; line-height: 16dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; white-space: nowrap; margin-left: 6dp; }
+.rp-label { font-size: 9.51dp; line-height: 16dp; font-weight: 600; letter-spacing: 0.06em; color: #7cd4ec; margin-left: 2dp; }
+.field.small { height: 16dp; line-height: 14dp; font-size: 9.51dp; padding: 0 4dp; }
+.rp-box { width: 48dp; text-align: right; color: #fcfcb8; }
+.slot { box-sizing: border-box; height: 18dp; margin-top: 2dp; padding: 0 7dp; background-color: #0f171e; font-size: 9.51dp; line-height: 18dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7a8a9a; white-space: nowrap; }
+
+/* A player as a card (what the host drags onto a team): the name in its chat colour, HOST after the host's, the
+   player's own edged in cyan. Under the host's pointer, TEAM 1 and TEAM 2. On a team, a place's height. */
+.person { box-sizing: border-box; display: flex; flex-direction: row; align-items: center; gap: 6dp; height: 20dp; margin-top: 2dp; padding: 0 2dp 0 8dp; background-color: #142029; border-left: 2dp #142029; }
+.person > * { flex: 0 0 auto; }
+.person > .grow { flex: 1 1 0; }
+.person .name { font-size: 11.63dp; line-height: 20dp; font-weight: 600; white-space: nowrap; }
+.person .host { font-size: 8.75dp; line-height: 20dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; }
+.person.me { border-left-color: #7cd4ec; }
+.person.hover { background-color: #1b2c38; border-left-color: #1b2c38; }
+.person .button.small { margin-left: 2dp; }
+.person.in-team { height: 18dp; }
+.person.in-team .name, .person.in-team .host { line-height: 18dp; }
+
+/* The map: until the host chooses one, a well saying so (the host's with CHOOSE MAP, 1998's LOAD MAP). Chosen: its
+   picture, the mission's and the map's names (the host's CHANGE under them), the mission's own description (the room
+   packet's) under both. Either takes the column's room above the options. */
+#match > .map-empty, #match > .map-chosen { flex: 1 1 0; }
+.map-empty { box-sizing: border-box; background-color: #0f171e; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 6dp; }
+.map-empty > * { flex: 0 0 auto; }
+.map-word { font-size: 11.63dp; line-height: 15dp; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.map-chosen { display: flex; flex-direction: column; }
+.map-chosen > * { flex: 0 0 auto; }
+.map-top { display: flex; flex-direction: row; gap: 10dp; }
+.map-top > * { flex: 0 0 auto; }
+/* The map's picture: the map's own (its briefing map), an image the room's model names. */
+.map-pic { width: 80dp; height: 80dp; }
+.map-pic img { width: 100%; height: 100%; }
+.map-names { flex: 1 1 0; }
+.map-title { font-size: 11.63dp; line-height: 15dp; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.map-change { margin-top: 10dp; }
+.map-text { font-size: 9.51dp; line-height: 12dp; color: #dce4e4; margin-top: 8dp; }
+
+/* The match options as played, a row each in MATCH OPTIONS' order, the tonnage limit first: the mission's, one value,
+   or the host's for each team, a value under each team's name (right-aligned with the other values); WEAPONS as how
+   many families are allowed. A guest's VIEW opens MATCH OPTIONS to read them, the host's CHANGE to set them. */
+.options-head { margin-top: 10dp; height: 16dp; }
+.opt { box-sizing: border-box; display: flex; flex-direction: row; height: 14dp; font-size: 9.51dp; line-height: 14dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; border-bottom: 1dp #141e26; }
+.opt > * { flex: 0 0 auto; }
+.opt > .grow { flex: 1 1 0; }
+.opt-name { color: #7cd4ec; }  /* a value's label, cyan as every screen's */
+.opt.team-cols { height: 12dp; line-height: 12dp; font-size: 8.75dp; color: #7cd4ec; border-bottom-width: 0dp; }
+.team-col, .team-val { width: 72dp; text-align: right; }
+@media (max-aspect-ratio: 17/10) {
+    .team-col, .team-val { width: 62dp; }
+}
+
+/* MATCH OPTIONS, a window over the room (VIEW's or CHANGE's), the room under a veil: the window's name over a rule;
+   the options' groups as tabs down its left side (the one shown white on the hover's fill, edged cyan), the shown
+   group's options a row each (the name, the game's line under it, the value or the host's control at the right; a
+   team's limit a row under TONNAGE's); along the bottom whom it's for and the way out. One height for every group,
+   WEAPONS' eleven rows, so the window doesn't move between tabs. */
+#options { flex: 0 0 520dp; display: flex; flex-direction: column; }
+#options > * { flex: 0 0 auto; }
+.options-body { display: flex; flex-direction: row; align-items: stretch; height: 308dp; }
+.options-body > * { flex: 0 0 auto; }
+.side-tabs { width: 112dp; border-right: 1dp #2a3742; }
+.side-tab { box-sizing: border-box; height: 24dp; padding: 0 10dp; border-left: 2dp #04040400; font-size: 11.63dp; line-height: 24dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; white-space: nowrap; }
+.side-tab.now { color: #fcfcfc; background-color: #12222e; border-left-color: #7cd4ec; }
+.options-body > .set-rows { flex: 1 1 0; padding-left: 12dp; }
+.set-row { box-sizing: border-box; display: flex; flex-direction: row; align-items: center; gap: 8dp; height: 28dp; border-bottom: 1dp #141e26; }
+.set-row > * { flex: 0 0 auto; }
+.set-row > .set-words { flex: 1 1 0; }
+.set-row.sub { height: 24dp; padding-left: 12dp; }
+.set-name { font-size: 9.51dp; line-height: 12dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.set-line { font-size: 9.51dp; line-height: 12dp; color: #a4b0bc; white-space: nowrap; }
+.set-value { font-size: 9.51dp; line-height: 20dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; text-align: right; white-space: nowrap; }
+.options-foot { display: flex; flex-direction: row; align-items: center; margin-top: 12dp; padding-top: 8dp; border-top: 1dp #2a3742; }
+.options-foot > * { flex: 0 0 auto; }
+.options-foot > .grow { flex: 1 1 0; }
+
+/* The chat: the newest line at its foot; TEAM off until the player is on a team. */
+#talk > .chat-lines { flex: 1 1 0; }
+.switch > .off { color: #6c7a88; }
+
+/* Along the bottom: LEAVE, then a guest's line saying whom the room waits for, or the host's BEGIN PLANNING (off until
+   every player is on a team and a map is chosen). */
+#foot { margin-top: 12dp; padding-top: 8dp; border-top: 1dp #2a3742; gap: 12dp; }
+#foot > * { flex: 0 0 auto; }
+#foot > .grow { flex: 1 1 0; }
+.status { font-size: 11.63dp; line-height: 20dp; color: #a4b0bc; white-space: nowrap; }
+
+/* 21:9: the 16:9 widths kept (no line or list grows longer), the night carried to the edges. */
+@media (min-aspect-ratio: 2/1) {
+    .night #room { flex: 0 1 821dp; }
+}
+
+/* CHOOSE MAP (1998's LOAD MAP): a window over the room, as MATCH OPTIONS, wider for its list: the maps a row each (the
+   mission's name, its file's, the points a team gets, the time limit), the picked one's picture, name and description
+   at the right; CANCEL and CHOOSE along the bottom. */
+#choose { flex: 0 0 640dp; display: flex; flex-direction: column; }
+#choose > * { flex: 0 0 auto; }
+.choose-body { display: flex; flex-direction: row; align-items: stretch; gap: 16dp; height: 308dp; }
+.choose-body > * { flex: 0 0 auto; }
+#maps { flex: 1 1 0; }
+#maps > * { flex: 0 0 auto; }
+#maps > .scroll-box { flex: 1 1 0; }
+#maps .scroll-box > .fade { decorator: vertical-gradient(#04040400 #040404ff); }
+.c-file { flex: 0 0 64dp; font-size: 9.51dp; letter-spacing: 0.06em; }
+/* A team's points, or both teams' when they differ ("375,000 / 300,000"). */
+.c-rp { flex: 0 0 116dp; text-align: right; }
+.c-time { flex: 0 0 44dp; text-align: right; }
+#map-pick { width: 208dp; padding-left: 16dp; border-left: 1dp #2a3742; }
+#map-pick > * { flex: 0 0 auto; }
+.map-pic.big { width: 208dp; height: 140dp; margin-bottom: 8dp; }
+#map-pick .map-text .para { margin-bottom: 6dp; }
+
+/* ---- Live (the game's own) ---- */
+
+/* The night's hint line along the foot (the campaign's sheet's), the room above it. */
+.night #hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 34dp; }
+.night #hintbar .content { padding-top: 8dp; }
+#room { padding-bottom: 42dp; }
+
+/* The host's TEAM 1 and TEAM 2 on a card under the pointer or with the keys' focus; off for a full team. A card the host
+   drags. */
+.person .button.small { opacity: 0; }
+.person:hover .button.small, .person .button.small:focus-visible, .person .button.small:hover { opacity: 1; }
+.person.drags { drag: clone; }
+.person:hover { background-color: #1b2c38; border-left-color: #1b2c38; }
+.person.me:hover { border-left-color: #7cd4ec; }
+.slot.drop, .pool-drop.drop { background-color: #12222e; }
+
+/* The RP box the host types in: its number in the data's cream, as the frames have it. */
+input.text.field.small.rp-box { width: 48dp; color: #fcfcb8; }
+
+/* The guest's line, and the update's, in the foot. */
+#foot .status { flex: 0 1 auto; overflow: hidden; }
+#foot .update-line { color: #e08a2c; }

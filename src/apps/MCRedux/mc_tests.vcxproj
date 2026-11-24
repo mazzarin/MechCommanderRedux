@@ -71,6 +71,9 @@
     <CopyFileToFolders Include="..\..\res\ui\art\main_menu.png">
       <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\choose_map.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\dialog.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
@@ -95,7 +98,13 @@
     <CopyFileToFolders Include="..\..\res\ui\lan.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\launcher.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\look.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\match_options.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\pause.rml">
@@ -141,6 +150,12 @@
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\net.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\room.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\room.rml">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\probe.rcss">

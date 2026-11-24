@@ -79,6 +79,7 @@ auto MCLogButton::LetGoPress() -> void
 auto MCLogButton::SetUpPicture(std::string_view fileName) -> void
 {
     LoadPicture(UpPicture, fileName);
+    UpPictureName = fileName;
     // The button takes the picture's size.
     BackgroundColor = 0xff;
     Resize(UpPicture->Width(), UpPicture->Height());

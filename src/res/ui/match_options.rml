@@ -1,0 +1,28 @@
+<rml>
+<head>
+    <title>Match options</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="dialog.rcss"/>
+    <link type="text/rcss" href="room.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md's stage 4, "MATCH OPTIONS"): a window over the room: FORCES, PLAY and WEAPONS down its side,
+     the tab's options beside them, each with the value the match plays. The host's are switches and steppers, sent as
+     they change; a guest's are their values, with "The host sets these.". An option a player's game doesn't have says
+     whose. DONE (the host's) or CLOSE (a guest's) goes back to the room. The rows are the game's (MATCH OPTIONS' rows,
+     logistics/MCMatchOptionsTab), put in by logistics/MCMatchOptionsWindow. -->
+<body class="window-body">
+    <div class="veil"></div>
+    <div class="window-place">
+        <div id="options" class="panel glass">
+            <div class="panel-name">Match options</div>
+            <div class="options-body">
+                <div class="side-tabs tabs" id="tabs"><div class="side-tab tab now">Forces</div><div class="side-tab tab">Play</div><div class="side-tab tab">Weapons</div></div>
+                <div class="set-rows" id="rows"></div>
+            </div>
+            <div class="options-foot"><div class="note" id="note">The host sets these.</div><div class="grow"></div>
+                <div class="button main" id="done" data-hint="Done">Done</div></div>
+            <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+        </div>
+    </div>
+</body>
+</rml>

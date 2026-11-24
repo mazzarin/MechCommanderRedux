@@ -1,0 +1,50 @@
+<rml>
+<head>
+    <title>Choose map</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="room.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md's stage 4, CHOOSE MAP): a window over the room, the host's: the maps the room can play
+     (the game's room packets, data/savegame/*.mpk) with each one's file, the points each team starts with and its time
+     limit; beside them the picked map's picture, its points and time limit and its description. CANCEL, and CHOOSE (or
+     a double click) loads it into the room. logistics/MCChooseMapWindow. -->
+<body class="window-body" data-model="choose">
+    <div class="veil"></div>
+    <div class="window-place">
+        <div id="choose" class="panel glass">
+            <div class="panel-name">Choose map</div>
+            <div class="choose-body">
+                <div id="maps" class="column">
+                    <div class="list-head row"><div class="cell grow">Map</div><div class="cell c-file">File</div><div class="cell c-rp">RP each</div><div class="cell c-time">Time</div></div>
+                    <div class="scroll-box" id="list-box">
+                        <div class="scroller" id="list">
+                            <div class="list-row row" data-for="map, i : maps" data-class-picked="i == picked"
+                                 data-event-click="pick(i)" data-event-dblclick="choose(i)" data-event-focus="pick(i)" data-hint="Pick">
+                                <div class="cell grow">{{map.name}}</div>
+                                <div class="cell c-file" data-class-grey="i != picked">{{map.file}}</div>
+                                <div class="cell c-rp" data-class-grey="i != picked">{{map.points}}</div>
+                                <div class="cell c-time" data-class-grey="i != picked">{{map.time}}</div>
+                            </div>
+                        </div>
+                        <div class="fade"></div>
+                    </div>
+                </div>
+                <div id="map-pick" class="column">
+                    <div data-if="picked >= 0">
+                        <div class="map-pic big"><img data-attr-src="pick_pic"/></div>
+                        <div class="map-title">{{pick_name}}</div>
+                        <div class="data grey">{{pick_facts}}</div>
+                        <div class="map-text"><div class="para" data-for="line : pick_lines">{{line.text}}</div></div>
+                    </div>
+                </div>
+            </div>
+            <div class="options-foot">
+                <div class="button" id="cancel" data-hint="Cancel">Cancel</div>
+                <div class="grow"></div>
+                <div class="button main" id="pick-map" data-class-off="picked &lt; 0" data-hint="Choose">Choose</div>
+            </div>
+            <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+        </div>
+    </div>
+</body>
+</rml>

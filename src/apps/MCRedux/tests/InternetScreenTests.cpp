@@ -488,104 +488,6 @@ namespace
 {
     /// <summary>Where LAN's search asks in the frames' test: an address of this machine's no game uses.</summary>
     constexpr std::string_view NoLanGameAddress = "127.0.0.1:28983";
-    /// <summary>Frames the menus take to lay out a new window and show it (the layout, then the drawn frame).</summary>
-    constexpr int32_t MenusSettleFrames = 3;
-
-    /// <summary>The game's menus (made by the first remade screen).</summary>
-    MCRmlMenus& GameMenus()
-    {
-        const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
-        REQUIRE(menus.has_value());
-        return menus->get();
-    }
-
-    /// <summary>The menus laid out for <paramref name="window"/>, between the game's frames: their last frame's draws.</summary>
-    std::shared_ptr<const MCUiDraws> MenusAt(MCWindowSize window)
-    {
-        MCRmlMenus& menus = GameMenus();
-        menus.SetWindow(window.Width, window.Height);
-        std::shared_ptr<const MCUiDraws> draws;
-
-        for (int32_t frame = 0; frame < MenusSettleFrames; ++frame)
-        {
-            draws = menus.Frame();
-        }
-
-        return draws;
-    }
-
-    /// <summary>
-    /// What the menus show now drawn on the software path at <paramref name="window"/> (the game's next frame takes
-    /// them back to its window): the picture's hash, saved by --shots as <paramref name="name"/>.
-    /// </summary>
-    uint32_t MenusDrawnAt(MCWindowSize window, std::string_view name)
-    {
-        const std::shared_ptr<const MCUiDraws> draws = MenusAt(window);
-        REQUIRE(draws != nullptr);
-        MCUiSoftware software;
-
-        if (const auto drawn = software.Draw(*draws); !drawn)
-        {
-            FAIL_CHECK(std::format("{} can't be drawn: {}", name, drawn.error()));
-            return 0;
-        }
-
-        const SDL_Surface& picture = *software.Picture();
-
-        // SDL's save takes the surface as changeable; it only reads it.
-        if (const std::optional<std::filesystem::path> path = ShotPath(name);
-            path.has_value() && !SDL_SavePNG(const_cast<SDL_Surface*>(&picture), MCFileSystem::ToUtf8(*path).c_str()))
-        {
-            FAIL_CHECK(std::format("{} can't be saved to {}: {}", name, path->string(), SDL_GetError()));
-        }
-
-        return PictureHash(picture);
-    }
-
-    /// <summary>
-    /// What the menus show now at every window the players' reports name: what the layout and legibility checks find,
-    /// each line headed by its window (nothing: none).
-    /// </summary>
-    std::string MenusProblems()
-    {
-        std::string problems;
-
-        for (const MCWindowSize& window : PlayersWindows)
-        {
-            MenusAt(window);
-            Rml::Context& context = GameMenus().Menus().Context();
-            const std::string found =
-                MCRmlChecks::BoxProblems(context) +
-                MCRmlChecks::Illegible(context, MCRmlMenus::MenusUnit(window.Width, window.Height));
-
-            if (!found.empty())
-            {
-                problems += std::format("{}x{}: {}\n", window.Width, window.Height, found);
-            }
-        }
-
-        return problems;
-    }
-
-    /// <summary>
-    /// What the menus show now as <paramref name="name"/>: its frames at 4:3, 16:9 and 5:4 (<paramref name="hashes"/>),
-    /// and the layout and legibility checks at every players' window.
-    /// </summary>
-    void CheckMenusFrames(std::string_view name, const std::array<uint32_t, FrameWindows.size()>& hashes)
-    {
-        const MCTest::Scope scope{std::string(name)};
-
-        for (size_t i = 0; i < FrameWindows.size(); ++i)
-        {
-            const MCWindowSize window = FrameWindows[i];
-            const uint32_t hash =
-                MenusDrawnAt(window, std::format("menus {} {}x{}", name, window.Width, window.Height));
-            CHECK_EQ(std::format("{}x{}: {:#010x}", window.Width, window.Height, hash),
-                     std::format("{}x{}: {:#010x}", window.Width, window.Height, hashes[i]));
-        }
-
-        CHECK_EQ(MenusProblems(), "");
-    }
 }
 
 /// <summary>
@@ -877,14 +779,14 @@ TEST_CASE_ISOLATED("game: INTERNET hosts a game into its room, its EXIT comes ba
     // (The host is alone, so the file check is done at once, its message closing itself.)
     roomScreen.LoadMission("ARENA");
     REQUIRE(SettleUntil([] { return DialogText().empty(); }));
-    REQUIRE(!roomScreen.MissionName.empty());
+    REQUIRE(!MCSessionScreen::Room().MissionName.empty());
     REQUIRE(SettleUntil([&] { return service.Room()->at("mission") != ""; }));
     CHECK(service.Room()->at("mission") ==
-          MCServiceName(roomScreen.MissionName, MCServiceMissionMost, std::string_view()));
+          MCServiceName(MCSessionScreen::Room().MissionName, MCServiceMissionMost, std::string_view()));
     SaveShot("internet 6 room", ScreenHash());
 
     // The room's EXIT: the internet games again, the game and its socket gone, the player's name kept.
-    ClickButton(*roomScreen.ExitButton);
+    MCTestGuest::PressInRoom("leave");
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     CHECK(!roomScreen.IsShowing());
     REQUIRE(MultiPlayer() != nullptr);
@@ -953,7 +855,7 @@ TEST_CASE_ISOLATED("game: a player away from an internet game is asked STILL THE
     Settle();
     CHECK(DialogText().empty());
     now += std::chrono::seconds(1);
-    REQUIRE(SettleUntil([] { return DialogText() == "ARE YOU STILL THERE?"; }));
+    REQUIRE(SettleUntil([] { return DialogText() == "Are you still there?"; }));
     CHECK(MCIdleCheck::Asking());
     SaveShot("internet 8 still there", ScreenHash());
     now += MCIdleCheck::AnswerTime - std::chrono::seconds(1);
@@ -966,7 +868,7 @@ TEST_CASE_ISOLATED("game: a player away from an internet game is asked STILL THE
 
     // Asked again, and no answer: the player leaves, the game ends on the service, and the games say why.
     now += MCIdleCheck::AwayTime;
-    REQUIRE(SettleUntil([] { return DialogText() == "ARE YOU STILL THERE?"; }));
+    REQUIRE(SettleUntil([] { return DialogText() == "Are you still there?"; }));
     now += MCIdleCheck::AnswerTime;
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     REQUIRE(SettleUntil([] { return !DialogText().empty(); }));
@@ -996,7 +898,7 @@ TEST_CASE_ISOLATED("game: an internet room's host restarts into an update, keepi
     // The update ready: the room's page offers RESTART, which brings the room back.
     UpdateReady();
     CHECK(MCLobbyUpdate::InRoom());
-    ShowUpdatePageOver(room);
+    room.ShowUpdateOver();
     Settle();
     const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(room, "RESTART");
     REQUIRE(restart != nullptr);
@@ -1052,7 +954,7 @@ TEST_CASE_ISOLATED("game: a host's new version comes back to its internet game's
     CHECK(!LobbyLaunchArgs.Active);
     SaveShot("internet 10 back", ScreenHash());
 
-    ClickButton(*GlobalLog()->SessionScreen->ExitButton);
+    MCTestGuest::PressInRoom("leave");
     REQUIRE(SettleUntil([] { return OnInternet(); }));
     CHECK(manager.Internet == nullptr);
     CHECK_EQ(service.OpenLines(), 0u);
@@ -1233,7 +1135,7 @@ TEST_CASE_ISOLATED("game: an internet host's REMATCH hosts its room again on the
     CHECK_EQ(manager.CurrentSession()->Name, gameName);
     // The room back on the list out of battle, as its guests can join it (the service turns joins to one in battle away).
     CHECK(service.Room()->at("battle") == false);
-    CHECK(!GlobalLog()->SessionScreen->MissionFile.empty());
+    CHECK(!GlobalLog()->Room.MissionFile.empty());
     CHECK(DialogText().empty());
     SaveShot("internet 14 rematch", ScreenHash());
 }

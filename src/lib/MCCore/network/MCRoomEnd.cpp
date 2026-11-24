@@ -2,6 +2,7 @@
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCMenuScreens.h"
 #include "network/MCRoomEnd.h"
+#include "ui/MCRmlFlow.h"
 #include "gui/MCGuiSystem.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
@@ -447,7 +448,15 @@ auto MCRoomEnd::WaitsForGuests() -> bool
 auto MCRoomEnd::GuestLine() -> std::string
 {
     // The launcher's guest says it in the 1998 dialog's capitals (the name kept as typed, for the games list's line).
+    // Port-only (SPEC-menus.md's stage 4): over the remade room, in a sentence with the names as typed.
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+    if (MCRmlFlow::Showing())
+    {
+        return SentenceOf(ClosedBy, game != nullptr && game->SessionManager != nullptr ? HostName(*game, false)
+                                                                                       : std::string(SomeHostSentence));
+    }
+
     const std::optional<std::string> closedBy = ClosedBy.has_value() ? std::optional(Upper(*ClosedBy)) : std::nullopt;
     return LineOf(closedBy,
                   game != nullptr && game->SessionManager != nullptr ? HostName(*game) : std::string(SomeHost));

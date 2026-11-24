@@ -31,6 +31,25 @@ public:
         /// windows that delete or leave do.
         /// </summary>
         bool Leaves = false;
+        /// <summary>
+        /// Port-only (SPEC-menus.md's stage 4): a key it asks for (a binding's), every key pressed while it shows but
+        /// Enter, Escape and a modifier alone, in a binding's form (MCKeyBindings::FromKeyEvent); none: it asks none.
+        /// </summary>
+        std::function<void(uint32_t key)> TakeKey;
+        /// <summary>
+        /// Port-only (SPEC-menus.md's stage 4): a wait (MCRmlDialogs::Waiting), which MCRmlDialogs::EndWait ends, even
+        /// with a way out (a launcher's CANCEL). It stands: see <see cref="OnLost"/>.
+        /// </summary>
+        bool Wait = false;
+        /// <summary>
+        /// Port-only (SPEC-menus.md's stage 4): an old dialog's say (MCReusableDialog), which stands as a wait does until
+        /// answered or ended: a change of screens hides it, and it says itself again over the next remade screen
+        /// (MCRmlDialogs::Tend); with none to say itself over, this shows it the old way instead.
+        /// </summary>
+        std::function<void()> OnLost;
+
+        /// <summary>Whether a change of screens leaves it standing (a wait, or an old dialog's say).</summary>
+        bool Stands() const { return Wait || OnLost != nullptr; }
     };
 
     MCRmlDialog();
@@ -45,18 +64,24 @@ public:
     void PressMain();
     void PressOther();
 
+    /// <summary>Hidden as answered or ended (MCRmlDialogs::Close, EndWait): it won't say itself again.</summary>
+    void End();
+
     /// <summary>Text made safe to put in a document (its markup's characters as entities).</summary>
     static std::string Escape(std::string_view text);
 
 protected:
     void OnLoaded(Rml::ElementDocument& document) override;
     MCOptionalRef<Rml::Element> FirstFocus(Rml::ElementDocument& document) override;
+    void OnHide() override;
 
 private:
     /// <summary>The words put in the document, and its buttons shown or not.</summary>
     void Fill();
 
     MCSay _Say;
+    /// <summary>Shown, and not yet answered or ended: hidden now, a change of screens hid it.</summary>
+    bool _Standing = false;
 };
 
 namespace MCRmlDialogs
@@ -78,8 +103,26 @@ namespace MCRmlDialogs
     /// <summary>Whether it shows.</summary>
     bool Shown();
 
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): the window's key <paramref name="event"/> for a dialog that asks for a key
+    /// (<see cref="MCRmlDialog::MCSay::TakeKey"/>); whether it took it (then nothing else sees it).
+    /// </summary>
+    bool TakeKey(const SDL_Event& event);
+
     /// <summary>A wait shown by <see cref="Waiting"/> ended (the 1998 dialog's Deactivate): the dialog closes.</summary>
     void EndWait();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 4): whether a say that stands (MCRmlDialog::MCSay::Stands) was hidden by a change
+    /// of screens and says itself again at <see cref="Tend"/>; with <paramref name="text"/>, whether that say is it.
+    /// </summary>
+    bool Returning(std::optional<std::string_view> text = std::nullopt);
+
+    /// <summary>
+    /// Each frame, after the screens': a say a change of screens hid says itself again over the remade screen shown, or,
+    /// with none, its old dialog shows it (MCRmlDialog::MCSay::OnLost).
+    /// </summary>
+    void Tend();
 
     /// <summary>
     /// An old message (ShowMenuMessage, in the 1998 dialog's capitals) said over the remade screen shown, in sentence

@@ -1,11 +1,15 @@
 #include "stdafx.h"
 #include "logistics/MCReportsNotice.h"
+#include "logistics/MCChooseMapWindow.h"
 #include "logistics/MCLogMenus.h"
+#include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
+#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
 #include "main/MCLogistics.h"
 #include "main/MCTelemetry.h"
@@ -104,11 +108,17 @@ namespace
         }
     };
 
-    /// <summary>Whether a remade screen shows on the menus' layer (Preferences over the main menu, the question itself).</summary>
+    /// <summary>
+    /// Whether a remade screen shows on the menus' layer (Preferences over the main menu, the question itself). Not the
+    /// remade room alone (SPEC-menus.md's stage 4): a launcher's game never leaves it, and the 1998 dialog says itself
+    /// over it; MATCH OPTIONS, CHOOSE MAP or a remade dialog over it does.
+    /// </summary>
     bool RemadeShows()
     {
         const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
-        return menus.has_value() && menus->get().Menus().Showing();
+        const bool roomAlone =
+            RoomScreenShown() && !MatchOptionsWindowShown() && !ChooseMapWindowShown() && !MCRmlDialogs::Shown();
+        return menus.has_value() && menus->get().Menus().Showing() && !roomAlone;
     }
 
     /// <summary>The question asked as the remade dialog; false when the menus' RmlUi can't start or its document can't be read.</summary>

@@ -43,6 +43,7 @@
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCTicker.h"
@@ -1128,6 +1129,14 @@ auto MCLogistics::ShowLogScreen(bool show, bool redraw) const -> void
     if (redraw)
     {
         GuiSystem().ActivatePaletteFromTga(ArtPath + "logart\\lsrupm05.tga");
+    }
+
+    // Port-only (SPEC-menus.md's stage 4): a launcher's join shows on the painting (logistics/MCRoomScreen), the 1998
+    // ready room hidden in its place.
+    if (show && ConnectScreen && ConnectScreen.Is(*CurrentScreen()) && ShowLauncherScreen())
+    {
+        CurrentScreen()->ShowGuiWindow(false);
+        return;
     }
 
     // Port-only (SPEC-menus.md's stage 8): the 1998 briefing stays hidden under the remade one (the way back from a

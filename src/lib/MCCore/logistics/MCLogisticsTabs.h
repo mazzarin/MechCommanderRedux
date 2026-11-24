@@ -161,7 +161,9 @@ public:
     const std::vector<MCGood>& StockGoods() const { return _StockGoods; }
     const std::vector<MCFitRow>& FittedRows() const { return _Fits; }
     const std::string& DetailsName() const { return _InfoName; }
+    /// <summary>The details' button (BUY or SELL) and the buy window's title (what it does).</summary>
     const std::string& DealWord() const { return _DealWord; }
+    const std::string& DealTitle() const { return _DealTitle; }
     bool DealOpen() const { return _DealOpen; }
     int DealCountShown() const { return _Deal.has_value() ? _Deal->Count : 0; }
     const std::string& DealTotal() const { return _DealTotal; }
@@ -173,6 +175,8 @@ public:
     std::shared_ptr<MCLogPart> LabUnit() const { return _LabPart.lock(); }
     /// <summary>The store mech's variant shown (the details' switch).</summary>
     int Variant() const { return _Variant; }
+    /// <summary>Whether the lab's 'Mech can be repaired here (a force 'Mech's, outside a match): sliders, not meters.</summary>
+    bool Repairs() const { return _Repairs; }
 
 private:
     /// <summary>What a card stands for: a unit, a store's good or a spare (one is set).</summary>

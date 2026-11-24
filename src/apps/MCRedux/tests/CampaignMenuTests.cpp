@@ -1204,6 +1204,7 @@ namespace
     constexpr std::string_view GuestLoadingPort = "28987";
     constexpr std::string_view HostLoadingPort = "28989";
     constexpr std::string_view LostLoadingPort = "28993";
+    constexpr std::string_view LogisticsMatchPort = "28997";
     constexpr std::string_view MatchMission = "ARENA";
     /// <summary>A player's light once they've pressed BEGIN MISSION (MCMPPlayerLights' status 2).</summary>
     constexpr int32_t ReadyLight = 2;
@@ -1420,6 +1421,84 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
              (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "ANN has left the game."}));
     CHECK(MCTestGuest::DialogText().empty());
     CHECK(MCCampaignMenu::Shown());
+}
+
+/// <summary>
+/// A match's PURCHASING and 'MECH BAY (purchase_mp, mechbay_mp): the side's store as many of each as wanted (no count,
+/// nothing sold out), a part sold back for the full price it cost (1998's in a match), the chat's newest lines and the
+/// line being typed under the middle and right columns, a line sent there with Enter; the 'MECH BAY's lab with no
+/// repairs (a match has none).
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a match's PURCHASING and 'MECH BAY stand on the chat, the store unlimited, a sale the full price")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    MCCampaignScreen& screen = PlanMatch(ann, LogisticsMatchPort);
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const auto unlimited = [](const MCLogisticsTabs::MCGood& good) { return good.Note.empty() && !good.Off; };
+
+    // PURCHASING: the side's 'Mechs and parts, no counts.
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(!tabs.StoreGoods().empty());
+    CHECK(std::ranges::all_of(tabs.StoreGoods(), unlimited));
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(!tabs.StoreGoods().empty());
+    CHECK(std::ranges::all_of(tabs.StoreGoods(), unlimited));
+
+    // A part bought, then sold back from the INVENTORY (the left column with COMPONENTS): all its price back.
+    const int32_t points = ResourcePoints;
+    const size_t owned = tabs.StockGoods().size();
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+    tabs.PressDeal();
+    REQUIRE(tabs.DealOpen());
+    tabs.DealConfirm();
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(ResourcePoints < points);
+    REQUIRE(!tabs.StockGoods().empty());
+    CHECK(tabs.StockGoods().size() >= owned);
+    tabs.Drop(MCLogisticsTabs::MCPlace::Stock, 0, MCLogisticsTabs::MCPlace::Store);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.DealOpen());
+    CHECK_EQ(tabs.DealTitle(), std::string("Sell"));
+    tabs.DealConfirm();
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(ResourcePoints, points);
+
+    // The chat under the store and the details: a line typed there goes to the team.
+    TypeLine(screen, "say-logistics", "Lasers for everyone");
+    REQUIRE(!screen.ChatLines().empty());
+    CHECK_EQ(screen.ChatLines().back().Text, std::string("Lasers for everyone"));
+    CHECK(screen.ChatLines().back().Team);
+    CHECK_EQ(ElementOf(screen, "say-logistics").GetAttribute<Rml::String>("value", "unread"), std::string());
+    Shot("purchase_mp");
+
+    // A 'Mech bought into the force for the 'MECH BAY: its lab without repairs.
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
+    MCTestGame::RunFrame(FlowFrame);
+    const size_t force = tabs.ForceCards().size();
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+    tabs.PressDeal();
+    REQUIRE(tabs.DealOpen());
+    tabs.DealConfirm();
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(!tabs.SpareCards().empty());
+    tabs.Send(MCLogisticsTabs::MCPlace::Spare, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(tabs.ForceCards().size(), force + 1);
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(tabs.LabUnit() != nullptr);
+    CHECK(!tabs.Repairs());
+    Shot("mechbay_mp");
 }
 
 /// <summary>
@@ -1685,7 +1764,7 @@ TEST_CASE_ISOLATED("game: PURCHASING buys and sells by 1998's rules, from the mo
     ClickOn(ElementOf(screen, std::format("store{}", stocked - store.begin())), SDL_BUTTON_RIGHT);
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE(tabs.DealOpen());
-    CHECK_EQ(tabs.DealWord(), std::string("Buy"));
+    CHECK_EQ(tabs.DealTitle(), std::string("Buy"));
     MCScreenInput::RealKey(SDL_SCANCODE_RIGHT);
     MCTestGame::RunFrame(FlowFrame);
     CHECK_EQ(tabs.DealCountShown(), 2);
@@ -1703,7 +1782,7 @@ TEST_CASE_ISOLATED("game: PURCHASING buys and sells by 1998's rules, from the mo
     DragTo(ElementOf(screen, std::format("stock{}", *row)), ElementOf(screen, "store0"));
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE(tabs.DealOpen());
-    CHECK_EQ(tabs.DealWord(), std::string("Sell"));
+    CHECK_EQ(tabs.DealTitle(), std::string("Sell"));
     MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
     MCTestGame::RunFrame(FlowFrame);
     CHECK_EQ(ResourcePoints, Points - each * 2 + each / 2);

@@ -301,6 +301,7 @@
                     </div>
                 </div>
                 </div>
+                <div class="chat band" data-if="mp"><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-logistics" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-logistics" maxlength="255" data-line="" data-value="say"/></div></div>
                 </div>
             </div>
         </div>

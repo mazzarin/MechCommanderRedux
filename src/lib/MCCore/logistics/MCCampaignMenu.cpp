@@ -46,11 +46,14 @@ namespace
     constexpr const char* ScreenDocument = "campaign.rml";
     constexpr const char* ScreenModel = "campaign";
     /// <summary>
-    /// A match's chat's places (BRIEFING's under the orders, DEPLOY's under the groups, and each tab's column at 21:9): its
-    /// line's boxes and TEAM/ALL switches, kept as one.
+    /// A match's chat's places (BRIEFING's under the orders, DEPLOY's under the groups, each tab's column at 21:9, and
+    /// PURCHASING's and the 'MECH BAY's band under their middle and right columns): its line's boxes and TEAM/ALL
+    /// switches, kept as one.
     /// </summary>
-    constexpr std::array<const char*, 4> SayIds = {"say-brief", "say-brief-side", "say-deploy", "say-deploy-side"};
-    constexpr std::array<const char*, 4> ToIds = {"to-brief", "to-brief-side", "to-deploy", "to-deploy-side"};
+    constexpr std::array<const char*, 5> SayIds = {"say-brief", "say-brief-side", "say-deploy", "say-deploy-side",
+                                                   "say-logistics"};
+    constexpr std::array<const char*, 5> ToIds = {"to-brief", "to-brief-side", "to-deploy", "to-deploy-side",
+                                                  "to-logistics"};
     /// <summary>The chat's switch: TEAM, then ALL (the room's order).</summary>
     constexpr int TeamChoice = 0;
     constexpr int AllChoice = 1;

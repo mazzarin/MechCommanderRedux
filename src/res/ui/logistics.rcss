@@ -47,7 +47,7 @@
 #logistics .stat > .value { flex: 1 1 0; }
 #logistics .blueprint { height: 92dp; margin-bottom: 8dp; }
 /* In multiplayer the details stand on the chat: the blueprint shorter, so BUY stays above it. */
-#logistics .mp .blueprint { height: 60dp; }
+.mp #logistics .blueprint { height: 60dp; }
 #logistics .section { margin-top: 10dp; }
 #logistics .kit-row { font-size: 11.63dp; line-height: 15dp; white-space: nowrap; }
 #logistics .kit-row .n { display: inline-block; width: 14dp; font-weight: 600; color: #fcfcb8; }
@@ -136,6 +136,8 @@
 #logistics .over-band > .cols { flex: 1 1 0; }
 #logistics .chat.band { flex: 0 0 auto; margin-top: 8dp; padding-top: 8dp; border-top: 1dp #2a3742; }
 #logistics .chat.band .chat-lines { flex: 0 0 auto; }
+/* The game's own: the band's newest two lines (two of the chat's 15-unit lines), older ones above them out of sight. */
+#logistics .chat.band .chat-lines { height: 30dp; }
 
 /* 16:10 and narrower: the lists a little narrower, the gaps 12. */
 @media (max-aspect-ratio: 17/10) {

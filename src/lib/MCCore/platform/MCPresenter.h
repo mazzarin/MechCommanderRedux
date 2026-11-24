@@ -118,6 +118,14 @@ struct MCFrame
     /// presenter keeps these in a texture and applies <see cref="Cycle"/> in its shader.
     /// </summary>
     std::span<const SDL_Color> PaletteColors;
+    /// <summary>
+    /// Port-only, with <see cref="PaletteColors"/> (empty: as those, brightened none): each entry's colour before the
+    /// game's brightness (gamma applied) and in A how many times its curve brightened it (0 to 3), which HD colours take
+    /// instead of following the entry's change; and the curve itself, a value at a time (column), brightened once (R),
+    /// twice (G) and three times (B).
+    /// </summary>
+    std::span<const SDL_Color> BeforeColors;
+    std::span<const SDL_Color> BrighteningColors;
     bool PaletteChanged = false;
     MCColorCycle Cycle;
     /// <summary>

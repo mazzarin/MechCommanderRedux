@@ -441,10 +441,18 @@ namespace
     }
 
     /// <summary>
-    /// The palette texture's rows: the colours shown, then the ones the HD art pack was made from (the shown ones when
-    /// there is none), which draw.pshader corrects HD colours by.
+    /// The palette texture's rows (shaders/channels.hlsli's): the colours shown, then the ones the HD art pack was made
+    /// from (the shown ones when there is none), which draw.pshader corrects HD colours by; port-only, the colours
+    /// before the game's brightness with how many times it brightened each in A, and its curve (MCFrame::BeforeColors,
+    /// MCFrame::BrighteningColors).
     /// </summary>
-    constexpr uint32_t PaletteRows = 2;
+    using MCGpuChannels::BeforeRow;
+    using MCGpuChannels::BrighteningRow;
+    using MCGpuChannels::MadeWithRow;
+    using MCGpuChannels::PaletteRows;
+    using MCGpuChannels::ShownRow;
+    /// <summary>The bytes of a palette texel (RGBA8).</summary>
+    constexpr size_t PaletteTexelBytes = 4;
     /// <summary>The HD terrain atlas's widest and tallest (what the GPUs the port runs on sample).</summary>
     constexpr uint32_t MaxHdAtlasSide = 16384;
     /// <summary>The HD terrain's atlases at most (a big map's tiles fill more than one; shaders/draw.pshader's hdTex2).</summary>
@@ -2659,14 +2667,35 @@ uint32_t MCVulkanRenderer::TableRow(MCColorTable table)
     return slot.has_value() ? slot->Row : 0;
 }
 
-void MCVulkanRenderer::SetColors(std::span<const SDL_Color> palette, const MCColorCycle& cycle)
+void MCVulkanRenderer::SetColors(std::span<const SDL_Color> palette, std::span<const SDL_Color> before,
+                                 std::span<const SDL_Color> brightening, const MCColorCycle& cycle)
 {
-    if (!palette.empty() &&
-        !std::equal(palette.begin(), palette.begin() + 256, _Colors.begin(),
-                    [](const SDL_Color& a, const SDL_Color& b) { return a.r == b.r && a.g == b.g && a.b == b.b; }))
+    if (palette.size() >= _Colors.size())
     {
-        std::copy(palette.begin(), palette.begin() + 256, _Colors.begin());
-        _ColorsChanged = true;
+        std::array<SDL_Color, 256> beforeColors{};
+        std::array<SDL_Color, 256> brighteningColors{};
+
+        for (size_t i = 0; i < _Colors.size(); ++i)
+        {
+            const uint8_t value = static_cast<uint8_t>(i);
+            beforeColors[i] = before.size() > i ? before[i] : SDL_Color{palette[i].r, palette[i].g, palette[i].b, 0};
+            brighteningColors[i] = brightening.size() > i ? brightening[i] : SDL_Color{value, value, value, 255};
+        }
+
+        const auto same = [](const SDL_Color& a, const SDL_Color& b)
+        { return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a; };
+        const auto sameRgb = [](const SDL_Color& a, const SDL_Color& b)
+        { return a.r == b.r && a.g == b.g && a.b == b.b; };
+
+        if (!std::equal(_Colors.begin(), _Colors.end(), palette.begin(), sameRgb) ||
+            !std::ranges::equal(beforeColors, _BeforeColors, same) ||
+            !std::ranges::equal(brighteningColors, _BrighteningColors, same))
+        {
+            std::copy_n(palette.begin(), _Colors.size(), _Colors.begin());
+            _BeforeColors = beforeColors;
+            _BrighteningColors = brighteningColors;
+            _ColorsChanged = true;
+        }
     }
 
     _Cycle = cycle;
@@ -8700,17 +8729,19 @@ auto MCVulkanRenderer::Seal(std::span<const MCUnderlay> underlays) -> std::expec
 
     if (_ColorsChanged)
     {
-        const std::span<uint8_t> palette = QueueUpload(_PaletteTexture.Handle, 0, 0, 256, PaletteRows, 4);
+        const std::span<uint8_t> palette =
+            QueueUpload(_PaletteTexture.Handle, 0, 0, 256, PaletteRows, static_cast<uint32_t>(PaletteTexelBytes));
         const auto& madeWith = _HdPaletteVersion != 0 ? MCHdArt::MadeWith() : std::nullopt;
+        const auto texel = [&](uint32_t row, size_t entry)
+        { return palette.subspan((row * _Colors.size() + entry) * PaletteTexelBytes, PaletteTexelBytes); };
+        const auto put = [](std::span<uint8_t> to, const SDL_Color& color)
+        { std::ranges::copy(std::array<uint8_t, PaletteTexelBytes>{color.r, color.g, color.b, color.a}, to.begin()); };
 
-        for (size_t i = 0; i < 256; ++i)
+        for (size_t i = 0; i < _Colors.size(); ++i)
         {
-            const std::span<uint8_t> shown = palette.subspan(i * 4, 4);
-            const std::span<uint8_t> then = palette.subspan((256 + i) * 4, 4);
-            shown[0] = _Colors[i].r;
-            shown[1] = _Colors[i].g;
-            shown[2] = _Colors[i].b;
-            shown[3] = 255;
+            const std::span<uint8_t> shown = texel(ShownRow, i);
+            const std::span<uint8_t> then = texel(MadeWithRow, i);
+            put(shown, {_Colors[i].r, _Colors[i].g, _Colors[i].b, 255});
 
             if (madeWith.has_value())
             {
@@ -8721,6 +8752,9 @@ auto MCVulkanRenderer::Seal(std::span<const MCUnderlay> underlays) -> std::expec
             {
                 std::ranges::copy(shown, then.begin());
             }
+
+            put(texel(BeforeRow, i), _BeforeColors[i]);
+            put(texel(BrighteningRow, i), _BrighteningColors[i]);
         }
 
         _ColorsChanged = false;

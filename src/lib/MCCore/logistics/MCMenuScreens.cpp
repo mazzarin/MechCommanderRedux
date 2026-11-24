@@ -5,6 +5,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCFileScrollPane.h"
+#include "logistics/MCGamesScreen.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogDialogButton.h"
@@ -14,6 +15,7 @@
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCSavesMenu.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateScreen.h"
@@ -42,8 +44,11 @@ namespace
             return false;
         }
 
+        // Port-only (SPEC-menus.md's stage 3): not while a remade screen shows over it, hidden (ui/MCRmlFlow), though it
+        // stays logistics' screen.
         const std::shared_ptr<MCLogObject> shown = logistics->CurrentScreen();
-        return shown != nullptr && (logistics.get()->*screen).Is(*shown);
+        return shown != nullptr && (shown->ShowWindow || !MCRmlFlow::Showing()) &&
+               (logistics.get()->*screen).Is(*shown);
     }
 
     /// <summary>Whether the load screen shows in mode <paramref name="multiplayer"/>, <paramref name="solo"/>.</summary>
@@ -169,10 +174,9 @@ auto MCMenuScreens::Register() -> void
         OldScreen("main", [] { return Showing(&MCLogistics::MainScreen); }, ShowMainMenu, AskQuit));
     Ids.Multiplayer = MCScreenFlow::Register(
         OldScreen("multiplayer", [] { return Showing(&MCLogistics::MultiplayerScreen); }, ConnectScreen));
-    Ids.Lan = MCScreenFlow::Register(OldScreen(
-        "lan", [] { return Showing(&MCLogistics::LanScreen); }, ShowLanScreen, Back("lan back", CancelToConnect)));
-    Ids.Internet = MCScreenFlow::Register(
-        OldScreen("internet", [] { return Showing(&MCLogistics::InternetScreen); }, ShowInternetScreen, InternetBack));
+    // Port-only (SPEC-menus.md's stage 3): LAN and INTERNET remade (logistics/MCGamesScreen).
+    Ids.Lan = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Lan));
+    Ids.Internet = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Internet));
     Ids.Room = MCScreenFlow::Register(OldScreen(
         "room", [] { return Showing(&MCLogistics::SessionScreen); }, [] { GlobalLog()->SetUpSessionScreen(); },
         []
@@ -189,12 +193,11 @@ auto MCMenuScreens::Register() -> void
     Ids.MissionPick = MCScreenFlow::Register(OldScreen(
         "mission pick", [] { return ShowingLoad(true, false); }, [] { GlobalLog()->SetUpSessionScreen(); },
         Back("mission pick back", CancelToSession), true));
-    Ids.Load =
-        MCScreenFlow::Register(OldScreen("load", [] { return ShowingLoad(false, false); }, LoadScreen, {}, true));
+    // Stage 5: LOAD GAME and SAVE GAME remade (logistics/MCSavesMenu); SOLO MISSIONS on the old file screen until 7.
+    Ids.Load = MCScreenFlow::Register(MCSavesMenu::Kind(MCSavesScreen::MCMode::Load));
     Ids.Solo = MCScreenFlow::Register(
         OldScreen("solo missions", [] { return ShowingLoad(false, true); }, SoloLoadScreen, {}, true));
-    Ids.Save = MCScreenFlow::Register(
-        OldScreen("save", [] { return Showing(&MCLogistics::SaveScreen); }, SaveScreen, {}, true));
+    Ids.Save = MCScreenFlow::Register(MCSavesMenu::Kind(MCSavesScreen::MCMode::Save));
     // Port-only (SPEC-menus.md, stage 6): Preferences remade (logistics/MCPrefsScreen.h), made afresh at each press so it
     // reads the settings as they are then; ACCEPT shows the screen below, CANCEL and Escape go back (its Leave puts the
     // settings back).
@@ -210,8 +213,8 @@ auto MCMenuScreens::Register() -> void
                 }));
         },
         MCRmlFlow::MCKeep::Afresh));
-    // Port-only (stage 6): UPDATE remade (logistics/MCUpdateScreen.h), from the main menu's UPDATE and INTERNET's newer
-    // game, made afresh at each press, named by where it opened; BACK shows that screen again.
+    // Port-only (stage 6): UPDATE remade (logistics/MCUpdateScreen.h), from the main menu's UPDATE and INTERNET's or
+    // LAN's newer game, made afresh at each press, named by where it opened; BACK shows that screen again.
     Ids.Update = MCScreenFlow::Register(MCRmlFlow::Kind(
         "update",
         [](MCRmlLayer& layer)

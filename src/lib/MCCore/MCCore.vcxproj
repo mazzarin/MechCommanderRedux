@@ -197,6 +197,7 @@
     <ClCompile Include="logistics\MCDueArtNotice.cpp" />
     <ClCompile Include="logistics\MCFileScrollPane.cpp" />
     <ClCompile Include="logistics\MCGameList.cpp" />
+    <ClCompile Include="logistics\MCGamesScreen.cpp" />
     <ClCompile Include="logistics\MCGenericScreen.cpp" />
     <ClCompile Include="logistics\MCHdOptionsPanel.cpp" />
     <ClCompile Include="logistics\MCIdleCheck.cpp" />
@@ -233,6 +234,7 @@
     <ClCompile Include="logistics\MCMechRepairBlock.cpp" />
     <ClCompile Include="logistics\MCMenuScreens.cpp" />
     <ClCompile Include="logistics\MCMissionLogisticsBridge.cpp" />
+    <ClCompile Include="logistics\MCMissionNames.cpp" />
     <ClCompile Include="logistics\MCPauseScreen.cpp" />
     <ClCompile Include="logistics\MCPilotInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCPilotPurchaseBlock.cpp" />
@@ -251,6 +253,8 @@
     <ClCompile Include="logistics\MCRepairScreen.cpp" />
     <ClCompile Include="logistics\MCReportsNotice.cpp" />
     <ClCompile Include="logistics\MCReusableDialog.cpp" />
+    <ClCompile Include="logistics\MCSaves.cpp" />
+    <ClCompile Include="logistics\MCSavesMenu.cpp" />
     <ClCompile Include="logistics\MCSessionScreen.cpp" />
     <ClCompile Include="logistics\MCSettingsModel.cpp" />
     <ClCompile Include="logistics\MCSettingsScreen.cpp" />
@@ -311,6 +315,7 @@
     <ClCompile Include="mission\MCTrailerMission.cpp" />
     <ClCompile Include="mission\MCWeatherPlay.cpp" />
     <ClCompile Include="network\MCGameDataHash.cpp" />
+    <ClCompile Include="network\MCGamesList.cpp" />
     <ClCompile Include="network\MCInternetCopy.cpp" />
     <ClCompile Include="network\MCInternetGame.cpp" />
     <ClCompile Include="network\MCInternetLobby.cpp" />
@@ -533,6 +538,7 @@
     <ClCompile Include="terrain\MCVideoWindow.cpp" />
     <ClCompile Include="ui\MCRmlArt.cpp" />
     <ClCompile Include="ui\MCRmlChecks.cpp" />
+    <ClCompile Include="ui\MCRmlDialog.cpp" />
     <ClCompile Include="ui\MCRmlFlow.cpp" />
     <ClCompile Include="ui\MCRmlKit.cpp" />
     <ClCompile Include="ui\MCRmlLayer.cpp" />
@@ -736,6 +742,7 @@
     <ClInclude Include="logistics\MCDueArtNotice.h" />
     <ClInclude Include="logistics\MCFileScrollPane.h" />
     <ClInclude Include="logistics\MCGameList.h" />
+    <ClInclude Include="logistics\MCGamesScreen.h" />
     <ClInclude Include="logistics\MCGenericScreen.h" />
     <ClInclude Include="logistics\MCHdOptionsPanel.h" />
     <ClInclude Include="logistics\MCIdleCheck.h" />
@@ -772,6 +779,7 @@
     <ClInclude Include="logistics\MCMechRepairBlock.h" />
     <ClInclude Include="logistics\MCMenuScreens.h" />
     <ClInclude Include="logistics\MCMissionLogisticsBridge.h" />
+    <ClInclude Include="logistics\MCMissionNames.h" />
     <ClInclude Include="logistics\MCPauseScreen.h" />
     <ClInclude Include="logistics\MCPilotInventoryBlock.h" />
     <ClInclude Include="logistics\MCPilotPurchaseBlock.h" />
@@ -790,6 +798,8 @@
     <ClInclude Include="logistics\MCRepairScreen.h" />
     <ClInclude Include="logistics\MCReportsNotice.h" />
     <ClInclude Include="logistics\MCReusableDialog.h" />
+    <ClInclude Include="logistics\MCSaves.h" />
+    <ClInclude Include="logistics\MCSavesMenu.h" />
     <ClInclude Include="logistics\MCSessionScreen.h" />
     <ClInclude Include="logistics\MCSettingsModel.h" />
     <ClInclude Include="logistics\MCSettingsScreen.h" />
@@ -849,6 +859,7 @@
     <ClInclude Include="mission\MCTrailerMission.h" />
     <ClInclude Include="mission\MCWeatherPlay.h" />
     <ClInclude Include="network\MCGameDataHash.h" />
+    <ClInclude Include="network\MCGamesList.h" />
     <ClInclude Include="network\MCInternetCopy.h" />
     <ClInclude Include="network\MCInternetGame.h" />
     <ClInclude Include="network\MCInternetLobby.h" />
@@ -1064,6 +1075,7 @@
     <ClInclude Include="terrain\MCVideoWindow.h" />
     <ClInclude Include="ui\MCRmlArt.h" />
     <ClInclude Include="ui\MCRmlChecks.h" />
+    <ClInclude Include="ui\MCRmlDialog.h" />
     <ClInclude Include="ui\MCRmlFlow.h" />
     <ClInclude Include="ui\MCRmlKit.h" />
     <ClInclude Include="ui\MCRmlLayer.h" />

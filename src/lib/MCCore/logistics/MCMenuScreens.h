@@ -23,7 +23,7 @@ namespace MCMenuScreens
     MCScreenFlow::MCScreenId Solo();
     MCScreenFlow::MCScreenId Save();
     MCScreenFlow::MCScreenId Preferences();
-    /// <summary>Port-only (stage 6): UPDATE remade, from the main menu and INTERNET.</summary>
+    /// <summary>Port-only (stage 6): UPDATE remade, from the main menu, INTERNET and LAN.</summary>
     MCScreenFlow::MCScreenId Update();
     /// <summary>The campaign's screens: the briefing, PURCHASING and the 'MECH BAY (sliding between them, one place).</summary>
     MCScreenFlow::MCScreenId Campaign();

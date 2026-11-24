@@ -75,8 +75,7 @@ namespace
             return;
         }
 
-        LeaveRoom();
-        ShowMenuMessage(LeftText);
+        LeaveRoom(std::string(LeftText));
     }
 }
 

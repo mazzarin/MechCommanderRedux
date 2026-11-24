@@ -14,6 +14,32 @@ namespace
     constexpr const char* KeysClass = "keys";
     /// <summary>An element the focus goes to first when the screen shows (the look's convention).</summary>
     constexpr const char* FirstFocusAttribute = "data-first";
+    /// <summary>The arrow keys, which the hint line boxes one by one, narrower (the look's <c>.key.updown</c>).</summary>
+    constexpr std::array<std::string_view, 4> ArrowKeys = {"↑", "↓", "←", "→"};
+    constexpr char KeySeparator = ' ';
+
+    /// <summary>
+    /// A hint's key boxed for the hint line: arrows each in a box of their own (<c>↑ ↓</c>), as the frames draw them;
+    /// any other key in one (<c>Q E</c>).
+    /// </summary>
+    std::string KeyBoxes(std::string_view key)
+    {
+        std::string arrows;
+
+        for (const auto part : std::views::split(key, KeySeparator))
+        {
+            const std::string_view arrow(part.begin(), part.end());
+
+            if (std::ranges::find(ArrowKeys, arrow) == ArrowKeys.end())
+            {
+                return std::format("<span class=\"key\">{}</span>", key);
+            }
+
+            arrows += std::format("<span class=\"key updown\">{}</span>", arrow);
+        }
+
+        return arrows;
+    }
 }
 
 /// <summary>
@@ -182,7 +208,7 @@ void MCRmlScreen::ShowKeys()
 
     for (const MCRmlKeyHint& hint : Keys)
     {
-        keys += std::format("<span class=\"hint\"><span class=\"key\">{}</span>{}</span>", hint.Key, hint.Does);
+        keys += std::format("<span class=\"hint\">{}{}</span>", KeyBoxes(hint.Key), hint.Does);
     }
 
     Rml::ElementList parts;
@@ -208,9 +234,41 @@ void MCRmlScreen::Hide()
         if (_Layer.has_value())
         {
             Layer().Hidden(*this);
+            FocusBelow();
         }
 
         OnHide();
+    }
+}
+
+void MCRmlScreen::FocusBelow()
+{
+    // RmlUi gives the keys' focus back to the document focused before, but only one in its focus history, and a kept
+    // screen shown again with the focus still in it (nothing shown since it hid) isn't put back in the history: a window
+    // over it then hid with the focus left in the window (SAVE GAME's NAME took no keys after the overwrite's question,
+    // LOAD GAME's list none after DELETE's). So the screen now on top takes it: where it had it, or where it opens with it.
+    Rml::Element* focus = Layer().Context().GetFocusElement();
+    const MCOptionalRef<MCRmlScreen> top = Layer().Top();
+
+    if (_Document == nullptr || focus == nullptr || focus->GetOwnerDocument() != _Document || !top.has_value() ||
+        top->get()._Document == nullptr)
+    {
+        return;
+    }
+
+    Rml::ElementDocument& below = *top->get()._Document;
+
+    if (Rml::Element* leaf = below.GetFocusLeafNode(); leaf != &below && leaf->IsVisible(true))
+    {
+        leaf->Focus(false);
+    }
+    else if (const MCOptionalRef<Rml::Element> first = top->get().FirstFocus(below); first.has_value())
+    {
+        first->get().Focus(false);
+    }
+    else
+    {
+        below.Focus(false);
     }
 }
 

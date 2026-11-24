@@ -1125,9 +1125,7 @@ auto MCLobbyUpdate::JoinFailed() -> void
         MCScreenFlow::Change("internet",
                              [text]
                              {
-                                 GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
                                  ShowInternetScreen();
-                                 GlobalLog()->ShowLogScreen(true, true);
                                  ShowMenuMessage(text);
                              });
         return;

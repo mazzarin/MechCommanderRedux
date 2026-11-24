@@ -280,6 +280,9 @@
     <ClCompile Include="tests\RoomEndTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\SavesTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ScenarioTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -450,6 +453,9 @@
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCInternetSpots.h">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\MCMenusPictures.h">
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCMock.h">

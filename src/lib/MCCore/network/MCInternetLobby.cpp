@@ -48,6 +48,8 @@ namespace
     /// at once).
     /// </summary>
     constexpr MCRetryDelay Comeback = MCServiceComebackTries;
+    /// <summary>The list's trouble when the system gave no socket at all (MCInternetList::Trouble).</summary>
+    constexpr std::string_view NoSocketTrouble = "the system couldn't open a socket";
 
     /// <summary>A busy hour or day: at least this share of the busiest one's mean.</summary>
     constexpr double BusyShare = 0.75;
@@ -470,6 +472,7 @@ void MCInternetList::Reopen(Clock::time_point now)
     if (_Ws == nullptr)
     {
         SDL_Log("MCInternetList: the system couldn't open a socket to the service's list");
+        _Trouble = std::string(NoSocketTrouble);
         Dropped(now, Comeback.Most);
     }
 }
@@ -535,6 +538,14 @@ bool MCInternetList::Update()
             SDL_Log("MCInternetList: the list's socket closed (%s); trying again in %lld ms", _Ws->WhyClosed().c_str(),
                     static_cast<long long>(wait.count()));
             changed |= _Listing.has_value();
+
+            // Closed before any list came: the screen says what's wrong while it tries again.
+            if (!_Listing.has_value())
+            {
+                changed |= _Trouble != _Ws->WhyClosed();
+                _Trouble = _Ws->WhyClosed();
+            }
+
             Dropped(now, wait);
             break;
         }
@@ -576,6 +587,7 @@ bool MCInternetList::Hear(const MCWebSocket::Message& message)
         _Tries = 0;
         bool changed = _Listing != listing;
         _Listing = std::move(listing);
+        _Trouble.reset();
 
         if (std::optional<MCBusiestHours> busiest = BusiestIn(parsed); busiest.has_value() && *busiest != _Busiest)
         {

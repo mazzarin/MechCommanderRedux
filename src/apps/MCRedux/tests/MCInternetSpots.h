@@ -1,10 +1,13 @@
 #pragma once
 
+#include "fakes/MCFakeGamesService.h"
 #include "fakes/MCServiceScript.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <format>
+#include <string>
 #include <string_view>
 
 // Where the tests click on MULTIPLAYER ACCESS and INTERNET CONNECTION (the middles of their controls, in the screens'
@@ -44,6 +47,29 @@ namespace MCInternetSpots
     /// <summary>The version the scripted games' game says it is, and a newer one.</summary>
     constexpr std::string_view Version = "0.6.0 (812)";
     constexpr std::string_view NewerVersion = "0.7.0 (900)";
+
+    /// <summary>The service's path its list is read from.</summary>
+    constexpr std::string_view ListPath = "/list";
+
+    /// <summary>
+    /// The list's socket scripted (<paramref name="list"/>) and the games' sockets to a stand-in service
+    /// (<paramref name="service"/>), for the scope's time: the internet tests' and the recorder's games.
+    /// </summary>
+    class MCServicesScope
+    {
+    public:
+        MCServicesScope(MCServiceScript::ListScript& list, MCFakeGames::MCFakeGamesService& service)
+            : _Scope([toList = MCServiceScript::ListOpener(list), toGames = service.Opener(),
+                      listUrl = std::format("{}{}", MCFakeGames::ServiceUrl, ListPath)](const std::string& url)
+                     { return url.starts_with(listUrl) ? toList(url) : toGames(url); },
+                     MCServiceScript::Answering(R"({"online":1})", _Asked), MCFakeGames::ServiceUrl, Version)
+        {
+        }
+
+    private:
+        std::string _Asked;
+        MCServiceScript::SetupScope _Scope;
+    };
 
     /// <summary>The service's list as it sends it: <paramref name="games"/>, and its counts.</summary>
     inline nlohmann::json Listing(nlohmann::json games, int online, int inGames)

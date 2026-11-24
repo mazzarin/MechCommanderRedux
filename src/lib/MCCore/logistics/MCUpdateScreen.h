@@ -1,7 +1,6 @@
 #pragma once
 
 #include "main/MCUpdater.h"
-#include "network/MCLobbyUpdate.h"
 #include "ui/MCRmlScreen.h"
 
 /// <summary>
@@ -19,19 +18,22 @@ public:
     explicit MCUpdateScreen(std::string place);
 
     /// <summary>
-    /// UPDATE pressed (the main menu's button, INTERNET's newer game): the remade screen opened through the screens'
-    /// flow over the screen shown; the old page when the menus' RmlUi can't start.
+    /// The main menu's UPDATE pressed: the remade screen opened through the screens' flow over the screen shown; the old
+    /// page when the menus' RmlUi can't start.
     /// </summary>
     static void OpenFromMenus();
 
     /// <summary>
-    /// UPDATE opened through the screens' flow over the screen shown, a newer game picked on INTERNET (<paramref
-    /// name="join"/>) joined once its update is in: the game kept for the new version as UPDATE shows (INTERNET's going
-    /// forgets one picked before); false when the menus' RmlUi can't start (the caller shows the old page).
+    /// UPDATE opened through the screens' flow over the screen shown; false when the menus' RmlUi can't start (the caller
+    /// shows the old page). INTERNET's and LAN's newer games open the flow's "update" themselves (MCGamesScreen), setting
+    /// the game to join once it's in (network/MCLobbyUpdate.h).
     /// </summary>
-    static bool Open(std::optional<MCLobbyUpdate::MCJoinAfter> join = std::nullopt);
+    static bool Open();
 
-    /// <summary>Where UPDATE opens from now, as its eyebrow names it: the screen the flow shows ("Internet", else "Main menu").</summary>
+    /// <summary>
+    /// Where UPDATE opens from now, as its eyebrow names it: the screen the flow shows ("Internet", "LAN", else "Main
+    /// menu").
+    /// </summary>
     static std::string PlaceOfShown();
 
     /// <summary>Whether the remade UPDATE shows (the reports' and the due art's notices wait for it).</summary>
@@ -71,8 +73,6 @@ private:
     void Press(MCAct act);
 
     std::string _Place;
-    /// <summary>The newer game to join once the update is in, kept as the screen shows.</summary>
-    std::optional<MCLobbyUpdate::MCJoinAfter> _Join;
     MCAct _Main = MCAct::None;
     MCAct _Second = MCAct::None;
     /// <summary>The notes and status last written (RmlUi lays the document out again for a change).</summary>

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "ui/MCRmlFlow.h"
 #include "gui/MCScreenChange.h"
+#include "logistics/MCIdleCheck.h"
 #include "main/MCHdSettings.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
@@ -104,6 +105,9 @@ MCOptionalRef<MCRmlMenus> MCRmlFlow::Menus()
     // A change of screen holds the player's clicks and keys until the next screen is in, as the 1998 screens' are
     // (gui/MCScreenChange.h): a second ENTER on a screen fading out presses nothing.
     started->get().HoldInput([] { return MCScreenChange::HoldsInput(); });
+    // The player's input on a remade screen counts as on the 1998 ones (an internet game's idle check: INTERNET keeps
+    // its list, a room doesn't ask "Still there?").
+    started->get().OnPlayerInput([] { MCIdleCheck::Input(); });
     return MCOptionalRef<MCRmlMenus>(started->get());
 }
 

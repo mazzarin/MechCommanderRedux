@@ -7,6 +7,7 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCIdleCheck.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
@@ -222,7 +223,7 @@ TEST_CASE_ISOLATED("screen flow: Escape goes back one screen, and on the main me
     PressAndCheck("Escape from PREFERENCES", PressEscape, {main});
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
 
-    PressAndCheck("LOAD GAME", MCScreenFlow::Via("load game", LoadScreen), {main, MCMenuScreens::Load()});
+    PressAndCheck("LOAD GAME", [] { MCScreenFlow::Open(MCMenuScreens::Load()); }, {main, MCMenuScreens::Load()});
     PressAndCheck("Escape from LOAD GAME", PressEscape, {main});
 
     PressAndCheck("NEW CAMPAIGN", NewCampaign, {main, MCMenuScreens::Campaign()});
@@ -403,6 +404,47 @@ TEST_CASE_ISOLATED(
 }
 
 /// <summary>
+/// The player's input on a remade screen counts as on the 1998 ones: an internet game's idle check sees the player there
+/// (INTERNET keeps its list, a room doesn't ask "Still there?").
+/// </summary>
+TEST_CASE_ISOLATED("screen flow: input on a remade screen keeps the player present")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    RunWhileChanging();
+    auto now = std::chrono::steady_clock::now();
+    MCIdleCheck::SetClock([&now] { return now; });
+    MCIdleCheck::Input();
+
+    const MCScreenId remade = MCScreenFlow::Register(MCRmlFlow::Kind(
+        "a remade test screen", [](MCRmlLayer& layer) -> MCGuiHandle<MCRmlScreen>
+        { return layer.CreateChild<MCRmlProbe>([](MCRmlProbe&) {}); }, MCRmlFlow::MCKeep::Kept));
+    MCScreenFlow::Open(remade);
+    RunWhileChanging();
+    REQUIRE(MCRmlFlow::Showing());
+
+    // A key on it, then the mouse moving: each keeps the player there past the away time since the one before.
+    const auto almostAway = MCIdleCheck::AwayTime - std::chrono::minutes(1);
+    now += almostAway;
+    CHECK(!MCIdleCheck::Away());
+    MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
+    now += almostAway;
+    CHECK(!MCIdleCheck::Away());
+    MCScreenInput::RealMove(100, 100);
+    now += almostAway;
+    CHECK(!MCIdleCheck::Away());
+
+    // Nothing for the away time: away.
+    now += MCIdleCheck::AwayTime;
+    CHECK(MCIdleCheck::Away());
+    MCIdleCheck::SetClock({});
+}
+
+/// <summary>
 /// A launcher's game starts at its room, the stack's end: its LEAVE and Escape ask "Leave the game?" (whose OK ends the
 /// game), and the question's CANCEL keeps the room.
 /// </summary>
@@ -447,6 +489,8 @@ TEST_CASE_ISOLATED("screen flow: NEXT MISSION lands on the briefing with the mai
 
     const MCTestGame::SaveGameCleanup saves;
     REQUIRE(MCTestGame::ReachFirstResults(5));
+    // The menus' way back went with them into the mission.
+    CHECK(StackNow().empty());
     RunWhileChanging();
     Mission()->LeaveResults();
     RunWhileChanging();
@@ -516,4 +560,20 @@ TEST_CASE("intro note: a restart's note skips the intro once, within its life")
     CHECK(!MCIntroNote::TakeAtStart(folder, Now + MCIntroNote::Life.count() + 1));
     CHECK(!std::filesystem::exists(folder / MCIntroNote::FileName));
     std::filesystem::remove_all(folder);
+}
+
+/// <summary>
+/// The intro note's skip is the first start's, a launcher's too (which plays no movies): it isn't left over for a later
+/// start in the same run.
+/// </summary>
+TEST_CASE_ISOLATED("intro note: a launcher's start takes the restart's skip too")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCIntroNote::SkipIntro = true;
+    REQUIRE(MCTestGame::StartLobby("-host -port 28981 -player BOB"));
+    CHECK(!MCIntroNote::SkipIntro);
 }

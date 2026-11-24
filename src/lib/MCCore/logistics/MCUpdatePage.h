@@ -89,8 +89,13 @@ void ShowUpdatePageOver(MCGuiObject& screen);
 /// </summary>
 std::shared_ptr<MCGuiObject> UpdatePageFind(const MCGuiObject& screen, int32_t xPos, int32_t yPos);
 
-/// <summary>DONE (or SKIP): the page closes.</summary>
+/// <summary>
+/// DONE (or SKIP): the page closes; opened from INTERNET (the flow's "update"), back to INTERNET through the flow.
+/// </summary>
 void HideUpdatePage();
+
+/// <summary>Port-only (SPEC-menus.md's stage 3): every page hidden, nothing more (the flow's "update" hiding).</summary>
+void HideUpdatePageViews();
 
 /// <summary>Whether the UPDATE page is showing (or the remade UPDATE).</summary>
 bool UpdatePageShown();

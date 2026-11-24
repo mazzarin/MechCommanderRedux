@@ -110,6 +110,13 @@ public:
     void HoldInput(std::function<bool()> held);
 
     /// <summary>
+    /// Port-only: <paramref name="input"/> called with each of the player's own events (a key, a character, a click, the
+    /// wheel, the mouse moving) while a screen shows, held or not, as the game's own input counts (an internet game's
+    /// idle check); none: nothing called.
+    /// </summary>
+    void OnPlayerInput(std::function<void()> input);
+
+    /// <summary>
     /// Lays out what changed and records the frame's draws, the mission's layer under the menus' (none shown: none at
     /// all). Unchanged since the last frame: the same draws, so the presenters keep their picture.
     /// </summary>
@@ -136,6 +143,7 @@ private:
     std::unique_ptr<MCRmlLayer> _Mission;
     std::unique_ptr<MCRmlLayer> _Menus;
     std::function<bool()> _InputHeld;
+    std::function<void()> _PlayerInput;
     bool _Hd = false;
     bool _Started = false;
     int32_t _Width = 0;

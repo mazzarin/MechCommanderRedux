@@ -1,0 +1,12 @@
+/* Port-only (SPEC-menus.md's stage 3): HOST GAME's window over the games list, a dialog (dialog.rcss) with its
+   settings in Preferences' rows: a setting's name at the left, its control at the right. */
+#hostwin { width: 420dp; }
+#hostwin .hints { margin-top: 8dp; }
+#hostwin .set-control { width: 164dp; }
+#hostwin .set-control input.text.field { width: 150dp; }
+.set-row { box-sizing: border-box; display: flex; flex-direction: row; align-items: center; gap: 12dp; height: 32dp; padding: 0 6dp; border-bottom: 1dp #141e26; }
+.set-row > * { flex: 0 0 auto; }
+.set-row > .set-words { flex: 1 1 0; }
+.set-name { font-size: 9.51dp; line-height: 13dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.set-control { width: 196dp; display: flex; flex-direction: row; justify-content: flex-end; align-items: center; }
+.set-control > * { flex: 0 0 auto; }

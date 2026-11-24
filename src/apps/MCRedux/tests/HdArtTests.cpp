@@ -2,6 +2,7 @@
 #include "MCFakeUpdaterBackend.h"
 #include "MCHdMovieFixture.h"
 #include "MCInternetSpots.h"
+#include "MCTestGuest.h"
 #include "fakes/MCNullAudioDevice.h"
 #include "MCTest.h"
 #include "MCTestArchive.h"
@@ -15723,52 +15724,63 @@ namespace
         RunUntil([] { return !AccessCountShown().empty(); }, AnswerFrames);
         shoot("mp_access");
 
-        // INTERNET CONNECTION: the list, a game picked (its players and where it is), one in battle picked, and the
-        // host block, then PRIVATE ticked.
+        // INTERNET (remade: SPEC-menus.md's stage 3): the list, a game picked (its players and where it is), one in
+        // battle picked, and HOST GAME's window, then PRIVATE.
         click(InternetX, InternetY);
+        RunUntil([] { return MCTestGuest::OnInternet(); }, AnswerFrames);
 
-        if (GlobalLog()->CurrentScreen() != GlobalLog()->InternetScreen)
+        if (!MCTestGuest::OnInternet())
         {
-            std::cout << "  INTERNET didn't open INTERNET CONNECTION: the internet screens are left out\n";
+            std::cout << "  INTERNET didn't open the remade INTERNET: the internet screens are left out\n";
             return;
         }
 
+        MCGamesScreen& internet = *MCTestGuest::Games(MCGamesWhere::Internet);
         list.Send(EveryKindOfGame(ListedOnline, ListedInGames));
-        RunUntil([] { return !InternetCountsShown().empty(); }, AnswerFrames);
-        MCSplashScreen& internet = *GlobalLog()->InternetScreen;
-        internet.Element<MCLogTextObject>(PlayerNameEntry)->SetStringBuffer("Commander");
-        const auto games = internet.Element<MCInternetGameList>(GameList);
-        games->Pick("K7QF");
+        RunUntil([&internet] { return !internet.Seen().Rows.empty(); }, AnswerFrames);
+        internet.SetPlayerName("Commander");
+        internet.PickKey("K7QF");
+        RunFrames(ClickFrames);
         shoot("mp_internet");
-        games->Pick("Q4RT");
+        internet.PickKey("Q4RT");
+        RunFrames(ClickFrames);
         shoot("mp_internet_in_battle");
-        games->ClearPick();
-        click(HostX, HostY);
+        internet.PressHost();
+        RunFrames(ClickFrames);
         shoot("mp_internet_host");
-        click(PrivacyX, PrivacyY);
-        shoot("mp_internet_private");
-        click(PrivacyX, PrivacyY);
 
-        // CANCEL to the games, then to MULTIPLAYER ACCESS, whose LAN opens the LAN games.
-        click(CancelX, CancelY);
-        click(CancelX, CancelY);
+        if (internet.HostWindow())
+        {
+            MCHostWindow::MCHost host = internet.HostWindow()->Choices();
+            host.Public = false;
+            internet.HostWindow()->SetChoices(host);
+            RunFrames(ClickFrames);
+            shoot("mp_internet_private");
+            internet.HostWindow()->Back();
+        }
+
+        // BACK to MULTIPLAYER ACCESS, whose LAN opens the LAN games.
+        internet.Back();
+        RunFrames(ClickFrames);
         click(LanX, LanY);
 
-        if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr ||
-            GlobalLog()->CurrentScreen() != GlobalLog()->LanScreen)
+        if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr || !MCTestGuest::OnLan())
         {
             std::cout << "  LAN didn't open the LAN games: the LAN and session screens are left out\n";
             return;
         }
 
         MultiPlayer()->SessionManager->ConnectTcp(HostAddress);
-        MCSplashScreen& lan = *GlobalLog()->LanScreen;
-        lan.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
-        lan.Element<MCLogTextObject>(10)->SetStringBuffer("Audit game");
-        lan.Element<MCLogTextObject>(11)->SetStringBuffer("6");
+        MCGamesScreen& lan = *MCTestGuest::Games(MCGamesWhere::Lan);
+        lan.SetPlayerName("Commander");
+        RunFrames(ClickFrames);
         shoot("mp_lan");
+        lan.PressHost();
+        RunFrames(ClickFrames);
+        shoot("mp_lan_host");
         // Hosting opens the room (the session screen), the host alone in it (the personal build: no ready room).
-        CreateSession();
+        lan.Host({.GameName = "Audit game", .MaxPlayers = 6});
+        RunFrames(ClickFrames);
         shoot("mp_session");
         GlobalLog()->SessionScreen->ShowTab(MCSessionTab::Options);
         shoot("mp_session_match_options");

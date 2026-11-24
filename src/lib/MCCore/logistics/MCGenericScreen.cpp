@@ -162,11 +162,20 @@ auto MCGenericScreen::SetScreenCallback(MCLogButton& button, int32_t callback) -
             exec = NewMcxCampaign;
             break;
         // Port-only (SPEC-menus.md's stage 2): each change of screen through the flow, with the one fade.
+        // Stage 5: SAVE GAME (not before a campaign has a mission) and LOAD GAME remade, opened over the main menu.
         case 1:
-            exec = MCScreenFlow::Via("save game", SaveScreen);
+        {
+            exec = []
+            {
+                if (GlobalLog()->CurrentMission != -1)
+                {
+                    MCScreenFlow::Open(MCMenuScreens::Save());
+                }
+            };
             break;
+        }
         case 2:
-            exec = MCScreenFlow::Via("load game", LoadScreen);
+            exec = [] { MCScreenFlow::Open(MCMenuScreens::Load()); };
             break;
         case 3:
             // Port-only (stage 6): the remade Preferences, through the screens' flow.

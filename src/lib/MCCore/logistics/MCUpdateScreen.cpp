@@ -51,6 +51,7 @@ namespace
     /// <summary>Where it opened, over its name.</summary>
     constexpr std::string_view MainMenuPlace = "Main menu";
     constexpr std::string_view InternetPlace = "Internet";
+    constexpr std::string_view LanPlace = "LAN";
 
     /// <summary>The status line's words (SPEC-menus.md's UPDATE, and its "When something goes wrong").</summary>
     constexpr std::string_view FoundText = "A newer version is out.";
@@ -72,8 +73,6 @@ namespace
 
     /// <summary>The remade UPDATE made last (the flow makes it afresh at each press).</summary>
     MCGuiHandle<MCUpdateScreen> TheScreen;
-    /// <summary>The newer game given to <see cref="MCUpdateScreen::Open"/>, for the screen the flow makes next.</summary>
-    std::optional<MCLobbyUpdate::MCJoinAfter> PendingJoin;
 
     /// <summary>What's in of a download: of the whole once that's known ("3.1 GB of 7.4 GB"), else what's in.</summary>
     std::string InHand(const MCStatus& status)
@@ -195,7 +194,7 @@ namespace
     }
 }
 
-MCUpdateScreen::MCUpdateScreen(std::string place) : _Place(std::move(place)), _Join(std::exchange(PendingJoin, {}))
+MCUpdateScreen::MCUpdateScreen(std::string place) : _Place(std::move(place))
 {
     SetDocument(UpdateDocument);
     Keys = {{"Esc", "Back"}};
@@ -210,24 +209,28 @@ void MCUpdateScreen::OpenFromMenus()
     }
 }
 
-bool MCUpdateScreen::Open(std::optional<MCLobbyUpdate::MCJoinAfter> join)
+bool MCUpdateScreen::Open()
 {
     if (!MCRmlFlow::Menus().has_value())
     {
         return false;
     }
 
-    // The flow makes the screen as the press opens it (the kind's Prepare), and the screen takes the game along; a
-    // press refused while another change runs goes no further. Either way no game is left for a screen made later.
-    PendingJoin = std::move(join);
+    // Refused while another change runs: the press goes no further.
     MCScreenFlow::Open(MCMenuScreens::Update());
-    PendingJoin.reset();
     return true;
 }
 
 std::string MCUpdateScreen::PlaceOfShown()
 {
-    return std::string(MCScreenFlow::Shown() == MCMenuScreens::Internet() ? InternetPlace : MainMenuPlace);
+    const MCScreenFlow::MCScreenId shown = MCScreenFlow::Shown();
+
+    if (shown == MCMenuScreens::Internet())
+    {
+        return std::string(InternetPlace);
+    }
+
+    return std::string(shown == MCMenuScreens::Lan() ? LanPlace : MainMenuPlace);
 }
 
 std::string_view MCUpdateScreen::Word(MCAct act)
@@ -304,12 +307,8 @@ void MCUpdateScreen::OnLoaded(Rml::ElementDocument& document)
 
 void MCUpdateScreen::OnShow()
 {
-    // The screen under it is gone now (INTERNET forgets a game picked as it goes): the new version joins this one.
-    if (_Join.has_value())
-    {
-        MCLobbyUpdate::JoinAfterUpdate(std::exchange(_Join, {}));
-        Refresh();
-    }
+    // The game to join once it's in, set by INTERNET or LAN as it opened UPDATE (after the screen was made): said now.
+    Refresh();
 }
 
 void MCUpdateScreen::OnDestroy()

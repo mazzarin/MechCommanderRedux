@@ -35,6 +35,13 @@ namespace
         }
     }
 
+    /// <summary>Whether <paramref name="event"/> is the player's own: a press, a key or a button let go, the mouse moving.</summary>
+    bool IsPlayerEvent(const SDL_Event& event)
+    {
+        return IsPress(event) || event.type == SDL_EVENT_KEY_UP || event.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+               event.type == SDL_EVENT_MOUSE_MOTION;
+    }
+
     /// <summary>Whether RmlUi is started (it is one per program).</summary>
     bool RmlStarted = false;
 
@@ -243,8 +250,18 @@ void MCRmlMenus::HoldInput(std::function<bool()> held)
     _InputHeld = std::move(held);
 }
 
+void MCRmlMenus::OnPlayerInput(std::function<void()> input)
+{
+    _PlayerInput = std::move(input);
+}
+
 bool MCRmlMenus::HandleEvent(const SDL_Event& event)
 {
+    if (Showing() && _PlayerInput != nullptr && IsPlayerEvent(event))
+    {
+        _PlayerInput();
+    }
+
     if (Showing() && _InputHeld != nullptr && IsPress(event) && _InputHeld())
     {
         return true;

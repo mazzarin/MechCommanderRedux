@@ -310,9 +310,10 @@ set(MC_ICON ${MC_SRC}/res/MCRedux.icns)
 set_source_files_properties(${MC_ICON} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 # Port-only (SPEC-menus.md): the remade menus' documents and style sheets (src/res/ui), in the app's resources' ui
 # folder, where SDL's base path finds them (ui/MCRmlSystem.h); the tests' beside mc_tests.
-# The face's files and their licence in its fonts folder, the new art in its art folder (each kept in its own folder).
+# The face's files and their licence in its fonts folder, the new art in its art folder (each kept in its own folder),
+# and the menus' data (missions.json: the missions' names).
 file(GLOB_RECURSE MC_UI_FILES CONFIGURE_DEPENDS ${MC_SRC}/res/ui/*.rml ${MC_SRC}/res/ui/*.rcss ${MC_SRC}/res/ui/*.ttf
-     ${MC_SRC}/res/ui/*.txt ${MC_SRC}/res/ui/*.png)
+     ${MC_SRC}/res/ui/*.txt ${MC_SRC}/res/ui/*.png ${MC_SRC}/res/ui/*.json)
 foreach(ui_file ${MC_UI_FILES})
   file(RELATIVE_PATH ui_relative ${MC_SRC}/res/ui ${ui_file})
   get_filename_component(ui_folder "${ui_relative}" DIRECTORY)

@@ -142,6 +142,8 @@ private:
 
     /// <summary>Set by the layer as it makes the screen.</summary>
     void Attach(MCRmlLayer& layer) { _Layer = layer; }
+    /// <summary>Hidden with the keys' focus still in it: the focus given to the screen now on top.</summary>
+    void FocusBelow();
     /// <summary>The screen's steps (<see cref="Prepare"/>).</summary>
     void Read();
     void LayOut();

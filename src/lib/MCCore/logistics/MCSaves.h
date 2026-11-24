@@ -59,6 +59,8 @@ public:
     enum class MCWritten : uint8_t
     {
         Saved,
+        /// <summary>A name no file can have (<see cref="CanName"/>), refused before anything was written.</summary>
+        BadName,
         DiskFull,
         Failed,
     };
@@ -88,8 +90,9 @@ public:
     /// <summary>
     /// The campaign saved now as <paramref name="name"/>, over a save of that name as the game writes its own, and the
     /// list read again. A name no file can have, and a disk without room for a save, are refused before anything is
-    /// written; a save that fails keeps the old one (1998's OVERWRITE deleted it first, to clear a CD install's
-    /// read-only flag, so a failed save lost it; the port's saves are written in the user folder).
+    /// written, so the old save is kept. Past them the game writes the save's file afresh where it is, as 1998's did,
+    /// so a save that fails once its file is begun loses the old one. 1998's OVERWRITE also deleted the save first, to
+    /// clear a CD install's read-only flag; the port's saves are written in the user folder, so it doesn't.
     /// </summary>
     MCWritten Write(std::string_view name);
 
@@ -102,7 +105,11 @@ public:
     /// </summary>
     static MCSave Unsaved(MCCampaign campaign, int32_t mission, uint32_t points);
 
-    /// <summary>Whether <paramref name="name"/> can name a save's file: not empty, no folder or drive in it.</summary>
+    /// <summary>
+    /// Whether <paramref name="name"/> can name a save's file on every system the game runs on: not empty or blank, no
+    /// folder, drive or control character in it, not ending in a dot or a space, and not a name Windows keeps for a
+    /// device (CON, PRN, AUX, NUL, COM0-9, LPT0-9, with or without an extension).
+    /// </summary>
     static bool CanName(std::string_view name);
 
     /// <summary>Counts every change of the list, so a view can tell when to read it again.</summary>
@@ -123,6 +130,9 @@ public:
 
     /// <summary>For the tests: the bytes free on the saves' disk (the disk's own without one).</summary>
     void SetRoom(std::function<std::uintmax_t()> room) { _Room = std::move(room); }
+
+    /// <summary>For the tests: how a save's file is deleted, whether it's gone (MCFileSystem::RemoveSave without one).</summary>
+    void SetRemove(std::function<bool(std::string_view gamePath)> remove) { _Remove = std::move(remove); }
 
 private:
     /// <summary>A campaign's master mission file's scenarios: each one's file and its operation and mission numbers.</summary>
@@ -154,4 +164,5 @@ private:
     uint64_t _Revision = 0;
     std::function<SDL_Time()> _Clock;
     std::function<std::uintmax_t()> _Room;
+    std::function<bool(std::string_view gamePath)> _Remove;
 };

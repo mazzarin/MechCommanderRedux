@@ -50,11 +50,18 @@ public:
 protected:
     void MakeModels(Rml::Context& context) override;
     void OnLoaded(Rml::ElementDocument& document) override;
+    /// <summary>A question (DELETE's, an overwrite's) on CANCEL, so a second Enter keeps the save; a message on its answer.</summary>
+    MCOptionalRef<Rml::Element> FirstFocus(Rml::ElementDocument& document) override;
 
 private:
+    /// <summary>The hint line's keys: Enter's answer while it has the focus, and a question's Escape.</summary>
+    void SetKeys();
+
     std::unique_ptr<MCRmlModel> _Model;
     MCSay _Say;
     double _ShownAt = 0;
+    /// <summary>Whether Enter presses the answer now (the focus on it), as the hint line says.</summary>
+    bool _EnterAnswers = false;
 };
 
 /// <summary>LOAD GAME and SAVE GAME.</summary>
@@ -179,10 +186,15 @@ namespace MCSavesMenu
     /// <summary>The screen, while the game's menus have it (made by the first kind's Prepare).</summary>
     MCOptionalRef<MCSavesScreen> Screen();
 
-    /// <summary>The words: "This save couldn't be loaded.", the save's and the disk's refusals, the saved message.</summary>
+    /// <summary>
+    /// The words: "This save couldn't be loaded.", the save's, the name's, the disk's and the delete's refusals, the saved
+    /// message, the questions.
+    /// </summary>
     inline constexpr std::string_view RefusedText = "This save couldn't be loaded.";
     inline constexpr std::string_view DiskFullText = "Couldn't save: the disk is full.";
     inline constexpr std::string_view SaveFailedText = "Couldn't save the game.";
+    inline constexpr std::string_view NameRefusedText = "That name can't be used.";
+    inline constexpr std::string_view DeleteFailedText = "Couldn't delete the save.";
     inline constexpr std::string_view SavedText = "Game saved.";
     inline constexpr std::string_view DeleteQuestion = "Delete this save?";
     inline constexpr std::string_view OverwriteQuestion = "Overwrite this saved game?";

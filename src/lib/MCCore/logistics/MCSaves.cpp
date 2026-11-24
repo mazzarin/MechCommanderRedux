@@ -38,6 +38,23 @@ namespace
     /// </summary>
     constexpr std::uintmax_t RoomForASave = 8 << 20;
     constexpr int64_t NanosecondsPerSecond = 1'000'000'000;
+    /// <summary>The names Windows keeps for its devices (MSDN's "Naming Files, Paths, and Namespaces"), lower case.</summary>
+    constexpr std::array<std::string_view, 4> Devices = {"con", "prn", "aux", "nul"};
+    /// <summary>The numbered ones: COM and LPT with a digit or a superscript 1, 2 or 3 (in UTF-8).</summary>
+    constexpr std::array<std::string_view, 2> NumberedDevices = {"com", "lpt"};
+    constexpr size_t NumberedDeviceLength = 3;
+    constexpr std::array<std::string_view, 13> DeviceNumbers = {"0", "1", "2", "3",        "4",        "5",       "6",
+                                                                "7", "8", "9", "\xc2\xb9", "\xc2\xb2", "\xc2\xb3"};
+    /// <summary>The control characters, which no save's name takes: below the space, and DEL.</summary>
+    constexpr unsigned char FirstPrintable = 0x20;
+    constexpr unsigned char DeleteCharacter = 0x7f;
+
+    bool IsControl(char letter)
+    {
+        const auto code = static_cast<unsigned char>(letter);
+        return code < FirstPrintable || code == DeleteCharacter;
+    }
+
     constexpr int64_t SecondsPerDay = 24 * 60 * 60;
     constexpr std::array<std::string_view, 12> Months = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -410,7 +427,8 @@ MCOptionalRef<const MCSaves::MCSave> MCSaves::Find(std::string_view name) const
 bool MCSaves::Delete(std::string_view name)
 {
     // The original cleared the file's read-only attribute first.
-    const bool removed = MCFileSystem::RemoveSave(SaveFile(name));
+    const std::string file = SaveFile(name);
+    const bool removed = _Remove ? _Remove(file) : MCFileSystem::RemoveSave(file);
 
     if (!removed)
     {
@@ -448,7 +466,7 @@ MCSaves::MCWritten MCSaves::Write(std::string_view name)
     if (!CanName(name))
     {
         SDL_Log("MCSaves: '%.*s' can't name a save's file", static_cast<int>(name.size()), name.data());
-        return MCWritten::Failed;
+        return MCWritten::BadName;
     }
 
     if (!HasRoom())
@@ -489,8 +507,34 @@ bool MCSaves::CanName(std::string_view name)
 {
     // The characters no file system's name takes, or that would put the save in another folder.
     constexpr std::string_view NotInAName = "\\/:*?\"<>|";
-    return !name.empty() && name.find_first_not_of(' ') != std::string_view::npos &&
-           name.find_first_of(NotInAName) == std::string_view::npos && name != "." && name != "..";
+
+    if (name.empty() || name.find_first_not_of(' ') == std::string_view::npos ||
+        name.find_first_of(NotInAName) != std::string_view::npos ||
+        std::ranges::any_of(name, [](char letter) { return IsControl(letter); }))
+    {
+        return false;
+    }
+
+    // Windows drops a name's last dots and spaces, so "Kaio." would save as another name ("." and ".." are folders).
+    if (name.back() == '.' || name.back() == ' ')
+    {
+        return false;
+    }
+
+    // A device's name is a file's whatever its extension ("con.sav", "LPT1 .txt"): the part before the first dot,
+    // without its last spaces.
+    std::string stem = Lowered(name.substr(0, name.find('.')));
+    stem.erase(stem.find_last_not_of(' ') + 1);
+
+    if (std::ranges::find(Devices, stem) != Devices.end())
+    {
+        return false;
+    }
+
+    const std::string_view numbered(stem);
+    return !(numbered.size() > NumberedDeviceLength &&
+             std::ranges::find(NumberedDevices, numbered.substr(0, NumberedDeviceLength)) != NumberedDevices.end() &&
+             std::ranges::find(DeviceNumbers, numbered.substr(NumberedDeviceLength)) != DeviceNumbers.end());
 }
 
 uint64_t MCSaves::Revision() const

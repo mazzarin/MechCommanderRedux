@@ -35,6 +35,9 @@ namespace
     constexpr const char* NameId = "name";
     constexpr const char* MapId = "map";
     constexpr const char* WhichId = "which";
+    /// <summary>The window's buttons: a question's CANCEL, and its answer (a message's OK).</summary>
+    constexpr const char* CancelId = "cancel";
+    constexpr const char* AnswerId = "answer";
     /// <summary>The thousands' separator in RP ("12,400"), and the dot between an operation's number and name.</summary>
     constexpr char ThousandsMark = ',';
     constexpr std::string_view OperationDot = " · ";
@@ -154,6 +157,23 @@ namespace
         return CurPlanet == 0 ? MCSaves::MCCampaign::Original : MCSaves::MCCampaign::Expansion;
     }
 
+    /// <summary>Why a save wasn't written, in its window.</summary>
+    std::string_view FailedText(MCSaves::MCWritten written)
+    {
+        switch (written)
+        {
+            case MCSaves::MCWritten::BadName:
+                return MCSavesMenu::NameRefusedText;
+            case MCSaves::MCWritten::DiskFull:
+                return MCSavesMenu::DiskFullText;
+            case MCSaves::MCWritten::Saved:
+            case MCSaves::MCWritten::Failed:
+                break;
+        }
+
+        return MCSavesMenu::SaveFailedText;
+    }
+
     double RmlNow()
     {
         Rml::SystemInterface* system = Rml::GetSystemInterface();
@@ -183,7 +203,7 @@ void MCSavesDialog::MakeModels(Rml::Context& context)
 
 void MCSavesDialog::OnLoaded(Rml::ElementDocument& /*document*/)
 {
-    OnClick("cancel",
+    OnClick(CancelId,
             [this]
             {
                 if (Back)
@@ -191,18 +211,15 @@ void MCSavesDialog::OnLoaded(Rml::ElementDocument& /*document*/)
                     Back();
                 }
             });
-    OnClick("answer", [this] { Answer(); });
+    OnClick(AnswerId, [this] { Answer(); });
 }
 
 void MCSavesDialog::Ask(MCSay say)
 {
     _Say = std::move(say);
-    Keys = {{"Enter", _Say.Answer}};
-
-    if (_Say.Asks)
-    {
-        Keys.push_back({"Esc", "Cancel"});
-    }
+    // A question opens on CANCEL (FirstFocus), a message on its answer.
+    _EnterAnswers = !_Say.Asks;
+    SetKeys();
 
     // Escape is a question's CANCEL, and a message's OK.
     Back = _Say.Asks ? std::function<void()>([this] { Hide(); }) : std::function<void()>([this] { Answer(); });
@@ -231,10 +248,56 @@ void MCSavesDialog::Ask(MCSay say)
 
 void MCSavesDialog::OnFrame()
 {
-    if (Shown() && _Say.ClosesAfter > 0 && RmlNow() - _ShownAt >= _Say.ClosesAfter)
+    if (!Shown())
+    {
+        return;
+    }
+
+    if (_Say.ClosesAfter > 0 && RmlNow() - _ShownAt >= _Say.ClosesAfter)
     {
         Answer();
+        return;
     }
+
+    // A question's hint line follows the focus as the keys move it between CANCEL and the answer.
+    Rml::Element* answer = Document().has_value() ? Document()->get().GetElementById(AnswerId) : nullptr;
+
+    if (const bool onAnswer = answer != nullptr && Layer().Context().GetFocusElement() == answer;
+        _Say.Asks && onAnswer != _EnterAnswers)
+    {
+        _EnterAnswers = onAnswer;
+        SetKeys();
+        ShowKeys();
+    }
+}
+
+void MCSavesDialog::SetKeys()
+{
+    // Enter presses what has the focus: the hint names it while that's the answer (CANCEL is Escape's already).
+    Keys.clear();
+
+    if (_EnterAnswers)
+    {
+        Keys.push_back({"Enter", _Say.Answer});
+    }
+
+    if (_Say.Asks)
+    {
+        Keys.push_back({"Esc", "Cancel"});
+    }
+}
+
+MCOptionalRef<Rml::Element> MCSavesDialog::FirstFocus(Rml::ElementDocument& document)
+{
+    if (_Say.Asks)
+    {
+        if (Rml::Element* cancel = document.GetElementById(CancelId); cancel != nullptr)
+        {
+            return *cancel;
+        }
+    }
+
+    return MCRmlScreen::FirstFocus(document);
 }
 
 void MCSavesDialog::Answer()
@@ -626,8 +689,22 @@ void MCSavesScreen::PressDelete()
                 next = *(at - 1);
             }
 
-            MCSaves::Game().Delete(name);
+            if (!MCSaves::Game().Delete(name))
+            {
+                // Still there: its row kept picked, and the window says so.
+                Fill(name);
+                Say(MCSavesDialog::MCSay{.Question = std::string(MCSavesMenu::DeleteFailedText), .Answer = "OK"});
+                return;
+            }
+
             Fill(next);
+
+            // SAVE GAME: NAME follows the new pick, as a picked row's does (the first free name with none left).
+            if (_Saving)
+            {
+                _Name = PickedSave().value_or(MCSaves::FreeName().value_or(std::string()));
+                Changed();
+            }
         },
     });
 }
@@ -700,10 +777,7 @@ void MCSavesScreen::Save(const std::string& name)
     }
 
     Fill(PickedSave());
-    Say(MCSavesDialog::MCSay{.Question =
-                                 std::string(written == MCSaves::MCWritten::DiskFull ? MCSavesMenu::DiskFullText
-                                                                                     : MCSavesMenu::SaveFailedText),
-                             .Answer = "OK"});
+    Say(MCSavesDialog::MCSay{.Question = std::string(FailedText(written)), .Answer = "OK"});
 }
 
 void MCSavesScreen::BackToCampaign()

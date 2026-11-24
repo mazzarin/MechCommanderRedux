@@ -5,7 +5,8 @@
     <link type="text/rcss" href="saves.rcss"/>
 </head>
 <!-- Port-only (SPEC-menus.md, stage 5): LOAD GAME's and SAVE GAME's window over them (logistics/MCSavesMenu): DELETE's
-     question and an overwrite's, CANCEL first; or a message with OK ("Game saved.", "This save couldn't be loaded."). -->
+     question and an overwrite's, CANCEL first and the keys' focus on it (MCSavesDialog::FirstFocus); or a message with
+     OK, the focus on it ("Game saved.", "This save couldn't be loaded."). -->
 <body class="window-body" data-model="saves_dialog">
     <div class="veil"></div>
     <div class="window-place">

@@ -64,12 +64,22 @@ namespace MCRmlFlow
     /// <summary>Whether a remade screen shows on the menus' layer (an old dialog would show under it).</summary>
     bool Showing();
 
+    /// <summary>The layer a screen the game shows itself is made on.</summary>
+    enum class MCOn
+    {
+        /// <summary>The menus' layer.</summary>
+        Menus,
+        /// <summary>Port-only (stage 9): the mission's, over the battlefield at its INTERFACE SIZE (the results).</summary>
+        Mission
+    };
+
     /// <summary>
-    /// The screen <paramref name="handle"/> holds, made on the menus' layer if it isn't (or was closed), its document not
-    /// read by this; none when the menus can't start or it can't be made (the log says why, naming it
-    /// <paramref name="what"/>).
+    /// The screen <paramref name="handle"/> holds, made on the layer <paramref name="on"/> names if it isn't (or was
+    /// closed), its document not read by this; none when the menus can't start or it can't be made (the log says why,
+    /// naming it <paramref name="what"/>).
     /// </summary>
-    template <class T> std::shared_ptr<T> MadeOnLayer(MCGuiHandle<T>& handle, std::string_view what)
+    template <class T>
+    std::shared_ptr<T> MadeOnLayer(MCGuiHandle<T>& handle, std::string_view what, MCOn on = MCOn::Menus)
     {
         const MCOptionalRef<MCRmlMenus> menus = Menus();
 
@@ -80,7 +90,8 @@ namespace MCRmlFlow
 
         if (handle.Lock() == nullptr)
         {
-            handle = menus->get().Menus().template CreateChild<T>([](T&) {});
+            MCRmlLayer& layer = on == MCOn::Mission ? menus->get().Mission() : menus->get().Menus();
+            handle = layer.template CreateChild<T>([](T&) {});
         }
 
         std::shared_ptr<T> screen = handle.Lock();
@@ -94,15 +105,15 @@ namespace MCRmlFlow
     }
 
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 8): the screen <paramref name="handle"/> holds, made on the menus' layer if it
-    /// isn't (or was closed) and its document read and laid out at once if a change's job hasn't (<see cref="ReadAhead"/>),
-    /// for a screen the game shows itself rather than through a change (the briefing over the 1998 one, the loading
-    /// screen); none when the menus can't start or its document can't be read (the log says why, naming it
-    /// <paramref name="what"/>).
+    /// Port-only (SPEC-menus.md's stage 8): the screen <paramref name="handle"/> holds, made on the layer
+    /// <paramref name="on"/> names if it isn't (or was closed) and its document read and laid out at once if a change's
+    /// job hasn't (<see cref="ReadAhead"/>), for a screen the game shows itself rather than through a change (the
+    /// briefing over the 1998 one, the loading screen, the results); none when the menus can't start or its document
+    /// can't be read (the log says why, naming it <paramref name="what"/>).
     /// </summary>
-    template <class T> MCOptionalRef<T> MadeNow(MCGuiHandle<T>& handle, std::string_view what)
+    template <class T> MCOptionalRef<T> MadeNow(MCGuiHandle<T>& handle, std::string_view what, MCOn on = MCOn::Menus)
     {
-        const std::shared_ptr<T> screen = MadeOnLayer(handle, what);
+        const std::shared_ptr<T> screen = MadeOnLayer(handle, what, on);
 
         if (screen == nullptr)
         {

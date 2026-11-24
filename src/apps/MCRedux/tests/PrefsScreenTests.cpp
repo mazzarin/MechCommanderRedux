@@ -707,7 +707,9 @@ TEST_CASE_ISOLATED("game: a match's pause: the battle goes on, and LEAVE MATCH a
     question = MCRemadeTest::OnTop<MCQuestionWindow>(MCRemadeTest::MCLayer::Mission);
     REQUIRE(question != nullptr);
     ClickOn(Find(*question, "yes"));
-    CHECK(!Menus().Mission().Showing());
+    // The pause and its question gone (the match's remade results may come up on the layer as it ends).
+    CHECK(!shown->Shown());
+    CHECK(MCRemadeTest::OnTop<MCQuestionWindow>(MCRemadeTest::MCLayer::Mission) == nullptr);
     CHECK_EQ(Mission()->EndScenarioRequested, -1);
     CHECK_EQ(ScenarioResult, LeftMatchResult);
 }

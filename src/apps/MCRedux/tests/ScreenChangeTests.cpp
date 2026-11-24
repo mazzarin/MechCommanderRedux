@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "RemadeScreens.h"
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
 #include "gui/MCGuiGlobals.h"
@@ -17,11 +18,17 @@
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
+#include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCPresenter.h"
+#include "ui/MCRmlLayer.h"
 #include "vfx/MCVfx.h"
+
+#include <RmlUi/Core/Box.h>
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
 
 #include <thread>
 
@@ -39,9 +46,9 @@ namespace
     constexpr SDL_Color Black{0, 0, 0, SDL_ALPHA_OPAQUE};
     /// <summary>The most frames a change of screen into a mission or back may take in the tests (20 seconds).</summary>
     constexpr int32_t MostFrames = 300;
-    /// <summary>The results panel's place on the 1998 screen (MCMissionResultsScreen::Init).</summary>
-    constexpr int32_t ResultsLeft = 0x28;
-    constexpr int32_t ResultsTop = 0xf;
+    /// <summary>The remade results' panel (ui/results.rml), and how far from the window's middle its own may be (a pixel's rounding).</summary>
+    constexpr const char* ResultsPanel = "results";
+    constexpr float MiddleSlack = 1.0f;
 
     /// <summary>A frame shown, as the tests read it at its present.</summary>
     struct MCShown
@@ -80,7 +87,7 @@ namespace
                                         .State = Mission()->State,
                                         .Loading = LoadingScreenUp,
                                         .Menus = GlobalLog() != nullptr,
-                                        .Results = Mission()->ResultsScreen != nullptr,
+                                        .Results = Mission()->ResultsUp(),
                                         .Battle = Scenario() != nullptr});
             };
         }
@@ -155,6 +162,8 @@ namespace
     /// <summary>A message box made on the screen (as the version dialog is) sits in the middle of <paramref name="area"/>.</summary>
     void CheckMessageBoxCentredOn(SDL_Rect area)
     {
+        // The 1998 box's own placement (where the menus can't start).
+        const MCTestGame::OldBoxAllowed allowed;
         const MCGuiHandle<MCGuiMessageBox> box =
             ScreenWindow()->CreateChild<MCGuiMessageBox>([](MCGuiMessageBox& made) { made.Init("Centred"); });
         REQUIRE(box != nullptr);
@@ -394,10 +403,17 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
     const int32_t height = GuiSystem().Height();
     REQUIRE(width > MenuFrameWidth);
     REQUIRE(height > MenuFrameHeight);
-    const MCGuiHandle<MCMissionResultsScreen>& results = Mission()->ResultsScreen;
-    REQUIRE(results != nullptr);
-    CHECK_EQ(results->GlobalX(), (width - MenuFrameWidth) / 2 + ResultsLeft);
-    CHECK_EQ(results->GlobalY(), (height - MenuFrameHeight) / 2 + ResultsTop);
+    // The remade results over the battlefield, their panel in the window's middle (no 1998 screen made).
+    CHECK(Mission()->ResultsScreen == nullptr);
+    const MCOptionalRef<MCResultsScreen> results = MCResultsMenu::Screen();
+    REQUIRE(results.has_value());
+    Rml::Element* panel = MCRemadeTest::Find(results->get(), ResultsPanel);
+    REQUIRE(panel != nullptr);
+    const Rml::Vector2f middle =
+        panel->GetAbsoluteOffset(Rml::BoxArea::Border) + panel->GetBox().GetSize(Rml::BoxArea::Border) / 2.0f;
+    const Rml::Vector2i window = results->get().Layer().Context().GetDimensions();
+    CHECK(std::fabs(middle.x - static_cast<float>(window.x) / 2.0f) <= MiddleSlack);
+    CHECK(std::fabs(middle.y - static_cast<float>(window.y) / 2.0f) <= MiddleSlack);
     CHECK_EQ(display.View().w, width);
     CHECK_EQ(display.View().h, height);
     CHECK(SameColor(display.Surround(), Black));
@@ -415,7 +431,7 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
     CHECK_EQ(MCScreenChange::Finished(), finished + 1);
     REQUIRE(Mission()->State == MCMissionState::Logistics);
     CHECK(Scenario() == nullptr);
-    CHECK(Mission()->ResultsScreen == nullptr);
+    CHECK(!Mission()->ResultsUp());
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
     REQUIRE(logistics != nullptr);
     CHECK(logistics->CurrentScreen() != nullptr);

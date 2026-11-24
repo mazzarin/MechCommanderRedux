@@ -25,6 +25,7 @@
 #include "main/MCGameStrings.h"
 #include "mission/MCMission.h"
 #include "mission/MCRematchLetters.h"
+#include "mission/MCResultsReads.h"
 #include "sprite/MCHdArt.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
@@ -37,17 +38,12 @@
 #include "terrain/MCTacticalMap.h"
 #include "vfx/MCVfxFunctions.h"
 
-uint32_t ResultsStepTicks = 20;
-int EventsToMissionResultsScreen = 0;
-
 namespace
 {
     /// <summary>Warrior status of a dead pilot.</summary>
     constexpr int32_t PilotDead = 4;
     /// <summary>Warrior status of a pilot whose icon shows the dead image.</summary>
     constexpr int32_t PilotMissing = 3;
-    /// <summary>The kinds of kill a warrior counts.</summary>
-    constexpr int32_t KillKinds = 7;
     /// <summary>GUI event: a mouse button went down.</summary>
     constexpr int32_t MouseDownEvent = 1;
     /// <summary>GUI event: a mouse button went up.</summary>
@@ -66,11 +62,10 @@ namespace
     /// <summary>The frame round a mech bar icon that a pilot line leaves out, in pixels each side.</summary>
     constexpr int32_t IconFrame = 2;
 
-    /// <summary>The mech bar icon of <paramref name="warrior"/>'s mover, or null.</summary>
+    /// <summary>The mech bar icon of <paramref name="warrior"/>'s mover, or null (mission/MCResultsReads).</summary>
     std::shared_ptr<MCFriendlyMechIcon> IconOf(const MCMechWarrior& warrior)
     {
-        const std::shared_ptr<MCGameObject> vehicle = LockObject(warrior.Vehicle);
-        return vehicle != nullptr ? TacticalInterface()->GetMechIconFromID(vehicle->PartId) : nullptr;
+        return MCResultsReads::Card(warrior);
     }
 
     /// <summary>
@@ -160,19 +155,6 @@ namespace
         const int32_t aboveMinimum = static_cast<int32_t>(skill - static_cast<double>(MinPilotSkill));
         return static_cast<int32_t>(static_cast<double>(aboveMinimum * 55) /
                                     (static_cast<double>(MaxPilotSkill) - MinPilotSkill));
-    }
-
-    /// <summary>The kills of <paramref name="warrior"/>, all kinds together.</summary>
-    int32_t TotalKills(const MCMechWarrior& warrior)
-    {
-        int32_t kills = 0;
-
-        for (int32_t kind = 0; kind < KillKinds; kind++)
-        {
-            kills += warrior.NumKilled[kind][1];
-        }
-
-        return kills;
     }
 
     /// <summary>Writes <paramref name="text"/> with <paramref name="font"/> at (<paramref name="x"/>, <paramref name="y"/>).</summary>
@@ -450,7 +432,28 @@ auto MCMissionResultsScreen::Init() -> int32_t
     Assert(result == 0, static_cast<uint32_t>(result), " error initializing mission results screen display elements ");
     result = _FailurePort->Init(const_cast<char*>("guimr07.tga"));
     Assert(result == 0, static_cast<uint32_t>(result), " error initializing mission results screen display elements ");
-    _NextDrawTime = 0;
+    _Count.OnPilot = [this](size_t pilot)
+    {
+        if (const std::shared_ptr<MCMechWarrior> warrior = _Results.Pilots[pilot].Warrior.lock(); warrior != nullptr)
+        {
+            _PilotIcons[pilot] = TakeIcon(*warrior);
+        }
+    };
+
+    _Count.OnDebriefing = [this]
+    {
+        const std::shared_ptr<MCGuiScrollTextObject> text = _TextObject.Lock();
+        text->ShowGuiWindow(true);
+
+        if (text->TextBuffer.empty())
+        {
+            std::string line = LoadGameString(0x361, 0xfe);
+            text->FontIndex = 1;
+            text->Print(line.data(), 0x1f);
+        }
+
+        text->Draw();
+    };
 
     if (MultiPlayer() == nullptr)
     {
@@ -481,7 +484,7 @@ auto MCMissionResultsScreen::Init() -> int32_t
 
 auto MCMissionResultsScreen::OnDestroy() -> void
 {
-    EventsToMissionResultsScreen = 0;
+    MCMissionEnd::End();
     _Results = {};
     _SuccessPort.reset();
     _FailurePort.reset();
@@ -567,7 +570,7 @@ auto MCMissionResultsScreen::HandleEvent(MCGuiEvent& event) -> void
         {
             if (event.Key == 0x1b)
             {
-                _SkipAnimation = true;
+                _Count.Skip();
                 return;
             }
             break;
@@ -634,40 +637,7 @@ auto MCMissionResultsScreen::Display() -> void
 
     if (MultiPlayer() == nullptr)
     {
-        while (_NextDrawTime != 0 && (_NextDrawTime <= MouseTicks || _SkipAnimation))
-        {
-            switch (_Step)
-            {
-                case MCResultsStep::ResourcePoints:
-                {
-                    if (ScenarioResult < 4 || Solo != 0)
-                    {
-                        _Step = MCResultsStep::Statistics;
-                    }
-                    else
-                    {
-                        StepResourcePoints();
-                    }
-                    break;
-                }
-                case MCResultsStep::Statistics:
-                    StepStatistics();
-                    break;
-                case MCResultsStep::PrimaryObjectives:
-                case MCResultsStep::SecondaryObjectives:
-                    StepObjectives();
-                    break;
-                case MCResultsStep::Pilots:
-                    StepPilots();
-                    break;
-                case MCResultsStep::Debriefing:
-                    StepDebriefing();
-                    break;
-
-                default:
-                    break;
-            }
-        }
+        _Count.Run(_Results);
     }
 
     // (The original copied the window's picture to the screen and displayed the children.)
@@ -692,9 +662,7 @@ auto MCMissionResultsScreen::Draw() -> void
         DrawStatistics();
         DrawObjectiveList();
         // The pilots the steps have reached.
-        const auto lines = static_cast<int32_t>(_Results.Pilots.size());
-        const int32_t pilots =
-            _Step == MCResultsStep::Pilots ? _StepIndex : (_Step > MCResultsStep::Pilots ? lines : 0);
+        const int32_t pilots = _Count.PilotsShown(_Results.Pilots.size());
 
         for (int32_t i = 0; i < pilots; i++)
         {
@@ -709,159 +677,15 @@ auto MCMissionResultsScreen::Draw() -> void
     }
 }
 
-auto MCMissionResultsScreen::AdvanceStep() -> void
-{
-    _StepIndex = 0;
-    _Step = static_cast<MCResultsStep>(std::to_underlying(_Step) + 1);
-}
-
-auto MCMissionResultsScreen::StepResourcePoints() -> void
-{
-    const int32_t shown = _StepIndex * 1000;
-
-    if (_Results.ResourcePointsEarned < shown)
-    {
-        _ShownResourcePoints = _Results.ResourcePointsEarned;
-        AdvanceStep();
-        _NextDrawTime = ResultsStepTicks + MouseTicks;
-
-        if (!_SkipAnimation)
-        {
-            SoundSystem()->PlayInterfaceSample(0x43);
-        }
-    }
-    else
-    {
-        _ShownResourcePoints = shown;
-        _NextDrawTime = ResultsStepTicks / 20 + MouseTicks;
-
-        if (!_SkipAnimation)
-        {
-            SoundSystem()->PlayInterfaceSample(0x42);
-        }
-
-        _StepIndex++;
-    }
-}
-
-auto MCMissionResultsScreen::StepStatistics() -> void
-{
-    _NextDrawTime = ResultsStepTicks / 2 + MouseTicks;
-
-    if (_StepIndex < 4)
-    {
-        _StepIndex++;
-    }
-    else if (_StepIndex == 4)
-    {
-        AdvanceStep();
-        _NextDrawTime = ResultsStepTicks + MouseTicks;
-    }
-
-    if (!_SkipAnimation)
-    {
-        SoundSystem()->PlayInterfaceSample(0x47);
-    }
-}
-
-auto MCMissionResultsScreen::ShowsTonnageBonus() -> bool
-{
-    std::shared_ptr<const MCScenario> scenario = Scenario();
-    const MCScenarioObjective& bonus = scenario->Objectives[scenario->Objectives.Count()];
-    return MultiPlayer() == nullptr && bonus.Type == MCScenarioObjective::TonnageBonus && bonus.Points > 0 &&
-           ScenarioResult > 3 && Solo == 0;
-}
-
-auto MCMissionResultsScreen::StepObjectives() -> void
-{
-    // The primary step lists the type 0 objectives, the secondary step the type 1 ones.
-    const uint32_t wantedType =
-        _Step != MCResultsStep::PrimaryObjectives ? MCScenarioObjective::Secondary : MCScenarioObjective::Primary;
-    const MCObjectiveList& objectives = Scenario()->Objectives;
-    bool drew = objectives[_StepIndex].Type == wantedType;
-
-    if (_StepIndex == objectives.Count())
-    {
-        // After the secondary objectives: the tonnage bonus, when it was earned.
-        if (_Step == MCResultsStep::SecondaryObjectives && ShowsTonnageBonus())
-        {
-            SoundSystem()->PlayBettySample(10);
-            drew = true;
-        }
-
-        AdvanceStep();
-    }
-    else
-    {
-        _StepIndex++;
-    }
-
-    if (drew && MultiPlayer() == nullptr)
-    {
-        if (!_SkipAnimation)
-        {
-            SoundSystem()->PlayInterfaceSample(0x47);
-        }
-
-        _NextDrawTime = ResultsStepTicks + MouseTicks;
-    }
-}
-
-auto MCMissionResultsScreen::StepPilots() -> void
-{
-    const int32_t index = _StepIndex;
-    _NextDrawTime = ResultsStepTicks + MouseTicks;
-
-    if (index == static_cast<int32_t>(_Results.Pilots.size()))
-    {
-        AdvanceStep();
-        return;
-    }
-
-    if (const std::shared_ptr<MCMechWarrior> warrior = _Results.Pilots[static_cast<size_t>(index)].Warrior.lock();
-        warrior != nullptr)
-    {
-        _PilotIcons[static_cast<size_t>(index)] = TakeIcon(*warrior);
-        _StepIndex++;
-    }
-
-    if (!_SkipAnimation)
-    {
-        SoundSystem()->PlayInterfaceSample(0x10);
-    }
-}
-
-auto MCMissionResultsScreen::StepDebriefing() -> void
-{
-    const std::shared_ptr<MCGuiScrollTextObject> text = _TextObject.Lock();
-    text->ShowGuiWindow(true);
-
-    if (text->TextBuffer.empty())
-    {
-        std::string line = LoadGameString(0x361, 0xfe);
-        text->FontIndex = 1;
-        text->Print(line.data(), 0x1f);
-    }
-
-    text->Draw();
-    _NextDrawTime = 0;
-    _Step = MCResultsStep::Done;
-
-    if (!_SkipAnimation)
-    {
-        SoundSystem()->PlayInterfaceSample(0x32);
-    }
-}
-
 auto MCMissionResultsScreen::DrawResourcePoints() -> void
 {
-    if (_ShownResourcePoints < 0)
+    if (_Count.ShownResourcePoints() < 0)
     {
         return;
     }
 
     FillBox(0x149, 9, 0x185, 0x14, 0x10);
-    WriteText(*LgWhiteFont, Port().Frame(), 0x14a, 10, std::to_string(_ShownResourcePoints));
+    WriteText(*LgWhiteFont, Port().Frame(), 0x14a, 10, std::to_string(_Count.ShownResourcePoints()));
 }
 
 auto MCMissionResultsScreen::DrawStatistics() -> void
@@ -869,7 +693,7 @@ auto MCMissionResultsScreen::DrawStatistics() -> void
     static constexpr std::array<int32_t, 5> statisticY = {0x33, 0x40, 0x4d, 0x5a, 0x67};
     const std::array<int32_t, 5> values = _Results.Statistics.Values();
     // The statistics the steps have reached: each step shows one.
-    const int32_t shown = _Step == MCResultsStep::Statistics ? _StepIndex : (_Step > MCResultsStep::Statistics ? 5 : 0);
+    const int32_t shown = _Count.StatisticsShown();
 
     for (int32_t i = 0; i < shown; i++)
     {
@@ -895,7 +719,7 @@ auto MCMissionResultsScreen::DrawObjectiveList() -> void
 
         for (int32_t index = 0; index <= objectives.Count(); index++)
         {
-            if (step > _Step || (step == _Step && index >= _StepIndex))
+            if (!_Count.ObjectiveShown(step, index))
             {
                 return;
             }
@@ -948,7 +772,8 @@ auto MCMissionResultsScreen::DrawObjectiveList() -> void
                 }
             }
 
-            if (index == objectives.Count() && step == MCResultsStep::SecondaryObjectives && ShowsTonnageBonus())
+            if (index == objectives.Count() && step == MCResultsStep::SecondaryObjectives &&
+                MCMissionEnd::ShowsTonnageBonus())
             {
                 const MCScenarioObjective& bonus = objectives[objectives.Count()];
                 WriteText(*BlueFont, Port().Frame(), 0xf, y, bonusHeader);
@@ -1011,7 +836,7 @@ auto MCMissionResultsScreen::DrawPilot(int32_t index) -> void
 
     std::shared_ptr<MCGuiFont> rankFont = result.OldRank < rank ? YellowFont : WhiteFont;
     WriteText(*rankFont, Port().Frame(), left + 0x39, textY, text);
-    WriteText(*WhiteFont, Port().Frame(), left + 0x8c, textY, std::to_string(TotalKills(*warrior)));
+    WriteText(*WhiteFont, Port().Frame(), left + 0x8c, textY, std::to_string(MCMissionEnd::Kills(*warrior)));
 
     // A bar per skill: the old value, and the gain in another colour.
     int32_t barY = top + 0x18;
@@ -1106,7 +931,7 @@ auto MCMissionResultsScreen::DrawMPPilotList() -> void
         const int32_t top = rowBase < 0x2c ? rowBase + 0x18c : rowBase;
         const auto mover = std::static_pointer_cast<MCMover>(LockObject(warrior->Vehicle));
         WriteText(*WhiteFont, Port().Frame(), left + 3, top + 2, mover->NetName.data());
-        WriteText(*WhiteFont, Port().Frame(), left + 0x8c, top + 3, std::to_string(TotalKills(*warrior)));
+        WriteText(*WhiteFont, Port().Frame(), left + 0x8c, top + 3, std::to_string(MCMissionEnd::Kills(*warrior)));
         int32_t barY = top + 0x17;
 
         for (const int32_t skill : ResultsSkillOrder)
@@ -1159,7 +984,7 @@ auto MCMissionResultsScreen::DrawMPSummary() -> void
     // The commanders by kills.
     int32_t row = 0;
 
-    for (const CommanderLine& commander : _CommanderLines)
+    for (const MCMissionEnd::MCCommanderLine& commander : _CommanderLines)
     {
         const int32_t rowY = static_cast<int16_t>(row) * 0xc + 0xbe;
         WriteText(*MedBlueFont, Port().Frame(), 0x1a, rowY, std::format("{}.", commander.Place));
@@ -1275,17 +1100,8 @@ auto MCMissionResultsScreen::KeepPicturesForEnd() -> size_t
 
 auto MCMissionResultsScreen::Activate() -> int32_t
 {
-    EventsToMissionResultsScreen = 1;
-    _SkipAnimation = false;
-    Mission()->StopScenarioCallbacks();
-    GuiSystem().CursorHidden = false;
-    GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
-    GuiSystem().CursorHidden = true;
-    GuiSystem().Release();
-
-    _StepIndex = 0;
-    _Step = MCResultsStep::ResourcePoints;
-    _NextDrawTime = MouseTicks;
+    MCMissionEnd::Begin();
+    _Count.Start();
     // Shown in front (the original added it to the screen here). Port-only (SPEC-menus.md's stage 1): its 640x480 frame
     // centred on the screen, over the whole battlefield as it ended at the mission's interface size, where the original's
     // (and the port's, the menus' view) sat in the screen's top-left corner.
@@ -1313,19 +1129,16 @@ auto MCMissionResultsScreen::Activate() -> int32_t
 
     // (The original copied the label onto the window here and freed it; Draw shows it.)
     _MoveOnButton->Draw();
-    const MCScenario& scenario = *Scenario();
+    _Results = MCMissionEnd::Gather();
 
     if (MultiPlayer() == nullptr)
     {
-        _Results = GatherSinglePlayerResults(scenario, ScenarioResult);
         _PilotIcons.clear();
         _PilotIcons.resize(_Results.Pilots.size());
-        _ShownResourcePoints = -1;
 
         // The debriefing shows the tactical map's salvage text. The original moved the map's box onto this screen; the
         // screen makes its own box like it, with the map's text, and the map's box is hidden (it left the map).
-        const std::shared_ptr<MCTacticalMap> tacMap = TacticalMap();
-        const std::shared_ptr<MCGuiScrollTextObject> salvage = tacMap->SalvageText.Lock();
+        const std::shared_ptr<MCGuiScrollTextObject> salvage = MCResultsReads::SalvageText();
         _TextObject = CreateChild<MCGuiScrollTextObject>(
             [&salvage](MCGuiScrollTextObject& made)
             {
@@ -1337,17 +1150,13 @@ auto MCMissionResultsScreen::Activate() -> int32_t
         text->MoveTo(10, 0x15b, false);
         text->Resize(0xc4, 0x59);
         text->ShowGuiWindow(false);
-
-        SoundSystem()->PlayBettySample(ScenarioResult < 4 ? 0xb : 0x12);
     }
     else
     {
-        if (IsMPlayerGame != 0)
+        if (MCMissionEnd::TimesOut())
         {
-            GuiSystem().AddTimer(weak_from_this(), TimeoutTimer, 90000, 0, 0, false);
+            GuiSystem().AddTimer(weak_from_this(), TimeoutTimer, MCMissionEnd::MatchTimeout, 0, 0, false);
         }
-
-        _Results = GatherMultiplayerResults(scenario);
 
         // (The original drew the summary, the home side's pilots and the objectives into the window's picture here;
         // Draw shows them each frame from what is kept below.)
@@ -1365,39 +1174,13 @@ auto MCMissionResultsScreen::Activate() -> int32_t
             _PilotIcons.push_back(warrior != nullptr ? TakeIcon(*warrior) : std::nullopt);
         }
 
-        const int32_t seconds = static_cast<int32_t>(std::fmod(static_cast<double>(ActualTime), 60.0));
-        _TimeText = std::format("{:02}:{:02}", static_cast<int32_t>(ActualTime) / 60, seconds);
-
-        // The commanders by kills.
-        _CommanderLines.clear();
-
-        for (int32_t i = 0; i < static_cast<int32_t>(_Results.Commanders.size()); i++)
-        {
-            const MCMissionCommanderScore& score = _Results.Commanders[static_cast<size_t>(i)];
-            auto player = score.Score < 0 ? nullptr : MultiPlayer()->SessionManager->GetPlayerNumber(score.CommanderId);
-
-            if (player != nullptr)
-            {
-                _CommanderLines.push_back({i + 1, player->Name, score.Score});
-            }
-        }
-
+        _TimeText = MCMissionEnd::MatchTime();
+        _CommanderLines = MCMissionEnd::CommanderLines(_Results);
         ShowMPPilots(true);
-        SoundSystem()->PlayBettySample(HomeSideLost(ScenarioResult, HomeTeam()->Alignment) ? 0xb : 0x12);
     }
 
-    // Port-only (Redux HD): a battle over, this game's leave ends its session for everyone, as the original's sessions
-    // ended with each battle; a game that quit a battle still going on hands its session on (MCSessionManager::HandsOn).
-    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
-    {
-        MultiPlayer()->SessionManager->HandsOn = Mission()->EndScenarioRequested < 0;
-    }
-
-    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr && Mission()->EndScenarioRequested != 0)
-    {
-        MultiPlayer()->LeaveSession();
-        MultiPlayer()->InMission = true;
-    }
+    MCMissionEnd::SayResult();
+    MCMissionEnd::LeaveBattle();
 
     // Port-only (Redux HD): the host's REMATCH, when a guest still in the session can have it (network/MCRoomEnd.h).
     if (_RematchButton != nullptr)
@@ -1405,7 +1188,6 @@ auto MCMissionResultsScreen::Activate() -> int32_t
         _RematchButton->ShowGuiWindow(MCRoomEnd::OffersRematch());
     }
 
-    SomethingOnFire = 0;
     return 0;
 }
 

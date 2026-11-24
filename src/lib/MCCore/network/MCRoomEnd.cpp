@@ -185,7 +185,7 @@ namespace
     bool AtResults()
     {
         const std::shared_ptr<MCMission> mission = Mission();
-        return mission != nullptr && mission->State == MCMissionState::Results && mission->ResultsScreen != nullptr;
+        return mission != nullptr && mission->State == MCMissionState::Results && mission->ResultsUp();
     }
 
     /// <summary>Tells every player the room ends, <paramref name="how"/>.</summary>

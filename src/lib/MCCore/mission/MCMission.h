@@ -153,6 +153,14 @@ public:
     void CloseResultsScreen();
 
     /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): whether the results are up, the remade ones (mission/MCResultsMenu) or the
+    /// 1998 screen where they can't show.
+    /// </summary>
+    bool ResultsUp() const;
+    /// <summary>Port-only (stage 9): whether the results' count has shown everything (either screen's).</summary>
+    bool ResultsFinished() const;
+
+    /// <summary>
     /// Port-only: the campaign mission whose briefing the way back from the results shows, once the scenario has ended
     /// (EndScenarioLeavingWayBack): the next on a win, this one again otherwise (BackToLogistics), a lost solo mission's
     /// campaign's first (its start); none where the way back goes elsewhere (a won solo mission's main screen, a match,
@@ -179,7 +187,10 @@ public:
     MCMissionState State = MCMissionState::Start;
     /// <summary>The state to go to after the current one (<c>NextGameState</c> in the mission FIT).</summary>
     MCMissionState NextState = MCMissionState::Start;
-    /// <summary>The results screen shown after a scenario (created in <see cref="StartScenario"/>).</summary>
+    /// <summary>
+    /// The 1998 results screen shown after a scenario (created in <see cref="StartScenario"/>). Port-only (stage 9): only
+    /// where the remade results (mission/MCResultsMenu) can't show; none otherwise.
+    /// </summary>
     MCGuiHandle<MCMissionResultsScreen> ResultsScreen;
     /// <summary>Index into <see cref="Movies"/> of the movie to play next (<c>SmackerMovieId</c>); -1 = none.</summary>
     int32_t CurrentMovie = 0;
@@ -269,6 +280,8 @@ private:
     void ShowLoadingScreen();
     /// <summary>Port-only: the loading screen taken down (its shape let go of), the battlefield next.</summary>
     void TakeDownLoadingScreen();
+    /// <summary>Port-only: the loading screen taken down for the battlefield, the menus' dialogs with it.</summary>
+    void IntoTheBattlefield();
     /// <summary>
     /// Port-only (SPEC-menus.md's stage 8): whether a match entered behind the loading screen has started (the host's
     /// start), or its scenario ended (a lost session, the match left) or the match is gone: the loading screen goes.
@@ -279,6 +292,15 @@ private:
     /// back (the scenario ended, the menus made again), then what a fade into the screen it shows does (IntoScreenPieces).
     /// </summary>
     std::vector<MCScreenChange::MCPiece> ResultsClosing();
+    /// <summary>
+    /// Port-only (stage 9): the scenario's end shown: the remade results, or where they can't show the 1998 screen
+    /// (made then if it wasn't at the load), activated.
+    /// </summary>
+    void ShowResults();
+    /// <summary>Port-only (stage 9): whichever results are up taken down, the game's cursor back.</summary>
+    void TakeDownResults();
+    /// <summary>The 1998 results screen made, hidden until the scenario ends (MCMissionResultsScreen::Activate).</summary>
+    void MakeOldResults();
 
     /// <summary>
     /// What the results lead to once the scenario has ended: logistics, or the campaign's ending movies (the original's

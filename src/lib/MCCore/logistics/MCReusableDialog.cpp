@@ -234,7 +234,9 @@ auto MCReusableDialog::StillSaid() const -> bool
 
 auto MCReusableDialog::SayOverRemade() -> bool
 {
-    if (!MCRmlFlow::Showing())
+    // Port-only (SPEC-menus.md's stage 9): whenever the menus run, over a remade screen or not; the 1998 box only where
+    // they can't start.
+    if (OldBoxOnly() || !MCRmlFlow::Menus().has_value())
     {
         return false;
     }
@@ -299,6 +301,12 @@ auto MCReusableDialog::SayOverRemade() -> bool
     return true;
 }
 
+auto MCReusableDialog::OldBoxOnly() -> bool&
+{
+    static bool only = false;
+    return only;
+}
+
 auto MCReusableDialog::Activate() -> void
 {
     // Port-only (SPEC-menus.md's stage 4): over a remade screen, the remade dialog says it (a key asked for, it passes
@@ -319,6 +327,7 @@ auto MCReusableDialog::Activate() -> void
 
 auto MCReusableDialog::ShowOld() -> void
 {
+    MCRmlDialogs::NoteOldBox(Text);
     GuiSystem().Grab(weak_from_this());
     // The original painted the dialog afresh: a press left on its buttons was gone.
     OkButton->PressedDown = false;

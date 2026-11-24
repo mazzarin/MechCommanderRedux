@@ -18,6 +18,7 @@
 #include "logistics/MCLoadingMenu.h"
 #include "logistics/MCLogChat.h"
 #include "logistics/MCLogInvScreen.h"
+#include "logistics/MCLogMenus.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenu.h"
@@ -1222,6 +1223,8 @@ namespace
     constexpr uint32_t LauncherLeftString = 0x365;
     constexpr int32_t LeftStringLength = 0xfe;
     constexpr std::string_view MatchMission = "ARENA";
+    /// <summary>A message said over the briefing, in the 1998 dialog's capitals.</summary>
+    constexpr std::string_view BriefingMessage = "THE GAME SAYS SOMETHING.";
     /// <summary>A player's light once they've pressed BEGIN MISSION (MCMPPlayerLights' status 2).</summary>
     constexpr int32_t ReadyLight = 2;
     /// <summary>The chat's switch: TEAM, then ALL.</summary>
@@ -2576,4 +2579,56 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
     }
 
     CHECK_EQ(frames, 0x47ed73fdu);
+}
+
+/// <summary>
+/// A message said over the briefing as its mission starts (a match's host starting it while a guest's box is up; here
+/// BEGIN MISSION pressed in its place) goes with the briefing, as the original's box went with logistics: it never shows
+/// over the loading screen or the battlefield, nor comes back there, and the menus' layer takes no event in the battle.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a message up over the briefing as its mission starts goes with it, never over the battlefield")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    ElementOf(screen, "ready0").Focus();
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(screen.CanBegin());
+    ShowMenuMessage(BriefingMessage);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(MCRmlDialogs::Shown());
+
+    screen.PressBegin();
+    constexpr int32_t MostFrames = 600;
+    const auto playing = [] { return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario; };
+    bool overLoading = false;
+
+    for (int32_t frame = 0; frame < MostFrames && !playing(); frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+        overLoading = overLoading || (LoadingScreenUp && MCRmlDialogs::Shown());
+    }
+
+    REQUIRE(playing());
+    constexpr int32_t BattleFrames = 20;
+
+    for (int32_t frame = 0; frame < BattleFrames; frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
+    REQUIRE(menus.has_value());
+    CHECK(!overLoading);
+    CHECK(!MCRmlDialogs::Shown());
+    CHECK(!MCRmlDialogs::Returning());
+    CHECK(!menus->get().Menus().Showing());
 }

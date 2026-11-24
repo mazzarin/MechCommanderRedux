@@ -11,6 +11,7 @@
 #include "gui/MCGuiSystem.h"
 #include "iface/MCMechBar.h"
 #include "iface/MCTacticalInterface.h"
+#include "logistics/MCReusableDialog.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCLogButton.h"
@@ -31,6 +32,7 @@
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
+#include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "gui/MCUpdateDisplay.h"
 #include "object/MCForces.h"
@@ -518,6 +520,8 @@ namespace
 {
     void ResultsScreenFrames(bool gpu)
     {
+        // The 1998 results screen's frames (the remade results' are ResultsMenuTests'), kept until step 2 of stage 9.
+        MCResultsMenu::Remade() = false;
         RequestDrawing(gpu);
         REQUIRE(MCTestGame::StartMission(1));
 
@@ -648,8 +652,10 @@ namespace
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
-        // The 1998 campaign screens' own recording (kept until stage 9 removes them): the remade screens off.
+        // The 1998 campaign screens' own recording (kept until stage 9 removes them): the remade screens off, and the
+        // 1998 box with them.
         MCCampaignMenu::Remade() = false;
+        MCReusableDialog::OldBoxOnly() = true;
         const MCRecordedPrefs prefs;
         std::optional<MCTestGame::PinnedSaves> saves;
         RequestDrawing(gpu);

@@ -672,7 +672,7 @@ namespace MCTestGame
         }
 
         REQUIRE(Mission()->State == MCMissionState::Results);
-        REQUIRE(Mission()->ResultsScreen != nullptr);
+        REQUIRE(Mission()->ResultsUp());
         return true;
     }
 
@@ -777,6 +777,44 @@ namespace MCTestGame
         return false;
     }
 
+    namespace
+    {
+        /// <summary>The 1998 boxes MCRmlDialogs had counted at the last frame's end.</summary>
+        size_t& OldBoxesSeen()
+        {
+            static size_t seen = 0;
+            return seen;
+        }
+
+        /// <summary>How many OldBoxAllowed live.</summary>
+        int& OldBoxAllowances()
+        {
+            static int allowances = 0;
+            return allowances;
+        }
+
+        /// <summary>
+        /// Port-only (SPEC-menus.md's stage 9): a 1998 dialog box shown while the menus ran fails the test, but in the
+        /// 1998 screens' own tests (MCReusableDialog::OldBoxOnly) or while an OldBoxAllowed lives.
+        /// </summary>
+        void CheckNoOldBox()
+        {
+            const size_t boxes = MCRmlDialogs::OldBoxes();
+
+            if (boxes == OldBoxesSeen())
+            {
+                return;
+            }
+
+            OldBoxesSeen() = boxes;
+
+            if (OldBoxAllowances() == 0 && !MCReusableDialog::OldBoxOnly())
+            {
+                FAIL_CHECK("a 1998 dialog box showed while the menus ran (the log's \"Dialogs:\" line names it)");
+            }
+        }
+    }
+
     void RunFrame(float seconds)
     {
         BootClock().Advance(static_cast<uint64_t>(static_cast<double>(seconds) * 1e9));
@@ -838,6 +876,19 @@ namespace MCTestGame
             static int32_t stateFrame = 0;
             stateLog << std::format("{} 0x{:08x}\n", stateFrame++, StateHash()) << std::flush;
         }
+
+        CheckNoOldBox();
+    }
+
+    OldBoxAllowed::OldBoxAllowed()
+    {
+        ++OldBoxAllowances();
+    }
+
+    OldBoxAllowed::~OldBoxAllowed()
+    {
+        --OldBoxAllowances();
+        OldBoxesSeen() = MCRmlDialogs::OldBoxes();
     }
 }
 

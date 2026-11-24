@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "MCTestGuest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiEvent.h"
@@ -24,6 +25,7 @@
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
+#include "mission/MCResultsMenu.h"
 #include "mission/MCRematchLetters.h"
 #include "mission/MCScenario.h"
 #include "network/MCGameDataHash.h"
@@ -731,6 +733,78 @@ TEST_CASE_ISOLATED("game: a host's REMATCH from its match's results hosts the ro
     CHECK_EQ(manager.GetPlayers(nullptr).size(), 1u);
     CHECK_EQ(GlobalLog()->Room.StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
     SaveShot("rematch 3 room again from the results", ScreenHash());
+    IsMPlayerGame = false;
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 9): the host's REMATCH on its match's remade results, clicked as a player does: the
+/// results offer it (a guest can have it), ANN is told and leaves, the results close and the room is hosted again.
+/// </summary>
+TEST_CASE_ISOLATED("game: a host's REMATCH clicked on its match's remade results hosts the room again")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28933";
+    constexpr uint32_t BothSidesLost = 3;
+    constexpr int32_t MostFramesToResults = 300;
+    const std::string address = std::format("127.0.0.1:{}", Port);
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+
+    // The match's room with ANN in it, the match under way (the campaign mission standing in for it).
+    auto host = std::make_shared<MCMultiPlayer>();
+    MCGameContext::Current().SetMultiPlayer(host);
+    REQUIRE_EQ(host->Start(), 0);
+    MCSessionManager& manager = *host->SessionManager;
+    manager.ConnectTcp(address);
+    REQUIRE_EQ(host->CreateSession("COMMANDER'S GAME", "COMMANDER", 4), 0);
+    const std::shared_ptr<MCFidpSession> matchRoom = manager.CurrentSession();
+    Guest ann("ANN", MCMatchRule::Supported);
+    REQUIRE(ann.Join(*manager.DirectPlay, address));
+    REQUIRE(SettleUntil([&] { return host->PlayerRules.contains(ann.Id()); }));
+    MCRoomEnd::MatchStarts();
+    host->InMission = true;
+    IsMPlayerGame = true;
+
+    // The match's end: its remade results, REMATCH offered.
+    ScenarioResult = BothSidesLost;
+    Mission()->EndScenarioRequested = 0;
+
+    for (int32_t frame = 0; frame < MostFramesToResults && Mission()->State != MCMissionState::Results; frame++)
+    {
+        Step();
+    }
+
+    REQUIRE(Mission()->State == MCMissionState::Results);
+    const std::shared_ptr<MCResultsScreen> results =
+        MCRemadeTest::OnTop<MCResultsScreen>(MCRemadeTest::MCLayer::Mission);
+    REQUIRE(results != nullptr);
+    REQUIRE(results->RematchShown());
+    CHECK(Mission()->ResultsScreen == nullptr);
+    Rml::Element* rematch = MCRemadeTest::Find(*results, "rematch");
+    REQUIRE(rematch != nullptr);
+    MCTestGuest::RealClickOn(*rematch);
+    REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
+    CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Rematch)});
+    ann.Leave();
+
+    // The results close, and the room is hosted again: a new session, the host alone in it.
+    CHECK(SettleUntil([&] { return Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr; }));
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            return GlobalLog() != nullptr && OnScreen(GlobalLog()->SessionScreen) && InSession() &&
+                   manager.CurrentSession() != matchRoom;
+        }));
+    Settle();
+    CHECK(!MCRoomEnd::Rematching());
+    CHECK(Scenario() == nullptr);
+    CHECK(MultiPlayer()->IsHost);
+    CHECK_EQ(manager.GetPlayers(nullptr).size(), 1u);
     IsMPlayerGame = false;
 }
 

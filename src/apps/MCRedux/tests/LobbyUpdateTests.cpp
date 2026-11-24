@@ -1405,9 +1405,9 @@ TEST_CASE_ISOLATED("game: a rejoin to a full room says so")
 
 namespace
 {
-    /// <summary>What a game refused at the door for the time of day and the weather says.</summary>
+    /// <summary>What a game refused at the door for the time of day and the weather says (the remade dialog's words).</summary>
     constexpr std::string_view RefusedForTime =
-        "YOUR GAME DOESN'T HAVE THIS MATCH'S TIME OF DAY. UPDATE YOUR GAME TO JOIN.";
+        "Your game doesn't have this match's time of day. Update your game to join.";
     /// <summary>The weather's as the remade dialog says it, over the launcher's join (SPEC-menus.md's stage 4).</summary>
     constexpr std::string_view RefusedForWeather =
         "Your game doesn't have this match's weather. Update your game to join.";

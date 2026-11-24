@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "ui/MCRmlDialog.h"
+#include "gui/MCScreenChange.h"
 #include "iface/MCKeyBindings.h"
 #include "platform/MCInput.h"
 #include "ui/MCRmlFlow.h"
@@ -32,10 +33,25 @@ namespace
         }
     }
 
-    MCGuiHandle<MCRmlDialog>& Kept()
+    /// <summary>The layers' dialogs (MCRmlDialogs::Dialog): the menus', then the mission's.</summary>
+    constexpr size_t Layers = 2;
+
+    std::array<MCGuiHandle<MCRmlDialog>, Layers>& KeptOnLayers()
     {
-        static MCGuiHandle<MCRmlDialog> kept;
+        static std::array<MCGuiHandle<MCRmlDialog>, Layers> kept;
         return kept;
+    }
+
+    MCGuiHandle<MCRmlDialog>& Kept(MCRmlFlow::MCOn on = MCRmlFlow::MCOn::Menus)
+    {
+        return KeptOnLayers()[on == MCRmlFlow::MCOn::Mission ? 1 : 0];
+    }
+
+    /// <summary>The 1998 boxes shown while the menus ran (MCRmlDialogs::NoteOldBox).</summary>
+    size_t& OldBoxCount()
+    {
+        static size_t count = 0;
+        return count;
     }
 
     /// <summary>What the dialogs belong to when they don't say (MCRmlDialogs::SetPlace).</summary>
@@ -43,6 +59,13 @@ namespace
     {
         static std::string place;
         return place;
+    }
+
+    /// <summary>The layer the displaced say was said on (MCRmlDialogs::Tend says it there again).</summary>
+    MCRmlFlow::MCOn& DisplacedOn()
+    {
+        static MCRmlFlow::MCOn on = MCRmlFlow::MCOn::Menus;
+        return on;
     }
 
     /// <summary>A say that stands, hidden by a change of screens, to say itself again (MCRmlDialogs::Tend).</summary>
@@ -172,11 +195,17 @@ MCOptionalRef<Rml::Element> MCRmlDialog::FirstFocus(Rml::ElementDocument& docume
 
 void MCRmlDialog::Say(MCSay say)
 {
-    // The say before replaced, not hidden by a change of screens; a newer say wins over one waiting to come back.
+    // The say before replaced, not hidden by a change of screens; a newer say wins over one waiting to come back on
+    // this layer (the other layer's comes back on its own).
     _Standing = false;
     _Say = std::move(say);
     Hide();
-    Displaced().reset();
+
+    if (DisplacedOn() == _On)
+    {
+        Displaced().reset();
+    }
+
     _Standing = true;
 
     if (!Document().has_value())
@@ -229,6 +258,7 @@ void MCRmlDialog::OnHide()
     if (std::exchange(_Standing, false) && _Say.Stands())
     {
         Displaced() = _Say;
+        DisplacedOn() = _On;
     }
 }
 
@@ -272,11 +302,13 @@ bool MCRmlDialog::OnRawKey(const SDL_KeyboardEvent& key)
     return true;
 }
 
-MCGuiHandle<MCRmlDialog> MCRmlDialogs::Dialog()
+MCGuiHandle<MCRmlDialog> MCRmlDialogs::Dialog(MCRmlFlow::MCOn on)
 {
-    if (Kept())
+    MCGuiHandle<MCRmlDialog>& kept = Kept(on);
+
+    if (kept)
     {
-        return Kept();
+        return kept;
     }
 
     const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
@@ -286,18 +318,14 @@ MCGuiHandle<MCRmlDialog> MCRmlDialogs::Dialog()
         return {};
     }
 
-    Kept() = menus->get().Menus().CreateChild<MCRmlDialog>([](MCRmlDialog&) {});
-    return Kept();
+    MCRmlLayer& layer = on == MCRmlFlow::MCOn::Mission ? menus->get().Mission() : menus->get().Menus();
+    kept = layer.CreateChild<MCRmlDialog>([on](MCRmlDialog& made) { made.SetLayer(on); });
+    return kept;
 }
 
-bool MCRmlDialogs::Show(MCRmlDialog::MCSay say)
+bool MCRmlDialogs::Show(MCRmlDialog::MCSay say, MCRmlFlow::MCOn on)
 {
-    if (!MCRmlFlow::Showing())
-    {
-        return false;
-    }
-
-    const MCGuiHandle<MCRmlDialog> dialog = Dialog();
+    const MCGuiHandle<MCRmlDialog> dialog = Dialog(on);
 
     if (!dialog)
     {
@@ -323,15 +351,49 @@ void MCRmlDialogs::Close()
 {
     Displaced().reset();
 
-    if (Kept())
+    for (const MCGuiHandle<MCRmlDialog>& kept : KeptOnLayers())
     {
-        Kept()->End();
+        if (kept)
+        {
+            kept->End();
+        }
+    }
+}
+
+void MCRmlDialogs::Drop(MCRmlFlow::MCOn on)
+{
+    if (Displaced().has_value() && DisplacedOn() == on)
+    {
+        Displaced().reset();
+    }
+
+    if (const MCGuiHandle<MCRmlDialog>& kept = Kept(on); kept)
+    {
+        kept->End();
     }
 }
 
 bool MCRmlDialogs::Shown()
 {
-    return Kept() && Kept()->Shown();
+    return std::ranges::any_of(KeptOnLayers(),
+                               [](const MCGuiHandle<MCRmlDialog>& kept) { return kept && kept->Shown(); });
+}
+
+void MCRmlDialogs::NoteOldBox(std::string_view text)
+{
+    const bool menusRun = MCRmlFlow::Menus().has_value();
+    SDL_Log("Dialogs: a 1998 box shows%s: %.*s", menusRun ? " while the menus run" : "", static_cast<int>(text.size()),
+            text.data());
+
+    if (menusRun)
+    {
+        ++OldBoxCount();
+    }
+}
+
+size_t MCRmlDialogs::OldBoxes()
+{
+    return OldBoxCount();
 }
 
 void MCRmlDialogs::EndWait()
@@ -344,9 +406,12 @@ void MCRmlDialogs::EndWait()
         Displaced().reset();
     }
 
-    if (Shown() && isWait(Kept()->Said()))
+    for (const MCGuiHandle<MCRmlDialog>& kept : KeptOnLayers())
     {
-        Kept()->End();
+        if (kept && kept->Shown() && isWait(kept->Said()))
+        {
+            kept->End();
+        }
     }
 }
 
@@ -357,7 +422,8 @@ bool MCRmlDialogs::Returning(std::optional<std::string_view> text)
 
 void MCRmlDialogs::Tend()
 {
-    if (!Displaced().has_value())
+    // Port-only (stage 9): back once the change is done, over the screen it shows (not over its fade).
+    if (!Displaced().has_value() || MCScreenChange::Running())
     {
         return;
     }
@@ -365,7 +431,7 @@ void MCRmlDialogs::Tend()
     MCRmlDialog::MCSay say = *std::exchange(Displaced(), std::nullopt);
     const std::function<void()> lost = say.OnLost;
 
-    if (Show(std::move(say)))
+    if (Show(std::move(say), DisplacedOn()))
     {
         return;
     }

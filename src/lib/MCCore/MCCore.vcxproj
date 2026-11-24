@@ -320,9 +320,12 @@
     <ClCompile Include="MCPort.cpp" />
     <ClCompile Include="mission\MCDifficultySettings.cpp" />
     <ClCompile Include="mission\MCMission.cpp" />
+    <ClCompile Include="mission\MCMissionEnd.cpp" />
     <ClCompile Include="mission\MCMissionResults.cpp" />
     <ClCompile Include="mission\MCMissionResultsScreen.cpp" />
     <ClCompile Include="mission\MCNightLights.cpp" />
+    <ClCompile Include="mission\MCResultsMenu.cpp" />
+    <ClCompile Include="mission\MCResultsReads.cpp" />
     <ClCompile Include="mission\MCScenario.cpp" />
     <ClCompile Include="mission\MCScenarioLoad.cpp" />
     <ClCompile Include="mission\MCScenarioObjectives.cpp" />
@@ -883,10 +886,13 @@
     <ClInclude Include="MCPort.h" />
     <ClInclude Include="mission\MCDifficultySettings.h" />
     <ClInclude Include="mission\MCMission.h" />
+    <ClInclude Include="mission\MCMissionEnd.h" />
     <ClInclude Include="mission\MCMissionResults.h" />
     <ClInclude Include="mission\MCMissionResultsScreen.h" />
     <ClInclude Include="mission\MCNightLights.h" />
     <ClInclude Include="mission\MCRematchLetters.h" />
+    <ClInclude Include="mission\MCResultsMenu.h" />
+    <ClInclude Include="mission\MCResultsReads.h" />
     <ClInclude Include="mission\MCScenario.h" />
     <ClInclude Include="mission\MCScenarioObjectives.h" />
     <ClInclude Include="mission\MCScenarioPart.h" />

@@ -175,6 +175,21 @@ namespace MCTestGame
     };
 
     /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): while it lives, a 1998 dialog box may show though the menus run (a test of
+    /// the box itself). Otherwise RunFrame fails a test where one shows, but in the 1998 screens' own tests
+    /// (MCReusableDialog::OldBoxOnly).
+    /// </summary>
+    class OldBoxAllowed
+    {
+    public:
+        OldBoxAllowed();
+        ~OldBoxAllowed();
+
+        OldBoxAllowed(const OldBoxAllowed&) = delete;
+        OldBoxAllowed& operator=(const OldBoxAllowed&) = delete;
+    };
+
+    /// <summary>
     /// Keeps the test user folder's prefs.cfg as it was while it lives (Preferences' ACCEPT, the pause and the reports'
     /// answer write PREFS): an isolated test's worker keeps its user folder for its next test, which would start with
     /// this one's settings (the software renderer, say).

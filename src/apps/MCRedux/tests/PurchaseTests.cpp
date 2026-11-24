@@ -1127,6 +1127,9 @@ TEST_CASE_ISOLATED("game: with MoreUnits the shop sells past 50 units up to 200,
         return;
     }
 
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
+
     constexpr int32_t Points = 10'000'000;
     constexpr int32_t Stock = 10;
     REQUIRE(MCTestGame::StartLogistics());

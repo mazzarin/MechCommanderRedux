@@ -1,4 +1,5 @@
-/* Port-only (SPEC-menus.md, "Over the battlefield"): the game's copy of tools/menus-frames/frames/battle.rcss's pause.
+/* Port-only (SPEC-menus.md, "Over the battlefield"): the game's copy of tools/menus-frames/frames/battle.rcss's pause
+   and results.
    Over the battlefield (the mission's layer, at its interface size): a panel at the window's middle over the battle as
    it stands, a light veil between so the picture still shows (SCREEN BRIGHTNESS is judged on it). */
 
@@ -24,6 +25,112 @@ body.over-battle { background-color: transparent; }
 .quick .set-control input.range.slider { width: 96dp; }
 .quick .set-control .step-value { width: 76dp; }
 
+/* ---- The results (stage 9) ---- */
+
+/* What the mission came to, laid out as 1998's: its name, MISSION SUCCESSFUL or MISSION FAILED, the RP earned at the
+   right; the battle's five numbers in a strip; at the left the objectives and the salvage, at the right every pilot
+   who dropped, a row each (twelve fit): kills, rank (cream when promoted) and the four skills, what each gained in
+   cream on its number and its meter. */
+#results { padding-top: 16dp; padding-bottom: 34dp; }
+#results > * { flex: 0 0 auto; }
+#results > .panel { flex: 1 1 0; display: flex; flex-direction: column; }
+#results .panel > * { flex: 0 0 auto; }
+#results .panel > .result-body { flex: 1 1 0; }
+#results .titlebar > * { flex: 0 0 auto; }
+#results .titlebar > .grow { flex: 1 1 0; }
+.earned { text-align: right; }
+.earned .title { color: #fcfcb8; }
+
+.battle { display: flex; flex-direction: row; gap: 16dp; padding-bottom: 6dp; border-bottom: 1dp #2a3742; margin-bottom: 8dp; }
+.battle > .fig { flex: 1 1 0; }
+.fig .n { font-size: 14.8dp; line-height: 18dp; font-weight: 700; }
+.fig .what { font-size: 8.46dp; line-height: 11dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; white-space: nowrap; }
+
+.result-body { display: flex; flex-direction: row; align-items: stretch; gap: 16dp; }
+.result-body > * { flex: 0 0 auto; }
+.result-body > .grow { flex: 1 1 0; }
+.outcome { width: 248dp; }
+
+.obj { display: flex; flex-direction: row; align-items: flex-start; gap: 6dp; padding: 3dp 0; font-size: 11.63dp; line-height: 15dp; }
+.obj > * { flex: 0 0 auto; }
+.obj > .grow { flex: 1 1 0; }
+.obj .mark { width: 10dp; height: 10dp; margin-top: 2.5dp; }
+.obj.open { color: #a4b0bc; }
+.obj .rp { font-size: 9.51dp; line-height: 15dp; font-weight: 600; letter-spacing: 0.06em; color: #fcfcb8; }
+.obj.failed .rp { color: #a4b0bc; }
+.obj-head { margin-top: 4dp; font-size: 8.46dp; line-height: 12dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+.section { margin-top: 12dp; }
+
+/* The pilots: a row each, the face, the callsign (a wounded or killed pilot's state beside it), the mech, then kills,
+   rank and the skills in columns, their names in cyan over them. */
+.pilot-head, .pilot-row { display: flex; flex-direction: row; align-items: center; white-space: nowrap; }
+.pilot-head > *, .pilot-row > * { flex: 0 0 auto; }
+.pilot-head { height: 16dp; border-bottom: 1dp #2a3742; }
+.pilot-head div { font-size: 8.46dp; line-height: 16dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; }
+.pilot-row { height: 20dp; border-bottom: 1dp #141e26; }
+.pilot-row .face { width: 15dp; height: 20dp; margin-right: 6dp; }
+.pilot-row .p-status { font-weight: 600; }
+.pilot-head > .p-name, .pilot-row > .p-name { flex: 1 1 0; overflow: hidden; }
+.p-name { font-size: 11.63dp; line-height: 20dp; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.p-status { margin-left: 6dp; font-size: 8.46dp; letter-spacing: 0.06em; }
+.p-mech { width: 84dp; font-size: 9.51dp; line-height: 20dp; color: #a4b0bc; }
+.p-kills { box-sizing: border-box; width: 34dp; padding-right: 10dp; font-size: 11.63dp; line-height: 20dp; font-weight: 600; text-align: right; }
+.p-rank { width: 64dp; font-size: 9.51dp; line-height: 20dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.p-skill { box-sizing: border-box; width: 54dp; padding-left: 6dp; }
+.p-skill .v { font-size: 9.51dp; line-height: 13dp; font-weight: 600; }
+.meter.thin { height: 2dp; margin-top: 1dp; }
+.meter-gain { position: absolute; top: 0; bottom: 0; background-color: #fcfcb8; }
+.pilot-row.gone .p-name, .pilot-row.gone .p-kills, .pilot-row.gone .p-rank, .pilot-row.gone .v { color: #a4b0bc; }
+
+/* Salvage: what was recovered, a row each (its picture, name and tons), as 1998's list. */
+.salvage-row { display: flex; flex-direction: row; align-items: center; gap: 8dp; height: 26dp; border-bottom: 1dp #141e26; font-size: 11.63dp; line-height: 26dp; }
+.salvage-row > * { flex: 0 0 auto; }
+.salvage-row > .grow { flex: 1 1 0; }
+.salvage-row .pic { width: 30dp; height: 24dp; }
+.salvage-row .t { font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+.none { font-size: 11.63dp; line-height: 15dp; color: #a4b0bc; }
+
+/* Multiplayer: the commanders by kills, the best pilot; every pilot by kills in the list at the right. */
+.place { display: flex; flex-direction: row; height: 18dp; font-size: 11.63dp; line-height: 18dp; border-bottom: 1dp #141e26; }
+.place > * { flex: 0 0 auto; }
+.place > .grow { flex: 1 1 0; }
+.place .at { width: 18dp; color: #7cd4ec; font-weight: 600; }
+.place .side { width: 60dp; font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
+.place .n { width: 40dp; text-align: right; font-weight: 600; }
+.best { display: flex; flex-direction: row; align-items: center; gap: 8dp; }
+.best > * { flex: 0 0 auto; }
+.best > .grow { flex: 1 1 0; }
+.best-lines { text-align: right; }
+.best-head { margin-bottom: 4dp; }
+.c-mech { width: 120dp; }
+.c-who { width: 86dp; }
+.c-n { width: 44dp; text-align: right; }
+#results .foot { margin-top: 12dp; padding-top: 8dp; border-top: 1dp #2a3742; gap: 8dp; }
+#results .foot > * { flex: 0 0 auto; }
+#results .foot > .grow { flex: 1 1 0; }
+
+/* 16:10: the left column and the pilots' columns narrower, so the callsigns keep their room. */
+@media (max-aspect-ratio: 17/10) {
+    .outcome { width: 220dp; }
+    .p-mech { width: 72dp; }
+    .p-kills { width: 30dp; padding-right: 8dp; }
+    .p-rank { width: 58dp; }
+    .p-skill { width: 46dp; padding-left: 4dp; }
+}
+
+/* 4:3 and 5:4 (the frames stop at 16:10): narrower again, every column kept, the callsigns' room what's left. */
+@media (max-aspect-ratio: 3/2) {
+    .result-body { gap: 12dp; }
+    .outcome { width: 170dp; }
+    .p-mech { width: 56dp; }
+    .p-kills { width: 32dp; padding-right: 6dp; }
+    .p-rank { width: 50dp; }
+    .p-skill { width: 40dp; padding-left: 3dp; }
+    .c-mech { width: 96dp; }
+    .c-who { width: 72dp; }
+    .c-n { width: 36dp; }
+}
+
 /* The hint line along the window's foot, over the battlefield. */
 #hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 34dp; }
 #hintbar .content { padding-top: 8dp; }
@@ -34,3 +141,7 @@ body.over-battle { background-color: transparent; }
    at 7.6 at every step. Its texts over the battlefield (the hint line, a CHANGES PLAY tag) are 8.5 units (8.99dp), the
    battle's own smallest, as its callsigns. */
 body.over-battle .hints, body.over-battle .tag { font-size: 8.99dp; }
+/* The results' smallest texts (the numbers' names, the objectives' groups, the pilots' columns, a pilot's state) the
+   same, over the battlefield at any interface size. */
+body.over-battle .fig .what, body.over-battle .obj-head, body.over-battle .pilot-head div,
+body.over-battle .p-status { font-size: 8.99dp; }

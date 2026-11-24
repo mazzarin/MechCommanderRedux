@@ -257,6 +257,9 @@ TEST_CASE_ISOLATED("game: the preferences screen chooses the renderer and saves 
         return;
     }
 
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
+
     REQUIRE(MCTestGame::StartLogistics());
     // The tests' user folder overlays the install, so a PREFS written here would be every later test's.
     const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
@@ -333,6 +336,9 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
     {
         return;
     }
+
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
 
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));

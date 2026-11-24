@@ -2,6 +2,7 @@
 #include "gui/MCGuiMessageBox.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
+#include "ui/MCRmlDialog.h"
 #include "vfx/MCVfxFunctions.h"
 
 MCGuiMessageBox::~MCGuiMessageBox()
@@ -16,6 +17,7 @@ auto MCGuiMessageBox::Init(std::string_view text) -> int32_t
         return -3;
     }
 
+    MCRmlDialogs::NoteOldBox(text);
     const int32_t boxWidth = std::max(WhiteFont->Width(text) + 0xc, 0x48);
     const int32_t fontHeight = WhiteFont->Height();
     // Port-only (SPEC-menus.md's stage 1): centred on what the window shows (the menus' frame, or the whole screen in a

@@ -8,6 +8,7 @@
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCFileScrollPane.h"
+#include "logistics/MCGamesScreen.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCInternetMenu.h"
@@ -126,89 +127,6 @@ void ConnectScreen()
     }
 }
 
-void CancelToConnect()
-{
-    // Port-only (the personal build): a LAN game's room (the session screen; the ready room's) goes back to the games.
-    // The modem and serial screens (shown only without a network) go back to the connection screen, as in the original.
-    // Port-only (SPEC-menus.md's stage 3): the remade LAN screen's own way back is its kind's (logistics/MCGamesScreen).
-    const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
-    const bool fromRoom = GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
-    const bool fromLanGame = (fromRoom || GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen) &&
-                             (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx);
-    // Port (Redux HD): an internet game's room goes back to the INTERNET screen.
-    const bool fromInternetGame = fromRoom && MultiPlayer()->SessionManager->Internet != nullptr;
-    WhackTimer = true;
-    // Original behaviour (OB-167): the same timer is removed twice (team 2's is left).
-    GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
-    GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
-
-    // Port-only (SPEC-menus.md, "In the room"): a host's goodbye to its room goes behind its way out (network/MCRoomEnd.h's
-    // CloseRoom), which leaves the session at once: the leave below then finds none to leave.
-    if (fromRoom)
-    {
-        MCRoomEnd::CloseRoom();
-    }
-
-    MultiPlayer()->LeaveSession();
-
-    GlobalLog()->ResetPlayerLights();
-
-    // The room's own: its timer, and its chat (the next room's starts empty, as from the main menu).
-    if (fromRoom)
-    {
-        GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen, 0);
-        GlobalLog()->ClearChat();
-    }
-
-    GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-
-    if (fromInternetGame)
-    {
-        ShowInternetScreen();
-        return;
-    }
-
-    if (fromLanGame)
-    {
-        // The games found again, the names as typed.
-        DoTheTcpThang();
-        return;
-    }
-
-    // Port-only (stage 7): the remade MULTIPLAYER (the modem's and serial's screens aren't made).
-    ConnectScreen();
-}
-
-void CancelToMPlayer()
-{
-    KillTheGame();
-}
-
-void LeaveRoom(std::string line)
-{
-    // Port-only (SPEC-menus.md's stage 2): the way out through the flow, with the one fade; (SPEC-menus.md, "In the
-    // room") a host's goodbye to its guests goes behind it, nothing waiting for it (CancelToConnect).
-    MCScreenFlow::Change("room back",
-                         [line = std::move(line)]
-                         {
-                             const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
-
-                             if (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx)
-                             {
-                                 CancelToConnect();
-                             }
-                             else
-                             {
-                                 Cancel();
-                             }
-
-                             if (!line.empty())
-                             {
-                                 ShowMenuMessage(line);
-                             }
-                         });
-}
-
 void CancelToSession()
 {
     MCSplashScreen& loadScreen = *GlobalLog()->LoadScreen;
@@ -274,17 +192,6 @@ void DoTheIpxThang()
         MultiPlayer()->SessionManager->ConnectIpx();
     }
 
-    ShowLanScreen();
-}
-
-void DoTheTcpThang()
-{
-    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
-    {
-        MultiPlayer()->SessionManager->ConnectTcp(const_cast<char*>(""));
-    }
-
-    // Port-only (SPEC-menus.md's stage 3): the remade LAN screen, shown at once.
     ShowLanScreen();
 }
 
@@ -389,7 +296,7 @@ void JoinSerialSession()
     if (MultiPlayer()->JoinSession("SerialGame", playerName) != 0)
     {
         // No game yet: try again in a second, with a way out.
-        WaitWithCancel(*GlobalLog()->SerialScreen, 0, 0xb1, CancelToConnect, false);
+        WaitWithCancel(*GlobalLog()->SerialScreen, 0, 0xb1, MCRoomEnd::LeaveToGames, false);
         return;
     }
 
@@ -458,7 +365,7 @@ void GOCallback()
     GlobalLog()->SetCurrentScreen(GlobalLog()->SessionScreen);
     GlobalLog()->ShowLogScreen(true, true);
     GlobalLog()->LogisticsState = 8;
-    GlobalLog()->SessionScreen->Activate(false);
+    GlobalLog()->Room.Activate(false);
 
     if (MultiPlayer() != nullptr)
     {
@@ -664,7 +571,7 @@ void ReadyRoomPlayerListHandleEvent(MCGuiObject& object, MCGuiEvent& event)
     }
 
     // The host can go once someone else is in. (Port-only, the personal build: only a modem or serial game waits here;
-    // a configured match goes on from the session screen, MCSessionScreen::WatchRoom.)
+    // a configured match goes on from the session screen, MCRoomModel::WatchRoom.)
     if (manager->IsHost != 0)
     {
         GlobalLog()->ConnectScreen->Element<MCLogButton>(2)->Disabled = players.size() < 2;

@@ -432,10 +432,9 @@ TEST_CASE_ISOLATED("game: a LAN host's Escape leaves its remade room at once, no
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
     ann.AnswerFiles(sameData);
-    MCSessionScreen& room = *GlobalLog()->SessionScreen;
-    room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
-    room.AssignPlayer(ann.Id(), 2, 0, false);
-    room.LoadMission(Mission);
+    MCSessionScreen::Room().AssignPlayer(manager.MyPlayerID, 1, 0, false);
+    MCSessionScreen::Room().AssignPlayer(ann.Id(), 2, 0, false);
+    MCSessionScreen::Room().LoadMission(Mission);
     REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && DialogText().empty(); }));
     Settle();
     const MCGuiHandle<MCRoomScreen> remade = RoomScreen();
@@ -623,15 +622,15 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
     ann.AnswerFiles(sameData);
     MCSessionScreen& room = *GlobalLog()->SessionScreen;
-    room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
-    room.AssignPlayer(ann.Id(), 2, 1, false);
-    room.SetTeamTechBase(2, 1);
-    room.LoadMission(Mission);
+    MCSessionScreen::Room().AssignPlayer(manager.MyPlayerID, 1, 0, false);
+    MCSessionScreen::Room().AssignPlayer(ann.Id(), 2, 1, false);
+    MCSessionScreen::Room().SetTeamTechBase(2, 1);
+    MCSessionScreen::Room().LoadMission(Mission);
     REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && DialogText().empty(); }));
-    room.SetTeam1RP(Team1Points);
-    room.SetTeam2RP(Team2Points);
+    MCSessionScreen::Room().SetTeam1RP(Team1Points);
+    MCSessionScreen::Room().SetTeam2RP(Team2Points);
     Settle();
-    REQUIRE(!room.StartButton->Disabled);
+    REQUIRE(MCSessionScreen::Room().CanStart);
 
     // The match starts (its hook alone: the test's guest plays no match) and ends; the results' REMATCH: ANN's game is
     // told, and the host waits for it to leave.
@@ -656,8 +655,8 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     CHECK(MCSessionScreen::Room().Team1Players[0] == manager.MyPlayerID);
     CHECK(!MCSessionScreen::Room().MissionFile.empty());
     CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
-    CHECK_EQ(std::string(again.Team1RPText->Text()), std::to_string(Team1Points));
-    CHECK_EQ(std::string(again.Team2RPText->Text()), std::to_string(Team2Points));
+    CHECK_EQ(MCSessionScreen::Room().PointsText[0], std::to_string(Team1Points));
+    CHECK_EQ(MCSessionScreen::Room().PointsText[1], std::to_string(Team2Points));
     CHECK_EQ(MCSessionScreen::Room().StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
     CHECK_EQ(MCLobbyUpdate::StartQuestion(), std::string("ANN isn't back yet. Start without ANN?"));
     SaveShot("rematch 0 room again", ScreenHash());

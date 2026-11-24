@@ -932,7 +932,8 @@ namespace MCTestGuest
 
                 uint32_t value = 0;
 
-                if (at + sizeof(value) > message.size())
+                // Nor is an id read across the counters (they'd read as one when they match an id's high word).
+                if (at + sizeof(value) > message.size() || (at < countersEnd && at + sizeof(value) > sizeof(header)))
                 {
                     line += std::format(" {:02x}", message[at]);
                     at++;
@@ -1089,7 +1090,7 @@ namespace MCTestGuest
     /// </summary>
     inline bool RoomShowsReady(uint32_t id)
     {
-        return RoomShows(id) && GlobalLog()->SessionScreen->ShownWithGameUp(id);
+        return RoomShows(id) && GlobalLog()->Room.ShownWithGameUp(id);
     }
 
     /// <summary>Whether <paramref name="screen"/> is logistics' screen now.</summary>

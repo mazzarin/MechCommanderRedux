@@ -1250,10 +1250,9 @@ namespace
             MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
         REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
         ann.AnswerFiles(sameData);
-        MCSessionScreen& room = *GlobalLog()->SessionScreen;
-        room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
-        room.AssignPlayer(ann.Id(), 2, 0, false);
-        room.LoadMission(MatchMission);
+        MCSessionScreen::Room().AssignPlayer(manager.MyPlayerID, 1, 0, false);
+        MCSessionScreen::Room().AssignPlayer(ann.Id(), 2, 0, false);
+        MCSessionScreen::Room().LoadMission(MatchMission);
         REQUIRE(
             MCTestGuest::SettleUntil([&] { return ann.MissionsLoaded() == 1 && MCTestGuest::DialogText().empty(); }));
         MCTestGuest::Settle();

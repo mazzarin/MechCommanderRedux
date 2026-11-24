@@ -222,5 +222,11 @@ void ShowGamesNow(MCGamesWhere where);
 /// <summary>LAN shown at once over TCP/IP (the network chosen, back from a room or a match), as INTERNET is.</summary>
 void ShowLanScreen();
 
+/// <summary>
+/// The LAN games found again (a room left: the original's DoTheTcpThang): connects over TCP/IP and shows the remade LAN
+/// screen.
+/// </summary>
+void DoTheTcpThang();
+
 /// <summary>The game quitting: the screens' lists let go (their sockets closed) before RmlUi stops.</summary>
 void ReleaseGamesScreens();

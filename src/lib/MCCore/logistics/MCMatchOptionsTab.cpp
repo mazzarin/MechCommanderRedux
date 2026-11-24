@@ -248,7 +248,7 @@ namespace
     /// <summary>Width of the setting boxes: LIGHT SNOW's in the list's font, with its margins.</summary>
     constexpr int32_t SettingWidth = 64;
 
-    /// <summary>The list's place and size: the chat window's on the session screen (MCSessionScreen::Activate).</summary>
+    /// <summary>The list's place and size: the chat window's on the session screen (MCSessionScreen::Opened).</summary>
     constexpr int32_t ListLeft = 2;
     constexpr int32_t ListTop = 0x42;
     constexpr int32_t ListWidth = 0xbf;

@@ -83,7 +83,7 @@ namespace MCLobbyUpdate
 
     /// <summary>
     /// Whether player <paramref name="playerId"/> is away updating: its place kept, it gone from the session. START
-    /// counts only the players there (MCSessionScreen::CheckGoodToGo): a team of such guests alone can't start.
+    /// counts only the players there (MCRoomModel::CheckGoodToGo): a team of such guests alone can't start.
     /// </summary>
     bool Away(uint32_t playerId);
 

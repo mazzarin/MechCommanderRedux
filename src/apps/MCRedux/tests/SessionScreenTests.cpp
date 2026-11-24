@@ -43,6 +43,7 @@
 #include "main/MCLogistics.h"
 #include "network/MCGameDataHash.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRoomEnd.h"
 #include "platform/MCDirectPlay.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
@@ -679,7 +680,6 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     // The guest's game joins the group the inquiries go to as the host's setup arrives; the test's guest doesn't.
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, guest.Id()));
 
-    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     MCMenuDialog& dialog = *GlobalLog()->Message;
     const uint32_t hostId = manager.MyPlayer()->Id;
     constexpr std::string_view Mission = "ARENA";
@@ -694,13 +694,13 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     guest.SendRules(hostId, MCMatchRule::Supported);
     guest.AnswerFiles(same);
     Settle();
-    screen.LoadMission(Mission);
+    MCSessionScreen::Room().LoadMission(Mission);
     CHECK(SettleUntil([&] { return guest.MissionsLoaded() == 1; }));
     CHECK(!dialog.IsShowing());
 
     // Its own gamesys.fit: named, as good as without the mission, which is called off.
     guest.AnswerFiles(ownGameSystem);
-    screen.LoadMission(Mission);
+    MCSessionScreen::Room().LoadMission(Mission);
     CHECK(SettleUntil([&] { return dialog.Text != LoadGameString(0xac, 0xfe); }));
     CHECK(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string("These players' game data differs from yours: Guest"));
@@ -714,7 +714,7 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     guest.SendRules(hostId, MCMatchRule::Supported & ~MCMatchRule::DataHashV2);
     guest.AnswerFiles(FirstFourBytes(missionFile));
     Settle();
-    screen.LoadMission(Mission);
+    MCSessionScreen::Room().LoadMission(Mission);
     CHECK(SettleUntil([&] { return dialog.Text != LoadGameString(0xac, 0xfe); }));
     CHECK(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string("Can't check these players' game data: Guest. Tell them to upgrade."));
@@ -728,7 +728,7 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     guest.SendRules(hostId, MCMatchRule::Supported);
     guest.AnswerFiles(0);
     Settle();
-    screen.LoadMission(Mission);
+    MCSessionScreen::Room().LoadMission(Mission);
     CHECK(SettleUntil([&] { return dialog.Text != LoadGameString(0xac, 0xfe); }));
     CHECK_EQ(dialog.Text, LoadGameString(0xab, 0xfe) + "Guest");
     ClickOk(dialog);
@@ -797,13 +797,13 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     CHECK(!GlobalLog()->ConnectScreen->IsShowing());
     CHECK(MCTestGuest::RoomShows(manager.MyPlayer()->Id));
-    CHECK(room.StartButton->Disabled);
-    CHECK(!room.LoadMissionButton->Disabled);
+    CHECK(!MCSessionScreen::Room().CanStart);
+    CHECK(MCSessionScreen::Room().HostControls);
     SaveShot("menus 0 host alone", ScreenHash());
     // A mission loaded with nobody else in the room: its file check is done at once (nobody to answer).
-    room.LoadMission("ARENA");
+    MCSessionScreen::Room().LoadMission("ARENA");
     REQUIRE(SettleUntil([] { return !GlobalLog()->Message->IsShowing(); }));
-    CHECK(!room.LoadMissionButton->Disabled);
+    CHECK(MCSessionScreen::Room().HostControls);
     MCTestGuest::PressInRoom("leave");
     CHECK(MCTestGuest::OnLan());
     CHECK(!room.IsShowing());
@@ -852,22 +852,22 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     // The guest's game joins the group the inquiries go to as the host's setup arrives; the test's guest doesn't.
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
     ann.AnswerFiles(sameData);
-    room.AssignPlayer(hostId, 1, 0, false);
-    room.AssignPlayer(ann.Id(), 2, 0, false);
-    room.SetTeamTechBase(2, 1);
-    room.LoadMission(Mission);
+    MCSessionScreen::Room().AssignPlayer(hostId, 1, 0, false);
+    MCSessionScreen::Room().AssignPlayer(ann.Id(), 2, 0, false);
+    MCSessionScreen::Room().SetTeamTechBase(2, 1);
+    MCSessionScreen::Room().LoadMission(Mission);
     REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && !dialog.IsShowing(); }));
-    room.SetTeam1RP(12000);
-    room.SetTeam2RP(9000);
+    MCSessionScreen::Room().SetTeam1RP(12000);
+    MCSessionScreen::Room().SetTeam2RP(9000);
     Settle();
-    CHECK(!room.StartButton->Disabled);
+    CHECK(MCSessionScreen::Room().CanStart);
 
     // CAL joins: not shown while its game is on its way (and START waits for it), then shown the room as it stands.
     Guest cal("CAL", MCMatchRule::Supported);
     REQUIRE(cal.Join(*manager.DirectPlay, RoomHostAddress, false));
     Settle();
     CHECK(!MCTestGuest::RoomShows(cal.Id()));
-    CHECK(room.StartButton->Disabled);
+    CHECK(!MCSessionScreen::Room().CanStart);
     CHECK_EQ(ann.SessionScreens(), 1);
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, cal.Id()));
     cal.AnswerFiles(sameData);
@@ -891,15 +891,15 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     CHECK(MCSessionScreen::Room().Team2Players[0] == ann.Id());
     CHECK_EQ(MCSessionScreen::Room().Team1TechBase, 1);
     CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
-    CHECK_EQ(std::string(room.Team1RPText->Text()), "12000");
-    CHECK_EQ(std::string(room.Team2RPText->Text()), "9000");
+    CHECK_EQ(MCSessionScreen::Room().PointsText[0], "12000");
+    CHECK_EQ(MCSessionScreen::Room().PointsText[1], "9000");
     CHECK(!MCSessionScreen::Room().MissionFile.empty());
     SaveShot("room 0 a player joined", ScreenHash());
 
     // CAL unpicked holds START; on team 2 it lights.
-    CHECK(room.StartButton->Disabled);
-    room.AssignPlayer(cal.Id(), 2, 1, false);
-    CHECK(!room.StartButton->Disabled);
+    CHECK(!MCSessionScreen::Room().CanStart);
+    MCSessionScreen::Room().AssignPlayer(cal.Id(), 2, 1, false);
+    CHECK(MCSessionScreen::Room().CanStart);
 
     // ANN leaves: taken off the screen, the room goes on with CAL on team 2 (no "has left the game").
     ann.Leave();
@@ -909,7 +909,7 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     CHECK(!dialog.IsShowing());
     CHECK(MCSessionScreen::Room().Team2Players[0] == MCSessionScreen::NoPlayer);
     CHECK(MCSessionScreen::Room().Team2Players[1] == cal.Id());
-    CHECK(!room.StartButton->Disabled);
+    CHECK(MCSessionScreen::Room().CanStart);
     CHECK(openToPlayers());
     SaveShot("room 1 a player left", ScreenHash());
 
@@ -940,7 +940,7 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     CHECK(!MCTestGuest::RoomShows(dan.Id()));
     CHECK(!MCSessionScreen::Room().MissionFile.empty());
     CHECK(MCSessionScreen::Room().Team2Players[1] == cal.Id());
-    CHECK(!room.StartButton->Disabled);
+    CHECK(MCSessionScreen::Room().CanStart);
 
     // START closes the room.
     MCTestGuest::PressInRoom("begin");
@@ -989,13 +989,13 @@ TEST_CASE_ISOLATED("game: a LAN room's host sends its guests the same messages i
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
     REQUIRE(manager.AddPlayerToGroup(game.AllPlayerGroupID, ann.Id()));
     ann.AnswerFiles(sameData);
-    room.AssignPlayer(hostId, 1, 0, false);
-    room.AssignPlayer(ann.Id(), 2, 0, false);
-    room.SetTeamTechBase(2, 1);
-    room.LoadMission(Mission);
+    MCSessionScreen::Room().AssignPlayer(hostId, 1, 0, false);
+    MCSessionScreen::Room().AssignPlayer(ann.Id(), 2, 0, false);
+    MCSessionScreen::Room().SetTeamTechBase(2, 1);
+    MCSessionScreen::Room().LoadMission(Mission);
     REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && !dialog.IsShowing(); }));
-    room.SetTeam1RP(12000);
-    room.SetTeam2RP(9000);
+    MCSessionScreen::Room().SetTeam1RP(12000);
+    MCSessionScreen::Room().SetTeam2RP(9000);
     REQUIRE(SettleUntil([&] { return received(ann, MCMPMessageType::RPUpdate) > 0; }));
     Settle();
 
@@ -1019,7 +1019,7 @@ TEST_CASE_ISOLATED("game: a LAN room's host sends its guests the same messages i
     cal.AnswerFiles(sameData);
     cal.Ping();
     REQUIRE(SettleUntil([&] { return cal.MissionsLoaded() == 1 && ann.MissionsLoaded() == 2 && !dialog.IsShowing(); }));
-    room.AssignPlayer(cal.Id(), 2, 1, false);
+    MCSessionScreen::Room().AssignPlayer(cal.Id(), 2, 1, false);
     Settle();
 
     // An older build's join, which says nothing of its rules, is refused at the door for the rain: nobody is told.
@@ -1077,7 +1077,6 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can
     MCTestGuest::HostOnLan("Commander", "Joiners' game", 6);
     Settle();
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
-    MCSessionScreen& room = *GlobalLog()->SessionScreen;
     MCLogChat& chat = *GlobalLog()->Chat;
     const uint32_t hostId = manager.MyPlayer()->Id;
     constexpr uint32_t WithoutArtillery = MCMatchRule::Supported & ~MCMatchRule::NoArtillery;
@@ -1197,7 +1196,7 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can
 
     // DAN's game lacks ARTILLERY too, which the room doesn't play (it is held for ANN): let in and shown the room, its
     // options with it, the picks kept.
-    room.AssignPlayer(ann.Id(), 2, 0, false);
+    MCSessionScreen::Room().AssignPlayer(ann.Id(), 2, 0, false);
     Guest dan("DAN", WithoutArtillery);
     REQUIRE(dan.Join(*manager.DirectPlay, JoinHostAddress));
     CHECK(dan.Refusal().empty());
@@ -1274,7 +1273,6 @@ namespace
         MCTestGuest::HostOnLan("BOB", "Rolling room", 6);
         Settle();
         REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
-        MCSessionScreen& room = *GlobalLog()->SessionScreen;
         REQUIRE(SettleLong(
             [&]
             {
@@ -1294,19 +1292,19 @@ namespace
                 const std::shared_ptr<MCFidpGroup> everyone = manager.GetGroup(MultiPlayer()->AllPlayerGroupID);
                 return everyone != nullptr && std::ranges::contains(everyone->Players, ann);
             }));
-        room.AssignPlayer(manager.MyPlayerID, 1, 0, false);
-        room.AssignPlayer(ann, 2, 0, false);
-        room.AssignPlayer(cat, 2, 1, false);
-        room.SetTeamTechBase(2, 1);
-        room.LoadMission(RolloverMission);
+        MCSessionScreen::Room().AssignPlayer(manager.MyPlayerID, 1, 0, false);
+        MCSessionScreen::Room().AssignPlayer(ann, 2, 0, false);
+        MCSessionScreen::Room().AssignPlayer(cat, 2, 1, false);
+        MCSessionScreen::Room().SetTeamTechBase(2, 1);
+        MCSessionScreen::Room().LoadMission(RolloverMission);
         REQUIRE(SettleLong(
             [&] { return !GlobalLog()->Message->IsShowing() && !MCSessionScreen::Room().MissionFile.empty(); }));
-        room.SetTeam1RP(12000);
-        room.SetTeam2RP(9000);
+        MCSessionScreen::Room().SetTeam1RP(12000);
+        MCSessionScreen::Room().SetTeam2RP(9000);
         Settle();
         std::ofstream(folder / PickedSignal).put('1');
         REQUIRE(SettleLong([&] { return std::filesystem::exists(folder / SeenSignal); }));
-        LeaveRoom();
+        MCRoomEnd::Leave();
         Settle();
     }
 }
@@ -1409,7 +1407,7 @@ TEST_CASE_ISOLATED(
         {
             return MCSessionScreen::Room().Team2Players[0] == ann &&
                    MCSessionScreen::Room().Team2Players[1] == cat.Id() &&
-                   std::string(room.Team1RPText->Text()) == "12000" && !MCSessionScreen::Room().MissionName.empty();
+                   MCSessionScreen::Room().PointsText[0] == "12000" && !MCSessionScreen::Room().MissionName.empty();
         }));
     const std::string missionName = MCSessionScreen::Room().MissionName;
     const std::shared_ptr<MCFidpPlayer> host = PlayerNamed("BOB");
@@ -1433,17 +1431,17 @@ TEST_CASE_ISOLATED(
     CHECK(MCSessionScreen::Room().Team2Players[0] == ann);
     CHECK(MCSessionScreen::Room().Team2Players[1] == cat.Id());
     CHECK_EQ(MCSessionScreen::Room().Team2TechBase, 1);
-    CHECK_EQ(std::string(room.Team1RPText->Text()), "12000");
-    CHECK_EQ(std::string(room.Team2RPText->Text()), "9000");
+    CHECK_EQ(MCSessionScreen::Room().PointsText[0], "12000");
+    CHECK_EQ(MCSessionScreen::Room().PointsText[1], "9000");
     CHECK(!MCSessionScreen::Room().MissionFile.empty());
     CHECK_EQ(MCSessionScreen::Room().MissionName, missionName);
     CHECK(ChatSays("BOB has left the game."));
     CHECK(ChatSays("is now the server."));
 
     // ANN's controls are the host's: CAT to team 1, and START plays, closing the room at the session's new hub.
-    room.AssignPlayer(cat.Id(), 1, 0, false);
+    MCSessionScreen::Room().AssignPlayer(cat.Id(), 1, 0, false);
     Settle();
-    REQUIRE(!room.StartButton->Disabled);
+    REQUIRE(MCSessionScreen::Room().CanStart);
     MCTestGuest::PressInRoom("begin");
     CHECK(GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen);
     CHECK(manager.SessionLocked());

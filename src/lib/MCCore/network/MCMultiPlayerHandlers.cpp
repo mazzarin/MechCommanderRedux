@@ -372,9 +372,9 @@ void HandleAppJoinTeam(uint32_t, std::span<const uint8_t> msg)
 {
     const auto join = ReadLinkupMessage<MCMPJoinTeamMessage>(msg);
 
-    if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
+    if (GlobalLog() != nullptr && GlobalLog()->Room.Made())
     {
-        GlobalLog()->SessionScreen->AssignPlayer(join.PlayerID, join.Team, join.Slot, false);
+        GlobalLog()->Room.AssignPlayer(join.PlayerID, join.Team, join.Slot, false);
     }
 }
 
@@ -382,34 +382,21 @@ void HandleAppRPUpdate(uint32_t, std::span<const uint8_t> msg)
 {
     const auto update = ReadLinkupMessage<MCMPTwoLongMessage>(msg);
 
-    if (GlobalLog() == nullptr || GlobalLog()->SessionScreen == nullptr)
+    if (GlobalLog() == nullptr || !GlobalLog()->Room.Made())
     {
         return;
     }
 
-    const std::shared_ptr<MCSessionScreen> sessionScreen = GlobalLog()->SessionScreen.Lock();
-
-    if (update.Value2 == 1)
-    {
-        sessionScreen->SetTeam1RP(update.Value1);
-    }
-
-    if (update.Value2 == 2)
-    {
-        sessionScreen->SetTeam2RP(update.Value1);
-    }
-
-    sessionScreen->Draw();
+    GlobalLog()->Room.TakePoints(update.Value1, update.Value2);
 }
 
 void HandleAppTechbaseChange(uint32_t, std::span<const uint8_t> msg)
 {
     const auto change = ReadLinkupMessage<MCMPTwoLongMessage>(msg);
 
-    if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
+    if (GlobalLog() != nullptr && GlobalLog()->Room.Made())
     {
-        GlobalLog()->SessionScreen->SetTeamTechBase(static_cast<int8_t>(change.Value1),
-                                                    static_cast<int8_t>(change.Value2));
+        GlobalLog()->Room.SetTeamTechBase(static_cast<int8_t>(change.Value1), static_cast<int8_t>(change.Value2));
     }
 }
 
@@ -1305,9 +1292,9 @@ void HandleAppFileReport(uint32_t fromID, std::span<const uint8_t> msg)
         return;
     }
 
-    if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
+    if (GlobalLog() != nullptr && GlobalLog()->Room.Made())
     {
-        GlobalLog()->SessionScreen->FileReport(fromID, check);
+        GlobalLog()->Room.FileReport(fromID, check);
     }
 }
 
@@ -1322,9 +1309,9 @@ void HandleAppLoadMission(uint32_t fromID, std::span<const uint8_t> msg)
         return;
     }
 
-    if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
+    if (GlobalLog() != nullptr && GlobalLog()->Room.Made())
     {
-        GlobalLog()->SessionScreen->LoadMission(fileName);
+        GlobalLog()->Room.LoadMission(fileName);
     }
 }
 
@@ -1334,18 +1321,18 @@ void HandleAppStart(uint32_t fromID, std::span<const uint8_t> msg)
 
     // Issue #25: the host sends the mission's bare name (LoadCampaign adds the folder and extension); anything else is
     // dropped, as is a start with no session screen to leave.
-    if (!IsGameFileName(missionName, true) || GlobalLog() == nullptr || GlobalLog()->SessionScreen == nullptr)
+    if (!IsGameFileName(missionName, true) || GlobalLog() == nullptr || !GlobalLog()->Room.Made())
     {
         Dropped("a start of a mission outside the game's folders", fromID);
         return;
     }
 
-    GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen, 0);
+    GlobalLog()->Room.StopTick();
     Game().SessionManager->SendLatencyInfo();
     SoundSystem()->PlayBettySample(0x19);
     // Port-only (the personal build): a guest still away updating leaves its team first (network/MCLobbyUpdate.h).
     MCLobbyUpdate::MatchStarts();
-    GlobalLog()->SessionScreen->PublishMatchState();
+    GlobalLog()->Room.PublishMatchState();
 
     if (!GlobalLog()->LoadMatchMission(missionName))
     {
@@ -1929,9 +1916,9 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
 
             game.PlayerSessionCheckIn[static_cast<size_t>(playerNumber)] = 1;
 
-            if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
+            if (GlobalLog() != nullptr && GlobalLog()->Room.Made())
             {
-                GlobalLog()->SessionScreen->SomeoneCheckedIn();
+                GlobalLog()->Room.SomeoneCheckedIn();
             }
 
             break;

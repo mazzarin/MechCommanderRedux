@@ -231,7 +231,7 @@ auto MCMenuScreens::Register() -> void
                 return;
             }
 
-            LeaveRoom();
+            MCRoomEnd::Leave();
         }));
     Ids.MissionPick = MCScreenFlow::Register(OldScreen(
         "mission pick", [] { return ShowingLoad(true, false); }, [] { GlobalLog()->SetUpSessionScreen(); },

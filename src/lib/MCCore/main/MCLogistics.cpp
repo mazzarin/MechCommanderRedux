@@ -1806,7 +1806,7 @@ auto MCLogistics::ReadySessionScreen() -> void
         DestroyMultiplayer();
     }
 
-    SessionScreen->Activate(false);
+    Room.Activate(false);
 
     // Port (Redux HD): an internet game's host passes its code on to its players.
     if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)

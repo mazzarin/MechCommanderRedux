@@ -23,7 +23,7 @@
 //   whose OK ends the game; the game ends after the results), and it has no REMATCH. Its host's LEAVE tells its guests
 //   as the menus' does, and the game ends once they have left (RunGame waits for it, the window gone).
 
-class MCSessionScreen;
+class MCRoomModel;
 
 namespace MCRoomEnd
 {
@@ -64,7 +64,7 @@ namespace MCRoomEnd
 
     /// <summary>
     /// Port-only (SPEC-menus.md, "In the room"): the host's LEAVE from its room, as it goes (logistics/MCConnectMenu.h's
-    /// CancelToConnect, a launcher's <see cref="LeaveLauncherGame"/>): with guests whose builds take its word, it tells
+    /// LeaveToGames, a launcher's <see cref="LeaveLauncherGame"/>): with guests whose builds take its word, it tells
     /// them the room closes and leaves the session at once, the goodbye kept apart until they have left
     /// (<see cref="LeaveWait"/> at most: MCSessionManager::LeaveAfterGoodbye). Nothing on the host's screen waits for it.
     /// </summary>
@@ -142,10 +142,26 @@ namespace MCRoomEnd
     bool Rematching();
 
     /// <summary>
-    /// The host shows its room again (MCSessionScreen::ShowRoomAgain): a rematch's player who returned goes back to its
+    /// The host shows its room again (MCRoomModel::ShowRoomAgain): a rematch's player who returned goes back to its
     /// team and slot.
     /// </summary>
-    void PlaceReturning(MCSessionScreen& room);
+    void PlaceReturning(MCRoomModel& room);
+
+    /// <summary>
+    /// Leaves the session (the room's way out, the original's CancelToConnect): from the LAN games back to the main menu,
+    /// from a LAN game's room (or the ready room) back to the games, an internet game's room back to INTERNET.
+    /// </summary>
+    void LeaveToGames();
+
+    /// <summary>Leaves the game for the multiplayer lobby that launched it (the original's CancelToMPlayer).</summary>
+    void LeaveForLauncher();
+
+    /// <summary>
+    /// Port-only (the personal build): the room's EXIT outside a lobby's game: a LAN game's
+    /// goes back to the games (<see cref="LeaveToGames"/>), a modem or serial game's to the main menu, as the original's.
+    /// Port-only (SPEC-menus.md's stage 3): <paramref name="line"/>, when given, is said over the screen it goes back to.
+    /// </summary>
+    void Leave(std::string line = {});
 
     /// <summary>
     /// The match's scenario has ended (MCMission::EndScenario, logistics' main menu up): a game the menus took to its

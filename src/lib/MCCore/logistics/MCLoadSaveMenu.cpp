@@ -174,7 +174,7 @@ void LoadMPGame()
 
     if (HasSelection(MCOptionalOf(pane)))
     {
-        GlobalLog()->SessionScreen->LoadMission(pane->Files[pane->SelectedFile].Name);
+        GlobalLog()->Room.LoadMission(pane->Files[pane->SelectedFile].Name);
     }
 }
 

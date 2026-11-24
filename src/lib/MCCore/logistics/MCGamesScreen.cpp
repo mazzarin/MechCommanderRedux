@@ -1154,6 +1154,17 @@ void ShowLanScreen()
     ShowGamesNow(MCGamesWhere::Lan);
 }
 
+void DoTheTcpThang()
+{
+    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr)
+    {
+        MultiPlayer()->SessionManager->ConnectTcp(const_cast<char*>(""));
+    }
+
+    // Port-only (SPEC-menus.md's stage 3): the remade LAN screen, shown at once.
+    ShowLanScreen();
+}
+
 void ReleaseGamesScreens()
 {
     for (const MCGamesWhere where : {MCGamesWhere::Internet, MCGamesWhere::Lan})

@@ -1118,13 +1118,13 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
             // Port-only (the personal build): the room goes on without the player, who is taken off every game's
             // screen (the host's chat said it left); a host left alone waits for others. The original ended the room
             // for everyone ("... has left the game").
-            GlobalLog()->SessionScreen->RemovePlayer(playerID);
+            GlobalLog()->Room.RemovePlayer(playerID);
 
             // Port-only (Redux HD): the room's host gone, its session rolled over to this game (MCDirectPlay.h): the
             // room is this game's now, as everyone picked it.
             if (IsHost && !wasHost && GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen)
             {
-                GlobalLog()->SessionScreen->TakeOverRoom();
+                GlobalLog()->Room.TakeOverRoom();
             }
         }
 

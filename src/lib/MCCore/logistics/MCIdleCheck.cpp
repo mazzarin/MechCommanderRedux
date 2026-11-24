@@ -7,6 +7,7 @@
 #include "logistics/MCSessionScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCRoomEnd.h"
 #include "network/MCMultiPlayer.h"
 
 namespace
@@ -71,11 +72,11 @@ namespace
         // A lobby's game goes back to its lobby, as its room's EXIT does.
         if (LaunchedFromLobby)
         {
-            CancelToMPlayer();
+            MCRoomEnd::LeaveForLauncher();
             return;
         }
 
-        LeaveRoom(std::string(LeftText));
+        MCRoomEnd::Leave(std::string(LeftText));
     }
 }
 

@@ -23,22 +23,6 @@ extern bool WhackTimer;
 /// </summary>
 void ConnectScreen();
 
-/// <summary>
-/// Leaves the session: from the LAN games back to the main menu, from a LAN game's room (the session screen, or the
-/// ready room) back to the games.
-/// </summary>
-void CancelToConnect();
-
-/// <summary>Leaves the game for the multiplayer lobby that launched it.</summary>
-void CancelToMPlayer();
-
-/// <summary>
-/// Port-only (the personal build): the session screen's EXIT outside a lobby's game: a LAN game's goes back to the
-/// games (<see cref="CancelToConnect"/>), a modem or serial game's to the main menu, as the original's. Port-only
-/// (SPEC-menus.md's stage 3): <paramref name="line"/>, when given, is said over the screen it goes back to.
-/// </summary>
-void LeaveRoom(std::string line = {});
-
 /// <summary>Back to the session screen from its load dialog.</summary>
 void CancelToSession();
 
@@ -50,9 +34,6 @@ void ShowSerialScreen();
 
 /// <summary>Connects over IPX and shows the session list.</summary>
 void DoTheIpxThang();
-
-/// <summary>Connects over TCP/IP and shows the session list.</summary>
-void DoTheTcpThang();
 
 /// <summary>The TCP/IP-or-IPX question's answer (1 IPX, 2 TCP/IP).</summary>
 void TcpipxDialogCallback(int32_t result);

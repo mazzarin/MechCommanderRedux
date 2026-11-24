@@ -212,14 +212,13 @@ namespace
 TEST_CASE("logistics: the session screen lists player ids in order, empty slots last")
 {
     const std::array<uint32_t, 3> ids = {0x30, 0x10, 0x20};
-    const auto sorted = MCSessionScreen::SortedPlayerIds(ids);
-    const uint32_t none = MCSessionScreen::NoPlayer;
-    CHECK(sorted == (std::array<uint32_t, MCSessionScreen::MaxPlayers>{0x10, 0x20, 0x30, none, none, none}));
+    const auto sorted = MCRoomModel::SortedPlayerIds(ids);
+    const uint32_t none = MCRoomModel::NoPlayer;
+    CHECK(sorted == (std::array<uint32_t, MCRoomModel::MaxPlayers>{0x10, 0x20, 0x30, none, none, none}));
 
     // A full session.
     const std::array<uint32_t, 6> full = {6, 5, 4, 3, 2, 1};
-    CHECK(MCSessionScreen::SortedPlayerIds(full) ==
-          (std::array<uint32_t, MCSessionScreen::MaxPlayers>{1, 2, 3, 4, 5, 6}));
+    CHECK(MCRoomModel::SortedPlayerIds(full) == (std::array<uint32_t, MCRoomModel::MaxPlayers>{1, 2, 3, 4, 5, 6}));
 }
 
 TEST_CASE("logistics: a unit sells for half its value in the campaign, all of it in a single mission")

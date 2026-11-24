@@ -8,10 +8,13 @@
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCGamesScreen.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLogMenus.h"
+#include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCSessionScreen.h"
+#include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
@@ -215,10 +218,9 @@ namespace
     /// <summary>The room's own, as its EXIT clears them: its timers, the players' lights, its chat.</summary>
     void ClearRoom(MCLogistics& logistics)
     {
-        // Original behaviour (OB-167), as CancelToConnect: the same timer is removed twice.
-        GuiSystem().RemoveTimer(*logistics.SessionScreen->Team1RPText, 0);
-        GuiSystem().RemoveTimer(*logistics.SessionScreen->Team1RPText, 0);
-        GuiSystem().RemoveTimer(*logistics.SessionScreen, 0);
+        // Original behaviour (OB-167), as LeaveToGames: the same timer is removed twice.
+        logistics.Room.StopBoxTimers();
+        logistics.Room.StopTick();
         logistics.ResetPlayerLights();
         logistics.ClearChat();
     }
@@ -293,9 +295,9 @@ namespace
             room.Address = LanAddress(manager, room.Hosting);
         }
 
-        if (room.Hosting && GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
+        if (room.Hosting && GlobalLog() != nullptr && GlobalLog()->Room.Made())
         {
-            room.Picks = GlobalLog()->SessionScreen->Picks();
+            room.Picks = GlobalLog()->Room.Picks();
         }
 
         return room;
@@ -338,7 +340,7 @@ namespace
         // Set up at once (the picks and the guests' places after it), shown through the flow.
         MCScreenFlow::Land(MCMenuScreens::RoomStack());
         MCMenuScreens::OpenRoom("room again");
-        GlobalLog()->SessionScreen->TakePicks(room.Picks);
+        GlobalLog()->Room.TakePicks(room.Picks);
         MCLobbyUpdate::KeepPlacesFor(room.Guests);
     }
 
@@ -781,7 +783,89 @@ auto MCRoomEnd::Rematching() -> bool
     return Ending.has_value() || HostAfterResults;
 }
 
-auto MCRoomEnd::PlaceReturning(MCSessionScreen& room) -> void
+auto MCRoomEnd::LeaveToGames() -> void
+{
+    // Port-only (the personal build): a LAN game's room (the session screen; the ready room's) goes back to the games.
+    // The modem and serial screens (shown only without a network) go back to the connection screen, as in the original.
+    // Port-only (SPEC-menus.md's stage 3): the remade LAN screen's own way back is its kind's (logistics/MCGamesScreen).
+    const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
+    const bool fromRoom = GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
+    const bool fromLanGame = (fromRoom || GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen) &&
+                             (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx);
+    // Port (Redux HD): an internet game's room goes back to the INTERNET screen.
+    const bool fromInternetGame = fromRoom && MultiPlayer()->SessionManager->Internet != nullptr;
+    WhackTimer = true;
+    // Original behaviour (OB-167): the same timer is removed twice (team 2's is left).
+    GlobalLog()->Room.StopBoxTimers();
+
+    // Port-only (SPEC-menus.md, "In the room"): a host's goodbye to its room goes behind its way out (network/MCRoomEnd.h's
+    // CloseRoom), which leaves the session at once: the leave below then finds none to leave.
+    if (fromRoom)
+    {
+        CloseRoom();
+    }
+
+    MultiPlayer()->LeaveSession();
+
+    GlobalLog()->ResetPlayerLights();
+
+    // The room's own: its timer, and its chat (the next room's starts empty, as from the main menu).
+    if (fromRoom)
+    {
+        GlobalLog()->Room.StopTick();
+        GlobalLog()->ClearChat();
+    }
+
+    GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+
+    if (fromInternetGame)
+    {
+        ShowInternetScreen();
+        return;
+    }
+
+    if (fromLanGame)
+    {
+        // The games found again, the names as typed.
+        DoTheTcpThang();
+        return;
+    }
+
+    // Port-only (stage 7): the remade MULTIPLAYER (the modem's and serial's screens aren't made).
+    ConnectScreen();
+}
+
+auto MCRoomEnd::LeaveForLauncher() -> void
+{
+    KillTheGame();
+}
+
+auto MCRoomEnd::Leave(std::string line) -> void
+{
+    // Port-only (SPEC-menus.md's stage 2): the way out through the flow, with the one fade; (SPEC-menus.md, "In the
+    // room") a host's goodbye to its guests goes behind it, nothing waiting for it (LeaveToGames).
+    MCScreenFlow::Change("room back",
+                         [line = std::move(line)]
+                         {
+                             const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
+
+                             if (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx)
+                             {
+                                 LeaveToGames();
+                             }
+                             else
+                             {
+                                 Cancel();
+                             }
+
+                             if (!line.empty())
+                             {
+                                 ShowMenuMessage(line);
+                             }
+                         });
+}
+
+auto MCRoomEnd::PlaceReturning(MCRoomModel& room) -> void
 {
     if (Returning.has_value())
     {

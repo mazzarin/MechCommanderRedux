@@ -1,0 +1,28 @@
+<rml>
+<head>
+    <title>Main menu: solo missions</title>
+    <link type="text/template" href="main_menu_frame.rml"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "Main menu"; stage 7; the style frames' main_menu_solo.rml): SOLO MISSIONS in the main
+     menu's place (1998's LOAD MISSION screen): the single missions by their briefings' names, each with the tons and
+     RP it starts with; PLAY opens the picked one's briefing, and a win comes back here (logistics/MCMainMenuScreen). -->
+<body template="main-menu" class="painting" data-model="solo-missions">
+    <div class="subhead">
+        <div class="eyebrow">Main menu</div>
+        <div class="heading caps">Solo missions</div>
+    </div>
+    <div id="rows">
+        <div class="choice two list-row" data-for="row, i : rows" data-class-picked="i == picked"
+             data-event-click="pick(i)" data-event-focus="pick(i)">{{row.title}}<div class="line">{{row.line}}</div></div>
+    </div>
+    <div class="grow"></div>
+    <div class="actions column gap8">
+        <div class="row">
+            <div class="button" id="back">Back</div>
+            <div class="grow"></div>
+            <div class="button main" id="main">Play</div>
+        </div>
+    </div>
+    <div class="gap-foot"></div>
+</body>
+</rml>

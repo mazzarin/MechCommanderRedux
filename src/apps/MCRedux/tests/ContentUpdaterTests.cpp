@@ -4153,6 +4153,7 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
     const auto stall = std::make_shared<MCGate>();
     MCUpdaterScope scope(release, false, [host = release.Host.Path(), stall]
                          { return std::make_unique<MCStallingSource>(host, stall); });
+    const MCTestGame::OldMainMenu oldMenu;
     REQUIRE(MCTestGame::StartLogistics());
     const uint64_t inHand =
         std::filesystem::file_size(release.Host.Path() / "patches" / "terrain-1-2.hdiff") + uint64_t{SendBytes};
@@ -4274,6 +4275,7 @@ TEST_CASE_ISOLATED("game: while the new HD art a program installed alone came fo
     NoteRelease2Due(release);
     const auto stall = std::make_shared<MCGate>();
     MCUpdaterScope scope(release, false, StallAt(release, stall));
+    const MCTestGame::OldMainMenu oldMenu;
     REQUIRE(MCTestGame::StartLogistics());
     const uint64_t inHand = StalledBytes(release);
     REQUIRE(GameFramesUntil([&] { return stall->Reached && MCUpdater::Status().Received == inHand; }));

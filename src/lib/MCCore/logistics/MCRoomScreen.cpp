@@ -840,6 +840,17 @@ bool RoomScreenShown()
     return Made() && Made()->Shown();
 }
 
+bool RoomScreenOnTop()
+{
+    if (!RoomScreenShown())
+    {
+        return false;
+    }
+
+    const MCOptionalRef<MCRmlScreen> top = Made()->Layer().Top();
+    return top.has_value() && Made().Is(top->get());
+}
+
 // ---- a launcher's way in ----
 
 namespace

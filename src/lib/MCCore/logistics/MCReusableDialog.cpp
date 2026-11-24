@@ -283,27 +283,6 @@ auto MCReusableDialog::SayOverRemade() -> bool
         }
     };
 
-    // A key asked for, as HandleEvent takes it: true closes the dialog as OK does (its callback with 0).
-    if (KeyTaker)
-    {
-        say.TakeKey = [self](uint32_t key)
-        {
-            const std::shared_ptr<MCGuiObject> object = self.lock();
-
-            if (object == nullptr)
-            {
-                return;
-            }
-
-            auto& dialog = static_cast<MCReusableDialog&>(*object);
-
-            if (dialog.KeyTaker && dialog.KeyTaker(key))
-            {
-                dialog.Deactivate(0);
-            }
-        };
-    }
-
     if (!MCRmlDialogs::Show(std::move(say)))
     {
         return false;

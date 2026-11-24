@@ -507,6 +507,14 @@ bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
     return true;
 }
 
+void ActivatePaletteNow()
+{
+    if (MCGuiSystem& gui = GuiSystem(); !gui.PendingPalette.empty())
+    {
+        ActivatePendingPalette(gui);
+    }
+}
+
 void FadeOutWhile(const std::function<void()>& work)
 {
     MCGuiSystem& gui = GuiSystem();

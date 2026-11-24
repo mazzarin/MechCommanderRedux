@@ -104,8 +104,7 @@ TEST_CASE_ISOLATED("game: a LAN guest whose room ends goes back to the LAN games
 
     constexpr std::string_view Port = "28951";
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
 
     // BOB's game goes without a word: its connection lost.
     auto bob = std::make_unique<Host>();
@@ -176,8 +175,7 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host starts a mission it can't load 
 
     constexpr std::string_view Port = "28956";
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     Host bob;
     REQUIRE(bob.Open(Port, "BOB", "BOB'S GAME"));
     JoinFromLan(Port, "ANN");
@@ -224,8 +222,7 @@ TEST_CASE_ISOLATED("game: a LAN host's EXIT tells its guests the room closes, an
     constexpr std::string_view Port = "28952";
     const std::string address = std::format("127.0.0.1:{}", Port);
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
 
     // A room another game can take over: EXIT leaves it to them at once, the room told nothing.
     HostFromLan(RollingPort);
@@ -298,8 +295,7 @@ TEST_CASE_ISOLATED(
     // The wait's clock held, so the room waits for ANN however long the presses take.
     ManualClock clock;
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     HostFromLan(Port);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.HandsOn = false;
@@ -373,8 +369,7 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     constexpr int32_t Team2Points = 9000;
     const std::string address = std::format("127.0.0.1:{}", Port);
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     HostFromLan(Port);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     // The match's session, kept: the rematch's room is another (a host's session has no instance of its own here).
@@ -520,8 +515,7 @@ TEST_CASE_ISOLATED("game: a LAN guest whose host has a rematch joins its room ag
 
     constexpr std::string_view Port = "28954";
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
-    Settle();
+    MCTestGuest::OpenLan();
     auto bob = std::make_unique<Host>();
     REQUIRE(bob->Open(Port, "BOB", "BOB'S GAME"));
     JoinFromLan(Port, "ANN");

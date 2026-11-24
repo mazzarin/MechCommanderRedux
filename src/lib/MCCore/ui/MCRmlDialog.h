@@ -2,6 +2,8 @@
 
 #include "ui/MCRmlScreen.h"
 
+#include <optional>
+
 /// <summary>
 /// Port-only (SPEC-menus.md's stage 3, "When something goes wrong"): a dialog over the remade screens
 /// (<c>ui/dialog.rml</c>): what it belongs to above in cyan, its title when it has one, one short sentence under it,
@@ -27,10 +29,11 @@ public:
         std::function<void()> OnMain;
         std::function<void()> OnOther;
         /// <summary>
-        /// Port-only (SPEC-menus.md's stage 4): a key it asks for (a binding's), every key pressed while it shows but
-        /// Enter, Escape and a modifier alone, in a binding's form (MCKeyBindings::FromKeyEvent); none: it asks none.
+        /// A key it asks for, in the game's key code (the LIGHTS key question): each key pressed but its buttons' (Enter,
+        /// Escape) and a modifier alone is offered; none returned takes it (the dialog closes, as its answer does),
+        /// words say why not (the dialog says them in its sentence's place). Empty: it takes no keys of its own.
         /// </summary>
-        std::function<void(uint32_t key)> TakeKey;
+        std::function<std::optional<std::string>(uint32_t key)> TakesKey;
         /// <summary>
         /// Port-only (SPEC-menus.md's stage 4): a wait (MCRmlDialogs::Waiting), which MCRmlDialogs::EndWait ends, even
         /// with a way out (a launcher's CANCEL). It stands: see <see cref="OnLost"/>.
@@ -61,6 +64,9 @@ public:
 
     /// <summary>Hidden as answered or ended (MCRmlDialogs::Close, EndWait): it won't say itself again.</summary>
     void End();
+
+    bool TakesKeys() const override;
+    bool OnRawKey(const SDL_KeyboardEvent& key) override;
 
     /// <summary>Text made safe to put in a document (its markup's characters as entities).</summary>
     static std::string Escape(std::string_view text);
@@ -97,12 +103,6 @@ namespace MCRmlDialogs
     /// <summary>Whether it shows.</summary>
     bool Shown();
 
-    /// <summary>
-    /// Port-only (SPEC-menus.md's stage 4): the window's key <paramref name="event"/> for a dialog that asks for a key
-    /// (<see cref="MCRmlDialog::MCSay::TakeKey"/>); whether it took it (then nothing else sees it).
-    /// </summary>
-    bool TakeKey(const SDL_Event& event);
-
     /// <summary>A wait shown by <see cref="Waiting"/> ended (the 1998 dialog's Deactivate): the dialog closes.</summary>
     void EndWait();
 
@@ -123,6 +123,14 @@ namespace MCRmlDialogs
     /// case; OK runs <paramref name="then"/>. False when no remade screen shows.
     /// </summary>
     bool Message(std::string_view text, std::function<void()> then = {});
+
+    /// <summary>
+    /// An old message that asks for a key (the LIGHTS key's) said over the remade screen shown: <paramref name="take"/>
+    /// offered each key (MCRmlDialog::MCSay::TakesKey); OK, Escape or a key taken runs <paramref name="then"/>. False
+    /// when no remade screen shows.
+    /// </summary>
+    bool AskKey(std::string_view text, std::function<std::optional<std::string>(uint32_t key)> take,
+                std::function<void()> then);
 
     /// <summary>A wait with no way out (ShowWaitingDialog: "Opening your room again...") over the remade screen shown.</summary>
     bool Waiting(std::string_view text);

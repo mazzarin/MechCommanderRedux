@@ -15704,29 +15704,26 @@ namespace
         const MCServiceScript::SetupScope service(MCServiceScript::ListOpener(list),
                                                   MCServiceScript::Answering(R"({"online":37})", asked), ServiceUrl,
                                                   Version);
-        const auto click = [](int32_t x, int32_t y)
-        {
-            MCScreenInput::Click(x, y);
-            RunFrames(ClickFrames);
-        };
-
-        // MULTIPLAYER: INTERNET (the count online under it) and LAN; the original's connection screen only without a
-        // network.
+        // MULTIPLAYER (remade: the main menu's panel, SPEC-menus.md's stage 7): INTERNET (the count online under it)
+        // and LAN; "No network connection." without one.
         ConnectScreen();
+        RunUntil(MCTestGuest::OnAccess, AnswerFrames);
 
-        if (GlobalLog()->CurrentScreen() != GlobalLog()->MultiplayerScreen)
+        if (!MCTestGuest::OnAccess() || MCTestGuest::Panel(MCMainPanel::Multiplayer).Offline())
         {
-            shoot("mp_connect");
+            shoot("mp_offline");
             std::cout << "  no network: the internet, LAN and session screens are left out\n";
             return;
         }
 
-        RunUntil([] { return !AccessCountShown().empty(); }, AnswerFrames);
+        RunUntil([]
+                 { return MCTestGuest::Panel(MCMainPanel::Multiplayer).OnlineLine() != MCMainMenuModel::InternetLine; },
+                 AnswerFrames);
         shoot("mp_access");
 
         // INTERNET (remade: SPEC-menus.md's stage 3): the list, a game picked (its players and where it is), one in
         // battle picked, and HOST GAME's window, then PRIVATE.
-        click(InternetX, InternetY);
+        MCTestGuest::PressInternet();
         RunUntil([] { return MCTestGuest::OnInternet(); }, AnswerFrames);
 
         if (!MCTestGuest::OnInternet())
@@ -15762,7 +15759,8 @@ namespace
         // BACK to MULTIPLAYER ACCESS, whose LAN opens the LAN games.
         internet.Back();
         RunFrames(ClickFrames);
-        click(LanX, LanY);
+        MCTestGuest::PressLan();
+        RunUntil(MCTestGuest::OnLan, AnswerFrames);
 
         if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr || !MCTestGuest::OnLan())
         {

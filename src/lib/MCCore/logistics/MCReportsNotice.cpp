@@ -1,15 +1,13 @@
 #include "stdafx.h"
 #include "logistics/MCReportsNotice.h"
-#include "logistics/MCChooseMapWindow.h"
 #include "logistics/MCLogMenus.h"
-#include "logistics/MCMatchOptionsWindow.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
-#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
 #include "main/MCLogistics.h"
 #include "main/MCTelemetry.h"
@@ -160,28 +158,11 @@ namespace
         MCReportsWords _Words;
     };
 
-    /// <summary>
-    /// Whether a remade screen shows on the menus' layer (Preferences over the main menu, the question itself). Not the
-    /// remade room alone (SPEC-menus.md's stage 4): a launcher's game never leaves it, so the notices say themselves
-    /// over it. Alone is the room on top with nothing over it: MATCH OPTIONS, CHOOSE MAP, a remade dialog or a notice
-    /// already shown is (each frame asks again, and a notice over the room shown as free would come again each frame
-    /// until it's answered, one over another).
-    /// </summary>
+    /// <summary>Whether a remade screen shows on the menus' layer (Preferences over the main menu, the question itself).</summary>
     bool RemadeShows()
     {
         const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
-
-        if (!menus.has_value() || !menus->get().Menus().Showing())
-        {
-            return false;
-        }
-
-        const MCOptionalRef<MCRmlScreen> top = menus->get().Menus().Top();
-        const MCGuiHandle<MCRoomScreen> room = RoomScreen();
-        const bool roomOnTop = room && top.has_value() && room.Is(top->get());
-        const bool roomAlone =
-            roomOnTop && !MatchOptionsWindowShown() && !ChooseMapWindowShown() && !MCRmlDialogs::Shown();
-        return !roomAlone;
+        return menus.has_value() && menus->get().Menus().Showing();
     }
 
     /// <summary>
@@ -215,8 +196,12 @@ namespace
 bool NoticeScreenFree()
 {
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    // Port-only (stage 7): the remade main menu with nothing over it is free (logistics/MCMainMenuScreen.h); (stage 4)
+    // so is the remade room, which a launcher's game never leaves. Only with nothing over it: a notice already shown
+    // holds the next (each frame asks again).
     return logistics != nullptr && OnNoticeScreen(*logistics) && !logistics->MessageDialog->IsShowing() &&
-           !logistics->QuestionDialog->IsShowing() && !UpdatePageShown() && !RemadeShows();
+           !logistics->QuestionDialog->IsShowing() && !UpdatePageShown() &&
+           (!RemadeShows() || MCMainMenuScreens::MainOnTop() || RoomScreenOnTop());
 }
 
 void ShowReportsNotice()

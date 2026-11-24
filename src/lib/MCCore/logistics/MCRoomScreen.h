@@ -196,6 +196,12 @@ MCGuiHandle<MCRoomScreen> RoomScreen();
 bool RoomScreenShown();
 
 /// <summary>
+/// Whether the remade room shows with nothing over it (no MATCH OPTIONS, CHOOSE MAP, dialog or notice): the notices'
+/// turn, as the main menu's (MCMainMenuScreens::MainOnTop).
+/// </summary>
+bool RoomScreenOnTop();
+
+/// <summary>
 /// Port-only (SPEC-menus.md's stage 4, a launcher's way in): a launcher's game on the painting alone
 /// (<c>ui/launcher.rml</c>) while it joins its room, the join's dialog over it: "Joining Steel Rain..." ("Joining the
 /// game..." until the room's name is known, as with a bare <c>-join</c>), or its host's "Setting up your game...";

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "gui/MCScreenFlow.h"
+#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
 #include "network/MCIntroNote.h"
 #include "logistics/MCLoadingMenu.h"
@@ -1591,7 +1592,7 @@ auto MCMission::StartIntoTheBattle(const std::string& scenarioName) -> void
     const auto load = [this, scenarioName] { LoadScenario(scenarioName); };
     const auto enter = [this]
     {
-        TakeDownLoadingScreen();
+        IntoTheBattlefield();
         EnterScenario();
     };
 
@@ -1611,7 +1612,7 @@ auto MCMission::StartIntoTheBattle(const std::string& scenarioName) -> void
                                         }},
                                        {.Part = {}, .Until = [this] { return MatchStartedOrEnded(); }}},
                                .FadeOut = MCScreenChange::MCFadeOut::AfterJob,
-                               .Dark = {{.Part = {}, .Run = [this] { TakeDownLoadingScreen(); }}}}))
+                               .Dark = {{.Part = {}, .Run = [this] { IntoTheBattlefield(); }}}}))
     {
         return;
     }
@@ -1644,6 +1645,14 @@ auto MCMission::TakeDownLoadingScreen() -> void
     MCLoadingMenu::Hide();
 }
 
+auto MCMission::IntoTheBattlefield() -> void
+{
+    TakeDownLoadingScreen();
+    // Port-only (SPEC-menus.md's stage 9): a dialog said over the loading screen goes with it (logistics is gone): the
+    // menus' layer takes no event over the battlefield.
+    MCRmlDialogs::Drop(MCRmlFlow::MCOn::Menus);
+}
+
 auto MCMission::ShowLoadingScreen() -> void
 {
     // The game's palette goes in before the loading screen's first frame (UpdateDisplay, the screen dark), as the
@@ -1666,6 +1675,9 @@ auto MCMission::ShowLoadingScreen() -> void
     // Port-only (SPEC-menus.md's stage 8): the remade BRIEFING and DEPLOY too, and the loading screen as designed shown
     // in their place, read from the briefing while logistics is still there (the 1998 one is drawn under it).
     MCRmlFlow::OldScreenShown();
+    // Port-only (SPEC-menus.md's stage 9): a dialog said over the briefing goes with it, as the original's box went with
+    // logistics: never over the loading screen or the battlefield.
+    MCRmlDialogs::Drop(MCRmlFlow::MCOn::Menus);
     MCLoadingMenu::Show();
     HoldLoadingShape();
     LoadingScreenUp = true;

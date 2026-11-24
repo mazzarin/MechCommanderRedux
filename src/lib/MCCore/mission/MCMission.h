@@ -280,6 +280,8 @@ private:
     void ShowLoadingScreen();
     /// <summary>Port-only: the loading screen taken down (its shape let go of), the battlefield next.</summary>
     void TakeDownLoadingScreen();
+    /// <summary>Port-only: the loading screen taken down for the battlefield, the menus' dialogs with it.</summary>
+    void IntoTheBattlefield();
     /// <summary>
     /// Port-only (SPEC-menus.md's stage 8): whether a match entered behind the loading screen has started (the host's
     /// start), or its scenario ended (a lost session, the match left) or the match is gone: the loading screen goes.

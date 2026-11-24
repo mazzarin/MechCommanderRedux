@@ -119,6 +119,14 @@ namespace MCRmlDialogs
     /// <summary>The dialog closed (a job's wait ended, the screen under it gone).</summary>
     void Close();
 
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): the dialog on <paramref name="on"/> closed unanswered, with any say of that
+    /// layer's waiting to come back (<see cref="Tend"/>): the way into the battle takes the menus' says with logistics,
+    /// as the original's box went with the screens it was said over, and the menus' layer takes no event over the
+    /// battlefield.
+    /// </summary>
+    void Drop(MCRmlFlow::MCOn on);
+
     /// <summary>Whether it shows (on either layer).</summary>
     bool Shown();
 

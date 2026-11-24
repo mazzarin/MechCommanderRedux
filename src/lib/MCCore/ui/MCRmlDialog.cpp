@@ -61,7 +61,6 @@ namespace
         return place;
     }
 
-    /// <summary>A say that stands, hidden by a change of screens, to say itself again (MCRmlDialogs::Tend).</summary>
     /// <summary>The layer the displaced say was said on (MCRmlDialogs::Tend says it there again).</summary>
     MCRmlFlow::MCOn& DisplacedOn()
     {
@@ -69,6 +68,7 @@ namespace
         return on;
     }
 
+    /// <summary>A say that stands, hidden by a change of screens, to say itself again (MCRmlDialogs::Tend).</summary>
     std::optional<MCRmlDialog::MCSay>& Displaced()
     {
         static std::optional<MCRmlDialog::MCSay> displaced;
@@ -195,11 +195,17 @@ MCOptionalRef<Rml::Element> MCRmlDialog::FirstFocus(Rml::ElementDocument& docume
 
 void MCRmlDialog::Say(MCSay say)
 {
-    // The say before replaced, not hidden by a change of screens; a newer say wins over one waiting to come back.
+    // The say before replaced, not hidden by a change of screens; a newer say wins over one waiting to come back on
+    // this layer (the other layer's comes back on its own).
     _Standing = false;
     _Say = std::move(say);
     Hide();
-    Displaced().reset();
+
+    if (DisplacedOn() == _On)
+    {
+        Displaced().reset();
+    }
+
     _Standing = true;
 
     if (!Document().has_value())
@@ -351,6 +357,19 @@ void MCRmlDialogs::Close()
         {
             kept->End();
         }
+    }
+}
+
+void MCRmlDialogs::Drop(MCRmlFlow::MCOn on)
+{
+    if (Displaced().has_value() && DisplacedOn() == on)
+    {
+        Displaced().reset();
+    }
+
+    if (const MCGuiHandle<MCRmlDialog>& kept = Kept(on); kept)
+    {
+        kept->End();
     }
 }
 

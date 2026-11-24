@@ -84,7 +84,13 @@ namespace
         return MCRmlDialogs::AsSentence(text);
     }
 
-    /// <summary>The points typed (commas and spaces skipped); none when it holds no digit or more than the game takes.</summary>
+    /// <summary>The most points the 1998 room's RP box holds (seven digits: MCSessionScreen's InitBuffer(8)).</summary>
+    constexpr int64_t MostPoints = 9'999'999;
+
+    /// <summary>
+    /// The points typed (commas and spaces skipped); none when it holds no digit or more than the 1998 RP box holds,
+    /// which its tick would read back cut to seven digits.
+    /// </summary>
     std::optional<int32_t> Ungrouped(std::string_view typed)
     {
         int64_t points = 0;
@@ -105,13 +111,76 @@ namespace
             points = points * 10 + (c - '0');
             any = true;
 
-            if (points > std::numeric_limits<int32_t>::max())
+            if (points > MostPoints)
             {
                 return std::nullopt;
             }
         }
 
         return any ? std::optional(static_cast<int32_t>(points)) : std::nullopt;
+    }
+
+    /// <summary>The characters the 1998 chat box takes (MCLogChatInput): printable ASCII, and 0xbf-0xfd.</summary>
+    constexpr Uint32 FirstPrintable = 0x20;
+    constexpr Uint32 LastPrintable = 0x7e;
+    constexpr Uint32 FirstAccented = 0xbf;
+    constexpr Uint32 LastAccented = 0xfd;
+    /// <summary>The chat formatter's code character, which the 1998 box never took.</summary>
+    constexpr Uint32 ChatCode = '%';
+    constexpr unsigned char FirstNonAscii = 0x80;
+    /// <summary>The most bytes one code point takes in UTF-8, with room for SDL_UCS4ToUTF8's.</summary>
+    constexpr size_t Utf8Most = 4;
+
+    /// <summary>
+    /// What's typed (UTF-8) as the 1998 chat box sends it: its characters one byte each (0xbf-0xfd the code points
+    /// they are), anything else left out, at most the chat's MaxLength.
+    /// </summary>
+    std::string AsChatBytes(std::string_view typed)
+    {
+        std::string bytes;
+        const char* at = typed.data();
+        size_t left = typed.size();
+
+        while (left > 0 && bytes.size() < MCLogChat::MaxLength)
+        {
+            const Uint32 point = SDL_StepUTF8(&at, &left);
+
+            if (point == 0)
+            {
+                break;
+            }
+
+            if ((point >= FirstPrintable && point <= LastPrintable && point != ChatCode) ||
+                (point >= FirstAccented && point <= LastAccented))
+            {
+                bytes.push_back(static_cast<char>(point));
+            }
+        }
+
+        return bytes;
+    }
+
+    /// <summary>A line's bytes as the chat sends them in UTF-8 for the remade views (0xbf-0xfd the code points).</summary>
+    std::string AsUtf8(std::string_view bytes)
+    {
+        std::string text;
+
+        for (const char c : bytes)
+        {
+            const auto byte = static_cast<unsigned char>(c);
+
+            if (byte < FirstNonAscii)
+            {
+                text.push_back(c);
+                continue;
+            }
+
+            std::array<char, Utf8Most> utf8{};
+            const char* end = SDL_UCS4ToUTF8(byte, utf8.data());
+            text.append(utf8.data(), static_cast<size_t>(end - utf8.data()));
+        }
+
+        return text;
     }
 
     /// <summary>Text with the chat's colour codes taken out.</summary>
@@ -325,6 +394,12 @@ void MCRoomScreen::OnDestroy()
 
 void MCRoomScreen::OnFrame()
 {
+    // The room's model goes with logistics.
+    if (GlobalLog() == nullptr)
+    {
+        return;
+    }
+
     Room().Tend();
     ShowRoom();
     ShowControls();
@@ -561,7 +636,7 @@ void MCRoomScreen::ShowChat()
         lines.push_back(MCChatLine{.Game = false,
                                    .Name = Uncoded(text.substr(ColourCode.size() + 1, split - ColourCode.size() - 1)),
                                    .Colour = ColourOf(*number),
-                                   .Text = Uncoded(text.substr(textColourAt + 1)),
+                                   .Text = AsUtf8(Uncoded(text.substr(textColourAt + 1))),
                                    .Team = text[textColourAt] == TeamTextColour});
     }
 
@@ -772,9 +847,8 @@ void MCRoomScreen::Say(std::string_view text, bool toTeam)
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
     const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat;
 
-    // '%' is the chat formatter's code character: the 1998 box never took it.
-    std::string line(text.substr(0, MCLogChat::MaxLength));
-    std::erase(line, '%');
+    // What the 1998 box would have sent: its characters only ('%' is the chat formatter's code character).
+    const std::string line = AsChatBytes(text);
 
     if (game == nullptr || chat == nullptr || line.empty() || game->SessionManager == nullptr ||
         game->SessionManager->MyPlayer() == nullptr)

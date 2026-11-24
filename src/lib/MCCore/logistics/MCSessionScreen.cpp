@@ -502,7 +502,8 @@ auto MCSessionScreen::OnDestroy() -> void
     MatchTabs = {};
     DropTargets.clear();
     // Port-only (SPEC-menus.md's stage 4): the mission and the map go with the room's model, which logistics owns (the
-    // screen closes as logistics goes, which may be gone already).
+    // screen closes as logistics goes, which may be gone already). The remade room viewing that model goes too.
+    HideRoomScreen();
     ClearMap();
     MCLogObject::OnDestroy();
 }

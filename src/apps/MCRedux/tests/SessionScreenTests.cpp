@@ -61,6 +61,8 @@ namespace
     constexpr std::string_view OptionsHostAddress = "127.0.0.1:28879";
     /// <summary>The game data check's test's, so it can run beside the others (--jobs).</summary>
     constexpr std::string_view DataHostAddress = "127.0.0.1:28881";
+    /// <summary>The room's chat test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view ChatHostAddress = "127.0.0.1:28884";
 
     /// <summary>Types <paramref name="text"/> into the text object that has the focus.</summary>
     void Type(std::string_view text)
@@ -254,6 +256,46 @@ namespace
 /// Port: why an option is held names every player whose game doesn't have it, then (for a line too narrow for them
 /// all) fewer and the rest counted, down to none named.
 /// </summary>
+/// <summary>
+/// The remade room's boxes take what the 1998 room's did. The chat sends what the 1998 chat box could
+/// (MCLogChatInput): its characters one byte each, the accented 0xbf-0xfd as those bytes, '%' (the chat formatter's
+/// code) and the rest left out, and shows that line back with its accents. The points take seven digits at most, as
+/// the 1998 RP box (whose tick would send more cut to seven).
+/// </summary>
+TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's boxes did")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(ChatHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Chat game", 6);
+    REQUIRE(SettleUntil([] { return RoomScreenShown(); }));
+    MCRoomScreen& room = *RoomScreen();
+
+    // "Olé" in UTF-8, a '%' and the euro sign, which the 1998 box hadn't.
+    room.Say("Ol\xc3\xa9, 100% sure \xe2\x82\xac!", false);
+    Settle();
+    REQUIRE(GlobalLog()->Chat != nullptr);
+    REQUIRE(!GlobalLog()->Chat->Lines.empty());
+    CHECK(GlobalLog()->Chat->Lines.back().Text.ends_with("Ol\xe9, 100 sure !"));
+    const std::vector<std::string> chat = room.Seen().Chat;
+    CHECK(std::ranges::find(chat, std::string("Bob: Ol\xc3\xa9, 100 sure !")) != chat.end());
+
+    room.TypePoints(MCRoomModel::Team1, "9,999,999");
+    Settle();
+    CHECK_EQ(room.Seen().Points1, std::string("9,999,999"));
+    room.TypePoints(MCRoomModel::Team1, "12,345,678");
+    Settle();
+    CHECK_EQ(GlobalLog()->Room.Team1Points, 9'999'999);
+    CHECK_EQ(room.Seen().Points1, std::string("9,999,999"));
+}
+
 TEST_CASE("session screen: a held match option tells whose game doesn't have it to upgrade")
 {
     CHECK(MatchTellToUpgrade({}).empty());

@@ -20,6 +20,12 @@ namespace MCRmlArt
 {
     /// <summary>The scheme a picture's source starts with.</summary>
     inline constexpr std::string_view Scheme = "art:";
+    /// <summary>
+    /// Port-only (stage 5): a campaign mission's briefing map, <c>map:&lt;scenario&gt;</c> (<c>map:mis0203</c>): the
+    /// <c>.log.tga</c> its mission file's MapFile names (MCLogistics::BriefingMapFile), read and coloured as
+    /// <c>art:</c>'s pictures are, with the pack's HD copy (found by its pixels, as the briefing finds it) on HD.
+    /// </summary>
+    inline constexpr std::string_view MapScheme = "map:";
 
     /// <summary>
     /// The picture <paramref name="source"/> names, with its HD copy when <paramref name="hd"/> and the pack has one;

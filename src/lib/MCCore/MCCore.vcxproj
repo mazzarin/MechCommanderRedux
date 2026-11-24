@@ -234,22 +234,30 @@
     <ClCompile Include="logistics\MCMechRepairBlock.cpp" />
     <ClCompile Include="logistics\MCMenuScreens.cpp" />
     <ClCompile Include="logistics\MCMissionLogisticsBridge.cpp" />
+    <ClCompile Include="logistics\MCMissionNames.cpp" />
+    <ClCompile Include="logistics\MCPauseScreen.cpp" />
     <ClCompile Include="logistics\MCPilotInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCPilotPurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCPlayerNameObject.cpp" />
     <ClCompile Include="logistics\MCPreferencesMenu.cpp" />
     <ClCompile Include="logistics\MCPrefsPage.cpp" />
+    <ClCompile Include="logistics\MCPrefsScreen.cpp" />
     <ClCompile Include="logistics\MCPurchaseDlg.cpp" />
     <ClCompile Include="logistics\MCPurchaseScreen.cpp" />
     <ClCompile Include="logistics\MCPurMechList.cpp" />
     <ClCompile Include="logistics\MCPurPilotList.cpp" />
     <ClCompile Include="logistics\MCPurProfile.cpp" />
     <ClCompile Include="logistics\MCPurVehicleList.cpp" />
+    <ClCompile Include="logistics\MCQuestionWindow.cpp" />
     <ClCompile Include="logistics\MCRegistrySettings.cpp" />
     <ClCompile Include="logistics\MCRepairScreen.cpp" />
     <ClCompile Include="logistics\MCReportsNotice.cpp" />
     <ClCompile Include="logistics\MCReusableDialog.cpp" />
+    <ClCompile Include="logistics\MCSaves.cpp" />
+    <ClCompile Include="logistics\MCSavesMenu.cpp" />
     <ClCompile Include="logistics\MCSessionScreen.cpp" />
+    <ClCompile Include="logistics\MCSettingsModel.cpp" />
+    <ClCompile Include="logistics\MCSettingsScreen.cpp" />
     <ClCompile Include="logistics\MCSmuti.cpp" />
     <ClCompile Include="logistics\MCSplashScreen.cpp" />
     <ClCompile Include="logistics\MCStoreRow.cpp" />
@@ -257,6 +265,7 @@
     <ClCompile Include="logistics\MCTickerLine.cpp" />
     <ClCompile Include="logistics\MCUnitLimits.cpp" />
     <ClCompile Include="logistics\MCUpdatePage.cpp" />
+    <ClCompile Include="logistics\MCUpdateScreen.cpp" />
     <ClCompile Include="logistics\MCVehicleInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCVehiclePurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCVehicleRepairBlock.cpp" />
@@ -436,6 +445,10 @@
     <ClCompile Include="platform\MCFlac.cpp" />
     <ClCompile Include="platform\MCFrameLog.cpp" />
     <ClCompile Include="platform\MCGpuCounted.cpp" />
+    <ClCompile Include="platform\MCGpuLimits.cpp">
+      <!-- Vulkan's types, from SDL's copy of Khronos' headers, for this file alone. -->
+      <AdditionalIncludeDirectories>$(MCLibDir)SDL-release-3.4.12\src\video\khronos;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <ClCompile Include="platform\MCIceLink.cpp">
       <!-- libdatachannel's headers include the system socket headers (winsock2.h drags in windows.h), which must
            not meet the game's Win32 stand-ins in the precompiled header. -->
@@ -770,22 +783,30 @@
     <ClInclude Include="logistics\MCMechRepairBlock.h" />
     <ClInclude Include="logistics\MCMenuScreens.h" />
     <ClInclude Include="logistics\MCMissionLogisticsBridge.h" />
+    <ClInclude Include="logistics\MCMissionNames.h" />
+    <ClInclude Include="logistics\MCPauseScreen.h" />
     <ClInclude Include="logistics\MCPilotInventoryBlock.h" />
     <ClInclude Include="logistics\MCPilotPurchaseBlock.h" />
     <ClInclude Include="logistics\MCPlayerNameObject.h" />
     <ClInclude Include="logistics\MCPreferencesMenu.h" />
     <ClInclude Include="logistics\MCPrefsPage.h" />
+    <ClInclude Include="logistics\MCPrefsScreen.h" />
     <ClInclude Include="logistics\MCPurchaseDlg.h" />
     <ClInclude Include="logistics\MCPurchaseScreen.h" />
     <ClInclude Include="logistics\MCPurMechList.h" />
     <ClInclude Include="logistics\MCPurPilotList.h" />
     <ClInclude Include="logistics\MCPurProfile.h" />
     <ClInclude Include="logistics\MCPurVehicleList.h" />
+    <ClInclude Include="logistics\MCQuestionWindow.h" />
     <ClInclude Include="logistics\MCRegistrySettings.h" />
     <ClInclude Include="logistics\MCRepairScreen.h" />
     <ClInclude Include="logistics\MCReportsNotice.h" />
     <ClInclude Include="logistics\MCReusableDialog.h" />
+    <ClInclude Include="logistics\MCSaves.h" />
+    <ClInclude Include="logistics\MCSavesMenu.h" />
     <ClInclude Include="logistics\MCSessionScreen.h" />
+    <ClInclude Include="logistics\MCSettingsModel.h" />
+    <ClInclude Include="logistics\MCSettingsScreen.h" />
     <ClInclude Include="logistics\MCSmuti.h" />
     <ClInclude Include="logistics\MCSplashScreen.h" />
     <ClInclude Include="logistics\MCStoreRow.h" />
@@ -793,6 +814,7 @@
     <ClInclude Include="logistics\MCTickerLine.h" />
     <ClInclude Include="logistics\MCUnitLimits.h" />
     <ClInclude Include="logistics\MCUpdatePage.h" />
+    <ClInclude Include="logistics\MCUpdateScreen.h" />
     <ClInclude Include="logistics\MCVehicleInventoryBlock.h" />
     <ClInclude Include="logistics\MCVehiclePurchaseBlock.h" />
     <ClInclude Include="logistics\MCVehicleRepairBlock.h" />
@@ -968,6 +990,7 @@
     <ClInclude Include="platform\MCFlac.h" />
     <ClInclude Include="platform\MCFrameLog.h" />
     <ClInclude Include="platform\MCGpuCounted.h" />
+    <ClInclude Include="platform\MCGpuLimits.h" />
     <ClInclude Include="platform\MCIceLink.h" />
     <ClInclude Include="platform\MCIceTransport.h" />
     <ClInclude Include="platform\MCInput.h" />

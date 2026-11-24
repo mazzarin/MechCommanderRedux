@@ -154,6 +154,10 @@ namespace
 
         /// <summary>When staging stopped for want of space: how many more bytes the disk must have free.</summary>
         std::optional<uint64_t> BytesShort() const { return _Short; }
+        /// <summary>When staging stopped for want of space: how many bytes free it needed in all.</summary>
+        uint64_t BytesNeeded() const { return _Needed; }
+        /// <summary>Whether a file downloaded wasn't as the list has it (deleted: the next try downloads it afresh).</summary>
+        bool Damaged() const { return _Damaged; }
 
         std::expected<void, std::string> Run()
         {
@@ -580,6 +584,7 @@ namespace
             if (*free < needed.Total)
             {
                 _Short = needed.Total - *free;
+                _Needed = needed.Total;
                 return std::unexpected(
                     std::format("the update needs {:.1f} GB free on the game's disk; it has {:.1f} GB",
                                 static_cast<double>(needed.Total) / BytesPerGigabyte,
@@ -630,7 +635,10 @@ namespace
                 case MCContentStage::MCFetchError::MCKind::Stopped:
                     return std::unexpected(std::string(StoppedError));
                 case MCContentStage::MCFetchError::MCKind::NotAsNamed:
+                {
+                    _Damaged = true;
                     return std::unexpected(std::format("{} isn't as the list has it", name));
+                }
                 case MCContentStage::MCFetchError::MCKind::Download:
                     break;
             }
@@ -1225,8 +1233,11 @@ namespace
         /// before the workers start, and only read after.
         /// </summary>
         std::map<std::string, uint64_t, std::less<>> _Prior;
-        /// <summary>When the space check refused: the bytes short.</summary>
+        /// <summary>When the space check refused: the bytes short, and the bytes it needed free in all.</summary>
         std::optional<uint64_t> _Short;
+        uint64_t _Needed = 0;
+        /// <summary>A file downloaded (on any worker) wasn't the list's.</summary>
+        std::atomic<bool> _Damaged = false;
         /// <summary>How many zips are fetched at once: as many as the disk has room for, at most ZipWorkers (CheckSpace).</summary>
         size_t _ZipsAhead = 1;
         /// <summary>The workers' sources while they fetch ahead.</summary>
@@ -1515,13 +1526,24 @@ std::expected<void, MCUpdateWork::MCFailure> MCContentStage::Stage(MCUpdateDisk&
 
     if (const std::optional<uint64_t> bytesShort = stager.BytesShort())
     {
-        return std::unexpected(MCUpdateWork::MCFailure{
-            .Kind = MCFailureKind::DiskFull, .Reason = std::move(staged.error()), .BytesShort = *bytesShort});
+        return std::unexpected(MCUpdateWork::MCFailure{.Kind = MCFailureKind::DiskFull,
+                                                       .Reason = std::move(staged.error()),
+                                                       .BytesShort = *bytesShort,
+                                                       .BytesNeeded = stager.BytesNeeded()});
     }
 
-    return std::unexpected(
-        MCUpdateWork::MCFailure{.Kind = source.HostUnreachable() ? MCFailureKind::Unreachable : MCFailureKind::Other,
-                                .Reason = std::move(staged.error())});
+    MCFailureKind kind = MCFailureKind::Other;
+
+    if (source.HostUnreachable())
+    {
+        kind = MCFailureKind::Unreachable;
+    }
+    else if (stager.Damaged())
+    {
+        kind = MCFailureKind::Damaged;
+    }
+
+    return std::unexpected(MCUpdateWork::MCFailure{.Kind = kind, .Reason = std::move(staged.error())});
 }
 
 std::expected<void, std::string> MCContentStage::Arm(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,

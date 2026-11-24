@@ -633,6 +633,12 @@
     <ClCompile Include="logistics\MCMissionLogisticsBridge.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCMissionNames.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCPauseScreen.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCPilotInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -646,6 +652,9 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCPrefsPage.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCPrefsScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCPurchaseDlg.cpp">
@@ -666,6 +675,9 @@
     <ClCompile Include="logistics\MCPurVehicleList.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCQuestionWindow.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCRegistrySettings.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -678,7 +690,19 @@
     <ClCompile Include="logistics\MCReusableDialog.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCSaves.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCSavesMenu.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCSessionScreen.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCSettingsModel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCSettingsScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCSmuti.cpp">
@@ -700,6 +724,9 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCUpdatePage.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCUpdateScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCVehicleInventoryBlock.cpp">
@@ -1235,6 +1262,9 @@
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCGpuCounted.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCGpuLimits.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCIceLink.cpp">
@@ -2161,6 +2191,12 @@
     <ClInclude Include="logistics\MCMissionLogisticsBridge.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCMissionNames.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCPauseScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCPilotInventoryBlock.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2174,6 +2210,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCPrefsPage.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCPrefsScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCPurchaseDlg.h">
@@ -2194,6 +2233,9 @@
     <ClInclude Include="logistics\MCPurVehicleList.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCQuestionWindow.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCRegistrySettings.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2206,7 +2248,19 @@
     <ClInclude Include="logistics\MCReusableDialog.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCSaves.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCSavesMenu.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCSessionScreen.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCSettingsModel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCSettingsScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCSmuti.h">
@@ -2228,6 +2282,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCUpdatePage.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCUpdateScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCVehicleInventoryBlock.h">
@@ -2749,6 +2806,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCGpuCounted.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCGpuLimits.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCIceLink.h">

@@ -220,9 +220,11 @@ MCScreenFlow::MCScreenKind MCRmlFlow::Kind(std::string name, MCMake make, MCKeep
 
 void MCRmlFlow::Tend()
 {
+    // Port-only (stage 6): the mission's layer too (the pause, Preferences over the battlefield).
     if (const MCOptionalRef<MCRmlMenus> running = MCRmlMenus::Running(); running.has_value())
     {
         running->get().Menus().Tend();
+        running->get().Mission().Tend();
     }
 }
 

@@ -11,12 +11,17 @@ namespace
     /// <summary>How far a texture place times its size may lie from a whole texel and still be taken as one.</summary>
     constexpr double WholeTexel = 1.0 / 1024.0;
 
-    /// <summary><paramref name="place"/> texels into a texture <paramref name="size"/> wide, when it's whole.</summary>
-    std::optional<int32_t> WholeTexels(float place, int32_t size)
+    constexpr size_t PixelBytes = 4;
+
+    /// <summary>
+    /// <paramref name="place"/> texels into a texture <paramref name="size"/> wide: a whole texel when it lies that near
+    /// one.
+    /// </summary>
+    float TexelsAt(float place, int32_t size)
     {
         const double texels = static_cast<double>(place) * size;
         const double whole = std::floor(texels + 0.5);
-        return std::abs(texels - whole) <= WholeTexel ? std::optional(static_cast<int32_t>(whole)) : std::nullopt;
+        return static_cast<float>(std::abs(texels - whole) <= WholeTexel ? whole : texels);
     }
 
     /// <summary>The rectangle triangles <paramref name="first"/> and the next make, when they make one.</summary>
@@ -159,20 +164,61 @@ namespace
             }
         }
 
-        const std::optional<int32_t> sourceLeft = WholeTexels(u[0], draw.Texture->Width);
-        const std::optional<int32_t> sourceRight = WholeTexels(u[1], draw.Texture->Width);
-        const std::optional<int32_t> sourceTop = WholeTexels(v[0], draw.Texture->Height);
-        const std::optional<int32_t> sourceBottom = WholeTexels(v[1], draw.Texture->Height);
+        const float texelLeft = TexelsAt(u[0], draw.Texture->Width);
+        const float texelRight = TexelsAt(u[1], draw.Texture->Width);
+        const float texelTop = TexelsAt(v[0], draw.Texture->Height);
+        const float texelBottom = TexelsAt(v[1], draw.Texture->Height);
 
-        if (!sourceLeft || !sourceRight || !sourceTop || !sourceBottom || *sourceRight <= *sourceLeft ||
-            *sourceBottom <= *sourceTop)
+        // Flipped, or past the texture (a picture repeated): triangles, as SDL samples them.
+        if (!(texelLeft >= 0.0f && texelRight > texelLeft && texelRight <= static_cast<float>(draw.Texture->Width) &&
+              texelTop >= 0.0f && texelBottom > texelTop && texelBottom <= static_cast<float>(draw.Texture->Height)))
         {
             return std::nullopt;
         }
 
-        quad.Source = SDL_Rect{*sourceLeft, *sourceTop, *sourceRight - *sourceLeft, *sourceBottom - *sourceTop};
+        quad.Texels = SDL_FRect{texelLeft, texelTop, texelRight - texelLeft, texelBottom - texelTop};
         return quad;
     }
+}
+
+std::expected<MCSdlHandle<SDL_Surface>, std::string> MCUiScaled(const MCUiTexture& picture, const SDL_Rect& part,
+                                                                int width, int height)
+{
+    const auto failed = [&](std::string_view what)
+    {
+        return std::unexpected(std::format("picture {}'s {},{} {}x{} scaled to {}x{}, {}: {}", picture.Id, part.x,
+                                           part.y, part.w, part.h, width, height, what, SDL_GetError()));
+    };
+
+    const size_t pitch = static_cast<size_t>(picture.Width) * PixelBytes;
+
+    if (part.x < 0 || part.y < 0 || part.w <= 0 || part.h <= 0 || part.x + part.w > picture.Width ||
+        part.y + part.h > picture.Height || picture.Pixels.size() < pitch * static_cast<size_t>(picture.Height))
+    {
+        return failed("not inside its pixels");
+    }
+
+    // The part scaled, in place (SDL only reads it).
+    MCSdlHandle<SDL_Surface> from(SDL_CreateSurfaceFrom(part.w, part.h, SDL_PIXELFORMAT_RGBA32,
+                                                        const_cast<uint8_t*>(picture.Pixels.data()) +
+                                                            static_cast<size_t>(part.y) * pitch +
+                                                            static_cast<size_t>(part.x) * PixelBytes,
+                                                        static_cast<int>(pitch)));
+
+    if (from == nullptr)
+    {
+        return failed("its part");
+    }
+
+    MCSdlHandle<SDL_Surface> scaled(
+        SDL_ScaleSurface(from.get(), width, height, picture.Smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST));
+
+    if (scaled == nullptr)
+    {
+        return failed("scaling");
+    }
+
+    return scaled;
 }
 
 int32_t MCUiPlace(float at, float by)

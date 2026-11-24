@@ -91,6 +91,13 @@ namespace MCLobbyUpdate
     std::string ReadyText();
 
     /// <summary>
+    /// Port-only (SPEC-menus.md's UPDATE): the remade UPDATE's line for an update ready to join a game the INTERNET
+    /// screen picked, in sentence case with the game's name as its host wrote it ("Downloaded. Restart to install it and
+    /// join Steel Rain."); empty without one.
+    /// </summary>
+    std::string JoinAfterLine();
+
+    /// <summary>
     /// RESTART with an update ready. In a room that can (<see cref="CanRestart"/>): the note is written, the room told,
     /// and a moment later (the messages out) the update installs, unless the room can't rejoin by then; otherwise, or
     /// with no note written, nothing happens (it installs as the game exits).

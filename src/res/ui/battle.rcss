@@ -1,0 +1,36 @@
+/* Port-only (SPEC-menus.md, "Over the battlefield"): the game's copy of tools/menus-frames/frames/battle.rcss's pause.
+   Over the battlefield (the mission's layer, at its interface size): a panel at the window's middle over the battle as
+   it stands, a light veil between so the picture still shows (SCREEN BRIGHTNESS is judged on it). */
+
+body.over-battle { background-color: transparent; }
+.veil.light { background-color: #04040480; }
+
+/* ---- The pause ---- */
+
+/* The way on at the left (RESUME, ALL PREFERENCES, ABORT MISSION or LEAVE MATCH at its foot), the settings changed
+   mid-battle at the right, each taking effect as it moves. */
+#pause { flex: 0 0 560dp; display: flex; flex-direction: column; }
+#pause > * { flex: 0 0 auto; }
+#pause .titlebar > * { flex: 0 0 auto; }
+#pause .titlebar > .grow { flex: 1 1 0; }
+.pause-body { display: flex; flex-direction: row; align-items: stretch; gap: 16dp; }
+.pause-body > * { flex: 0 0 auto; }
+.pause-actions { width: 152dp; display: flex; flex-direction: column; gap: 8dp; }
+.pause-actions > * { flex: 0 0 auto; }
+.pause-actions > .grow { flex: 1 1 0; }
+.quick { flex: 1 1 0; border-left: 1dp #2a3742; padding-left: 16dp; }
+.quick .set-row { padding: 0; }
+.quick .set-control { width: 164dp; }
+.quick .set-control input.range.slider { width: 96dp; }
+.quick .set-control .step-value { width: 76dp; }
+
+/* The hint line along the window's foot, over the battlefield. */
+#hintbar { position: absolute; left: 0; right: 0; bottom: 0; height: 34dp; }
+#hintbar .content { padding-top: 8dp; }
+
+/* ---- At the mission's interface size ---- */
+
+/* The interface size is 1 to 2 in quarter steps, and the face is cut to whole pixels there: Fine's 8 units come out
+   at 7.6 at every step. Its texts over the battlefield (the hint line, a CHANGES PLAY tag) are 8.5 units (8.99dp), the
+   battle's own smallest, as its callsigns. */
+body.over-battle .hints, body.over-battle .tag { font-size: 8.99dp; }

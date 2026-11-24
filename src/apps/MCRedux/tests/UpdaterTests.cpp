@@ -53,6 +53,16 @@ namespace
     }
 
     /// <summary>
+    /// The original's UPDATE page over the main menu (a lobby's room still shows it; the main menu's UPDATE opens the
+    /// remade one: UpdateScreenTests.cpp).
+    /// </summary>
+    void OpenOldPage()
+    {
+        ShowUpdatePage();
+        Frames();
+    }
+
+    /// <summary>
     /// The main menu's window (mainscreen.fit's element 9, MM_WN00), the first row of its background's copyright lines
     /// and their colour (MM_BKGD's entry 58).
     /// </summary>
@@ -267,7 +277,8 @@ TEST_CASE_ISOLATED("game: the main menu names the version running under its wind
     CHECK_EQ(ink.Top - windowBottom, CopyrightTop - 1 - ink.Bottom);
 }
 
-TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an update waits, and its page installs it")
+TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an update waits, and the original's page "
+                   "installs it")
 {
     if (!MCTestGame::Available())
     {
@@ -297,7 +308,7 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     MCScreenInput::SaveShot("update waiting", MCScreenInput::ScreenHash());
 
     // The page: the versions, the notes, INSTALL and SKIP.
-    RealClickOn(*cinema);
+    OpenOldPage();
     REQUIRE(UpdatePageShown());
     CHECK_EQ(UpdatePageStatus(), std::string("A NEWER VERSION IS OUT."));
     const std::vector<std::string> lines = UpdatePageLines();
@@ -370,7 +381,7 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     CHECK(!UpdatePageShown());
     CHECK(!cinema->Disabled);
     MCScreenInput::SaveShot("update ready menu", MCScreenInput::ScreenHash());
-    RealClickOn(*cinema);
+    OpenOldPage();
     RealClickOn(*restart);
     REQUIRE_EQ(updater.Log->Answers.size(), size_t{2});
     CHECK(updater.Log->Answers[1] == MCAnswer::Install);
@@ -380,7 +391,7 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     // SKIP: this version isn't offered again, and UPDATE grays.
     MCUpdater::Found("0.2.3 (490)", "More.");
     Frames();
-    RealClickOn(*cinema);
+    OpenOldPage();
     REQUIRE(UpdatePageShown());
     RealClickOn(*skip);
     REQUIRE_EQ(updater.Log->Answers.size(), size_t{3});
@@ -393,7 +404,7 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     MCUpdater::Answer(MCAnswer::Install);
     MCUpdater::Failed("the download was cut off");
     Frames();
-    RealClickOn(*cinema);
+    OpenOldPage();
     REQUIRE(UpdatePageShown());
     CHECK_EQ(UpdatePageStatus(), std::string("THE UPDATE FAILED: THE DOWNLOAD WAS CUT OFF"));
     CHECK(install->IsShowing());

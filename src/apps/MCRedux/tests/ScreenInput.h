@@ -31,6 +31,12 @@ namespace MCScreenInput
     void SaveShownShot(const std::string& name);
 
     /// <summary>
+    /// --shots &lt;folder&gt;: saves the whole window as the player sees it, the menus' RmlUi over the game's picture,
+    /// as <paramref name="name"/>.png there (any presenter).
+    /// </summary>
+    void SaveWindowShot(const std::string& name);
+
+    /// <summary>
     /// Sends the game a mouse event at (<paramref name="x"/>, <paramref name="y"/>) as CheckMouse makes them (type 1
     /// left down, 4 left up, 7 a move), with the cursor moved there first.
     /// </summary>
@@ -74,6 +80,12 @@ namespace MCScreenInput
     /// does, then a frame.
     /// </summary>
     void RealKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod);
+
+    /// <summary>
+    /// Sends one SDL key event for <paramref name="scancode"/>, down or up, with <paramref name="mod"/> held, as play
+    /// does, without a frame (a tool running its own frames).
+    /// </summary>
+    void SendKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod = SDL_KMOD_NONE);
 
     /// <summary>
     /// Holds <paramref name="modifier"/> (<paramref name="mod"/>), presses and lets go of <paramref name="scancode"/>,

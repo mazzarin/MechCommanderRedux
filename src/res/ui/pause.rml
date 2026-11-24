@@ -1,0 +1,38 @@
+<rml>
+<head>
+    <title>Pause</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="prefs.rcss"/>
+    <link type="text/rcss" href="battle.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md, "A pause menu"; the style frames' pause.rml and pause_mp.rml): over the battlefield, at
+     the mission's interface size. Single player: PAUSED, the mission paused behind it, ABORT MISSION. Multiplayer: MENU,
+     the battle plays on behind it, LEAVE MATCH. Beside the way on the settings changed mid-battle, each taking effect
+     as it moves (logistics/MCPauseScreen makes their rows). -->
+<body class="over-battle">
+    <div class="veil light"></div>
+    <div class="window-place">
+        <div id="pause" class="panel glass">
+            <div class="titlebar row bottom">
+                <div class="grow"><div class="eyebrow" id="where"></div><div class="title caps" id="name">Paused</div></div>
+            </div>
+            <div class="pause-body">
+                <div class="pause-actions">
+                    <div class="button main wide tall" id="resume" data-first>Resume</div>
+                    <div class="button wide" id="all">All preferences</div>
+                    <div class="grow"></div>
+                    <div class="button wide" id="leave">Abort mission</div>
+                </div>
+                <div class="quick" id="quick"></div>
+            </div>
+        </div>
+    </div>
+    <div id="hintbar">
+        <div class="stage16">
+            <div class="content">
+                <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

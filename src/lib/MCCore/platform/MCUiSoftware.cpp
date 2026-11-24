@@ -509,34 +509,39 @@ void MCUiTriangle(SDL_Surface& picture, const SDL_Rect& clip, std::span<const SD
             }
         }
 
-        uint8_t* pixel = static_cast<uint8_t*>(picture.pixels) + static_cast<ptrdiff_t>(walked.y + y) * picture.pitch +
-                         static_cast<ptrdiff_t>(walked.x + first) * static_cast<ptrdiff_t>(PixelBytes);
-
-        if (uniform)
+        // An empty row (first past last) has no pixel to point at: its pointer would be past the picture.
+        if (first <= last)
         {
-            for (int64_t x = first; x <= last; ++x, pixel += PixelBytes)
-            {
-                one.Over(pixel);
-            }
-        }
-        else if (first <= last)
-        {
-            const std::array<int64_t, TriangleCorners> w = {row[0] + across[0] * first, row[1] + across[1] * first,
-                                                            row[2] + across[2] * first};
-            std::array<MCStepped, PixelBytes> channels = {MCStepped(weighted(w, 0), weighted(across, 0), area),
-                                                          MCStepped(weighted(w, 1), weighted(across, 1), area),
-                                                          MCStepped(weighted(w, 2), weighted(across, 2), area),
-                                                          MCStepped(weighted(w, 3), weighted(across, 3), area)};
+            uint8_t* pixel = static_cast<uint8_t*>(picture.pixels) +
+                             static_cast<ptrdiff_t>(walked.y + y) * picture.pitch +
+                             static_cast<ptrdiff_t>(walked.x + first) * static_cast<ptrdiff_t>(PixelBytes);
 
-            for (int64_t x = first; x <= last; ++x, pixel += PixelBytes)
+            if (uniform)
             {
-                const MCStraight here(std::array<int64_t, PixelBytes>{channels[0].Value(), channels[1].Value(),
-                                                                      channels[2].Value(), channels[3].Value()});
-                here.Over(pixel);
-
-                for (MCStepped& channel : channels)
+                for (int64_t x = first; x <= last; ++x, pixel += PixelBytes)
                 {
-                    channel.Step();
+                    one.Over(pixel);
+                }
+            }
+            else
+            {
+                const std::array<int64_t, TriangleCorners> w = {row[0] + across[0] * first, row[1] + across[1] * first,
+                                                                row[2] + across[2] * first};
+                std::array<MCStepped, PixelBytes> channels = {MCStepped(weighted(w, 0), weighted(across, 0), area),
+                                                              MCStepped(weighted(w, 1), weighted(across, 1), area),
+                                                              MCStepped(weighted(w, 2), weighted(across, 2), area),
+                                                              MCStepped(weighted(w, 3), weighted(across, 3), area)};
+
+                for (int64_t x = first; x <= last; ++x, pixel += PixelBytes)
+                {
+                    const MCStraight here(std::array<int64_t, PixelBytes>{channels[0].Value(), channels[1].Value(),
+                                                                          channels[2].Value(), channels[3].Value()});
+                    here.Over(pixel);
+
+                    for (MCStepped& channel : channels)
+                    {
+                        channel.Step();
+                    }
                 }
             }
         }
@@ -574,6 +579,46 @@ SDL_Rect MCUiFootprint(const MCUiDraw& draw, const SDL_Rect& window)
 
     const SDL_Rect inside = Overlap(SDL_Rect{left, top, right - left, bottom - top}, window);
     return draw.Scissor.has_value() ? Overlap(inside, *draw.Scissor) : inside;
+}
+
+namespace
+{
+    /// <summary>One axis of an MCUiCopy: the whole texels round a cut, the pixels they're scaled to, the cut's place.</summary>
+    struct MCAxisCopy
+    {
+        int First = 0;
+        int Texels = 0;
+        int Scaled = 0;
+        int At = 0;
+    };
+
+    /// <summary>
+    /// The axis of a copy of <paramref name="size"/> texels from <paramref name="start"/> onto <paramref name="pixels"/>
+    /// pixels: whole texels scaled to the pixels; else the whole texels round them at the same pixels a texel, and the
+    /// cut's first pixel in them (within them, the pixels' room left).
+    /// </summary>
+    MCAxisCopy AxisCopy(float start, float size, int pixels)
+    {
+        const auto first = static_cast<int>(std::floor(start));
+        const auto last = static_cast<int>(std::ceil(start + size));
+        const double perTexel = static_cast<double>(pixels) / static_cast<double>(size);
+        const int scaled = std::max(static_cast<int>(std::lround((last - first) * perTexel)), pixels);
+        const int at = std::clamp(static_cast<int>(std::lround((start - static_cast<float>(first)) * perTexel)), 0,
+                                  scaled - pixels);
+        return MCAxisCopy{.First = first, .Texels = last - first, .Scaled = scaled, .At = at};
+    }
+}
+
+MCUiCopy MCUiCopyOf(const SDL_FRect& texels, const SDL_Rect& target)
+{
+    const MCAxisCopy across = AxisCopy(texels.x, texels.w, target.w);
+    const MCAxisCopy down = AxisCopy(texels.y, texels.h, target.h);
+    return MCUiCopy{
+        .Part = SDL_Rect{across.First, down.First, across.Texels, down.Texels},
+        .Width = across.Scaled,
+        .Height = down.Scaled,
+        .From = SDL_Rect{across.At, down.At, target.w, target.h},
+    };
 }
 
 std::vector<SDL_Rect> MCUiChangedBoxes(std::span<const MCUiDraw> before, std::span<const MCUiDraw> now,
@@ -716,39 +761,20 @@ std::expected<std::reference_wrapper<SDL_Texture>, std::string> MCUiSoftware::Sc
         return std::ref(*found->second.Texture);
     }
 
-    const auto failed = [&](std::string_view what)
+    const std::expected<MCSdlHandle<SDL_Surface>, std::string> scaled = MCUiScaled(texture, source, width, height);
+
+    if (!scaled)
     {
-        return std::unexpected(SdlError(std::format("picture {}'s {},{} {}x{} scaled to {}x{}, {}", texture.Id,
-                                                    source.x, source.y, source.w, source.h, width, height, what)));
-    };
-
-    // The part scaled, in place (SDL only reads it).
-    const size_t pitch = static_cast<size_t>(texture.Width) * PixelBytes;
-    MCSdlHandle<SDL_Surface> part(SDL_CreateSurfaceFrom(source.w, source.h, SDL_PIXELFORMAT_RGBA32,
-                                                        const_cast<uint8_t*>(texture.Pixels.data()) +
-                                                            static_cast<size_t>(source.y) * pitch +
-                                                            static_cast<size_t>(source.x) * PixelBytes,
-                                                        static_cast<int>(pitch)));
-
-    if (part == nullptr)
-    {
-        return failed("its part");
-    }
-
-    MCSdlHandle<SDL_Surface> scaled(
-        SDL_ScaleSurface(part.get(), width, height, texture.Smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST));
-
-    if (scaled == nullptr)
-    {
-        return failed("scaling");
+        return std::unexpected(std::format("the menus' software drawing, {}", scaled.error()));
     }
 
     MCSdlHandle<SDL_Texture> made(
         SDL_CreateTexture(_Renderer.get(), SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, width, height));
 
-    if (made == nullptr || !SDL_UpdateTexture(made.get(), nullptr, scaled->pixels, scaled->pitch))
+    if (made == nullptr || !SDL_UpdateTexture(made.get(), nullptr, (*scaled)->pixels, (*scaled)->pitch))
     {
-        return failed("its copy");
+        return std::unexpected(SdlError(std::format("picture {}'s {},{} {}x{} scaled to {}x{}, its copy", texture.Id,
+                                                    source.x, source.y, source.w, source.h, width, height)));
     }
 
     SDL_SetTextureBlendMode(made.get(), SDL_BLENDMODE_BLEND_PREMULTIPLIED);
@@ -807,6 +833,9 @@ std::expected<void, std::string> MCUiSoftware::MakePicture(int width, int height
 
     if (_White == nullptr || !SDL_UpdateTexture(_White.get(), nullptr, White.data(), PixelBytes))
     {
+        // The texture and the renderer draw into the surface: they go first.
+        _White.reset();
+        _Renderer.reset();
         _Surface.reset();
         return std::unexpected(SdlError(std::format("the {}x{} picture's renderer", width, height)));
     }
@@ -936,8 +965,8 @@ std::expected<void, std::string> MCUiSoftware::DrawOne(const MCUiDraw& draw, con
 
     for (const MCUiPiece& piece : _Pieces)
     {
-        // A rectangle, copied (a textured one when it shows whole texels).
-        if (piece.Quad.has_value() && (draw.Texture == nullptr || piece.Quad->Source.has_value()))
+        // A rectangle, copied (a textured one when its texels lie inside its texture, the right way round).
+        if (piece.Quad.has_value() && (draw.Texture == nullptr || piece.Quad->Texels.has_value()))
         {
             const MCUiQuad& quad = *piece.Quad;
             const SDL_Rect cut = Overlap(quad.Target, clip);
@@ -959,15 +988,15 @@ std::expected<void, std::string> MCUiSoftware::DrawOne(const MCUiDraw& draw, con
                 continue;
             }
 
-            // A picture at another size, inside its texture: its scaled copy, texel for texel.
+            // A picture: its texels copied as they are, or at another size (or cut between texels) from their scaled
+            // copy, texel for texel.
+            const MCUiCopy placed = MCUiCopyOf(*quad.Texels, quad.Target);
             SDL_Texture* copied = texture;
-            SDL_Rect from = *quad.Source;
-            const bool scaled = from.w != quad.Target.w || from.h != quad.Target.h;
+            SDL_Rect from{placed.Part.x + placed.From.x, placed.Part.y + placed.From.y, placed.From.w, placed.From.h};
 
-            if (scaled && from.x >= 0 && from.y >= 0 && from.x + from.w <= draw.Texture->Width &&
-                from.y + from.h <= draw.Texture->Height)
+            if (placed.Width != placed.Part.w || placed.Height != placed.Part.h)
             {
-                auto copy = ScaledOf(draw.Texture, from, quad.Target.w, quad.Target.h);
+                auto copy = ScaledOf(draw.Texture, placed.Part, placed.Width, placed.Height);
 
                 if (!copy)
                 {
@@ -975,7 +1004,7 @@ std::expected<void, std::string> MCUiSoftware::DrawOne(const MCUiDraw& draw, con
                 }
 
                 copied = &copy->get();
-                from = SDL_Rect{0, 0, quad.Target.w, quad.Target.h};
+                from = placed.From;
             }
 
             SDL_SetTextureColorMod(copied, quad.Color[0], quad.Color[1], quad.Color[2]);

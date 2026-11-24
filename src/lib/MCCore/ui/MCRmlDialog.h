@@ -2,6 +2,8 @@
 
 #include "ui/MCRmlScreen.h"
 
+#include <optional>
+
 /// <summary>
 /// Port-only (SPEC-menus.md's stage 3, "When something goes wrong"): a dialog over the remade screens
 /// (<c>ui/dialog.rml</c>): what it belongs to above in cyan, its title when it has one, one short sentence under it,
@@ -26,6 +28,12 @@ public:
         std::string Other;
         std::function<void()> OnMain;
         std::function<void()> OnOther;
+        /// <summary>
+        /// A key it asks for, in the game's key code (the LIGHTS key question): each key pressed but its buttons' (Enter,
+        /// Escape) and a modifier alone is offered; none returned takes it (the dialog closes, as its answer does),
+        /// words say why not (the dialog says them in its sentence's place). Empty: it takes no keys of its own.
+        /// </summary>
+        std::function<std::optional<std::string>(uint32_t key)> TakesKey;
     };
 
     MCRmlDialog();
@@ -39,6 +47,9 @@ public:
     /// <summary>Presses its answer, or its way back, as a click would (and the tests).</summary>
     void PressMain();
     void PressOther();
+
+    bool TakesKeys() const override;
+    bool OnRawKey(const SDL_KeyboardEvent& key) override;
 
     /// <summary>Text made safe to put in a document (its markup's characters as entities).</summary>
     static std::string Escape(std::string_view text);
@@ -80,6 +91,14 @@ namespace MCRmlDialogs
     /// case; OK runs <paramref name="then"/>. False when no remade screen shows.
     /// </summary>
     bool Message(std::string_view text, std::function<void()> then = {});
+
+    /// <summary>
+    /// An old message that asks for a key (the LIGHTS key's) said over the remade screen shown: <paramref name="take"/>
+    /// offered each key (MCRmlDialog::MCSay::TakesKey); OK, Escape or a key taken runs <paramref name="then"/>. False
+    /// when no remade screen shows.
+    /// </summary>
+    bool AskKey(std::string_view text, std::function<std::optional<std::string>(uint32_t key)> take,
+                std::function<void()> then);
 
     /// <summary>A wait with no way out (ShowWaitingDialog: "Opening your room again...") over the remade screen shown.</summary>
     bool Waiting(std::string_view text);

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
@@ -7,6 +8,7 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
@@ -139,9 +141,18 @@ namespace
         MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     }
 
-    /// <summary>Whether the message dialog shows text <paramref name="text"/>.</summary>
+    /// <summary>
+    /// Whether <paramref name="text"/> is asked: by the remade question over a remade screen (the main menu's QUIT, its
+    /// heading the words), else by 1998's message box.
+    /// </summary>
     bool Asks(std::string_view text)
     {
+        if (const std::shared_ptr<MCRmlScreen> top = MCRemadeTest::OnTop<MCRmlScreen>();
+            top != nullptr && MCRemadeTest::Words(*top, "heading") == text)
+        {
+            return true;
+        }
+
         MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
         return dialog.IsShowing() && dialog.Text == text;
     }
@@ -244,6 +255,7 @@ TEST_CASE_ISOLATED("screen flow: Escape goes back one screen, and on the main me
     CHECK(Asks(MCMenuScreens::QuitQuestion));
     PressEscape();
     MCTestGame::RunFrame(FrameSeconds);
+    CHECK(!Asks(MCMenuScreens::QuitQuestion));
     CHECK(!GlobalLog()->MessageDialog->IsShowing());
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
     CHECK(StackNow() == std::vector{main});
@@ -286,7 +298,7 @@ TEST_CASE_ISOLATED("screen flow: a registered screen and an old one hand over to
                                                           [&]
                                                       {
                                                           CHECK(MCScreenChange::Dark());
-                                                          CHECK(!GlobalLog()->MainScreen->IsShowing());
+                                                          CHECK(!MCMainMenuScreens::Shown(MCMainPanel::Main));
                                                           shown = true;
                                                       },
                                                       .Hide = [&] { shown = false; },
@@ -302,7 +314,7 @@ TEST_CASE_ISOLATED("screen flow: a registered screen and an old one hand over to
 
     PressAndCheck("back to the main menu", [] { MCScreenFlow::Back(); }, {main});
     CHECK(!shown);
-    CHECK(GlobalLog()->MainScreen->IsShowing());
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Main));
 }
 
 /// <summary>
@@ -335,7 +347,7 @@ TEST_CASE_ISOLATED(
     REQUIRE(keptScreen);
     REQUIRE(keptScreen->Shown());
     CHECK(MCRmlFlow::Showing());
-    CHECK(!GlobalLog()->MainScreen->IsShowing());
+    CHECK(!MCMainMenuScreens::Shown(MCMainPanel::Main));
     auto& keptProbe = static_cast<MCRmlProbe&>(*keptScreen.Lock());
 
     // ENTER presses the focus's button (JOIN GAME); ESC is the screen's Back, here the next screen.
@@ -399,8 +411,7 @@ TEST_CASE_ISOLATED(
     MCScreenFlow::Back();
     RunWhileChanging();
     CHECK(StackNow() == std::vector<MCScreenId>{main});
-    CHECK(!MCRmlFlow::Showing());
-    CHECK(GlobalLog()->MainScreen->IsShowing());
+    CHECK(MCMainMenuScreens::MainOnTop());
 }
 
 /// <summary>
@@ -535,7 +546,7 @@ TEST_CASE_ISOLATED("screen flow: the campaign's end movies lead to the main menu
     CHECK(!Mission()->GameOver);
     REQUIRE(GlobalLog() != nullptr);
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
-    CHECK(GlobalLog()->MainScreen->IsShowing());
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Main));
     CHECK(StackNow() == std::vector{MCMenuScreens::Main()});
     CHECK(fades.FadedIn);
 }

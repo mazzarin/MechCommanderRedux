@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include "ui/MCRmlDialog.h"
+#include "iface/MCKeyBindings.h"
+#include "platform/MCInput.h"
 #include "ui/MCRmlFlow.h"
 #include "ui/MCRmlLayer.h"
 
@@ -8,6 +10,8 @@
 namespace
 {
     constexpr const char* DialogDocument = "dialog.rml";
+    /// <summary>The game's mark on an extended key's scan code (as Preferences' CONTROLS reads a key).</summary>
+    constexpr int16_t ExtendedScanCode = 0x100;
     constexpr const char* EnterKey = "ENTER";
     constexpr const char* EscapeKey = "ESC";
     /// <summary>The look's class for a titlebar with no title (the eyebrow over the sentence alone).</summary>
@@ -187,6 +191,46 @@ void MCRmlDialog::PressOther()
     }
 }
 
+bool MCRmlDialog::TakesKeys() const
+{
+    return Shown() && _Say.TakesKey != nullptr;
+}
+
+bool MCRmlDialog::OnRawKey(const SDL_KeyboardEvent& key)
+{
+    // Its buttons' keys are RmlUi's (Enter its answer, Escape its answer or way back), and keys let go or held.
+    if (!key.down || key.repeat || key.scancode == SDL_SCANCODE_RETURN || key.scancode == SDL_SCANCODE_KP_ENTER ||
+        key.scancode == SDL_SCANCODE_ESCAPE)
+    {
+        return false;
+    }
+
+    const MCInput::MCScanCode scan = MCInput::Win32ScanCode(key.scancode);
+    const auto code = static_cast<int16_t>(scan.Code | (scan.Extended ? ExtendedScanCode : 0));
+
+    // A key without a code (the game couldn't name it), or a modifier alone, isn't offered (as 1998's dialog's).
+    if (code == 0 || MCKeyBindings::IsModifierKey(code))
+    {
+        return false;
+    }
+
+    // Copied: taking the key may close this dialog.
+    const std::function<std::optional<std::string>(uint32_t)> take = _Say.TakesKey;
+    const std::optional<std::string> refused = take(MCKeyBindings::FromKeyEvent(
+        code, (key.mod & SDL_KMOD_SHIFT) != 0, (key.mod & SDL_KMOD_CTRL) != 0, (key.mod & SDL_KMOD_ALT) != 0));
+
+    if (!refused.has_value())
+    {
+        PressMain();
+        return true;
+    }
+
+    _Say.Text = MCRmlDialogs::AsSentence(*refused);
+    SDL_Log("Menus: the dialog says: %s", _Say.Text.c_str());
+    Fill();
+    return true;
+}
+
 MCGuiHandle<MCRmlDialog> MCRmlDialogs::Dialog()
 {
     if (Kept())
@@ -289,6 +333,12 @@ std::string MCRmlDialogs::AsSentence(std::string_view text)
 bool MCRmlDialogs::Message(std::string_view text, std::function<void()> then)
 {
     return Show(MCRmlDialog::MCSay{.Text = AsSentence(text), .OnMain = std::move(then)});
+}
+
+bool MCRmlDialogs::AskKey(std::string_view text, std::function<std::optional<std::string>(uint32_t key)> take,
+                          std::function<void()> then)
+{
+    return Show(MCRmlDialog::MCSay{.Text = AsSentence(text), .OnMain = std::move(then), .TakesKey = std::move(take)});
 }
 
 bool MCRmlDialogs::Waiting(std::string_view text)

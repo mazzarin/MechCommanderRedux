@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
+#include "MCTestGuest.h"
 #include "MCTestArchive.h"
 #include "lib/MCPacketFile.h"
 #include "ScreenInput.h"
@@ -11,6 +12,7 @@
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCBriefingBox.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCFileScrollPane.h"
@@ -271,15 +273,18 @@ TEST_CASE_ISOLATED("game: the main menu opens its screens in their states, and c
     CHECK_EQ(GameDifficulty, difficulty);
     CHECK_EQ(SoundSystem()->MusicLevel, music);
 
-    // The multiplayer menu.
+    // The multiplayer menu (remade: the main menu's panel, the main screen logistics' under it).
     ShowMultiPlayer();
     Settle();
-    CHECK(logistics->CurrentScreen() == logistics->MultiplayerScreen);
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Multiplayer));
+    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
     CHECK_EQ(logistics->LogisticsState, 10);
     CHECK(!Solo);
-    Cancel();
+    MCTestGuest::ClickOn(MCMainPanel::Multiplayer, "back");
     Settle();
     CHECK(logistics->CurrentScreen() == logistics->MainScreen);
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Main));
+    CHECK_EQ(logistics->LogisticsState, 1);
 
     // A new campaign opens on the briefing screen, and the menu's return goes back there.
     NewCampaign();
@@ -301,6 +306,7 @@ TEST_CASE_ISOLATED("game: the main menu offers LOAD MISSION while there are save
 
     static constexpr std::array<std::string_view, 2> Saves = {"Bravo", "Alpha"};
     std::optional<MCTestGame::PinnedSaves> saves;
+    const MCTestGame::OldMainMenu oldMenu;
     REQUIRE(MCTestGame::StartLogistics([&saves] { saves.emplace(Saves); }));
     Settle();
     std::shared_ptr<MCLogistics> logistics = GlobalLog();
@@ -768,10 +774,11 @@ TEST_CASE_ISOLATED("game: the hold is kept past a mission's end only where a mis
     CHECK(!keeps(Won, false));
     MCGameContext::Current().SetMultiPlayer(nullptr);
 
-    // A quick-start mission won: SOLO MISSIONS (stage 2's landing), and nothing held.
+    // A quick-start mission won: SOLO MISSIONS (stage 2's landing; remade in the main menu's panel, stage 7), and
+    // nothing held.
     PlayToResultsAndBack(Won, true);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen);
-    CHECK(LoadingSolo);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Solo));
     CHECK(!MCHdArt::HoldsFor(missions[0]));
     CHECK(!MCHdArt::HoldsFor(missions[1]));
     CHECK_EQ(MCHdArt::HeldBytes(), 0u);

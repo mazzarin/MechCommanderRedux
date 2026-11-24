@@ -117,6 +117,21 @@ namespace MCTestGame
     inline constexpr int32_t MainMenuLoadButton = 3;
 
     /// <summary>
+    /// While it lives, logistics' main menu is 1998's (mainScreen.fit), as when the menus' RmlUi can't start: the tests
+    /// of its own buttons, lines and pages, kept while it's made (until SPEC-menus.md's stage 9). Made before
+    /// <see cref="StartLogistics"/>.
+    /// </summary>
+    class OldMainMenu
+    {
+    public:
+        OldMainMenu();
+        ~OldMainMenu();
+
+        OldMainMenu(const OldMainMenu&) = delete;
+        OldMainMenu& operator=(const OldMainMenu&) = delete;
+    };
+
+    /// <summary>
     /// While it lives, the game's save folder (SavePath, and the folder logistics' file panes list) is a folder of the
     /// tests' user folder holding copies of what the game ships in its own (campaign starts, solo missions, multiplayer
     /// maps) and, of saves, just those it names (empty files: the load screen lists each by name, without an operation,

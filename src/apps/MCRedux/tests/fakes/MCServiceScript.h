@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lib/MCThreadKeeper.h"
+#include "logistics/MCGamesScreen.h"
 #include "network/MCInternetGame.h"
 
 #include <nlohmann/json.hpp>
@@ -157,10 +158,17 @@ namespace MCServiceScript
 
         /// <summary>
         /// The setup gone, and the threads let go of meanwhile (a count's request) joined: what the stand-ins refer to
-        /// (the URL asked) outlives them.
+        /// (the URL asked) outlives them. INTERNET's screen closed first: its list's socket is a stand-in, and the
+        /// scripts and services behind them (declared before this scope) go with the test, so a test that ends on
+        /// INTERNET would leave the menus' stop to close the list into freed memory.
         /// </summary>
         ~SetupScope()
         {
+            if (const MCGuiHandle<MCGamesScreen> internet = MCGamesScreenOf(MCGamesWhere::Internet); internet)
+            {
+                internet->Close();
+            }
+
             MCInternetGame::Setup({});
             MCThreadKeeper::Process().JoinAll();
         }

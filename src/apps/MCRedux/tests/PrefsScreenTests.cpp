@@ -10,6 +10,7 @@
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCBriefingScreen.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPauseScreen.h"
 #include "logistics/MCPrefsScreen.h"
@@ -241,7 +242,7 @@ namespace
         std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OnTop<MCPrefsScreen>();
         REQUIRE(prefs != nullptr);
         CHECK(prefs->Place() == MCPrefsScreen::MCPlace::Menus);
-        CHECK(!GlobalLog()->MainScreen->IsShowing());
+        CHECK(!MCMainMenuScreens::Shown(MCMainPanel::Main));
         return prefs;
     }
 
@@ -251,14 +252,13 @@ namespace
         MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     }
 
-    /// <summary>Back on the main menu (the old one until stage 7), the main menu alone on the stack.</summary>
+    /// <summary>Back on the main menu, nothing over it, the main menu alone on the stack.</summary>
     void CheckOnMainMenu()
     {
         RunWhileChanging();
         CHECK(StackNow() == std::vector{MCMenuScreens::Main()});
         CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
-        CHECK(GlobalLog()->MainScreen->IsShowing());
-        CHECK(!Menus().Menus().Showing());
+        CHECK(MCMainMenuScreens::MainOnTop());
     }
 
     /// <summary>A campaign's first mission up and past its start, so Escape reaches the battle's own keys.</summary>

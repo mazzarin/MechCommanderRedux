@@ -227,6 +227,8 @@
     <ClCompile Include="logistics\MCLogTextObject.cpp" />
     <ClCompile Include="logistics\MCLogToolButton.cpp" />
     <ClCompile Include="logistics\MCMainMenu.cpp" />
+    <ClCompile Include="logistics\MCMainMenuModel.cpp" />
+    <ClCompile Include="logistics\MCMainMenuScreen.cpp" />
     <ClCompile Include="logistics\MCMatchOptionsTab.cpp" />
     <ClCompile Include="logistics\MCMechBriefBlock.cpp" />
     <ClCompile Include="logistics\MCMechInventoryBlock.cpp" />
@@ -776,6 +778,8 @@
     <ClInclude Include="logistics\MCLogTextObject.h" />
     <ClInclude Include="logistics\MCLogToolButton.h" />
     <ClInclude Include="logistics\MCMainMenu.h" />
+    <ClInclude Include="logistics\MCMainMenuModel.h" />
+    <ClInclude Include="logistics\MCMainMenuScreen.h" />
     <ClInclude Include="logistics\MCMatchOptionsTab.h" />
     <ClInclude Include="logistics\MCMechBriefBlock.h" />
     <ClInclude Include="logistics\MCMechInventoryBlock.h" />

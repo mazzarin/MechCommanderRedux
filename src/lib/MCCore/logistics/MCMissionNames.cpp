@@ -13,8 +13,11 @@ namespace
     constexpr std::string_view FileName = "missions.json";
     constexpr const char* OperationsKey = "operations";
     constexpr const char* MissionsKey = "missions";
-    /// <summary>The line a briefing names its operation on, before the word (its operation's, then a slash).</summary>
-    constexpr std::string_view FedcomMark = "FEDCOM:";
+    /// <summary>
+    /// The line a briefing names its operation on, before the word (its operation's, then a slash): the Inner Sphere's
+    /// FEDCOM, or STARCOM in the single missions played against a Clan's aces (ACEHUNT's, PAREDUX's).
+    /// </summary>
+    constexpr std::array<std::string_view, 2> OperationMarks = {"FEDCOM:", "STARCOM:"};
     /// <summary>The most a data file may hold (it is a few kilobytes): a larger one isn't read.</summary>
     constexpr std::uintmax_t MostFileBytes = 1 << 20;
 
@@ -25,6 +28,20 @@ namespace
         std::unordered_map<std::string, std::string> Operations;
         std::unordered_map<std::string, std::string> Missions;
     };
+
+    /// <summary>What follows the operation's mark on a briefing's line; none when the line has none.</summary>
+    std::optional<std::string_view> AfterMark(std::string_view line)
+    {
+        for (const std::string_view mark : OperationMarks)
+        {
+            if (const size_t at = line.find(mark); at != std::string_view::npos)
+            {
+                return line.substr(at + mark.size());
+            }
+        }
+
+        return std::nullopt;
+    }
 
     MCNames& Names()
     {
@@ -146,7 +163,7 @@ namespace
 auto MCMissionNames::FromBriefing(std::string_view text) -> MCWritten
 {
     MCWritten written;
-    bool afterFedcom = false;
+    bool afterMark = false;
     std::vector<std::string> title;
 
     for (size_t start = 0; start <= text.size();)
@@ -155,15 +172,14 @@ auto MCMissionNames::FromBriefing(std::string_view text) -> MCWritten
         const std::string visible = Visible(text.substr(start, end - start));
         start = end + 1;
 
-        if (const size_t mark = visible.find(FedcomMark); !afterFedcom && mark != std::string::npos)
+        if (const std::optional<std::string_view> rest = AfterMark(visible); !afterMark && rest.has_value())
         {
-            const std::string_view rest = std::string_view(visible).substr(mark + FedcomMark.size());
-            written.Operation = std::string(Trimmed(rest.substr(0, rest.find('/'))));
-            afterFedcom = true;
+            written.Operation = std::string(Trimmed(rest->substr(0, rest->find('/'))));
+            afterMark = true;
             continue;
         }
 
-        if (!afterFedcom)
+        if (!afterMark)
         {
             continue;
         }

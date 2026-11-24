@@ -162,15 +162,26 @@ namespace
 
     /// <summary>
     /// Whether a remade screen shows on the menus' layer (Preferences over the main menu, the question itself). Not the
-    /// remade room alone (SPEC-menus.md's stage 4): a launcher's game never leaves it, and the 1998 dialog says itself
-    /// over it; MATCH OPTIONS, CHOOSE MAP or a remade dialog over it does.
+    /// remade room alone (SPEC-menus.md's stage 4): a launcher's game never leaves it, so the notices say themselves
+    /// over it. Alone is the room on top with nothing over it: MATCH OPTIONS, CHOOSE MAP, a remade dialog or a notice
+    /// already shown is (each frame asks again, and a notice over the room shown as free would come again each frame
+    /// until it's answered, one over another).
     /// </summary>
     bool RemadeShows()
     {
         const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
+
+        if (!menus.has_value() || !menus->get().Menus().Showing())
+        {
+            return false;
+        }
+
+        const MCOptionalRef<MCRmlScreen> top = menus->get().Menus().Top();
+        const MCGuiHandle<MCRoomScreen> room = RoomScreen();
+        const bool roomOnTop = room && top.has_value() && room.Is(top->get());
         const bool roomAlone =
-            RoomScreenShown() && !MatchOptionsWindowShown() && !ChooseMapWindowShown() && !MCRmlDialogs::Shown();
-        return menus.has_value() && menus->get().Menus().Showing() && !roomAlone;
+            roomOnTop && !MatchOptionsWindowShown() && !ChooseMapWindowShown() && !MCRmlDialogs::Shown();
+        return !roomAlone;
     }
 
     /// <summary>

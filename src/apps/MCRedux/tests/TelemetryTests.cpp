@@ -16,6 +16,7 @@
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCRoomScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"
 #include "main/MCHdSettings.h"
@@ -30,6 +31,7 @@
 #include "update/MCUpdateDisk.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 // The reports (main/MCTelemetry.h), with a stand-in for the app's backend: nothing sent before the player has seen
 // what the reports hold, the question where the law wants consent first (the system's own region, or the server's),
@@ -1051,6 +1053,45 @@ namespace
         CHECK(!MCRemadeTest::Visible(*notice, "no"));
         return notice;
     }
+
+    /// <summary>Whether <paramref name="screen"/>'s document has the keys (the menus' focus is in it).</summary>
+    bool HasKeys(const MCRmlScreen& screen)
+    {
+        const MCOptionalRef<Rml::ElementDocument> document = screen.Document();
+        Rml::Context* context = document.has_value() ? document->get().GetContext() : nullptr;
+        const Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
+        return focus != nullptr && focus->GetOwnerDocument() == &document->get();
+    }
+
+    /// <summary>
+    /// A lobby's game hosting on <paramref name="port"/> as BOB, the reports' region answered: its remade room with the
+    /// notice over it, the keys the notice's (not the room's chat box).
+    /// </summary>
+    std::shared_ptr<MCRmlScreen> NoticeOverLobbyRoom(std::string_view port, MCFakeReports& reports)
+    {
+        REQUIRE(MCTestGame::StartLobby(std::format("-host -port {} -player BOB", port)));
+        REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
+        reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
+        MCTestGuest::Settle();
+        REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+        CHECK(RoomScreenShown());
+        CHECK(!GlobalLog()->MessageDialog->IsShowing());
+        std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
+        REQUIRE(notice != nullptr);
+        CHECK(HasKeys(*notice));
+        return notice;
+    }
+
+    /// <summary>The notice over a lobby's room answered: gone, the room on top with the keys, REPORTS on.</summary>
+    void NoticeAnsweredOverRoom()
+    {
+        CHECK(RemadeNotice() == nullptr);
+        const std::shared_ptr<MCRoomScreen> room = MCRemadeTest::OnTop<MCRoomScreen>();
+        REQUIRE(room != nullptr);
+        CHECK(HasKeys(*room));
+        CHECK_EQ(GReports, 1);
+        CHECK(MCTelemetry::Reporting());
+    }
 }
 
 TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its OK turns REPORTS on")
@@ -1093,7 +1134,8 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
 
 /// <summary>
 /// A game a lobby starts never shows the main menu: its room (the session screen) shows the reports' notice instead,
-/// once: not again as the room is shown again for a player who joins. Escape closes it, as seen.
+/// once: not again each frame while it shows, nor as the room is shown again for a player who joins. Over the remade
+/// room (stage 4) the notice has the keys, a guest's join leaving it on top; Escape closes it, as seen.
 /// </summary>
 TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice once")
 {
@@ -1105,27 +1147,54 @@ TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice onc
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     MCTestGuest::Guest guest("ANN");
-    REQUIRE(MCTestGame::StartLobby("-host -port 28899 -player BOB"));
-    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
-    reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
-    MCTestGuest::Settle();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
-    REQUIRE(RemadeNotice() != nullptr);
+    const std::shared_ptr<MCRmlScreen> notice = NoticeOverLobbyRoom("28899", reports);
     MCScreenInput::SaveWindowShot("reports notice session screen");
-    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
-    MCTestGuest::Settle();
-    // Over the remade room (stage 4), the room stays on top: the notice is gone.
-    CHECK(RemadeNotice() == nullptr);
-    CHECK_EQ(GReports, 1);
-    CHECK(MCTelemetry::Reporting());
 
+    // A guest joins while it shows: still the one notice on top, with the keys.
     REQUIRE(guest.Join(*MultiPlayer()->SessionManager->DirectPlay, "127.0.0.1:28899"));
     REQUIRE(MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(guest.Id()); }));
     MCTestGuest::Settle();
-    CHECK(RemadeNotice() == nullptr);
+    CHECK(RemadeNotice() == notice);
+    CHECK(HasKeys(*notice));
+
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGuest::Settle();
+    NoticeAnsweredOverRoom();
     CHECK(!GlobalLog()->MessageDialog->IsShowing());
-    CHECK_EQ(GReports, 1);
+}
+
+/// <summary>The reports' notice over a lobby's remade room: Enter, as OK.</summary>
+TEST_CASE_ISOLATED("game: Enter closes the reports' notice over a lobby's room")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs prefs;
+    MCFakeReports reports;
+    REQUIRE(NoticeOverLobbyRoom("28892", reports) != nullptr);
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    MCTestGuest::Settle();
+    NoticeAnsweredOverRoom();
+}
+
+/// <summary>The reports' notice over a lobby's remade room: OK clicked (the mouse reaches it too).</summary>
+TEST_CASE_ISOLATED("game: OK closes the reports' notice over a lobby's room")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs prefs;
+    MCFakeReports reports;
+    const std::shared_ptr<MCRmlScreen> notice = NoticeOverLobbyRoom("28896", reports);
+    Rml::Element* ok = MCRemadeTest::Find(*notice, "yes");
+    REQUIRE(ok != nullptr);
+    MCTestGuest::RealClickOn(*ok);
+    MCTestGuest::Settle();
+    NoticeAnsweredOverRoom();
 }
 
 TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CANCEL leaves REPORTS off")

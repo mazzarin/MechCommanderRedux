@@ -11,6 +11,7 @@
 #include "gui/MCGuiSystem.h"
 #include "iface/MCMechBar.h"
 #include "iface/MCTacticalInterface.h"
+#include "logistics/MCReusableDialog.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCLogButton.h"
@@ -651,8 +652,10 @@ namespace
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
-        // The 1998 campaign screens' own recording (kept until stage 9 removes them): the remade screens off.
+        // The 1998 campaign screens' own recording (kept until stage 9 removes them): the remade screens off, and the
+        // 1998 box with them.
         MCCampaignMenu::Remade() = false;
+        MCReusableDialog::OldBoxOnly() = true;
         const MCRecordedPrefs prefs;
         std::optional<MCTestGame::PinnedSaves> saves;
         RequestDrawing(gpu);

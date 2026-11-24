@@ -4000,6 +4000,9 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until
         return;
     }
 
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
+
     MCHostedRelease release("hd-options-art-size");
     AddTwoX(release);
     release.Machine = BigMachine;
@@ -4066,6 +4069,9 @@ TEST_CASE_ISOLATED("game: HD OPTIONS says a failed HD art download in a player's
         return;
     }
 
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
+
     MCHostedRelease release("hd-options-art-size-failed");
     AddTwoX(release);
     release.Machine = BigMachine;
@@ -4097,6 +4103,9 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD o
     {
         return;
     }
+
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
 
     MCHostedRelease release("hd-options-remove");
     UpdateToRelease2(release);

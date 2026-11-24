@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCLogDialogBox.h"
 #include "gui/MCUpdateDisplay.h"
+#include "ui/MCRmlDialog.h"
 #include "vfx/MCVfxFunctions.h"
 
 auto MCLogDialogBox::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height) -> void
@@ -100,6 +101,7 @@ auto MCLogDialogBox::DrawBox() -> void
 
 auto MCLogDialogBox::Activate() -> void
 {
+    MCRmlDialogs::NoteOldBox("the 1998 BUY window");
     NeedBackground = true;
     GuiSystem().Grab(weak_from_this());
     BringToFront(false);

@@ -162,6 +162,8 @@ namespace
     /// <summary>A message box made on the screen (as the version dialog is) sits in the middle of <paramref name="area"/>.</summary>
     void CheckMessageBoxCentredOn(SDL_Rect area)
     {
+        // The 1998 box's own placement (where the menus can't start).
+        const MCTestGame::OldBoxAllowed allowed;
         const MCGuiHandle<MCGuiMessageBox> box =
             ScreenWindow()->CreateChild<MCGuiMessageBox>([](MCGuiMessageBox& made) { made.Init("Centred"); });
         REQUIRE(box != nullptr);

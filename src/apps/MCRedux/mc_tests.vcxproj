@@ -341,6 +341,7 @@
     <ClCompile Include="tests\ProgramSwapTests.cpp" />
     <ClCompile Include="tests\PurchaseTests.cpp" />
     <ClCompile Include="tests\ReleaseCopyTests.cpp" />
+    <ClCompile Include="tests\RemadeDialogTests.cpp" />
     <ClCompile Include="tests\ResultsMenuTests.cpp" />
     <ClCompile Include="tests\RoomEndTests.cpp" />
     <ClCompile Include="tests\SavesTests.cpp" />

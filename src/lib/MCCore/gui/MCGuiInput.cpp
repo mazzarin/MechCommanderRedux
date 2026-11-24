@@ -25,6 +25,7 @@
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
+#include "ui/MCRmlDialog.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCWin32Defs.h"
@@ -98,6 +99,12 @@ namespace
 
     /// <summary>Alt+Enter switches between full screen and a window (always on in MCX.EXE).</summary>
     constexpr bool AllowMagicWindowSwitching = true;
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): the version box's words in the remade dialog (the 1998 box's
+    /// "Release Version: ..." in sentence case).
+    /// </summary>
+    constexpr std::string_view ReleaseVersionFormat = "Release version: {}";
 
     /// <summary>Whether <paramref name="target"/> is the modal object or one of its children (or there is none).</summary>
     bool UnderModal(std::shared_ptr<MCGuiObject> target)
@@ -258,6 +265,15 @@ namespace
                 if (CheatsOn && CtrlAltHeld())
                 {
                     const std::string release = LoadGameString(0x282, 0xfe);
+
+                    // Port-only (SPEC-menus.md's stage 9): the remade dialog says it, over the battlefield in a
+                    // mission, at its interface size; the 1998 box where the menus can't start.
+                    if (MCRmlDialogs::Show({.Eyebrow = AppName, .Text = std::format(ReleaseVersionFormat, release)},
+                                           Scenario() != nullptr ? MCRmlFlow::MCOn::Mission : MCRmlFlow::MCOn::Menus))
+                    {
+                        break;
+                    }
+
                     DestroyVersion();
                     gui.VersionDialog = ScreenWindow()->CreateChild<MCGuiMessageBox>(
                         [&](MCGuiMessageBox& made) { made.Init(std::format("Release Version: {}", release)); });

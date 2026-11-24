@@ -406,6 +406,9 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
         return;
     }
 
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
+
     REQUIRE(MCTestGame::StartLogistics());
 
     // The page as the GPU shows it: on a machine whose GPU couldn't start, the next case's.

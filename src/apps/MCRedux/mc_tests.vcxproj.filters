@@ -283,6 +283,9 @@
     <ClCompile Include="tests\ReleaseCopyTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\RemadeDialogTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ResultsMenuTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

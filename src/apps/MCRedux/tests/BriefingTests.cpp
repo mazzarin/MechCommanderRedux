@@ -413,6 +413,9 @@ TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the dr
         return;
     }
 
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
+
     // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
     MCCampaignMenu::Remade() = false;
 
@@ -1831,6 +1834,9 @@ TEST_CASE_ISOLATED("game: with MoreUnits a save holding more than 50 units is bo
         return;
     }
 
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
+
     // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
     MCCampaignMenu::Remade() = false;
 
@@ -1862,6 +1868,9 @@ TEST_CASE_ISOLATED("game: without MoreUnits a save holding more than 50 units la
     {
         return;
     }
+
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
 
     // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
     MCCampaignMenu::Remade() = false;

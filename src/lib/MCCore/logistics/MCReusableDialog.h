@@ -87,6 +87,12 @@ public:
     std::shared_ptr<MCLogPort> MiddlePiece;
     std::shared_ptr<MCLogPort> BottomPiece;
 
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9), for the tests of the 1998 box itself: it shows as where the menus' RmlUi
+    /// can't start (off: the remade dialog says it whenever the menus run).
+    /// </summary>
+    static bool& OldBoxOnly();
+
 protected:
     /// <summary>Draws the frame: the top, <see cref="NumMiddlePieces"/> middle pieces and the bottom.</summary>
     void DrawFrame();

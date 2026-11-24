@@ -1161,6 +1161,9 @@ TEST_CASE_ISOLATED("game: the reports' notice in 1998's message box keeps its te
         return;
     }
 
+    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
+    MCReusableDialog::OldBoxOnly() = true;
+
     const MCTestGame::KeepPrefs prefs;
     MCFakeReports reports;
     const MCTestGame::OldMainMenu oldMenu;

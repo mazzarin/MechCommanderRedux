@@ -5,14 +5,15 @@
     <link type="text/rcss" href="dialog.rcss"/>
 </head>
 <!-- Port-only (SPEC-menus.md, "The reports question"; the style frames' dialog_reports.rml): asked once, over the main
-     menu (or the room, for a launcher's players); Preferences' REPORTS changes it later. -->
+     menu (or the room, for a launcher's players), SEND with the focus; Preferences' REPORTS changes it later. Where no
+     question is needed, the notice in its place: its title and sentences, OK alone (DON'T SEND hidden). -->
 <body class="window-body">
     <div class="veil"></div>
     <div class="window-place">
         <div class="dialog panel glass">
-            <div class="titlebar"><div class="heading caps">Send reports?</div></div>
+            <div class="titlebar"><div class="heading caps" id="heading">Send reports?</div></div>
             <div class="say"><p id="ask"></p><p id="kept"></p></div>
-            <div class="foot row"><div class="button" id="no" data-first>Don't send</div><div class="grow"></div><div class="button main" id="yes">Send</div></div>
+            <div class="foot row"><div class="button" id="no">Don't send</div><div class="grow"></div><div class="button main" id="yes" data-first>Send</div></div>
         </div>
     </div>
 </body>

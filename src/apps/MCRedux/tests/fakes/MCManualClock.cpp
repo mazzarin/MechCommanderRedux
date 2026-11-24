@@ -31,8 +31,23 @@ void MCManualClock::AdvanceOnPresent(bool on)
     _AdvanceOnPresent = on;
 }
 
+void MCManualClock::Follow(std::function<uint64_t()> target)
+{
+    _Follow = std::move(target);
+}
+
 uint64_t MCManualClock::Read()
 {
+    if (std::this_thread::get_id() == _Owner && _Follow != nullptr)
+    {
+        if (const uint64_t target = _Follow(), now = _Nanoseconds.load(); target > now)
+        {
+            Advance(target - now);
+        }
+
+        return _Nanoseconds.load();
+    }
+
     if (std::this_thread::get_id() == _Owner && ++_Reads > 100000)
     {
         return _Nanoseconds += 1000;

@@ -25,6 +25,42 @@
 namespace
 {
     /// <summary>
+    /// Campaign <paramref name="campaign"/>'s start (BeginCampaign's) as pieces, for a change's job: the campaign read
+    /// again, then its load from start file <paramref name="startFile"/>, a step a piece; <paramref name="firstPlanet"/>
+    /// starts it on the first planet (the expansion's keeps the planet it had).
+    /// </summary>
+    std::vector<MCScreenChange::MCPiece> CampaignStartPieces(std::string campaign, std::string_view startFile,
+                                                             bool firstPlanet)
+    {
+        std::vector<MCScreenChange::MCPiece> pieces = {{.Part = "campaign.reload",
+                                                        .Run = [campaign = std::move(campaign), firstPlanet]
+                                                        {
+                                                            MissionName = campaign;
+                                                            Mission()->ReloadCampaign(MissionName);
+
+                                                            if (firstPlanet)
+                                                            {
+                                                                CurPlanet = 0;
+                                                            }
+
+                                                            Solo = false;
+                                                            LastLogisticsMissionState = 0;
+                                                        }}};
+        // A start file it refuses leaves the briefing shown over no campaign, as the original's.
+        std::ranges::move(GlobalLog()->LoadCampaignPieces(startFile, ".pkk", false, false, std::make_shared<int32_t>()),
+                          std::back_inserter(pieces));
+        return pieces;
+    }
+
+    /// <summary>The briefing of the campaign started, in place of the main menu (BeginCampaign's end).</summary>
+    void ShowCampaignStarted()
+    {
+        GlobalLog()->BriefingScreen->HideBriefing();
+        GlobalLog()->SetUpBriefingScreen(false);
+        GlobalLog()->MainScreen->ShowGuiWindow(false);
+    }
+
+    /// <summary>
     /// Starts campaign <paramref name="campaign"/> from its start file <paramref name="startFile"/> on the briefing
     /// screen; <paramref name="firstPlanet"/> starts it on the first planet (the expansion's keeps the planet it had).
     /// </summary>
@@ -34,31 +70,21 @@ namespace
         SoundSystem()->StopDigitalMusic();
         SoundSystem()->PlayBettySample(0x19);
 
-        // Port-only: the campaign started and its briefing set up once the screen is dark, where the main menu sat
-        // frozen for it before its fade began (64-65 ms on the A10, 18-38 on the M4 Pro); port-only (SPEC-menus.md's
-        // stage 2): in a change of screen through the flow, the main menu fading out live, the briefing fading in.
-        // Betty's line and the music's stop at the click.
-        MCScreenFlow::Change("new campaign", [campaign = std::string(campaign), startFile = std::string(startFile),
-                                              firstPlanet] { BeginCampaign(campaign, startFile, firstPlanet); });
+        // Port-only: the campaign started and its briefing set up in the fade, where the main menu sat frozen for it
+        // before its fade began (64-65 ms on the A10, 18-38 on the M4 Pro); port-only (SPEC-menus.md's stage 2): in a
+        // change of screen through the flow, the main menu fading out live, the briefing fading in. Betty's line and the
+        // music's stop at the click; from it, live, the remade briefing's document read and the campaign loaded, a step
+        // a frame; the briefing set up once the screen is dark.
+        std::vector<MCScreenChange::MCPiece> job = MCCampaignMenu::Ahead();
+        std::ranges::move(CampaignStartPieces(std::string(campaign), startFile, firstPlanet), std::back_inserter(job));
+        MCScreenFlow::Change("new campaign", ShowCampaignStarted, std::move(job));
     }
 }
 
 void BeginCampaign(std::string_view campaign, std::string_view startFile, bool firstPlanet)
 {
-    MissionName = campaign;
-    Mission()->ReloadCampaign(MissionName);
-
-    if (firstPlanet)
-    {
-        CurPlanet = 0;
-    }
-
-    Solo = false;
-    LastLogisticsMissionState = 0;
-    GlobalLog()->LoadCampaign(startFile, ".pkk", false, false);
-    GlobalLog()->BriefingScreen->HideBriefing();
-    GlobalLog()->SetUpBriefingScreen(false);
-    GlobalLog()->MainScreen->ShowGuiWindow(false);
+    MCScreenChange::RunPieces(CampaignStartPieces(std::string(campaign), startFile, firstPlanet));
+    ShowCampaignStarted();
 }
 
 // Each menu action first made sure a campaign CD was in a drive (scanning C: to Z: for data\tiles\gtiles90.pak,

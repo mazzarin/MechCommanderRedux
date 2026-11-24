@@ -3,6 +3,8 @@
 // The load and save screens' callbacks: campaign saves (.sav), single missions (.sol) and the host's multiplayer
 // missions. Original source: logistics\logmain.cpp.
 
+#include "gui/MCScreenChange.h"
+
 #include <string_view>
 
 class MCGuiEvent;
@@ -35,6 +37,26 @@ void LoadGame();
 /// campaign).
 /// </summary>
 bool LoadSavedGame(std::string_view name, bool campaign);
+
+/// <summary>
+/// Port-only (SPEC-menus.md's changes of screen): a save's load (<see cref="LoadSavedGame"/>'s) as a change's job, run
+/// live from its press a step a frame; <see cref="ShowSavedGame"/> ends it once the screen is dark.
+/// </summary>
+struct MCSavedGameLoad
+{
+    std::vector<MCScreenChange::MCPiece> Job;
+    /// <summary>The load's result once its job has run: 0 loaded, else refused.</summary>
+    std::shared_ptr<int32_t> Result;
+};
+
+/// <summary>The load of save <paramref name="name"/> (a campaign's .sav, or a single mission's .sol), begun.</summary>
+MCSavedGameLoad LoadSavedGameAhead(std::string_view name, bool campaign);
+
+/// <summary>
+/// A save's load ended, its job run: the music stopped; on success (<paramref name="result"/> 0) the briefing set up and
+/// the logistics music on. Whether the game took the save (a refused one leaves no campaign).
+/// </summary>
+bool ShowSavedGame(int32_t result);
 
 /// <summary>Loads the multiplayer mission chosen on the load screen (the host's session screen).</summary>
 void LoadMPGame();

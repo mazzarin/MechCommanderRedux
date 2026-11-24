@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCSavesMenu.h"
 #include "ai/MCMoveGeometry.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCRegistrySettings.h"
@@ -723,9 +724,14 @@ void MCSavesScreen::Say(MCSavesDialog::MCSay say)
 void MCSavesScreen::Load(const std::string& name)
 {
     const std::weak_ptr<MCRmlScreen> self = weak_from_this();
+    // The save loaded live from the press, a step a frame (after the briefing's document); the briefing set up once dark.
+    LoadingSolo = false;
+    MCSavedGameLoad load = LoadSavedGameAhead(name, true);
+    std::vector<MCScreenChange::MCPiece> job = MCCampaignMenu::Ahead();
+    std::ranges::move(load.Job, std::back_inserter(job));
     MCScreenFlow::Change(
         "load game",
-        [self, name]
+        [self, name, result = std::move(load.Result)]
         {
             const std::shared_ptr<MCRmlScreen> screen = self.lock();
 
@@ -736,9 +742,8 @@ void MCSavesScreen::Load(const std::string& name)
 
             auto& saves = static_cast<MCSavesScreen&>(*screen);
             saves.Hide();
-            LoadingSolo = false;
 
-            if (LoadSavedGame(name, true))
+            if (ShowSavedGame(*result))
             {
                 return;
             }
@@ -747,7 +752,8 @@ void MCSavesScreen::Load(const std::string& name)
             SDL_Log("Menus: the save %s couldn't be loaded", name.c_str());
             saves.Show();
             saves.Say(MCSavesDialog::MCSay{.Question = std::string(MCSavesMenu::RefusedText), .Answer = "OK"});
-        });
+        },
+        std::move(job));
 }
 
 void MCSavesScreen::Save(const std::string& name)
@@ -772,17 +778,19 @@ void MCSavesScreen::Save(const std::string& name)
 
 void MCSavesScreen::BackToCampaign()
 {
-    MCScreenFlow::Change("saved",
-                         []
-                         {
-                             if (const MCOptionalRef<MCSavesScreen> screen = MCSavesMenu::Screen(); screen.has_value())
-                             {
-                                 screen->get().Hide();
-                             }
+    MCScreenFlow::Change(
+        "saved",
+        []
+        {
+            if (const MCOptionalRef<MCSavesScreen> screen = MCSavesMenu::Screen(); screen.has_value())
+            {
+                screen->get().Hide();
+            }
 
-                             // The campaign screen it was left from (the old save screen's way back).
-                             SaveWorkedCallback(0);
-                         });
+            // The campaign screen it was left from (the old save screen's way back).
+            SaveWorkedCallback(0);
+        },
+        MCCampaignMenu::Ahead());
 }
 
 void MCSavesScreen::OnDestroy()

@@ -34,6 +34,7 @@
 #include "object/MCObjectTypeManager.h"
 #include "vfx/MCVfxFunctions.h"
 #include "sprite/MCHdArt.h"
+#include "platform/MCFrameLog.h"
 
 auto MCLogistics::LoadQuickStart(MCFitIniFile& file) -> void
 {
@@ -318,43 +319,186 @@ namespace
     }
 }
 
-auto MCLogistics::LoadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce)
-    -> int32_t
+struct MCLogistics::MCCampaignReading
+{
+    MCCampaignReading(MCLogistics& logistics, std::string_view saveName, std::string_view extension, bool newCampaign,
+                      bool loadForce);
+    MCCampaignReading(const MCCampaignReading&) = delete;
+    MCCampaignReading& operator=(const MCCampaignReading&) = delete;
+    ~MCCampaignReading();
+
+    std::weak_ptr<MCLogistics> Logistics;
+    std::string SaveName;
+    std::string Extension;
+    bool NewCampaign = false;
+    bool LoadForce = false;
+    MCTelemetry::MCRefusedLoad Read;
+    MCPacketFile PacketFile;
+    MCFitIniFile File;
+    /// <summary>A match's quick start, read with the save's start: there is no force to read.</summary>
+    bool QuickStart = false;
+    /// <summary>The save's mission number (-1 with none): a campaign's further on comes back from that mission.</summary>
+    int32_t SavedMission = 0;
+    /// <summary>The refusal's error; 0 while the reading goes on.</summary>
+    int32_t Result = 0;
+    /// <summary>The shop as its reading goes (a campaign's, not a match's); none before and after.</summary>
+    std::shared_ptr<MCShopReading> Shop;
+    /// <summary>A force entry asked for more copies than a save may give (the save is refused once the force is read).</summary>
+    bool TooManyCopies = false;
+    /// <summary>The operation and mission of this point in the campaign (the mission start's save's name).</summary>
+    int32_t OperationNumber = 0;
+    int32_t MissionNumber = 0;
+    /// <summary>Set by a step that left more to do: it runs again.</summary>
+    bool Again = false;
+    /// <summary>Every step run, or one refused (<see cref="EndCampaignRead"/>).</summary>
+    bool Finished = false;
+};
+
+MCLogistics::MCCampaignReading::MCCampaignReading(MCLogistics& logistics, std::string_view saveName,
+                                                  std::string_view extension, bool newCampaign, bool loadForce)
+    : Logistics(logistics.weak_from_this())
+    , SaveName(saveName)
+    , Extension(extension)
+    , NewCampaign(newCampaign)
+    , LoadForce(loadForce)
 {
     // The file's kind, for the reports: its extension, without the dot, in lower case.
     std::string kind(extension.substr(extension.starts_with('.') ? 1 : 0));
     std::ranges::transform(kind, kind.begin(),
                            [](char c) { return static_cast<char>(std::tolower(static_cast<uint8_t>(c))); });
-    MCTelemetry::MCRefusedLoad read{.Kind = std::move(kind), .Player = loadForce};
-    const int32_t result = ReadCampaign(saveName, extension, newCampaign, loadForce, read);
+    Read = {.Kind = std::move(kind), .Player = loadForce};
+}
 
-    if (result != 0)
+MCLogistics::MCCampaignReading::~MCCampaignReading()
+{
+    // Dropped before its end (its change called off, the lists part read): no campaign, as when refused.
+    if (const std::shared_ptr<MCLogistics> logistics = Logistics.lock(); logistics != nullptr && !Finished)
+    {
+        logistics->CurrentMission = -1;
+    }
+}
+
+auto MCLogistics::LoadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce)
+    -> int32_t
+{
+    MCCampaignReading reading(*this, saveName, extension, newCampaign, loadForce);
+
+    for (const MCCampaignStep& step : CampaignSteps())
+    {
+        do
+        {
+            if (reading.Result != 0)
+            {
+                break;
+            }
+
+            const MCFrameLog::Scope part(step.Part);
+            reading.Again = false;
+            reading.Result = (this->*step.Read)(reading);
+        } while (reading.Again);
+    }
+
+    return EndCampaignRead(reading);
+}
+
+auto MCLogistics::LoadCampaignPieces(std::string_view saveName, std::string_view extension, bool newCampaign,
+                                     bool loadForce, const std::shared_ptr<int32_t>& result)
+    -> std::vector<MCScreenChange::MCPiece>
+{
+    const auto reading = std::make_shared<MCCampaignReading>(*this, saveName, extension, newCampaign, loadForce);
+    std::vector<MCScreenChange::MCPiece> pieces;
+
+    // Each step a wait, done once its reading leaves nothing more: a step with more (the shop's mechs) goes on in the
+    // next frame.
+    for (const MCCampaignStep& step : CampaignSteps())
+    {
+        pieces.push_back({.Until = [reading, step]
+                          {
+                              const std::shared_ptr<MCLogistics> logistics = reading->Logistics.lock();
+
+                              if (logistics == nullptr || reading->Result != 0)
+                              {
+                                  return true;
+                              }
+
+                              const MCFrameLog::Scope part(step.Part);
+                              reading->Again = false;
+                              reading->Result = ((*logistics).*step.Read)(*reading);
+                              return !reading->Again || reading->Result != 0;
+                          }});
+    }
+
+    pieces.push_back({.Run = [reading, result]
+                      {
+                          if (const std::shared_ptr<MCLogistics> logistics = reading->Logistics.lock();
+                              logistics != nullptr)
+                          {
+                              *result = logistics->EndCampaignRead(*reading);
+                          }
+                      }});
+    return pieces;
+}
+
+auto MCLogistics::CampaignSteps() -> std::span<const MCCampaignStep>
+{
+    static constexpr std::array<MCCampaignStep, 12> Steps = {{
+        {.Part = "campaign.palette", .Read = &MCLogistics::ReadCampaignPalette},
+        {.Part = "campaign.save", .Read = &MCLogistics::ReadCampaignStart},
+        {.Part = "campaign.pilots", .Read = &MCLogistics::ReadCampaignForce},
+        {.Part = "campaign.mechs", .Read = &MCLogistics::ReadCampaignMechs},
+        {.Part = "campaign.vehicles", .Read = &MCLogistics::ReadCampaignVehicles},
+        {.Part = "campaign.components", .Read = &MCLogistics::ReadCampaignComponents},
+        {.Part = "campaign.mission", .Read = &MCLogistics::ReadCampaignMission},
+        {.Part = "campaign.shop", .Read = &MCLogistics::ReadCampaignShop},
+        {.Part = "campaign.shop mechs", .Read = &MCLogistics::ReadCampaignShopMechs},
+        {.Part = "campaign.shop goods", .Read = &MCLogistics::ReadCampaignShopGoods},
+        {.Part = "campaign.shop end", .Read = &MCLogistics::ReadCampaignShopEnd},
+        {.Part = "campaign.inventory", .Read = &MCLogistics::ReadCampaignBlocks},
+    }};
+    return Steps;
+}
+
+auto MCLogistics::EndCampaignRead(MCCampaignReading& reading) -> int32_t
+{
+    reading.Finished = true;
+
+    if (reading.Result != 0)
     {
         // Port fix: a refused save had emptied the lists (and taken its mission number, if it got that far), and the
         // campaign stayed open: the main menu's RETURN TO GAME showed the screens over the emptied lists, where a mech
         // whose pilot was gone, the shop never read, or the mission start's save crashed, and SAVE GAME saved them.
         // With no campaign, both wait for the next load.
-        SDL_Log("MCLogistics: %.*s%.*s refused (%d); no campaign loaded", static_cast<int>(saveName.size()),
-                saveName.data(), static_cast<int>(extension.size()), extension.data(), result);
+        SDL_Log("MCLogistics: %s%s refused (%d); no campaign loaded", reading.SaveName.c_str(),
+                reading.Extension.c_str(), reading.Result);
         CurrentMission = -1;
-        MCTelemetry::LoadRefused(read);
+        MCTelemetry::LoadRefused(reading.Read);
     }
 
-    return result;
+    return reading.Result;
 }
 
-auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce,
-                               MCTelemetry::MCRefusedLoad& read) -> int32_t
+auto MCLogistics::ReadCampaignPalette(MCCampaignReading&) -> int32_t
 {
     // Port-only (Redux HD): what's kept across missions, from the files this game reads now (a match or not).
     LoadComponentListIfSwitched();
     ReadKeptTablesIfSwitched();
-    using MCTelemetry::MCLoadRefusal;
-    MCPacketFile packetFile;
-    MCFitIniFile file;
-    bool quickStart = false;
     MCDeploy::SetLocked(false);
     GuiSystem().ActivatePaletteFromTga(ArtPath + "logart\\lsrupm05.tga");
+
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignStart(MCCampaignReading& reading) -> int32_t
+{
+    using MCTelemetry::MCLoadRefusal;
+    const std::string_view saveName = reading.SaveName;
+    const std::string_view extension = reading.Extension;
+    const bool newCampaign = reading.NewCampaign;
+    MCTelemetry::MCRefusedLoad& read = reading.Read;
+    MCPacketFile& packetFile = reading.PacketFile;
+    MCFitIniFile& file = reading.File;
+    bool& quickStart = reading.QuickStart;
+    int32_t& savedMission = reading.SavedMission;
 
     // Start from empty lists and inventories.
     MechList->Clear();
@@ -456,7 +600,7 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
     }
 
     RepairScreen->ClearSelection();
-    int32_t savedMission = 0;
+    savedMission = 0;
 
     if (MultiPlayer() == nullptr)
     {
@@ -509,7 +653,15 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
         }
     }
 
-    if (MultiPlayer() == nullptr && !quickStart)
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignForce(MCCampaignReading& reading) -> int32_t
+{
+    MCPacketFile& packetFile = reading.PacketFile;
+    MCFitIniFile& file = reading.File;
+
+    if (MultiPlayer() == nullptr && !reading.QuickStart)
     {
         // The force: unassigned then assigned entries of each kind, numbered on from the unassigned ones. An entry
         // names a profile or a packet of this save.
@@ -528,9 +680,21 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
             " could not find warrior Data ",
             [&](const std::string& profile) { WarriorList->AddWarrior(profile, true); },
             [&](int32_t packet) { AssignedWarriorList->AddWarrior(packetFile, packet, false); });
+    }
 
-        // Port fix: a unit entry asking for more copies than MostCopies refuses the save (none of them made).
-        bool tooManyCopies = false;
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignMechs(MCCampaignReading& reading) -> int32_t
+{
+    MCPacketFile& packetFile = reading.PacketFile;
+    MCFitIniFile& file = reading.File;
+    bool& tooManyCopies = reading.TooManyCopies;
+
+    if (MultiPlayer() == nullptr && !reading.QuickStart)
+    {
+        // Port fix: a unit entry asking for more copies than MostCopies refuses the save (none of them made, once its
+        // vehicles are read).
         const uint32_t numMechs = ReadForceCount(file, "Mechs", "NumMechs", " could not read mech count ");
         ReadForceEntries(
             file, "Mech", 0, numMechs, " could not find mech block ", " could not find Mech Data ",
@@ -556,7 +720,24 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
             " could not find Mech Data ",
             [&](const std::string& profile) { MechList->AddMech(profile, false, true, true); },
             [&](int32_t packet) { ForceMechList->AddMech(packetFile, packet); });
+    }
 
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignVehicles(MCCampaignReading& reading) -> int32_t
+{
+    using MCTelemetry::MCLoadRefusal;
+    const bool newCampaign = reading.NewCampaign;
+    const bool loadForce = reading.LoadForce;
+    MCTelemetry::MCRefusedLoad& read = reading.Read;
+    MCPacketFile& packetFile = reading.PacketFile;
+    MCFitIniFile& file = reading.File;
+    bool& tooManyCopies = reading.TooManyCopies;
+    int32_t result = 0;
+
+    if (MultiPlayer() == nullptr && !reading.QuickStart)
+    {
         const uint32_t numVehicles = ReadForceCount(file, "Vehicles", "NumVehicles", " could not read vehicle count ");
         ReadForceEntries(
             file, "Vehicle", 0, numVehicles, " could not find Vehicle block ", " could not find vehicle Data ",
@@ -604,6 +785,16 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
             return Refused(read, MCLoadRefusal::Other, READ_ERR);
         }
     }
+
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignComponents(MCCampaignReading& reading) -> int32_t
+{
+    using MCTelemetry::MCLoadRefusal;
+    MCTelemetry::MCRefusedLoad& read = reading.Read;
+    MCFitIniFile& file = reading.File;
+    int32_t result = 0;
 
     // Every component the game knows (allcomp.fit), with no copies.
     {
@@ -678,6 +869,19 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
             }
         }
     }
+
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignMission(MCCampaignReading& reading) -> int32_t
+{
+    using MCTelemetry::MCLoadRefusal;
+    const bool newCampaign = reading.NewCampaign;
+    const bool loadForce = reading.LoadForce;
+    MCTelemetry::MCRefusedLoad& read = reading.Read;
+    MCFitIniFile& file = reading.File;
+    int32_t& savedMission = reading.SavedMission;
+    int32_t result = 0;
 
     // Time passes between missions: the pilots heal.
     if (!newCampaign && !loadForce)
@@ -855,6 +1059,14 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
         resultFile.Close();
     }
 
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignShop(MCCampaignReading& reading) -> int32_t
+{
+    MCPacketFile& packetFile = reading.PacketFile;
+    int32_t result = 0;
+
     if (MultiPlayer() == nullptr)
     {
         // The purchase options of this point in the campaign, and an automatic save when a new mission starts.
@@ -863,55 +1075,95 @@ auto MCLogistics::ReadCampaign(std::string_view saveName, std::string_view exten
         Assert(result == 0, 0, " could not open master mission file ");
         result = masterFile.SeekBlock("OpInfo");
         Assert(result == 0, 0, " could not find operation information in master mission file");
-        const auto operationNumber =
+        reading.OperationNumber =
             ReadRequired<int32_t>(masterFile, std::format("Scenario{}Operation", LastLogisticsMissionState),
                                   " could not find operation number in master mission file ");
-        const auto missionNumber =
+        reading.MissionNumber =
             ReadRequired<int32_t>(masterFile, std::format("Scenario{}Mission", LastLogisticsMissionState),
                                   " could not find mission number in master mission file ");
-        const std::string oldPurchaseFile = SetUpCampaignPurchasing(PurchaseFile, packetFile);
-
-        if (LastLogisticsMissionState < CurrentMission && !loadForce)
-        {
-            SetUpOldPurchasing(oldPurchaseFile);
-            // "Operation %d Mission %d" (a printf format from the string table).
-            const std::string format = LoadGameString(CurPlanet == 0 ? 0x37a : 0x386, 199);
-            SaveCampaign(MCFormatPrintf(format.c_str(), operationNumber, missionNumber));
-        }
-
-        // Killed pilots leave the roster and can't be hired again.
-        for (int32_t index = 0; index < WarriorList->GetWarriorCount();)
-        {
-            std::shared_ptr<MCLogWarrior> pilot;
-            WarriorList->GetWarriorInfo(index, pilot);
-
-            if (pilot == nullptr || pilot->WarriorStatus != MCLogWarrior::StatusKilled)
-            {
-                index++;
-                continue;
-            }
-
-            const int32_t descIndex = pilot->DescIndex;
-
-            // Original behaviour (OB-098): the pilot is removed by its id compared as a byte. Port fix: an id
-            // the byte doesn't hold (256 or more) found no pilot, and the scan began again for ever; it moves on.
-            if (WarriorList->RemoveWarrior(static_cast<uint8_t>(pilot->Id)) != 0)
-            {
-                index++;
-                continue;
-            }
-
-            PurPilotList->SetPilotStatus(descIndex, 2);
-            index = 0;
-        }
-
-        MCPurchaseScreen::CreatePurVehiclePane(false);
+        reading.Shop = BeginCampaignShop(PurchaseFile, packetFile);
     }
     else
     {
         SetUpMPPurchasing(PurchaseFile);
         MCPurchaseScreen::CreatePurVehiclePane(false);
     }
+
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignShopMechs(MCCampaignReading& reading) -> int32_t
+{
+    if (reading.Shop != nullptr)
+    {
+        reading.Again = ReadShopMechs(*reading.Shop);
+    }
+
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignShopGoods(MCCampaignReading& reading) -> int32_t
+{
+    if (reading.Shop != nullptr)
+    {
+        ReadShopGoods(*reading.Shop);
+    }
+
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignShopEnd(MCCampaignReading& reading) -> int32_t
+{
+    if (reading.Shop == nullptr)
+    {
+        return 0;
+    }
+
+    const bool loadForce = reading.LoadForce;
+    const std::string oldPurchaseFile = EndCampaignShop(*reading.Shop);
+    reading.Shop.reset();
+
+    if (LastLogisticsMissionState < CurrentMission && !loadForce)
+    {
+        SetUpOldPurchasing(oldPurchaseFile);
+        // "Operation %d Mission %d" (a printf format from the string table).
+        const std::string format = LoadGameString(CurPlanet == 0 ? 0x37a : 0x386, 199);
+        SaveCampaign(MCFormatPrintf(format.c_str(), reading.OperationNumber, reading.MissionNumber));
+    }
+
+    // Killed pilots leave the roster and can't be hired again.
+    for (int32_t index = 0; index < WarriorList->GetWarriorCount();)
+    {
+        std::shared_ptr<MCLogWarrior> pilot;
+        WarriorList->GetWarriorInfo(index, pilot);
+
+        if (pilot == nullptr || pilot->WarriorStatus != MCLogWarrior::StatusKilled)
+        {
+            index++;
+            continue;
+        }
+
+        const int32_t descIndex = pilot->DescIndex;
+
+        // Original behaviour (OB-098): the pilot is removed by its id compared as a byte. Port fix: an id
+        // the byte doesn't hold (256 or more) found no pilot, and the scan began again for ever; it moves on.
+        if (WarriorList->RemoveWarrior(static_cast<uint8_t>(pilot->Id)) != 0)
+        {
+            index++;
+            continue;
+        }
+
+        PurPilotList->SetPilotStatus(descIndex, 2);
+        index = 0;
+    }
+
+    MCPurchaseScreen::CreatePurVehiclePane(false);
+    return 0;
+}
+
+auto MCLogistics::ReadCampaignBlocks(MCCampaignReading& reading) -> int32_t
+{
+    MCPacketFile& packetFile = reading.PacketFile;
 
     packetFile.Close();
     MCLogInvScreen& screen = *RepairScreen;

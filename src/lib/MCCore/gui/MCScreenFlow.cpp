@@ -313,9 +313,10 @@ auto MCScreenFlow::Change(std::string name, std::function<void()> work, std::vec
         Noted();
     };
 
-    // A change's own work (dark already, or its job), or nothing shown: at once.
+    // A change's own work (dark already, or its job), or nothing shown: at once, what it would prepare first.
     if (MCScreenChange::InPiece())
     {
+        MCScreenChange::RunPieces(prepare);
         noted();
         return;
     }

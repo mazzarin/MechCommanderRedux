@@ -51,6 +51,13 @@ namespace
     uint64_t Generation = 0;
     /// <summary>Whether <see cref="MCScreenChange::Tend"/> runs a piece (one that draws frames of its own runs no other).</summary>
     bool Tending = false;
+    /// <summary>
+    /// Where <see cref="MCScreenChange::RunNext"/> puts the pieces asked for: the pieces RunPieces runs after the one
+    /// running; none while a change's own piece runs (they go into its list, after it).
+    /// </summary>
+    std::vector<MCScreenChange::MCPiece>* RunNextInto = nullptr;
+    /// <summary>Whether the change's own piece running is one of its job's (else its dark work's).</summary>
+    bool RunningJob = false;
     /// <summary>The last change to end: its name and its press (for a change carrying on from it).</summary>
     std::string LastName;
     uint64_t LastPressed = 0;
@@ -155,9 +162,12 @@ namespace
         piece.Run = nullptr;
         const std::string_view part = piece.Part;
         const uint64_t generation = Generation;
+        std::vector<MCPiece>* const into = std::exchange(RunNextInto, nullptr);
+        RunningJob = job;
         Tending = true;
         RunInPart(part, run);
         Tending = false;
+        RunNextInto = into;
 
         if (generation != Generation)
         {
@@ -292,11 +302,16 @@ auto MCScreenChange::Tend() -> void
         MCRan ran = MCRan::Done;
 
         // At least one piece a frame: a slow one gets a frame of its own, so the screen is never held long between them.
-        // A wait not over leaves the rest for the next frame.
+        // Another starts only while one as long as the last still fits in the budget. A wait not over leaves the rest for
+        // the next frame.
+        double last = 0.0;
+
         do
         {
+            const double before = GameMsSince(started);
             ran = RunNextPiece();
-        } while (ran == MCRan::Done && PiecesLeft() && GameMsSince(started) < FrameBudgetMs);
+            last = GameMsSince(started) - before;
+        } while (ran == MCRan::Done && PiecesLeft() && GameMsSince(started) + last < FrameBudgetMs);
 
         if (ran != MCRan::Done || PiecesLeft())
         {
@@ -331,10 +346,13 @@ auto MCScreenChange::Tend() -> void
 auto MCScreenChange::RunPieces(std::span<const MCPiece> pieces) -> void
 {
     const bool tending = Tending;
+    std::vector<MCPiece>* const into = RunNextInto;
     Tending = true;
 
     for (const MCPiece& piece : pieces)
     {
+        std::vector<MCPiece> next;
+        RunNextInto = &next;
         RunInPart(piece.Part, piece.Run);
 
         // A wait done without a change: asked until it's over (nothing else to draw meanwhile).
@@ -342,6 +360,9 @@ auto MCScreenChange::RunPieces(std::span<const MCPiece> pieces) -> void
         {
             SDL_Delay(1);
         }
+
+        RunNextInto = into;
+        RunPieces(next);
     }
 
     Tending = tending;
@@ -370,6 +391,27 @@ auto MCScreenChange::JobDone() -> bool
 auto MCScreenChange::InPiece() -> bool
 {
     return Tending;
+}
+
+auto MCScreenChange::RunNext(std::vector<MCPiece> pieces) -> void
+{
+    if (RunNextInto != nullptr)
+    {
+        std::ranges::move(pieces, std::back_inserter(*RunNextInto));
+        return;
+    }
+
+    if (!Tending || Current.Phase == MCPhase::None)
+    {
+        RunPieces(pieces);
+        return;
+    }
+
+    // After the piece running, in its list.
+    std::vector<MCPiece>& list = RunningJob ? Current.Change.Job : Current.Change.Dark;
+    const size_t after = (RunningJob ? Current.NextJob : Current.NextDark) + 1;
+    list.insert(list.begin() + static_cast<std::ptrdiff_t>(std::min(after, list.size())),
+                std::make_move_iterator(pieces.begin()), std::make_move_iterator(pieces.end()));
 }
 
 auto MCScreenChange::Running() -> bool

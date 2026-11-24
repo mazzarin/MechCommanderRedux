@@ -1301,7 +1301,9 @@ namespace
 
 auto MCLogistics::ScreensSlidIn() const -> std::vector<MCGuiHandle<MCLogInvScreen>>
 {
-    if (CurrentScreen() == nullptr || CurrentScreen() != BriefingScreen)
+    // Port-only (SPEC-menus.md's stage 8): none under the remade campaign screen, whose PURCHASING and 'MECH BAY are its
+    // own tabs (logistics/MCLogisticsTabs): the 1998 screens never slide in from it.
+    if (CurrentScreen() == nullptr || CurrentScreen() != BriefingScreen || MCCampaignMenu::Shown())
     {
         return {};
     }
@@ -1663,26 +1665,6 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 
     MCBriefingScreen& briefing = *BriefingScreen;
     ShowTickerOn(briefing);
-    // The 1998 briefing's own pictures (its deploy pane's blocks and slots, its unit box, its panes, its tonnage bar,
-    // its screen buttons), made only where it shows.
-    const auto setUpPictures = [this, &briefing]
-    {
-        briefing.SetUpDeploy();
-        briefing.MissionPane->SetScrollPos(0.0f);
-        briefing.DeployPane->SetScrollPos(0.0f);
-        briefing.DrawTonnageBar();
-        DrawScreenButtons();
-
-        // Show the briefing box of the first unit in the deploy pane (none: the box area is blank).
-        if (!briefing.DeployUnits.empty())
-        {
-            briefing.ShowBriefing(briefing.DeployUnits.front());
-        }
-        else
-        {
-            briefing.HideBriefing();
-        }
-    };
 
     // The original blanked the local player's empty drop slots here (the screen draws them each frame), then the box
     // area under them (the box is shown again below).
@@ -1723,6 +1705,21 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
     {
         briefing.ShowGuiWindow(false);
 
+        // Port-only: in a change's piece, the remade screen set up, laid out and shown in pieces of their own, after
+        // this one.
+        if (MCScreenChange::InPiece() && !animate)
+        {
+            MCScreenChange::RunNext(MCCampaignMenu::ShowPieces(
+                [logistics = weak_from_this()]
+                {
+                    if (const std::shared_ptr<MCLogistics> shown = logistics.lock(); shown != nullptr)
+                    {
+                        shown->ShowOldBriefing();
+                    }
+                }));
+            return 0;
+        }
+
         if (MCCampaignMenu::Show())
         {
             return 0;
@@ -1732,7 +1729,7 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
         briefing.ShowGuiWindow(true);
     }
 
-    setUpPictures();
+    SetUpBriefingPictures();
 
     if (animate)
     {
@@ -1742,6 +1739,33 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
     }
 
     return 0;
+}
+
+auto MCLogistics::SetUpBriefingPictures() -> void
+{
+    MCBriefingScreen& briefing = *BriefingScreen;
+    briefing.SetUpDeploy();
+    briefing.MissionPane->SetScrollPos(0.0f);
+    briefing.DeployPane->SetScrollPos(0.0f);
+    briefing.DrawTonnageBar();
+    DrawScreenButtons();
+
+    // Show the briefing box of the first unit in the deploy pane (none: the box area is blank).
+    if (!briefing.DeployUnits.empty())
+    {
+        briefing.ShowBriefing(briefing.DeployUnits.front());
+    }
+    else
+    {
+        briefing.HideBriefing();
+    }
+}
+
+auto MCLogistics::ShowOldBriefing() -> void
+{
+    // The remade screen can't show (the log says why): the 1998 briefing's.
+    BriefingScreen->ShowGuiWindow(true);
+    SetUpBriefingPictures();
 }
 
 auto MCLogistics::SetUpSessionScreen() -> int32_t

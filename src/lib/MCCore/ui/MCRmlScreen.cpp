@@ -4,13 +4,19 @@
 #include "ui/MCRmlLayer.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/FileInterface.h>
 #include <RmlUi/Core/Input.h>
 
 namespace
 {
+    /// <summary>A document's head's end, and the body put after it for a document of its head alone.</summary>
+    constexpr std::string_view HeadEnd = "</head>";
+    constexpr std::string_view EmptyBody = "<body/></rml>";
+
     /// <summary>The hint line's part for the screen's keys (ui/look.rcss).</summary>
     constexpr const char* KeysClass = "keys";
     /// <summary>An element the focus goes to first when the screen shows (the look's convention).</summary>
@@ -90,6 +96,41 @@ MCOptionalRef<Rml::ElementDocument> MCRmlScreen::Document() const
     return _Document != nullptr ? MCOptionalRef<Rml::ElementDocument>(*_Document) : std::nullopt;
 }
 
+void MCRmlScreen::ReadStyle()
+{
+    if (_Destroyed || _Document != nullptr || !_Error.empty())
+    {
+        return;
+    }
+
+    // The document read, and its style sheets into RmlUi's cache, which its read then finds: its head alone read as a
+    // document of its own, closed at once (a quarter of a large screen's first read: the briefing's four sheets, 2.9 of
+    // 12.3 ms on the M4 Pro).
+    Rml::FileInterface* const files = Rml::GetFileInterface();
+    const Rml::FileHandle file = files != nullptr ? files->Open(_Path) : 0;
+
+    if (file == 0)
+    {
+        Unreadable();
+        return;
+    }
+
+    _Text.assign(files->Length(file), '\0');
+    _Text.resize(files->Read(_Text.data(), _Text.size(), file));
+    files->Close(file);
+
+    if (const size_t head = _Text.find(HeadEnd); head != std::string::npos)
+    {
+        std::string text = _Text.substr(0, head + HeadEnd.size());
+        text += EmptyBody;
+
+        if (Rml::ElementDocument* const style = Layer().Context().LoadDocumentFromMemory(text, _Path); style != nullptr)
+        {
+            style->Close();
+        }
+    }
+}
+
 void MCRmlScreen::Read()
 {
     if (_Destroyed || _Document != nullptr || !_Error.empty())
@@ -99,11 +140,13 @@ void MCRmlScreen::Read()
 
     Rml::Context& context = Layer().Context();
     MakeModels(context);
-    _Document = context.LoadDocument(_Path);
+    _Document = _Text.empty() ? context.LoadDocument(_Path) : context.LoadDocumentFromMemory(_Text, _Path);
+    _Text.clear();
+    _Text.shrink_to_fit();
 
     if (_Document == nullptr)
     {
-        _Error = std::format("the menus' document {} can't be read (the log says why)", _Path);
+        Unreadable();
         return;
     }
 
@@ -111,6 +154,11 @@ void MCRmlScreen::Read()
     _Document->Hide();
     Layer().Kit().Attach(*_Document);
     OnLoaded(*_Document);
+}
+
+void MCRmlScreen::Unreadable()
+{
+    _Error = std::format("the menus' document {} can't be read (the log says why)", _Path);
 }
 
 void MCRmlScreen::LayOut()
@@ -143,6 +191,7 @@ std::vector<MCScreenChange::MCPiece> MCRmlScreen::Prepare()
     };
 
     return {
+        MCScreenChange::MCPiece{.Part = "menus.style", .Run = step(&MCRmlScreen::ReadStyle)},
         MCScreenChange::MCPiece{.Part = "menus.read", .Run = step(&MCRmlScreen::Read)},
         MCScreenChange::MCPiece{.Part = "menus.layout", .Run = step(&MCRmlScreen::LayOut)},
         MCScreenChange::MCPiece{.Part = "menus.record", .Run = step(&MCRmlScreen::Record)},

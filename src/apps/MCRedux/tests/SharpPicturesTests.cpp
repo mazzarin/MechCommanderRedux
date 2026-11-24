@@ -54,6 +54,11 @@ namespace
     constexpr float FrameSeconds = 1.0f / 15.0f;
     /// <summary>Frames that settle a screen change's wipe.</summary>
     constexpr int32_t SettleFrames = 30;
+    /// <summary>
+    /// The rehearsals a fade into the remade briefing runs: the screen's alone, as no 1998 screen slides in from it (its
+    /// PURCHASING and 'MECH BAY are its own tabs).
+    /// </summary>
+    constexpr size_t RemadeBriefingRehearsals = 1;
 
     /// <summary>
     /// The picture made ahead under <paramref name="key"/>, redrawn from <paramref name="columns"/> x
@@ -684,9 +689,9 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
     CHECK(MCFilesAhead::TakenCount() - taken >= noted / 2);
     CHECK_EQ(MCFilesAhead::HeldCount(), 0u);
 
-    // After the work, the fade did what a fade into the briefing does: the briefing rehearsed and the two screens a
-    // slide from it brings in readied. The next frame's fade, from black, does none of it again.
-    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn * MCLogistics::InventoryTabs);
+    // After the work, the fade did what a fade into the briefing does: the briefing rehearsed (no 1998 screen slides in
+    // from the remade one). The next frame's fade, from black, does none of it again.
+    CHECK_EQ(RehearsalsRun() - rehearsed, RemadeBriefingRehearsals);
     const size_t closed = RehearsalsRun();
     MCTestGame::RunFrame(FrameSeconds);
     CHECK_EQ(RehearsalsRun(), closed);
@@ -695,8 +700,8 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
 
 /// <summary>
 /// Port-only (SPEC-menus.md's stage 2): NEW CAMPAIGN's click is a change of screen through the flow: the main menu fades
-/// out live from the click, the campaign starts (its load, the briefing's set-up) once the screen is black, then what a
-/// fade into the briefing does, and the briefing fades in; its next frame does none of it again.
+/// out live from the click while the campaign loads, a step a frame; the briefing is set up once the screen is black,
+/// then what a fade into the briefing does, and the briefing fades in; its next frame does none of it again.
 /// </summary>
 TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its click, once the screen is black")
 {
@@ -729,13 +734,13 @@ TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its 
     const auto firstStarted = std::ranges::find_if(shown, &MCShown::Started);
     REQUIRE(firstStarted != shown.end());
     REQUIRE(firstStarted != shown.begin());
-    // The main menu shown fading before the work, which waited for black.
+    // The main menu shown fading before the briefing's set-up, which waited for black.
     CHECK(std::ranges::any_of(shown.begin(), firstStarted,
                               [](const MCShown& at) { return at.Fade > 0 && at.Fade < MCScreenChange::Black; }));
     CHECK_EQ(std::prev(firstStarted)->Fade, MCScreenChange::Black);
     CHECK_EQ(shown.back().Fade, 0);
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
-    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn * MCLogistics::InventoryTabs);
+    CHECK_EQ(RehearsalsRun() - rehearsed, RemadeBriefingRehearsals);
     const size_t started = RehearsalsRun();
     MCTestGame::RunFrame(FrameSeconds);
     CHECK_EQ(RehearsalsRun(), started);
@@ -744,8 +749,8 @@ TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its 
 
 /// <summary>
 /// Port-only: a fade into a screen (a new palette for the next frame, as a campaign's load sets) rehearses it and
-/// readies the screens a slide from it brings in once the screen is nearly black, where a piece's longer step can't be
-/// seen.
+/// readies the screens a slide from it brings in (none from the remade briefing) once the screen is nearly black, where
+/// a piece's longer step can't be seen.
 /// </summary>
 TEST_CASE_ISOLATED("game: a fade into a screen rehearses it once the screen is nearly black")
 {
@@ -781,7 +786,7 @@ TEST_CASE_ISOLATED("game: a fade into a screen rehearses it once the screen is n
     REQUIRE(firstRehearsed != shown.end());
     REQUIRE(firstRehearsed != shown.begin());
     CHECK(std::prev(firstRehearsed)->Fade >= MCGuiSystem::FadeNearBlack);
-    CHECK_EQ(RehearsalsRun() - rehearsed, 1 + MCLogistics::MostScreensSlidIn * MCLogistics::InventoryTabs);
+    CHECK_EQ(RehearsalsRun() - rehearsed, RemadeBriefingRehearsals);
     GHdArt = 0;
 }
 

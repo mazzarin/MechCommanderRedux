@@ -356,10 +356,23 @@ namespace MCCampaignMenu
     bool Wanted();
 
     /// <summary>
+    /// For the job of a change into the campaign's screens, from its press: the screen's document read and laid out
+    /// (MCRmlFlow::ReadAhead), so <see cref="Show"/> once the screen is dark finds it ready; none when it isn't wanted or
+    /// is read already.
+    /// </summary>
+    std::vector<MCScreenChange::MCPiece> Ahead();
+
+    /// <summary>
     /// The screen shown over the 1998 briefing, set up for the mission now: on BRIEFING, or the tab it was left on when
     /// the 1998 PURCHASING or 'MECH BAY's BRIEFING button comes back (<see cref="ComeBack"/>); false when it can't show.
     /// </summary>
     bool Show();
+
+    /// <summary>
+    /// Port-only, for a change's dark: <see cref="Show"/> as pieces (the screen set up, laid out, shown), each a frame of
+    /// its own; <paramref name="otherwise"/> when it can't show.
+    /// </summary>
+    std::vector<MCScreenChange::MCPiece> ShowPieces(std::function<void()> otherwise);
 
     /// <summary>
     /// The next <see cref="Show"/> is the way back to the screen (from the 1998 PURCHASING or 'MECH BAY, the main menu's

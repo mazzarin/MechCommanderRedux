@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCMainMenuScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCQuestionWindow.h"
@@ -523,27 +524,33 @@ void MCMainMenuScreen::ReleaseCount()
 void MCMainMenuScreen::Play(std::string name, bool campaign, std::string change)
 {
     const std::weak_ptr<MCRmlScreen> self = weak_from_this();
-    MCScreenFlow::Change(std::move(change),
-                         [self, name = std::move(name), campaign]
-                         {
-                             const std::shared_ptr<MCRmlScreen> screen = self.lock();
+    // The save loaded live from the press, a step a frame (after the briefing's document); the briefing set up once dark.
+    MCSavedGameLoad load = MCMainMenuModel::Play(name, campaign);
+    std::vector<MCScreenChange::MCPiece> job = MCCampaignMenu::Ahead();
+    std::ranges::move(load.Job, std::back_inserter(job));
+    MCScreenFlow::Change(
+        std::move(change),
+        [self, name = std::move(name), result = std::move(load.Result)]
+        {
+            const std::shared_ptr<MCRmlScreen> screen = self.lock();
 
-                             if (screen == nullptr)
-                             {
-                                 return;
-                             }
+            if (screen == nullptr)
+            {
+                return;
+            }
 
-                             screen->Hide();
+            screen->Hide();
 
-                             if (MCMainMenuModel::Play(name, campaign))
-                             {
-                                 return;
-                             }
+            if (MCMainMenuModel::Played(name, *result))
+            {
+                return;
+            }
 
-                             // Refused: the panel again, saying so.
-                             screen->Show();
-                             MCRmlDialogs::Show(MCRmlDialog::MCSay{.Text = std::string(MCSavesMenu::RefusedText)});
-                         });
+            // Refused: the panel again, saying so.
+            screen->Show();
+            MCRmlDialogs::Show(MCRmlDialog::MCSay{.Text = std::string(MCSavesMenu::RefusedText)});
+        },
+        std::move(job));
 }
 
 void MCMainMenuScreen::Continue()
@@ -556,12 +563,14 @@ void MCMainMenuScreen::Continue()
 
 void MCMainMenuScreen::ReturnToGame()
 {
-    MCScreenFlow::Change("return to game",
-                         []
-                         {
-                             MCMainMenuScreens::HideAll();
-                             MCMainMenuModel::ReturnToGame();
-                         });
+    MCScreenFlow::Change(
+        "return to game",
+        []
+        {
+            MCMainMenuScreens::HideAll();
+            MCMainMenuModel::ReturnToGame();
+        },
+        MCCampaignMenu::Ahead());
 }
 
 void MCMainMenuScreen::Cinema()

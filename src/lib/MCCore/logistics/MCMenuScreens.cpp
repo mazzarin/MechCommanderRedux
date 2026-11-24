@@ -284,6 +284,7 @@ auto MCMenuScreens::Register() -> void
     };
 
     campaign.Ready = [] { return MCCampaignMenu::Ready(); };
+    campaign.Prepare = [] { return MCCampaignMenu::Ahead(); };
     Ids.Campaign = MCScreenFlow::Register(std::move(campaign));
     Ids.ReadyRoom = MCScreenFlow::Register(OldScreen(
         "ready room", [] { return LauncherScreenShown() || Showing(&MCLogistics::ConnectScreen); }, [] {},

@@ -5,6 +5,7 @@
 // force exchange.
 
 #include "gui/MCGuiRef.h"
+#include "gui/MCScreenChange.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogObject.h"
 #include "logistics/MCLogPort.h"
@@ -222,7 +223,7 @@ public:
     /// (<see cref="ReadyForSlide"/>, RehearseHidden), so the slide neither waits for them nor draws them first: from
     /// the briefing, the purchase screen (its store the most to make) then the repair screen; none from any other (they
     /// were readied on the way, and readying one while the other shows would scroll the inventory list shown: each tab
-    /// fills both screens'). At most <see cref="MostScreensSlidIn"/>. Each is readied at every inventory tab, the one
+    /// fills both screens'), nor from the remade campaign screen over the briefing (its tabs are its own). At most <see cref="MostScreensSlidIn"/>. Each is readied at every inventory tab, the one
     /// shown first, so a tab's first click finds its art loaded and its pictures on the GPU too.
     /// </summary>
     std::vector<MCGuiHandle<MCLogInvScreen>> ScreensSlidIn() const;
@@ -315,6 +316,27 @@ public:
     /// <returns>The current mission's purchase file.</returns>
     std::string SetUpCampaignPurchasing(std::string_view purchaseFile, MCPacketFile& file);
 
+    /// <summary>
+    /// Port-only: <see cref="SetUpCampaignPurchasing"/>'s reading as it goes, a part at a time (the campaign's load's
+    /// steps): the shop's packet open, how far its mechs are read.
+    /// </summary>
+    struct MCShopReading;
+
+    /// <summary>
+    /// <see cref="SetUpCampaignPurchasing"/> begun: the costs, the cinemas and the operation's picture read, the shop
+    /// emptied and its packet in <paramref name="file"/> opened, its gifts given.
+    /// </summary>
+    std::shared_ptr<MCShopReading> BeginCampaignShop(std::string_view purchaseFile, MCPacketFile& file);
+
+    /// <summary>A slice of the shop's mechs read (at least one, while any are left); whether any are left.</summary>
+    bool ReadShopMechs(MCShopReading& shop);
+
+    /// <summary>The shop's vehicles and components read.</summary>
+    void ReadShopGoods(MCShopReading& shop);
+
+    /// <summary>The rest of the shop read (its pilots): the current mission's purchase file.</summary>
+    std::string EndCampaignShop(MCShopReading& shop);
+
     /// <summary>Sets up what can be bought in a multiplayer game.</summary>
     void SetUpMPPurchasing(std::string_view purchaseFile);
 
@@ -326,9 +348,6 @@ public:
     /// mechs for sale (their price lowered by theirs), and the vehicles carrying one not sold.
     /// </summary>
     void HideBannedWeapons(uint32_t bans) const;
-
-    /// <summary>Sets up what can be bought from a campaign's purchase packet (its last).</summary>
-    void SetUpPurchasing(MCPacketFile& file);
 
     /// <summary>Changes what can be bought by an old-style purchase file (counts added to the shop's).</summary>
     void SetUpOldPurchasing(std::string_view purchaseFile) const;
@@ -445,6 +464,17 @@ public:
     /// why it was refused (MCTelemetry::LoadRefused).
     /// </summary>
     int32_t LoadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce);
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's changes of screen): <see cref="LoadCampaign"/> as a change's pieces, one a step of its
+    /// reading (the palette, the save, the force, the components, the mission, the shop, the inventory), for the job of
+    /// a change from its press, so no frame holds the whole load. After the last, <paramref name="result"/> holds
+    /// LoadCampaign's result; a refusal skips the steps after it. Dropped before the end (the change called off), it
+    /// leaves no campaign, as a refusal does.
+    /// </summary>
+    std::vector<MCScreenChange::MCPiece> LoadCampaignPieces(std::string_view saveName, std::string_view extension,
+                                                            bool newCampaign, bool loadForce,
+                                                            const std::shared_ptr<int32_t>& result);
 
     /// <summary>Writes the deployed force into the mission's start file <paramref name="startFile"/> and the profiles.</summary>
     int32_t PrepareScenario(std::string_view scenarioName, std::string_view startFile);
@@ -797,11 +827,57 @@ public:
 
 private:
     /// <summary>
-    /// <see cref="LoadCampaign"/>'s reading: empties the lists, then reads the save into them, noting in
-    /// <paramref name="read"/> what it read of the file and, when it refuses it, why.
+    /// A campaign's load as it goes, from one step of <see cref="LoadCampaign"/>'s reading to the next: the save named,
+    /// its files open, what it read of the file and, when it refuses it, why (for the reports).
     /// </summary>
-    int32_t ReadCampaign(std::string_view saveName, std::string_view extension, bool newCampaign, bool loadForce,
-                         MCTelemetry::MCRefusedLoad& read);
+    struct MCCampaignReading;
+
+    /// <summary>
+    /// A step of <see cref="LoadCampaign"/>'s reading: its frame log part, and its reading (0, or the refusal), run again
+    /// while it leaves more to do (MCCampaignReading's Again).
+    /// </summary>
+    struct MCCampaignStep
+    {
+        std::string_view Part;
+        int32_t (MCLogistics::*Read)(MCCampaignReading& reading);
+    };
+
+    /// <summary>
+    /// The 1998 briefing's own pictures (its deploy pane's blocks and slots, its unit box, its panes, its tonnage bar,
+    /// its screen buttons), made only where it shows.
+    /// </summary>
+    void SetUpBriefingPictures();
+
+    /// <summary>The 1998 briefing shown with its pictures, where the remade one can't show.</summary>
+    void ShowOldBriefing();
+
+    /// <summary>The steps of <see cref="LoadCampaign"/>'s reading, in order.</summary>
+    static std::span<const MCCampaignStep> CampaignSteps();
+
+    /// <summary>The steps: the palette and the tables kept across missions.</summary>
+    int32_t ReadCampaignPalette(MCCampaignReading& reading);
+    /// <summary>The lists emptied, the save opened and its start read (the planet, the shop's file, the mission).</summary>
+    int32_t ReadCampaignStart(MCCampaignReading& reading);
+    /// <summary>The force's pilots, its mechs, its vehicles.</summary>
+    int32_t ReadCampaignForce(MCCampaignReading& reading);
+    int32_t ReadCampaignMechs(MCCampaignReading& reading);
+    int32_t ReadCampaignVehicles(MCCampaignReading& reading);
+    /// <summary>The components the game knows, and the save's.</summary>
+    int32_t ReadCampaignComponents(MCCampaignReading& reading);
+    /// <summary>The mission now, or the last mission's results applied.</summary>
+    int32_t ReadCampaignMission(MCCampaignReading& reading);
+    /// <summary>The shop of this point in the campaign begun (a match's read whole).</summary>
+    int32_t ReadCampaignShop(MCCampaignReading& reading);
+    /// <summary>A slice of the shop's mechs (the step runs again while any are left).</summary>
+    int32_t ReadCampaignShopMechs(MCCampaignReading& reading);
+    /// <summary>The shop's vehicles and components; then its pilots, the mission start's save, the killed pilots gone.</summary>
+    int32_t ReadCampaignShopGoods(MCCampaignReading& reading);
+    int32_t ReadCampaignShopEnd(MCCampaignReading& reading);
+    /// <summary>The inventory's blocks.</summary>
+    int32_t ReadCampaignBlocks(MCCampaignReading& reading);
+
+    /// <summary>The reading's end: a refusal leaves no campaign, and the reports say why. Its result.</summary>
+    int32_t EndCampaignRead(MCCampaignReading& reading);
 
     /// <summary>Set by <see cref="Start"/>: the destructor takes the screens and art down.</summary>
     bool _Started = false;

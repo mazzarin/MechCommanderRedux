@@ -1,5 +1,6 @@
 #pragma once
 
+#include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCSaves.h"
 
 #include <optional>
@@ -100,8 +101,14 @@ namespace MCMainMenuModel
     /// <summary>For the tests: whether MULTIPLAYER finds a network (none: it looks).</summary>
     void SetNetworkForTests(std::optional<bool> network);
 
-    /// <summary>The save <paramref name="name"/> loaded into its briefing (CONTINUE, a campaign's CONTINUE, PLAY); false refused.</summary>
-    bool Play(const std::string& name, bool campaign);
+    /// <summary>
+    /// The load of save <paramref name="name"/> into its briefing (CONTINUE, a campaign's CONTINUE, PLAY) begun, for its
+    /// change's job; <see cref="Played"/> ends it once the screen is dark.
+    /// </summary>
+    MCSavedGameLoad Play(const std::string& name, bool campaign);
+
+    /// <summary>The load of save <paramref name="name"/> ended with <paramref name="result"/>: false refused.</summary>
+    bool Played(const std::string& name, int32_t result);
 
     /// <summary>A campaign started anew (1998's NEW CAMPAIGN and the expansion's): Betty's line, then its first briefing.</summary>
     void NewCampaign(MCSaves::MCCampaign campaign);

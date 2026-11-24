@@ -130,6 +130,12 @@ namespace MCScreenChange
     /// <summary>Whether a change's piece runs now (Tend, or RunPieces): work a change does, not a press.</summary>
     bool InPiece();
 
+    /// <summary>
+    /// From a change's piece: <paramref name="pieces"/> run right after it, before the rest (a piece's work split, each
+    /// part in a frame's budget); from RunPieces' piece, after that one; with no piece running, at once.
+    /// </summary>
+    void RunNext(std::vector<MCPiece> pieces);
+
     /// <summary>Whether a change runs (from <see cref="Start"/> until the fade-in is over).</summary>
     bool Running();
 

@@ -15,6 +15,24 @@ namespace
     /// <summary>The longest AlphaPal.ini line read (the reader's limit: a longer line is cut, OB-135).</summary>
     constexpr int32_t AlphaPalLineLength = 0x100;
 
+    /// <summary>Port-only: what AlphaTable was last made from (InitAlphaLookup).</summary>
+    struct MCAlphaMadeFrom
+    {
+        std::array<MCVfxRgb, 256> Palette{};
+        std::array<uint8_t, AlphaColorCount> Special{};
+        std::array<MCAlphaColor, AlphaColorCount> Colors{};
+    };
+
+    /// <summary>Whether <paramref name="a"/> and <paramref name="b"/> make the same table: byte for byte, as read.</summary>
+    bool SameTable(const MCAlphaMadeFrom& a, const MCAlphaMadeFrom& b)
+    {
+        return std::memcmp(a.Palette.data(), b.Palette.data(), sizeof(a.Palette)) == 0 && a.Special == b.Special &&
+               std::memcmp(a.Colors.data(), b.Colors.data(), sizeof(a.Colors)) == 0;
+    }
+
+    /// <summary>What AlphaTable holds now (none before its first making).</summary>
+    std::optional<MCAlphaMadeFrom> TableMadeFrom;
+
     /// <summary>__ftol then the clamp to 0..255 InitAlphaLookup applies.</summary>
     int ClampComponent(double value)
     {
@@ -84,6 +102,18 @@ void InitAlphaLookup(std::span<const MCVfxRgb, 256> palette)
 {
     SpecialColor.fill(0);
     MCAlphaColors = ReadAlphaPal();
+
+    // Port-only: made again only from a palette or colours it doesn't hold already (nothing else writes it). Every
+    // logistics screen and campaign load gives the same palette, and the making took 5-9 ms of their frame on the M4 Pro.
+    MCAlphaMadeFrom from{.Special = SpecialColor, .Colors = MCAlphaColors};
+    std::ranges::copy(palette, from.Palette.begin());
+
+    if (TableMadeFrom.has_value() && SameTable(*TableMadeFrom, from))
+    {
+        return;
+    }
+
+    TableMadeFrom = from;
 
     // The x87 ran at 53-bit precision (the MSVC CRT default), so double arithmetic gives the same results.
     auto out = AlphaTable.begin();

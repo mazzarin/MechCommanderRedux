@@ -183,11 +183,15 @@ auto MCMainMenuModel::SetNetworkForTests(std::optional<bool> network) -> void
     NetworkForTests = network;
 }
 
-auto MCMainMenuModel::Play(const std::string& name, bool campaign) -> bool
+auto MCMainMenuModel::Play(const std::string& name, bool campaign) -> MCSavedGameLoad
 {
     LoadingSolo = false;
+    return LoadSavedGameAhead(name, campaign);
+}
 
-    if (LoadSavedGame(name, campaign))
+auto MCMainMenuModel::Played(const std::string& name, int32_t result) -> bool
+{
+    if (ShowSavedGame(result))
     {
         return true;
     }

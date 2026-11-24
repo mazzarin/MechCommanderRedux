@@ -665,7 +665,8 @@ namespace
     /// <summary>
     /// While it lives, the game's clock (the boot's manual one) keeps up with the real one: at each frame's start (its
     /// length, <see cref="Behind"/>) and again after the frame's callbacks, before it is drawn, so a frame drawn after
-    /// long work (a mission's load) shows the time it was drawn at, as in play, not the time the frame began.
+    /// long work (a mission's load) shows the time it was drawn at, as in play, not the time the frame began; and at
+    /// each read in between, so a change's pieces stop at its frame budget as in play (gui/MCScreenChange.h).
     /// </summary>
     class MCRealTime
     {
@@ -676,6 +677,7 @@ namespace
             _Clock.AdvanceOnPresent(false);
             _RealStart = Clock::now();
             _GameStart = _Clock.Nanoseconds();
+            _Clock.Follow([this] { return Target(); });
             _CatchUp->SetExec([this] { CatchUp(); });
             GuiSystem().AddCallback(_CatchUp);
         }
@@ -683,6 +685,7 @@ namespace
         ~MCRealTime()
         {
             GuiSystem().RemoveCallback(*_CatchUp);
+            _Clock.Follow(nullptr);
             _Clock.AdvanceOnPresent(true);
         }
 

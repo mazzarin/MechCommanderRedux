@@ -65,18 +65,17 @@ namespace MCRmlFlow
     bool Showing();
 
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 8): the screen <paramref name="handle"/> holds, made on the menus' layer if it
-    /// isn't (or was closed) and its document read and laid out at once, for a screen the game shows itself rather
-    /// than through a change (the briefing over the 1998 one, the loading screen); none when the menus can't start or
-    /// its document can't be read (the log says why, naming it <paramref name="what"/>).
+    /// The screen <paramref name="handle"/> holds, made on the menus' layer if it isn't (or was closed), its document not
+    /// read by this; none when the menus can't start or it can't be made (the log says why, naming it
+    /// <paramref name="what"/>).
     /// </summary>
-    template <class T> MCOptionalRef<T> MadeNow(MCGuiHandle<T>& handle, std::string_view what)
+    template <class T> std::shared_ptr<T> MadeOnLayer(MCGuiHandle<T>& handle, std::string_view what)
     {
         const MCOptionalRef<MCRmlMenus> menus = Menus();
 
         if (!menus.has_value())
         {
-            return std::nullopt;
+            return nullptr;
         }
 
         if (handle.Lock() == nullptr)
@@ -84,11 +83,29 @@ namespace MCRmlFlow
             handle = menus->get().Menus().template CreateChild<T>([](T&) {});
         }
 
-        const std::shared_ptr<T> screen = handle.Lock();
+        std::shared_ptr<T> screen = handle.Lock();
 
         if (screen == nullptr)
         {
             SDL_Log("Menus: %.*s couldn't be made", static_cast<int>(what.size()), what.data());
+        }
+
+        return screen;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 8): the screen <paramref name="handle"/> holds, made on the menus' layer if it
+    /// isn't (or was closed) and its document read and laid out at once if a change's job hasn't (<see cref="ReadAhead"/>),
+    /// for a screen the game shows itself rather than through a change (the briefing over the 1998 one, the loading
+    /// screen); none when the menus can't start or its document can't be read (the log says why, naming it
+    /// <paramref name="what"/>).
+    /// </summary>
+    template <class T> MCOptionalRef<T> MadeNow(MCGuiHandle<T>& handle, std::string_view what)
+    {
+        const std::shared_ptr<T> screen = MadeOnLayer(handle, what);
+
+        if (screen == nullptr)
+        {
             return std::nullopt;
         }
 
@@ -107,6 +124,18 @@ namespace MCRmlFlow
         }
 
         return *screen;
+    }
+
+    /// <summary>
+    /// The pieces that read and lay out the document of the screen <paramref name="handle"/> holds (made on the menus'
+    /// layer if it isn't), for the job of a change that shows it (<see cref="MadeNow"/>) once the screen is dark: run
+    /// live from the press, so the dark has none of it. None when it is read already, or can't be made.
+    /// </summary>
+    template <class T> std::vector<MCScreenChange::MCPiece> ReadAhead(MCGuiHandle<T>& handle, std::string_view what)
+    {
+        const std::shared_ptr<T> screen = MadeOnLayer(handle, what);
+        return screen != nullptr && !screen->Document().has_value() ? screen->Prepare()
+                                                                    : std::vector<MCScreenChange::MCPiece>{};
     }
 
     /// <summary>The screen <paramref name="handle"/> holds while it lives; none once closed.</summary>

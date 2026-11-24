@@ -22,6 +22,8 @@ namespace
 {
     /// <summary>The longest default save name (the original's 0x68-byte buffer).</summary>
     constexpr size_t MaxDefaultNameLength = 0x67;
+    /// <summary>A save's load result before its job has run (LoadCampaign's are 0 or its errors).</summary>
+    constexpr int32_t NotLoaded = -1;
 
     /// <summary>The file pane of the screen being shown (the load or save screen), or null.</summary>
     std::shared_ptr<MCFileScrollPane> ShownFilePane()
@@ -131,13 +133,30 @@ void LoadGame()
 
 bool LoadSavedGame(std::string_view name, bool campaign)
 {
-    std::string fileName(name);
-    SoundSystem()->StopDigitalMusic();
-    GlobalLog()->BriefingScreen->HideBriefing();
-    Solo = !campaign;
-    LastLogisticsMissionState = 0;
+    const MCSavedGameLoad load = LoadSavedGameAhead(name, campaign);
+    MCScreenChange::RunPieces(load.Job);
+    return ShowSavedGame(*load.Result);
+}
 
-    if (GlobalLog()->LoadCampaign(fileName, campaign ? ".sav" : ".sol", false, true) != 0)
+MCSavedGameLoad LoadSavedGameAhead(std::string_view name, bool campaign)
+{
+    MCSavedGameLoad load{.Result = std::make_shared<int32_t>(NotLoaded)};
+    load.Job.push_back({.Run = [campaign]
+                        {
+                            GlobalLog()->BriefingScreen->HideBriefing();
+                            Solo = !campaign;
+                            LastLogisticsMissionState = 0;
+                        }});
+    std::ranges::move(GlobalLog()->LoadCampaignPieces(name, campaign ? ".sav" : ".sol", false, true, load.Result),
+                      std::back_inserter(load.Job));
+    return load;
+}
+
+bool ShowSavedGame(int32_t result)
+{
+    SoundSystem()->StopDigitalMusic();
+
+    if (result != 0)
     {
         return false;
     }

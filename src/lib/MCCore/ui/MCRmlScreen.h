@@ -178,11 +178,16 @@ private:
     /// <summary>Hidden with the keys' focus still in it: the focus given to the screen now on top.</summary>
     void FocusBelow();
     /// <summary>The screen's steps (<see cref="Prepare"/>).</summary>
+    void ReadStyle();
     void Read();
     void LayOut();
     void Record();
+    /// <summary>The document can't be read (the log says why).</summary>
+    void Unreadable();
 
     std::string _Path;
+    /// <summary>The document's text, read with its style sheets for its read (empty once read).</summary>
+    std::string _Text;
     std::string _Error;
     /// <summary>The layer, which outlives its screens (it destroys them first).</summary>
     MCOptionalRef<MCRmlLayer> _Layer;

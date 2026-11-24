@@ -30,6 +30,24 @@ namespace
         int32_t NumGifts = 0;
     };
 
+    /// <summary>
+    /// The shop's Mech# blocks as their reading goes, last first: the next one's number (-1: none left), and the file
+    /// names and counts that carry over from block to block.
+    /// </summary>
+    struct MCMechBlocks
+    {
+        int32_t Next = -1;
+        std::string FileA;
+        std::string FileJ;
+        std::string FileW;
+        int32_t CountA = 0;
+        int32_t CountJ = 0;
+        int32_t CountW = 0;
+    };
+
+    /// <summary>How long a frame's slice of the shop's mechs may read (a mech is three profiles, about 1 ms on the M4 Pro).</summary>
+    constexpr double ShopMechsSliceMs = MCScreenChange::FrameBudgetMs / 2;
+
     /// <summary>Opens purchase file <paramref name="name"/><c>.fit</c> under <c>MissionPath</c>.</summary>
     void OpenPurchaseFile(MCFitIniFile& file, std::string_view name, std::string_view error)
     {
@@ -103,39 +121,41 @@ namespace
     }
 
     /// <summary>
-    /// Adds the Mech# blocks (last first) to the shop. A variant without a count has none; its file name carries
-    /// over from the block before, as the original's buffers did.
+    /// Adds the next Mech# block (<see cref="MCMechBlocks::Next"/>, counting down) to the shop. A variant without a count
+    /// has none; its file name carries over from the block before, as the original's buffers did.
     /// </summary>
+    void ReadMechBlock(MCFitIniFile& file, MCMechBlocks& blocks, MCPurMechList& mechs)
+    {
+        const int32_t result = file.SeekBlock(std::format("Mech{}", blocks.Next));
+        Assert(result == 0, 0, " could not find mech block in purchasing file ");
+        blocks.Next--;
+
+        if (ReadEntry(file, "TypeAAvailable", blocks.CountA))
+        {
+            ReadText(file, "TypeAFile", 9, blocks.FileA);
+        }
+
+        if (ReadEntry(file, "TypeJAvailable", blocks.CountJ))
+        {
+            ReadText(file, "TypeJFile", 9, blocks.FileJ);
+        }
+
+        if (ReadEntry(file, "TypeWAvailable", blocks.CountW))
+        {
+            ReadText(file, "TypeWFile", 9, blocks.FileW);
+        }
+
+        mechs.AddMech(blocks.FileA, blocks.CountA, blocks.FileJ, blocks.CountJ, blocks.FileW, blocks.CountW);
+    }
+
+    /// <summary>Adds the Mech# blocks (last first) to the shop (<see cref="ReadMechBlock"/>).</summary>
     void ReadPurchaseMechs(MCFitIniFile& file, int32_t numMechs, MCPurMechList& mechs)
     {
-        std::string fileA;
-        std::string fileJ;
-        std::string fileW;
-        int32_t countA = 0;
-        int32_t countJ = 0;
-        int32_t countW = 0;
+        MCMechBlocks blocks{.Next = numMechs - 1};
 
-        for (int32_t mech = numMechs - 1; mech >= 0; --mech)
+        while (blocks.Next >= 0)
         {
-            const int32_t result = file.SeekBlock(std::format("Mech{}", mech));
-            Assert(result == 0, 0, " could not find mech block in purchasing file ");
-
-            if (ReadEntry(file, "TypeAAvailable", countA))
-            {
-                ReadText(file, "TypeAFile", 9, fileA);
-            }
-
-            if (ReadEntry(file, "TypeJAvailable", countJ))
-            {
-                ReadText(file, "TypeJFile", 9, fileJ);
-            }
-
-            if (ReadEntry(file, "TypeWAvailable", countW))
-            {
-                ReadText(file, "TypeWFile", 9, fileW);
-            }
-
-            mechs.AddMech(fileA, countA, fileJ, countJ, fileW, countW);
+            ReadMechBlock(file, blocks, mechs);
         }
     }
 
@@ -228,7 +248,41 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>Replaces the shop's lists (mechs, vehicles, pilots, components) with new, empty ones.</summary>
+    void ResetShop(MCLogistics& logistics)
+    {
+        logistics.PurMechList = std::make_unique<MCPurMechList>();
+        logistics.PurVehicleList = std::make_unique<MCPurVehicleList>();
+        logistics.PurPilotList = std::make_unique<MCPurPilotList>();
+        logistics.PurchaseComponents = std::make_unique<MCInventoryList>();
+    }
+}
+
+struct MCLogistics::MCShopReading
+{
+    /// <summary>The shop's packet of the campaign file, open.</summary>
+    MCFitIniFile File;
+    MCPurchaseHeader Header;
+    MCMechBlocks Mechs;
+    /// <summary>The current mission's purchase file (SetUpCampaignPurchasing's result).</summary>
+    std::string MissionPurchaseFile;
+};
+
 auto MCLogistics::SetUpCampaignPurchasing(std::string_view purchaseFile, MCPacketFile& file) -> std::string
+{
+    const std::shared_ptr<MCShopReading> shop = BeginCampaignShop(purchaseFile, file);
+
+    while (ReadShopMechs(*shop))
+    {
+    }
+
+    ReadShopGoods(*shop);
+    return EndCampaignShop(*shop);
+}
+
+auto MCLogistics::BeginCampaignShop(std::string_view purchaseFile, MCPacketFile& file) -> std::shared_ptr<MCShopReading>
 {
     MCFitIniFile purchasing;
     OpenPurchaseFile(purchasing, purchaseFile, " could not open purchasing file ");
@@ -254,7 +308,8 @@ auto MCLogistics::SetUpCampaignPurchasing(std::string_view purchaseFile, MCPacke
 
     // Original behaviour: a missing Mission block leaves the block before it current.
     purchasing.SeekBlock(std::format("Mission{}", CurrentMission));
-    std::string missionPurchaseFile =
+    auto shop = std::make_shared<MCShopReading>();
+    shop->MissionPurchaseFile =
         ReadRequiredText(purchasing, "PurchaseFile", 0xf9, " could not read PurchaseFile in purchasing file");
 
     if (!ReadText(purchasing, "OperationCinema", 0x29, OperationCinema))
@@ -278,20 +333,76 @@ auto MCLogistics::SetUpCampaignPurchasing(std::string_view purchaseFile, MCPacke
     }
 
     purchasing.Close();
-    SetUpPurchasing(file);
-    return missionPurchaseFile;
+
+    // The shop: the campaign file's last packet.
+    ResetShop(*this);
+    file.SeekPacket(file.GetNumPackets() - 1);
+    const int32_t size = file.GetPacketSize();
+    Assert(size > 0, static_cast<uint32_t>(size), " Bad Purchase Data in Campaign File ");
+    result = shop->File.Open(file, static_cast<uint32_t>(size));
+    Assert(result == 0, 0, " could not open mission purchasing file ");
+    shop->Header = ReadPurchaseHeader(shop->File, true);
+    ReadPurchaseGifts(shop->File, shop->Header.NumGifts, *MechList, *VehicleList);
+    shop->Mechs.Next = shop->Header.NumMechs - 1;
+    return shop;
 }
 
-namespace
+auto MCLogistics::ReadShopMechs(MCShopReading& shop) -> bool
 {
-    /// <summary>Replaces the shop's lists (mechs, vehicles, pilots, components) with new, empty ones.</summary>
-    void ResetShop(MCLogistics& logistics)
+    const int64_t started = MCPort::PerformanceCounter();
+    const auto msSince = [started]
     {
-        logistics.PurMechList = std::make_unique<MCPurMechList>();
-        logistics.PurVehicleList = std::make_unique<MCPurVehicleList>();
-        logistics.PurPilotList = std::make_unique<MCPurPilotList>();
-        logistics.PurchaseComponents = std::make_unique<MCInventoryList>();
+        return static_cast<double>(MCPort::PerformanceCounter() - started) * 1000.0 /
+               static_cast<double>(MCPort::PerformanceFrequency());
+    };
+
+    // At least one a slice.
+    do
+    {
+        if (shop.Mechs.Next < 0)
+        {
+            break;
+        }
+
+        ReadMechBlock(shop.File, shop.Mechs, *PurMechList);
+    } while (msSince() < ShopMechsSliceMs);
+
+    return shop.Mechs.Next >= 0;
+}
+
+auto MCLogistics::ReadShopGoods(MCShopReading& shop) -> void
+{
+    ReadPurchaseVehicles(shop.File, shop.Header.NumVehicles, *PurVehicleList, false);
+    ReadPurchaseComponents(shop.File, shop.Header.NumComponents, *PurchaseComponents,
+                           " Could not find Purchasing omponent block");
+}
+
+auto MCLogistics::EndCampaignShop(MCShopReading& shop) -> std::string
+{
+    MCFitIniFile& purchasing = shop.File;
+    const MCPurchaseHeader& header = shop.Header;
+
+    for (int32_t warrior = 0; warrior < header.NumWarriors; ++warrior)
+    {
+        int32_t status = 0;
+        MCFitIniFile pilotFile;
+        const std::string profile = ReadPurchaseWarrior(purchasing, warrior, status, pilotFile);
+        const auto descIndex =
+            ReadRequired<int32_t>(pilotFile, "DescIndex", " Could not find DescIndex in General Block ");
+        pilotFile.Close();
+        // A pilot the player has (or had) shows as sold, alive or dead.
+        int32_t ownStatus = OwnPilotStatus(*WarriorList, descIndex, -1);
+
+        if (ownStatus == -1)
+        {
+            ownStatus = OwnPilotStatus(*AssignedWarriorList, descIndex, -1);
+        }
+
+        PurPilotList->AddPilot(profile, ownStatus != -1 ? ownStatus : status);
     }
+
+    purchasing.Close();
+    return shop.MissionPurchaseFile;
 }
 
 auto MCLogistics::SetUpMPPurchasing(std::string_view purchaseFile) -> void
@@ -370,46 +481,6 @@ auto MCLogistics::HidePilotsAbove(MCPilotRank most) const -> void
             pilot->Status = MCPurPilotData::OffShop;
         }
     }
-}
-
-auto MCLogistics::SetUpPurchasing(MCPacketFile& file) -> void
-{
-    MCFitIniFile purchasing;
-    ResetShop(*this);
-
-    // The shop is the campaign file's last packet.
-    file.SeekPacket(file.GetNumPackets() - 1);
-    const int32_t size = file.GetPacketSize();
-    Assert(size > 0, static_cast<uint32_t>(size), " Bad Purchase Data in Campaign File ");
-    const int32_t result = purchasing.Open(file, static_cast<uint32_t>(size));
-    Assert(result == 0, 0, " could not open mission purchasing file ");
-    const MCPurchaseHeader header = ReadPurchaseHeader(purchasing, true);
-    ReadPurchaseGifts(purchasing, header.NumGifts, *MechList, *VehicleList);
-    ReadPurchaseMechs(purchasing, header.NumMechs, *PurMechList);
-    ReadPurchaseVehicles(purchasing, header.NumVehicles, *PurVehicleList, false);
-    ReadPurchaseComponents(purchasing, header.NumComponents, *PurchaseComponents,
-                           " Could not find Purchasing omponent block");
-
-    for (int32_t warrior = 0; warrior < header.NumWarriors; ++warrior)
-    {
-        int32_t status = 0;
-        MCFitIniFile pilotFile;
-        const std::string profile = ReadPurchaseWarrior(purchasing, warrior, status, pilotFile);
-        const auto descIndex =
-            ReadRequired<int32_t>(pilotFile, "DescIndex", " Could not find DescIndex in General Block ");
-        pilotFile.Close();
-        // A pilot the player has (or had) shows as sold, alive or dead.
-        int32_t ownStatus = OwnPilotStatus(*WarriorList, descIndex, -1);
-
-        if (ownStatus == -1)
-        {
-            ownStatus = OwnPilotStatus(*AssignedWarriorList, descIndex, -1);
-        }
-
-        PurPilotList->AddPilot(profile, ownStatus != -1 ? ownStatus : status);
-    }
-
-    purchasing.Close();
 }
 
 auto MCLogistics::SetUpOldPurchasing(std::string_view purchaseFile) const -> void

@@ -27,6 +27,13 @@ public:
     /// </summary>
     void AdvanceOnPresent(bool on = true);
 
+    /// <summary>
+    /// Until given none: each read on the clock's thread first moves it on to <paramref name="target"/>'s time where
+    /// that is ahead (the recorder keeping it with the real one through a frame, so budgets on the game's clock run out
+    /// in real time, as in play).
+    /// </summary>
+    void Follow(std::function<uint64_t()> target);
+
     /// <summary>The clock in nanoseconds, without counting as a read.</summary>
     uint64_t Nanoseconds() const { return _Nanoseconds.load(); }
 
@@ -48,4 +55,6 @@ private:
     bool _AdvanceOnPresent = false;
     /// <summary>The presents since the clock last advanced.</summary>
     uint32_t _Presents = 0;
+    /// <summary>The time each read catches up with (<see cref="Follow"/>); none.</summary>
+    std::function<uint64_t()> _Follow;
 };

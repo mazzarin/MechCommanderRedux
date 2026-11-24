@@ -13,6 +13,7 @@ namespace
     constexpr std::string_view Direct3D12Driver = "direct3d12";
     constexpr std::string_view VulkanDriver = "vulkan";
     constexpr std::string_view NotListed = "Vulkan's devices can't be listed";
+    constexpr double MsPerSecond = 1000.0;
 
     /// <summary>SDL's Vulkan loader held (SDL_Vulkan_LoadLibrary, which SDL's GPU holds too) until this goes.</summary>
     struct MCHeldLoader
@@ -177,16 +178,20 @@ namespace MCGpuLimits
             return VulkanLeast;
         }
 
+        // Timed: an instance of the game's own, made once (the HD main menu painting asks at the menus' first draw).
+        const uint64_t start = SDL_GetPerformanceCounter();
         const std::expected<int32_t, std::string> largest = VulkanLargestSide(deviceName);
+        const double ms = static_cast<double>(SDL_GetPerformanceCounter() - start) * MsPerSecond /
+                          static_cast<double>(SDL_GetPerformanceFrequency());
 
         if (!largest)
         {
-            SDL_Log("GPU: the largest texture of Vulkan's %s unknown (%s): taken as Vulkan's least, %d a side",
-                    deviceName, largest.error().c_str(), VulkanLeast);
+            SDL_Log("GPU: the largest texture of Vulkan's %s unknown (%s, %.1f ms): taken as Vulkan's least, %d a side",
+                    deviceName, largest.error().c_str(), ms, VulkanLeast);
             return VulkanLeast;
         }
 
-        SDL_Log("GPU: Vulkan's %s holds textures up to %d a side", deviceName, *largest);
+        SDL_Log("GPU: Vulkan's %s holds textures up to %d a side (asked in %.1f ms)", deviceName, *largest, ms);
         return *largest;
     }
 }

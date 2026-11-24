@@ -540,7 +540,9 @@ auto MCLogistics::HandleLostPlayer(uint32_t playerID, int) const -> void
 
     // Port-only (SPEC-menus.md's stage 8): over the remade briefing the chat says it, as in the room: the host's line
     // to every game (MCMultiPlayer::PlayerLeftGame). The dialog's "Returning you to the Main Menu" returned nowhere.
-    if (MCCampaignMenu::Shown())
+    // A launcher's game ends as 1998's did: its dialog says the words that end it over the remade briefing, and its
+    // answer or its five seconds end the game (LostPlayerHandler, CancelBool's KillTheGame).
+    if (MCCampaignMenu::Shown() && LaunchedFromLobby == 0)
     {
         SDL_Log("MCLogistics: %s (the chat says so over the remade briefing)", HoldString.c_str());
         return;

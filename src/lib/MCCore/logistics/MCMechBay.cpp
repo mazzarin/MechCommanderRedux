@@ -452,6 +452,30 @@ bool MCMechBay::RepairAll(MCLogMech& mech)
     return shortOfPoints;
 }
 
+bool MCMechBay::ItemsDamaged(const MCLogMech& mech)
+{
+    // Any weapon, equipment or jammer copy damaged.
+    for (const std::shared_ptr<MCLogInventoryItem>& item : mech.Inventory->Items)
+    {
+        const MCComponentForm form = ComponentForm(item->MasterID);
+
+        if (!IsWeapon(form) && !IsEquipment(form) && form != MCComponentForm::Jammer)
+        {
+            continue;
+        }
+
+        for (const std::shared_ptr<MCLogInventoryStat>& stat : item->Stats)
+        {
+            if (stat->Hits != 0)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 std::string MCMechBay::Refit(MCLogMech& mech, std::vector<std::shared_ptr<MCLogInventoryItem>>& used)
 {
     // Replace every damaged copy from the component inventory; list the ones missing.

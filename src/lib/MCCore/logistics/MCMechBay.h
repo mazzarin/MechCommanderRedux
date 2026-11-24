@@ -104,6 +104,12 @@ namespace MCMechBay
     bool RepairAll(MCLogMech& mech);
 
     /// <summary>
+    /// Whether any of <paramref name="mech"/>'s weapons, equipment or jammers is damaged: REFIT ALL works only then
+    /// (1998's MCMechRepairBlock::ItemsDamaged, its button's CanRepairItems).
+    /// </summary>
+    bool ItemsDamaged(const MCLogMech& mech);
+
+    /// <summary>
     /// REFIT ALL: the mech out of the drop, the other damage (not the engine) cleared, each damaged weapon or piece of
     /// equipment swapped for a spare; the spares used, in order, go to <paramref name="used"/>.
     /// </summary>

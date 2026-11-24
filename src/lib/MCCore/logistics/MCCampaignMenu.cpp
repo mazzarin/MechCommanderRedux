@@ -705,7 +705,7 @@ void MCCampaignScreen::FillWeight()
                            : std::format(MCCampaignMenu::FreeFormat, MCCampaignMenu::TonsText(Tons(-over)));
     _WeightMore = weight.Adds && weight.Total != weight.Base;
     _WeightOver = weight.Refused || over > 0;
-    _CanBegin = MCDeploy::CanBegin();
+    _CanBegin = MCDeploy::CanBegin() && !MCDeploy::Locked();
 }
 
 bool MCCampaignScreen::StepRamp(double now)
@@ -1061,6 +1061,13 @@ void MCCampaignScreen::PutBack()
 
 void MCCampaignScreen::PressBegin()
 {
+    // A match's BEGIN MISSION once pressed is said: 1998's button stayed down and took no more presses
+    // (MCBriefingScreen::HandleClick's !MCDeploy::Locked()). Another would send the ready word and its line again.
+    if (MCDeploy::Locked())
+    {
+        return;
+    }
+
     if (!MCDeploy::CanBegin())
     {
         SoundSystem()->PlayBettySample(BeginRefusedBetty);
@@ -1075,6 +1082,12 @@ void MCCampaignScreen::PressBegin()
             if (MultiPlayer() == nullptr)
             {
                 Sound(BeginSound);
+            }
+            else
+            {
+                // Dark from now on, as 1998's stayed down.
+                FillWeight();
+                Changed();
             }
 
             break;

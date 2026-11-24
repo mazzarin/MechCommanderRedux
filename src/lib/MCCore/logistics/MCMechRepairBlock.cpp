@@ -838,26 +838,7 @@ auto MCMechRepairBlock::DrawButtons(MCOptionalRef<MCLogPort> port) -> void
 
 auto MCMechRepairBlock::ItemsDamaged() const -> bool
 {
-    // Any weapon or equipment copy damaged.
-    for (const std::shared_ptr<MCLogInventoryItem>& item : Mech()->Inventory->Items)
-    {
-        MCComponentForm form = ComponentForm(item->MasterID);
-
-        if (!IsWeapon(form) && !IsEquipment(form) && form != MCComponentForm::Jammer)
-        {
-            continue;
-        }
-
-        for (const std::shared_ptr<MCLogInventoryStat>& stat : item->Stats)
-        {
-            if (stat->Hits != 0)
-            {
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return MCMechBay::ItemsDamaged(*Mech());
 }
 
 auto MCMechRepairBlock::StructureDamaged() const -> bool

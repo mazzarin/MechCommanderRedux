@@ -18,6 +18,7 @@
 #include "logistics/MCLoadingMenu.h"
 #include "logistics/MCLogChat.h"
 #include "logistics/MCLogInvScreen.h"
+#include "logistics/MCLogRows.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMainMenuScreen.h"
@@ -34,6 +35,8 @@
 #include "gui/MCUpdateDisplay.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
+#include "main/MCGameSession.h"
+#include "main/MCGameStrings.h"
 #include "main/MCInventoryList.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
@@ -1211,6 +1214,13 @@ namespace
     constexpr std::string_view HostLoadingPort = "28989";
     constexpr std::string_view LostLoadingPort = "28993";
     constexpr std::string_view LogisticsMatchPort = "28997";
+    constexpr std::string_view ReadyOncePort = "28945";
+    constexpr std::string_view LauncherLeavePort = "28947";
+    /// <summary>A drop's weight for BEGIN MISSION to go (any above none).</summary>
+    constexpr int32_t DroppedTons = 35;
+    /// <summary>1998's "has left the game" that ends a launcher's game (MCLogistics::HandleLostPlayer), and its length.</summary>
+    constexpr uint32_t LauncherLeftString = 0x365;
+    constexpr int32_t LeftStringLength = 0xfe;
     constexpr std::string_view MatchMission = "ARENA";
     /// <summary>A player's light once they've pressed BEGIN MISSION (MCMPPlayerLights' status 2).</summary>
     constexpr int32_t ReadyLight = 2;
@@ -1426,6 +1436,72 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
              (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "ANN has left the game."}));
     CHECK(MCTestGuest::DialogText().empty());
     CHECK(MCCampaignMenu::Shown());
+}
+
+/// <summary>
+/// A match's BEGIN MISSION once pressed is said once: the ready word and its line in the chat go out once, and the
+/// button is dark from then on, however often it is pressed again (1998's stayed down).
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's BEGIN MISSION is said once, the button dark after it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    MCCampaignScreen& screen = PlanMatch(ann, ReadyOncePort);
+    // A drop with weight in it (a match's units are bought first; the press is what's tried here).
+    CurDeployTonnage = DroppedTons;
+    REQUIRE(MCDeploy::CanBegin());
+    // Ann hears its line ("COMMANDER is ready") once.
+    ann.Watch(MCMPMessageType::Chat);
+    screen.PressBegin();
+    REQUIRE(MCTestGuest::SettleUntil([&ann] { return !ann.Watched(MCMPMessageType::Chat).empty(); }));
+    MCTestGuest::Settle();
+    CHECK(MCDeploy::Locked());
+    CHECK(!screen.CanBegin());
+    CHECK_EQ(ann.Watched(MCMPMessageType::Chat).size(), size_t{1});
+
+    screen.PressBegin();
+    MCTestGuest::Settle();
+    CHECK_EQ(ann.Watched(MCMPMessageType::Chat).size(), size_t{1});
+    CHECK(MCCampaignMenu::Shown());
+}
+
+/// <summary>
+/// A launcher's match ends as 1998's did when a player leaves it at the remade briefing: the dialog says the words that
+/// end it over the briefing, and its answer ends the game (LostPlayerHandler, CancelBool's KillTheGame).
+/// </summary>
+TEST_CASE_ISOLATED("game: a launcher's match ends when a player leaves its remade briefing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    PlanMatch(ann, LauncherLeavePort);
+    // As a launcher's command line sets it (here once the match is planned, the way in being LAN's).
+    LaunchedFromLobby = true;
+    ann.Leave();
+    REQUIRE(MCTestGuest::SettleUntil([] { return !MCTestGuest::DialogText().empty(); }));
+    CHECK(MCRmlDialogs::Shown());
+    CHECK_EQ(MCTestGuest::DialogText(),
+             MCRmlDialogs::AsSentence(std::format("ANN {}", LoadGameString(LauncherLeftString, LeftStringLength))));
+    bool ended = false;
+
+    try
+    {
+        MCRmlDialogs::Dialog()->PressMain();
+        MCTestGuest::Settle();
+    }
+    catch (const MCGameQuit& quit)
+    {
+        ended = quit.ExitCode == 0;
+    }
+
+    CHECK(ended);
 }
 
 /// <summary>
@@ -1893,6 +1969,103 @@ TEST_CASE_ISOLATED("game: PURCHASING buys and sells by 1998's rules, from the mo
     KeyOn(ElementOf(screen, std::format("force{}", logistics->ForceMechList->Mechs.size() - 1)), SDL_SCANCODE_RETURN);
     CHECK_EQ(logistics->ForceMechList->Mechs.size(), force);
     CHECK_EQ(logistics->MechList->Mechs.size(), sparesBefore + 1);
+}
+
+/// <summary>
+/// A part's last copy sold, the part still picked: its SELL offers no more (no sale of none, no points for it, the count
+/// never below none).
+/// </summary>
+TEST_CASE_ISOLATED("game: PURCHASING sells a part's last copy, then offers no more")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    constexpr int32_t Points = 200000;
+    ResourcePoints = Points;
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
+    MCTestGame::RunFrame(FlowFrame);
+
+    // One bought, then every copy owned sold, one at a time.
+    const std::vector<std::shared_ptr<MCLogInventoryItem>> store = StoreParts();
+    const auto stocked = std::ranges::find_if(store, [](const auto& item) { return item->Count >= 1; });
+    REQUIRE(stocked != store.end());
+    const uint8_t masterID = (*stocked)->MasterID;
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, static_cast<size_t>(stocked - store.begin()));
+    tabs.PressDeal();
+    tabs.DealConfirm();
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(SpareCount(masterID) >= 1);
+
+    while (SpareCount(masterID) > 0)
+    {
+        const std::optional<size_t> row = SpareRow(masterID);
+        REQUIRE(row.has_value());
+        tabs.Pick(MCLogisticsTabs::MCPlace::Stock, *row);
+        tabs.PressDeal();
+        REQUIRE(tabs.DealOpen());
+        tabs.DealConfirm();
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    // SELL again: nothing to sell.
+    const int32_t sold = ResourcePoints;
+    tabs.PressDeal();
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!tabs.DealOpen());
+    CHECK_EQ(ResourcePoints, sold);
+    CHECK_EQ(SpareCount(masterID), 0);
+}
+
+/// <summary>
+/// REFIT ALL works only with a weapon, equipment or jammer damaged, as 1998's button (its CanRepairItems): with none, the
+/// 'Mech stays in the drop; with one, it leaves it for the refit.
+/// </summary>
+TEST_CASE_ISOLATED("game: the 'MECH BAY's REFIT ALL does nothing with nothing damaged")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    const std::shared_ptr<MCLogMech> mech = logistics->ForceMechList->Mechs.front();
+
+    // Every ready unit into the drop, the worked 'Mech among them.
+    for (const std::shared_ptr<MCLogPart>& unit : MCDeploy::ReadyUnits())
+    {
+        // A unit too heavy for what is left stays out: only the worked 'Mech must be in.
+        static_cast<void>(MCDeploy::Send(*unit, std::nullopt));
+    }
+
+    REQUIRE(mech->Deployed != 0);
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.LabUnit() == mech);
+    REQUIRE(!MCMechBay::ItemsDamaged(*mech));
+    tabs.RefitAll();
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(mech->Deployed != 0);
+
+    // A weapon damaged: REFIT ALL takes the 'Mech out of the drop to refit it.
+    const auto weapon =
+        std::ranges::find_if(mech->Inventory->Items, [](const auto& item)
+                             { return IsWeapon(ComponentForm(item->MasterID)) && !item->Stats.empty(); });
+    REQUIRE(weapon != mech->Inventory->Items.end());
+    (*weapon)->Stats.front()->Hits = 1;
+    REQUIRE(MCMechBay::ItemsDamaged(*mech));
+    tabs.RefitAll();
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(mech->Deployed == 0);
 }
 
 /// <summary>

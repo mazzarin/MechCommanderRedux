@@ -1190,9 +1190,10 @@ void MCLogisticsTabs::FillLab()
                              .State = stat->Hits != 0 ? std::string(DamagedWord) : std::string()});
             _FitThings.push_back(
                 MCThing{.Part = item, .ItemNum = static_cast<uint8_t>(stat->ItemNum), .Place = MCPlace::Fitted});
-            _CanRefit = _CanRefit || stat->Hits != 0;
         }
     }
+
+    _CanRefit = MCMechBay::ItemsDamaged(mech);
 }
 
 void MCLogisticsTabs::FillDeal()
@@ -1959,7 +1960,9 @@ void MCLogisticsTabs::RefitAll()
 {
     const std::shared_ptr<MCLogMech> mech = WorkedMech();
 
-    if (mech == nullptr || !_Repairs)
+    // Only with a weapon, equipment or jammer damaged, as 1998's button (its CanRepairItems): otherwise nothing, the
+    // mech left in the drop.
+    if (mech == nullptr || !_Repairs || !MCMechBay::ItemsDamaged(*mech))
     {
         return;
     }
@@ -2071,6 +2074,13 @@ void MCLogisticsTabs::OfferDeal(const MCThing& thing)
         }
         else
         {
+            // None left to sell (the last sold, the part still picked): no sale, as 1998's empty row offered none.
+            if (part->Count <= 0)
+            {
+                PlayLogSound(RefusedSound);
+                return;
+            }
+
             deal = {.Thing = thing,
                     .Sale = true,
                     .Each = MCStore::SalePrice(*part),

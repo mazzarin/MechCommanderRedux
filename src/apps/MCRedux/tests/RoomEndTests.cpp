@@ -610,12 +610,14 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     // The match's session, kept: the rematch's room is another (a host's session has no instance of its own here).
     const std::shared_ptr<MCFidpSession> firstRoom = manager.CurrentSession();
+    const uint32_t firstHost = manager.MyPlayerID;
     const uint32_t sameData = MCMissionDataHash(GamePath(SavePath, Mission, ".mpk"));
     REQUIRE(sameData != 0);
 
     // ANN joins and is picked for team 2's second slot; the host takes team 1, Inner Sphere for team 2, a mission and
     // the points.
     Guest ann("ANN", MCMatchRule::Supported);
+    ann.RecordAll();
     REQUIRE(ann.Join(*manager.DirectPlay, address));
     REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
@@ -662,6 +664,7 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
 
     // ANN's game joins again: shown the room, back on team 2's second slot, her place no longer kept.
     Guest annAgain("ANN", MCMatchRule::Supported);
+    annAgain.RecordAll();
     REQUIRE(annAgain.Join(*manager.DirectPlay, address));
     REQUIRE(SettleUntil(
         [&]
@@ -671,6 +674,20 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     CHECK(MCLobbyUpdate::StartQuestion().empty());
     CHECK(MCSessionScreen::Room().Team1Players[0] == manager.MyPlayerID);
     SaveShot("rematch 1 guest back", ScreenHash());
+
+    // The room's messages (SPEC-menus.md's stage 9, step 2): what ANN's game was sent in the match's room and in the
+    // rematch's, in the same order and bytes as the 1998 session screen sent them (recorded from it before the room's
+    // logic left it; the same in every run).
+    const std::array firstIds = {MCTestGuest::MCNamedId{firstHost, "HOST"}, MCTestGuest::MCNamedId{ann.Id(), "ANN"}};
+    const std::array againIds = {MCTestGuest::MCNamedId{manager.MyPlayerID, "HOST"},
+                                 MCTestGuest::MCNamedId{annAgain.Id(), "ANN"}};
+    constexpr std::array<uint16_t, 24> FirstTypes = {2,  3, 3,  3,  50, 16, 42, 49, 44, 44, 7,  7,
+                                                     41, 7, 41, 37, 43, 43, 39, 43, 43, 43, 43, 55};
+    constexpr uint64_t FirstDigest = 0x30456649f7b68be4ull;
+    constexpr std::array<uint16_t, 15> AgainTypes = {2, 3, 3, 3, 50, 16, 42, 49, 41, 7, 41, 44, 44, 43, 43};
+    constexpr uint64_t AgainDigest = 0xfb63ead0c2553026ull;
+    MCTestGuest::CheckRecorded(ann, firstIds, firstHost, ann.Instance(), FirstTypes, FirstDigest);
+    MCTestGuest::CheckRecorded(annAgain, againIds, manager.MyPlayerID, annAgain.Instance(), AgainTypes, AgainDigest);
 }
 
 /// <summary>

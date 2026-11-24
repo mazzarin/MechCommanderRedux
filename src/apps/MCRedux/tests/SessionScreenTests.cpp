@@ -744,6 +744,8 @@ namespace
     constexpr std::string_view RoomHostAddress = "127.0.0.1:28923";
     /// <summary>The room's joiners' test's.</summary>
     constexpr std::string_view JoinHostAddress = "127.0.0.1:28925";
+    /// <summary>The room's messages' test's.</summary>
+    constexpr std::string_view MessagesHostAddress = "127.0.0.1:28929";
 
     /// <summary>Clicks the middle of <paramref name="button"/>, as a player does, and lets the game settle.</summary>
     void ClickButton(MCGuiObject& button)
@@ -945,6 +947,106 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     CHECK(GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen);
     CHECK(manager.SessionLocked());
     CHECK(!openToPlayers());
+}
+
+/// <summary>
+/// The room's messages (the personal build): what a LAN room's host sends its guests goes out in the same order and
+/// bytes as the 1998 session screen sent them before the room's logic left it (SPEC-menus.md's stage 9, step 2), as
+/// older builds and MCX.EXE read every byte: a join and the room shown, the host's picks (the teams, a tech base, the
+/// mission, the points) and its options, a second guest shown the room and the first shown it again, a joiner refused
+/// at the door (nobody told), a guest leaving, and START.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN room's host sends its guests the same messages in the same order as the room goes")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MCMultiPlayer& game = *MultiPlayer();
+    MCSessionManager& manager = *game.SessionManager;
+    manager.ConnectTcp(MessagesHostAddress);
+    MCTestGuest::HostOnLan("Commander", "Messages' game", 6);
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    MCSessionScreen& room = *GlobalLog()->SessionScreen;
+    const MCMenuDialog& dialog = *GlobalLog()->Message;
+    const uint32_t hostId = manager.MyPlayer()->Id;
+    constexpr std::string_view Mission = "ARENA";
+    const uint32_t sameData = MCMissionDataHash(GamePath(SavePath, Mission, ".mpk"));
+    REQUIRE(sameData != 0);
+    constexpr size_t WeatherRow = 1;
+    const auto received = [](Guest& guest, MCMPMessageType type)
+    { return std::ranges::count(MCTestGuest::RecordedTypes(guest.Recorded()), static_cast<uint16_t>(type)); };
+
+    // ANN joins and is shown the room; the host picks the teams, Inner Sphere for team 2, the mission and the points.
+    Guest ann("ANN", MCMatchRule::Supported);
+    ann.RecordAll();
+    REQUIRE(ann.Join(*manager.DirectPlay, MessagesHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
+    REQUIRE(manager.AddPlayerToGroup(game.AllPlayerGroupID, ann.Id()));
+    ann.AnswerFiles(sameData);
+    room.AssignPlayer(hostId, 1, 0, false);
+    room.AssignPlayer(ann.Id(), 2, 0, false);
+    room.SetTeamTechBase(2, 1);
+    room.LoadMission(Mission);
+    REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && !dialog.IsShowing(); }));
+    room.SetTeam1RP(12000);
+    room.SetTeam2RP(9000);
+    REQUIRE(SettleUntil([&] { return received(ann, MCMPMessageType::RPUpdate) > 0; }));
+    Settle();
+
+    // The host's options: rain.
+    MatchOptionRows()[WeatherRow].Changed(static_cast<int32_t>(MCWeatherKind::Rain));
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            const std::optional<MCMPMatchOptionsMessage> sent = ann.MatchOptions();
+            return sent.has_value() && sent->Weather == static_cast<int8_t>(MCWeatherKind::Rain);
+        }));
+    Settle();
+
+    // CAL joins, its game on its way; once it's up, it's shown the room as it stands, and ANN is shown it again. CAL
+    // goes on team 2.
+    Guest cal("CAL", MCMatchRule::Supported);
+    cal.RecordAll();
+    REQUIRE(cal.Join(*manager.DirectPlay, MessagesHostAddress, false));
+    Settle();
+    REQUIRE(manager.AddPlayerToGroup(game.AllPlayerGroupID, cal.Id()));
+    cal.AnswerFiles(sameData);
+    cal.Ping();
+    REQUIRE(SettleUntil([&] { return cal.MissionsLoaded() == 1 && ann.MissionsLoaded() == 2 && !dialog.IsShowing(); }));
+    room.AssignPlayer(cal.Id(), 2, 1, false);
+    Settle();
+
+    // An older build's join, which says nothing of its rules, is refused at the door for the rain: nobody is told.
+    Guest old("OLD");
+    CHECK(!old.Join(*manager.DirectPlay, MessagesHostAddress));
+    Settle();
+
+    // CAL leaves, and START.
+    cal.Leave();
+    REQUIRE(SettleUntil([&] { return !MCTestGuest::RoomShows(cal.Id()); }));
+    Settle();
+    MCTestGuest::PressInRoom("begin");
+    Settle();
+    Settle();
+
+    const std::array ids = {MCTestGuest::MCNamedId{hostId, "HOST"}, MCTestGuest::MCNamedId{ann.Id(), "ANN"},
+                            MCTestGuest::MCNamedId{cal.Id(), "CAL"}};
+    // As the 1998 session screen sent them (recorded from it before the move; the same in every run).
+    constexpr std::array<uint16_t, 47> AnnTypes = {2,  3,  3,  3,  50, 16, 42, 49, 44, 44, 7,  7,  41, 7,   41, 37,
+                                                   43, 43, 39, 43, 43, 43, 43, 49, 3,  50, 7,  42, 49, 37,  41, 41,
+                                                   44, 44, 43, 43, 39, 43, 43, 7,  41, 33, 33, 5,  13, 260, 40};
+    constexpr uint64_t AnnDigest = 0x51131235166865e5ull;
+    constexpr std::array<uint16_t, 21> CalTypes = {2,  3,  3,  3,  50, 16, 7,  42, 49, 37, 41,
+                                                   41, 44, 44, 43, 43, 39, 43, 43, 7,  41};
+    constexpr uint64_t CalDigest = 0xfa35b473f6ac77a6ull;
+    MCTestGuest::CheckRecorded(ann, ids, hostId, ann.Instance(), AnnTypes, AnnDigest);
+    MCTestGuest::CheckRecorded(cal, ids, hostId, ann.Instance(), CalTypes, CalDigest);
 }
 
 /// <summary>
@@ -1294,6 +1396,7 @@ TEST_CASE_ISOLATED(
     GlobalLog()->SetUpSessionScreen();
     const uint32_t ann = manager.MyPlayerID;
     Guest cat("CAT", MCMatchRule::Supported);
+    cat.RecordAll(ann);
     MCDirectPlay noHostHere;
     REQUIRE(cat.Join(noHostHere, RolloverHostAddress));
     cat.AnswerFiles(MCMissionDataHash(GamePath(SavePath, RolloverMission, ".mpk")));
@@ -1346,4 +1449,14 @@ TEST_CASE_ISOLATED(
     CHECK(manager.SessionLocked());
     CHECK_EQ(manager.DirectPlay->SetSessionDesc(manager.CurrentSession()->SessionDesc, 0), uint32_t{DP_OK});
     CHECK(bob.Passed());
+
+    // The room's messages (SPEC-menus.md's stage 9, step 2): what CAT's game was sent from ANN's, its chat and then its
+    // taking the room over, in the same order and bytes as the 1998 session screen sent them (recorded from it before
+    // the room's logic left it; the same in every run).
+    Settle();
+    const std::array ids = {MCTestGuest::MCNamedId{bobId, "BOB"}, MCTestGuest::MCNamedId{ann, "ANN"},
+                            MCTestGuest::MCNamedId{cat.Id(), "CAT"}};
+    constexpr std::array<uint16_t, 16> CatTypes = {13, 13, 42, 49, 37, 41, 41, 44, 44, 43, 43, 39, 43, 43, 41, 40};
+    constexpr uint64_t CatDigest = 0x98f12fc85f8a5d4cull;
+    MCTestGuest::CheckRecorded(cat, ids, ann, cat.Instance(), CatTypes, CatDigest);
 }

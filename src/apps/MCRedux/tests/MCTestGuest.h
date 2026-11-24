@@ -363,6 +363,8 @@ namespace MCTestGuest
                 return false;
             }
 
+            _Instance = found.guidInstance;
+
             if (WhilePumping(host, [&] { return _DirectPlay.Open(found, DPOPEN_JOIN | DPOPEN_RETURNSTATUS); }) != DP_OK)
             {
                 return false;
@@ -399,6 +401,9 @@ namespace MCTestGuest
 
         /// <summary>What the host said its refusal at the door was for (the options' names), if it refused one.</summary>
         const std::string& Refusal() const { return _Refusal; }
+
+        /// <summary>The session's instance as the guest found it to join (DirectPlay's random one; none before).</summary>
+        const _GUID& Instance() const { return _Instance; }
 
         /// <summary>The last match options message the host sent, if any.</summary>
         std::optional<MCMPMatchOptionsMessage> MatchOptions()
@@ -460,6 +465,24 @@ namespace MCTestGuest
         }
 
         /// <summary>
+        /// Keeps every message the host sends from now on (or player <paramref name="from"/> alone, as the game a room
+        /// rolls over to), of every type but the link's own (acknowledgements, pings, latencies), in the order they
+        /// come, each once (as <see cref="Watch"/>): <see cref="Recorded"/>.
+        /// </summary>
+        void RecordAll(std::optional<uint32_t> from = std::nullopt)
+        {
+            _RecordedFrom = from.value_or(0);
+            _Recording = true;
+        }
+
+        /// <summary>What <see cref="RecordAll"/> kept, whole (headers and send counters too), in the order it came.</summary>
+        std::vector<std::vector<uint8_t>> Recorded()
+        {
+            const std::lock_guard lock(_Mutex);
+            return _Recorded;
+        }
+
+        /// <summary>
         /// Sends <paramref name="message"/> to player <paramref name="to"/> as a game's would (from the listener, which
         /// owns the connection).
         /// </summary>
@@ -480,6 +503,36 @@ namespace MCTestGuest
             Answer(from, message);
             Keep(message);
             KeepWatched(message);
+            KeepRecorded(from, message);
+        }
+
+        /// <summary>
+        /// Keeps <paramref name="message"/> from player <paramref name="from"/> while recording (<see cref="RecordAll"/>),
+        /// the first time it comes.
+        /// </summary>
+        void KeepRecorded(uint32_t from, std::span<const uint8_t> message)
+        {
+            if (!_Recording || message.size() < sizeof(MCFIMessageHeader) ||
+                (_RecordedFrom != 0 && from != _RecordedFrom))
+            {
+                return;
+            }
+
+            const uint16_t type = ReadLinkupMessage<MCFIMessageHeader>(message).Type();
+
+            if (type == static_cast<uint16_t>(MCLinkupMessageType::Verify) ||
+                type == static_cast<uint16_t>(MCLinkupMessageType::Ping) ||
+                type == static_cast<uint16_t>(MCLinkupMessageType::Latency))
+            {
+                return;
+            }
+
+            const std::lock_guard lock(_Mutex);
+
+            if (_RecordedTaken.emplace(message.begin(), message.end()).second)
+            {
+                _Recorded.emplace_back(message.begin(), message.end());
+            }
         }
 
         /// <summary>Keeps <paramref name="message"/> if it is of a watched type, the first time it comes.</summary>
@@ -613,8 +666,9 @@ namespace MCTestGuest
         std::string _Name;
         /// <summary>The rules the guest's join card says, if it sends one.</summary>
         std::optional<uint32_t> _Card;
-        /// <summary>The host's refusal at the door (the test's thread's own, as is the join).</summary>
+        /// <summary>The host's refusal at the door (the test's thread's own, as is the join), and the session joined.</summary>
         std::string _Refusal;
+        _GUID _Instance{};
         std::optional<MCMPMatchOptionsMessage> _MatchOptions;
         std::optional<MCMPPlayersRulesMessage> _PlayersRules;
         /// <summary>The host's messages taking every player to the session screen.</summary>
@@ -629,6 +683,14 @@ namespace MCTestGuest
         /// <summary>The messages of the watched types taken, and kept by type.</summary>
         std::set<std::vector<uint8_t>> _WatchedTaken;
         std::map<uint16_t, std::vector<std::vector<uint8_t>>> _WatchedMessages;
+        /// <summary>
+        /// Whether every message is kept (<see cref="RecordAll"/>) and from whom (0: anyone), the ones taken, and them in
+        /// order.
+        /// </summary>
+        std::atomic<bool> _Recording = false;
+        std::atomic<uint32_t> _RecordedFrom = 0;
+        std::set<std::vector<uint8_t>> _RecordedTaken;
+        std::vector<std::vector<uint8_t>> _Recorded;
         /// <summary>Until when the guest pings (<see cref="Ping"/>), and its next ping (the listener's own).</summary>
         std::atomic<std::chrono::steady_clock::time_point> _PingUntil{};
         std::chrono::steady_clock::time_point _NextPing{};
@@ -825,6 +887,153 @@ namespace MCTestGuest
         DPSESSIONDESC2 _Desc{};
         std::atomic<Admit> _AdmitWanted = Admit::AsIs;
     };
+
+    /// <summary>A player's id, and the name a recorded message's bytes give it (<see cref="DescribedMessages"/>).</summary>
+    using MCNamedId = std::pair<uint32_t, std::string_view>;
+
+    /// <summary>
+    /// The messages a guest recorded (<see cref="Guest::RecordAll"/>), a line each: its type, then its bytes in hex, as
+    /// the session's ids differ from run to run (platform/MCDirectPlay.cpp: they start at a random high word, the
+    /// session's <paramref name="idBase"/>, the host's id's): each of <paramref name="ids"/> in them (4 bytes, as the wire
+    /// has it) written as its name in braces, and any other of the session's (a group's) as "{id n}", n its low word;
+    /// the session's random <paramref name="instance"/> (DirectPlay's session description) as "{session}".
+    /// </summary>
+    inline std::vector<std::string> DescribedMessages(const std::vector<std::vector<uint8_t>>& messages,
+                                                      std::span<const MCNamedId> ids, uint32_t idBase,
+                                                      const _GUID& instance)
+    {
+        constexpr uint32_t HighWord = 0xffff0000u;
+        std::vector<std::string> lines;
+
+        for (const std::vector<uint8_t>& message : messages)
+        {
+            const MCFIMessageHeader header = ReadLinkupMessage<MCFIMessageHeader>(message);
+            std::string line = std::format("{}:", header.Type());
+            // A guaranteed message's send counters count the link's messages too (latencies, timed by the clock).
+            const size_t countersEnd =
+                (header.Header & FIMSG_GUARANTEED) != 0 ? sizeof(MCFIGuaranteedMessageHeader) : sizeof(header);
+
+            for (size_t at = 0; at < message.size();)
+            {
+                if (at >= sizeof(header) && at < countersEnd)
+                {
+                    line += " ..";
+                    at++;
+                    continue;
+                }
+
+                if (at + sizeof(instance) <= message.size() &&
+                    std::memcmp(message.data() + at, &instance, sizeof(instance)) == 0)
+                {
+                    line += " {session}";
+                    at += sizeof(instance);
+                    continue;
+                }
+
+                uint32_t value = 0;
+
+                if (at + sizeof(value) > message.size())
+                {
+                    line += std::format(" {:02x}", message[at]);
+                    at++;
+                    continue;
+                }
+
+                std::memcpy(&value, message.data() + at, sizeof(value));
+                const auto named =
+                    std::ranges::find_if(ids, [value](const MCNamedId& id) { return id.first == value; });
+
+                if (named != ids.end())
+                {
+                    line += std::format(" {{{}}}", named->second);
+                    at += sizeof(value);
+                    continue;
+                }
+
+                if ((value & HighWord) == (idBase & HighWord))
+                {
+                    line += std::format(" {{id {}}}", value & ~HighWord);
+                    at += sizeof(value);
+                    continue;
+                }
+
+                line += std::format(" {:02x}", message[at]);
+                at++;
+            }
+
+            lines.push_back(std::move(line));
+        }
+
+        return lines;
+    }
+
+    /// <summary>The messages' types, in order (<see cref="Guest::Recorded"/>).</summary>
+    inline std::vector<uint16_t> RecordedTypes(const std::vector<std::vector<uint8_t>>& messages)
+    {
+        std::vector<uint16_t> types;
+
+        for (const std::vector<uint8_t>& message : messages)
+        {
+            types.push_back(ReadLinkupMessage<MCFIMessageHeader>(message).Type());
+        }
+
+        return types;
+    }
+
+    /// <summary>A 64-bit FNV-1a of <paramref name="lines"/>, each ended by a line break.</summary>
+    inline uint64_t LinesDigest(std::span<const std::string> lines)
+    {
+        constexpr uint64_t Basis = 0xcbf29ce484222325ull;
+        constexpr uint64_t Prime = 0x100000001b3ull;
+        uint64_t digest = Basis;
+
+        for (const std::string& line : lines)
+        {
+            for (const char c : line + "\n")
+            {
+                digest = (digest ^ static_cast<uint8_t>(c)) * Prime;
+            }
+        }
+
+        return digest;
+    }
+
+    /// <summary>
+    /// Checks that <paramref name="guest"/> recorded the messages of types <paramref name="types"/> in that order, their
+    /// bytes (<see cref="DescribedMessages"/> with <paramref name="ids"/>, <paramref name="idBase"/> and
+    /// <paramref name="instance"/>) of digest <paramref name="digest"/>; when not, prints what it recorded, a line each,
+    /// the types and the digest, for the test to take as its new record.
+    /// </summary>
+    inline void CheckRecorded(Guest& guest, std::span<const MCNamedId> ids, uint32_t idBase, const _GUID& instance,
+                              std::span<const uint16_t> types, uint64_t digest)
+    {
+        const std::vector<std::vector<uint8_t>> recorded = guest.Recorded();
+        const std::vector<std::string> lines = DescribedMessages(recorded, ids, idBase, instance);
+        const std::vector<uint16_t> took = RecordedTypes(recorded);
+        const uint64_t tookDigest = LinesDigest(lines);
+        CHECK(std::ranges::equal(took, types));
+        CHECK_EQ(tookDigest, digest);
+
+        if (std::ranges::equal(took, types) && tookDigest == digest)
+        {
+            return;
+        }
+
+        std::string typesLine;
+
+        for (const uint16_t type : took)
+        {
+            typesLine += std::format("{}, ", type);
+        }
+
+        std::cout << std::format("  recorded {} messages, digest {:#018x}, types {{{}}}:\n", lines.size(), tookDigest,
+                                 typesLine);
+
+        for (const std::string& line : lines)
+        {
+            std::cout << "    " << line << "\n";
+        }
+    }
 
     /// <summary>Runs one frame of a fifteenth of a second, giving the network a moment first.</summary>
     inline void Step()

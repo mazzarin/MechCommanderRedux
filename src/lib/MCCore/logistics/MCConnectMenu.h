@@ -34,12 +34,10 @@ void CancelToMPlayer();
 
 /// <summary>
 /// Port-only (the personal build): the session screen's EXIT outside a lobby's game: a LAN game's goes back to the
-/// games (<see cref="CancelToConnect"/>), a modem or serial game's to the main menu, as the original's.
+/// games (<see cref="CancelToConnect"/>), a modem or serial game's to the main menu, as the original's. Port-only
+/// (SPEC-menus.md's stage 3): <paramref name="line"/>, when given, is said over the screen it goes back to.
 /// </summary>
-void LeaveRoom();
-
-/// <summary>Back to the LAN (session list) screen.</summary>
-void CancelToLan();
+void LeaveRoom(std::string line = {});
 
 /// <summary>Back to the session screen from its load dialog.</summary>
 void CancelToSession();
@@ -59,9 +57,6 @@ void DoTheTcpThang();
 /// <summary>The TCP/IP-or-IPX question's answer (1 IPX, 2 TCP/IP).</summary>
 void TcpipxDialogCallback(int32_t result);
 
-/// <summary>Shows the LAN session list over TCP/IP, the player's name and game's name filled in.</summary>
-void ShowLanScreen();
-
 /// <summary>Leaves the game for the Zone's internet lobby.</summary>
 void DoExitToZone1();
 
@@ -74,17 +69,8 @@ void DoExitToMplayer();
 /// <summary>Asks whether to leave for the internet lobby (<see cref="DoExitToMplayer"/>).</summary>
 void ShowInternet();
 
-/// <summary>Hosting: remembers the player name and opens the session name and size entries.</summary>
-void HostGame();
-
 /// <summary>Clears the ready room's and the session list's player lists.</summary>
 void ResetReadyRoom();
-
-/// <summary>Joins the session chosen in the list and opens its room (the session screen), or says it can't be joined.</summary>
-void JoinGame();
-
-/// <summary>Creates the hosted session (2 to 6 players) and opens its room (the session screen), the host alone in it.</summary>
-void CreateSession();
 
 /// <summary>Hosts a serial game on the COM port typed.</summary>
 void CreateSerialSession();
@@ -129,14 +115,8 @@ void Dial();
 /// <summary>The modem list: a click picks the modem on the line under the mouse.</summary>
 void ModemListHandleEvent(MCGuiObject& object, MCGuiEvent& event);
 
-/// <summary>The session list's player list: a game picked lists its players; none clears it.</summary>
-void PlayerListHandleEvent(MCGuiObject& object, MCGuiEvent& event);
-
 /// <summary>The ready room's player list: each tick lists the session's players with their pings.</summary>
 void ReadyRoomPlayerListHandleEvent(MCGuiObject& object, MCGuiEvent& event);
-
-/// <summary>The LAN screen: timer ticks refresh its lists; a game picked can be joined unless full.</summary>
-void LanScreenHandleEvent(MCGuiObject& object, MCGuiEvent& event);
 
 /// <summary>The COM port entry: a port outside 1..4 is backspaced out; the screen hears whether the port is good.</summary>
 void ComPortTextHandleEvent(MCGuiObject& object, MCGuiEvent& event);

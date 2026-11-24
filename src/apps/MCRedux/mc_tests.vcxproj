@@ -56,6 +56,30 @@
   <!-- Port-only (SPEC-menus.md): the remade menus' documents and style sheets, in a ui folder beside the program,
        where SDL's base path finds them (MCCore's ui\MCRmlSystem.h). -->
   <ItemGroup>
+    <CopyFileToFolders Include="..\..\res\ui\art\hd\main_menu.png">
+      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\art\main_menu.png">
+      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\dialog.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\dialog.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\host.rcss">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\host_game.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\internet.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\lan.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\look.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
@@ -69,6 +93,9 @@
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\saves_dialog.rml">
+      <DestinationFolders>$(OutDir)ui</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\res\ui\net.rcss">
       <DestinationFolders>$(OutDir)ui</DestinationFolders>
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\probe.rcss">
@@ -91,12 +118,6 @@
     </CopyFileToFolders>
     <CopyFileToFolders Include="..\..\res\ui\fonts\SairaSemiCondensed-SemiBold.ttf">
       <DestinationFolders>$(OutDir)ui\fonts</DestinationFolders>
-    </CopyFileToFolders>
-    <CopyFileToFolders Include="..\..\res\ui\art\main_menu.png">
-      <DestinationFolders>$(OutDir)ui\art</DestinationFolders>
-    </CopyFileToFolders>
-    <CopyFileToFolders Include="..\..\res\ui\art\hd\main_menu.png">
-      <DestinationFolders>$(OutDir)ui\art\hd</DestinationFolders>
     </CopyFileToFolders>
   </ItemGroup>
   <ItemGroup>
@@ -280,7 +301,7 @@
     <ClInclude Include="tests\MCFilePatchFixture.h" />
     <ClInclude Include="tests\MCHdMovieFixture.h" />
     <ClInclude Include="tests\MCInternetSpots.h" />
-    <ClInclude Include="tests\MCMenuFrames.h" />
+    <ClInclude Include="tests\MCMenusPictures.h" />
     <ClInclude Include="tests\MCMock.h" />
     <ClInclude Include="tests\MCScratchFolder.h" />
     <ClInclude Include="tests\MCTest.h" />

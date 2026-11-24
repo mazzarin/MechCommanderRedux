@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "ui/MCRmlDialog.h"
 #include "fakes/MCManualClock.h"
 #include "camera/MCCamera.h"
 #include "gui/MCGuiSmackerWindow.h"
@@ -544,10 +545,11 @@ namespace MCTestGame
         {
             RunFrame(1.0f / 15.0f);
 
-            // The room (the session screen) once the lobby's join is done, or a dialog saying it failed.
+            // The room (the session screen) once the lobby's join is done, or a dialog saying it failed (the 1998 one,
+            // or the remade one over the games list: SPEC-menus.md's stage 3).
             if (Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
                 (GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen ||
-                 GlobalLog()->MessageDialog->IsShowing()) &&
+                 GlobalLog()->MessageDialog->IsShowing() || MCRmlDialogs::Shown()) &&
                 GuiSystem().SmackerWindow == nullptr && !MCScreenChange::Running())
             {
                 return true;

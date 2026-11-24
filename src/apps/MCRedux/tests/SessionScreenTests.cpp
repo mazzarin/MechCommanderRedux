@@ -3,6 +3,9 @@
 #include "ScreenInput.h"
 #include "MCScratchFolder.h"
 #include "MCTestGuest.h"
+#include "gui/MCScreenFlow.h"
+#include "gui/MCScreenChange.h"
+#include "logistics/MCGamesScreen.h"
 #include "TestGame.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
@@ -86,13 +89,8 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(HostAddress);
-    MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
     // MULTIPLAYER opens the LAN games (the personal build).
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
-    lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
-    lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Test game");
-    lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
-    CreateSession();
+    MCTestGuest::HostOnLan("Commander", "Test game", 6);
     Settle();
     REQUIRE(manager.CurrentSession() != nullptr);
     REQUIRE(manager.DirectPlay != nullptr);
@@ -125,23 +123,24 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
     // 0xb3ef257d, 0x3b17d20d, 0xbcc94190, 0xec4846b8, 0x19fd5db9, 0x7342d1b5, 0xdfb618bc). Port-only (SPEC-menus.md's
     // stage 2, 23 Nov 2026): the room shows through the flow's change of screen, its fade on frames of its own: only the
     // clock's seconds differ from the frames before (0x1ec2ad5c, 0x835f1a11, 0x6a7049b5, 0xa372a3c5, 0x051c73ce,
-    // 0x18b1b165, 0x0f8826b3, 0x8ec3c175, 0x8bc88c88).
+    // 0x18b1b165, 0x0f8826b3, 0x8ec3c175, 0x8bc88c88). Port-only (SPEC-menus.md's stage 3, 23 Nov 2026): hosted from
+    // the remade LAN screen: only the clock's seconds differ from the frames before (0xa081b283, 0xdeffc2e8, 0x6a7049b5, 0xa372a3c5, 0x825d1740, 0x2b2ce4ce, 0x54a64500, 0x49ead7a5, 0x5fb91fd0).
     const Step steps[] = {
-        {"session", [] {}, 0xa081b283u},
-        {"first name to team 1", [] { Drag(0x15, 0x16a, 0x100, 0x13a); }, 0xdeffc2e8u},
-        {"next name to team 2", [] { Drag(0x15, 0x16a, 0x1c4, 0x13a); }, 0x6a7049b5u},
-        {"team 1 points up", [] { Click(0x106, 0x186); }, 0xa372a3c5u},
-        {"team 2 Inner Sphere", [] { Click(0x225, 0x112); }, 0x825d1740u},
-        {"hover a light", [] { SendMouse(7, 0xdc, 5, false); }, 0x2b2ce4ceu},
+        {"session", [] {}, 0x75074e57u},
+        {"first name to team 1", [] { Drag(0x15, 0x16a, 0x100, 0x13a); }, 0x033dd847u},
+        {"next name to team 2", [] { Drag(0x15, 0x16a, 0x1c4, 0x13a); }, 0x20db565cu},
+        {"team 1 points up", [] { Click(0x106, 0x186); }, 0xc99453e5u},
+        {"team 2 Inner Sphere", [] { Click(0x225, 0x112); }, 0xe219f804u},
+        {"hover a light", [] { SendMouse(7, 0xdc, 5, false); }, 0x7b832cd8u},
         {"chat typed",
          []
          {
              Click(0x40, 0x130);
              Type("hello there");
          },
-         0x54a64500u},
-        {"chat sent", [] { SendKey(0xd); }, 0x49ead7a5u},
-        {"name back off the team", [] { Drag(0x105, 0x13a, 0x40, 0x1c0); }, 0x5fb91fd0u},
+         0x9e88d21du},
+        {"chat sent", [] { SendKey(0xd); }, 0x37f5347fu},
+        {"name back off the team", [] { Drag(0x105, 0x13a, 0x40, 0x1c0); }, 0x8e846398u},
     };
 
     int32_t index = 0;
@@ -160,8 +159,9 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
     // 0xa176a052 before the OB-129 fix (the first step's frames), 0x87982e74 before the control audit (2026-10-04: the
     // steps are unchanged; between them presses end at the release, and the ready lights' backing and the clock show
     // at once; 0x8a6bba0e before the MATCH OPTIONS tab; 0xc78ee09f before the room showed from hosting, the clock's;
-    // 0x5e48015b before the room showed through the flow's change).
-    CHECK_EQ(presents, 0xd7cf0a76u);
+    // 0x5e48015b before the room showed through the flow's change; 0xd7cf0a76 before it was hosted from the remade LAN
+    // screen, the clock's).
+    CHECK_EQ(presents, 0x04e0ba6eu);
 }
 
 namespace
@@ -264,13 +264,8 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(OptionsHostAddress);
-    MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
     // MULTIPLAYER opens the LAN games (the personal build).
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
-    lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
-    lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Options game");
-    lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
-    CreateSession();
+    MCTestGuest::HostOnLan("Commander", "Options game", 6);
     Settle();
     REQUIRE(manager.DirectPlay != nullptr);
     MCMultiPlayer& game = *MultiPlayer();
@@ -577,13 +572,8 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(DataHostAddress);
-    MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
     // MULTIPLAYER opens the LAN games (the personal build).
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
-    lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
-    lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Data game");
-    lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
-    CreateSession();
+    MCTestGuest::HostOnLan("Commander", "Data game", 6);
     Settle();
     REQUIRE(manager.DirectPlay != nullptr);
 
@@ -685,13 +675,14 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     ConnectScreen();
     Settle();
     REQUIRE(MultiPlayer() != nullptr);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
-    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(MCTestGuest::OnLan());
+    CHECK(MCTestGuest::DialogText().empty());
     CHECK(MultiPlayer()->SessionManager->CurrentConnection == MCNetProtocol::TcpIp);
 
     // The games' CANCEL: the main menu, the multiplayer object gone.
-    MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
-    ClickButton(*lanScreen.Element<MCLogButton>(1));
+    MCGamesScreen& lanScreen = *MCTestGuest::Games(MCGamesWhere::Lan);
+    lanScreen.Back();
+    Settle();
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
     CHECK(MultiPlayer() == nullptr);
 
@@ -701,10 +692,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(MenuHostAddress);
-    lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
-    lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Menu game");
-    lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("2");
-    CreateSession();
+    MCTestGuest::HostOnLan("Commander", "Menu game", 2);
     Settle();
     REQUIRE(manager.CurrentSession() != nullptr);
     MCSessionScreen& room = *GlobalLog()->SessionScreen;
@@ -719,15 +707,13 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     REQUIRE(SettleUntil([] { return !GlobalLog()->MessageDialog->IsShowing(); }));
     CHECK(!room.LoadMissionButton->Disabled);
     ClickButton(*room.ExitButton);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
-    CHECK(lanScreen.IsShowing());
+    CHECK(MCTestGuest::OnLan());
     CHECK(!room.IsShowing());
     CHECK(manager.CurrentSession() == nullptr);
     CHECK(manager.CurrentConnection == MCNetProtocol::TcpIp);
-    CHECK_EQ(ElementText(lanScreen, 4), "Commander");
+    CHECK_EQ(lanScreen.PlayerName(), "Commander");
 
     // Without a network the connection screen shows instead, and its SERIAL screen's CANCEL goes back to it.
-    lanScreen.ShowGuiWindow(false);
     ShowSerialScreen();
     Settle();
     auto& serialScreen = *GlobalLog()->SerialScreen;
@@ -735,7 +721,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MultiplayerScreen);
     CHECK(GlobalLog()->MultiplayerScreen->IsShowing());
     CHECK(!serialScreen.IsShowing());
-    CHECK(!lanScreen.IsShowing());
+    CHECK(!MCTestGuest::OnLan());
 }
 
 /// <summary>
@@ -757,11 +743,8 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(RoomHostAddress);
-    MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
-    lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
-    lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Room game");
-    lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
-    CreateSession();
+    // MULTIPLAYER opens the LAN games (the personal build).
+    MCTestGuest::HostOnLan("Commander", "Room game", 6);
     Settle();
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     MCSessionScreen& room = *GlobalLog()->SessionScreen;
@@ -902,11 +885,8 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can
     MCMultiPlayer& game = *MultiPlayer();
     MCSessionManager& manager = *game.SessionManager;
     manager.ConnectTcp(JoinHostAddress);
-    MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
-    lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
-    lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Joiners' game");
-    lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
-    CreateSession();
+    // MULTIPLAYER opens the LAN games (the personal build).
+    MCTestGuest::HostOnLan("Commander", "Joiners' game", 6);
     Settle();
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     MCSessionScreen& room = *GlobalLog()->SessionScreen;
@@ -1101,11 +1081,8 @@ namespace
         Settle();
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
         manager.ConnectTcp(RolloverHostAddress);
-        MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
-        lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("BOB");
-        lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Rolling room");
-        lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
-        CreateSession();
+        // MULTIPLAYER opens the LAN games (the personal build).
+        MCTestGuest::HostOnLan("BOB", "Rolling room", 6);
         Settle();
         REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
         MCSessionScreen& room = *GlobalLog()->SessionScreen;

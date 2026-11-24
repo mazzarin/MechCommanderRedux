@@ -1,12 +1,13 @@
 #pragma once
 
-// Port-only (SPEC-menus.md, "Testing"): what the remade menus' tests share (MenuUiTests, SavesTests): the windows a
-// screen is drawn at, a picture's hash, a test's screenshot's path and the game's window set to a size.
-
 #include "MCTest.h"
 #include "platform/MCDisplay.h"
 
-namespace MCMenuFrames
+// Port-only (SPEC-menus.md's "Testing"): what the remade screens' tests share: the windows they're drawn and checked
+// at, a picture's hash (an SDL surface's or the game window's), where --shots saves one, and the game's window set to a
+// size.
+
+namespace MCMenusPictures
 {
     struct MCWindowSize
     {
@@ -42,11 +43,11 @@ namespace MCMenuFrames
 
     inline constexpr uint32_t FnvBasis = 0x811c9dc5;
     inline constexpr uint32_t FnvPrime = 0x01000193;
-    inline constexpr size_t PixelBytes = 4;
 
     /// <summary>The FNV-1a hash of a picture's size and its RGBA pixels, row by row.</summary>
     inline uint32_t PictureHash(const SDL_Surface& picture)
     {
+        constexpr size_t PixelBytes = 4;
         uint32_t hash = FnvBasis;
         hash = (hash ^ static_cast<uint32_t>(picture.w)) * FnvPrime;
         hash = (hash ^ static_cast<uint32_t>(picture.h)) * FnvPrime;
@@ -82,20 +83,6 @@ namespace MCMenuFrames
         return hash;
     }
 
-    /// <summary>Where a test's screenshot <paramref name="name"/> goes with <c>--shots</c>; none without it.</summary>
-    inline std::optional<std::filesystem::path> ShotPath(std::string_view name)
-    {
-        const std::optional<std::string_view> shots = MCTest::Option("shots");
-
-        if (!shots.has_value())
-        {
-            return std::nullopt;
-        }
-
-        std::filesystem::create_directories(std::filesystem::path(*shots));
-        return std::filesystem::path(*shots) / std::format("{}.png", name);
-    }
-
     /// <summary>The window made <paramref name="width"/> x <paramref name="height"/> pixels (in points on a dense screen).</summary>
     inline bool SetWindowPixels(MCDisplay& display, int width, int height)
     {
@@ -108,5 +95,19 @@ namespace MCMenuFrames
         int pixelHeight = 0;
         SDL_GetWindowSizeInPixels(&window, &pixelWidth, &pixelHeight);
         return pixelWidth == width && pixelHeight == height;
+    }
+
+    /// <summary>Where --shots saves the picture <paramref name="name"/> (a .png); none without --shots.</summary>
+    inline std::optional<std::filesystem::path> ShotPath(std::string_view name)
+    {
+        const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+        if (!shots.has_value())
+        {
+            return std::nullopt;
+        }
+
+        std::filesystem::create_directories(std::filesystem::path(*shots));
+        return std::filesystem::path(*shots) / std::format("{}.png", name);
     }
 }

@@ -1,0 +1,40 @@
+<rml>
+<head>
+    <title>Host game</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="dialog.rcss"/>
+    <link type="text/rcss" href="host.rcss"/>
+</head>
+<!-- Port-only (SPEC-menus.md's stage 3): HOST GAME, a window over the games list: the game's name (the game offers
+     "<player>'s game"), how many players, who can join (an internet game: PUBLIC or PRIVATE); CANCEL and HOST GAME. -->
+<body class="window-body">
+    <div class="veil"></div>
+    <div class="window-place">
+        <div id="hostwin" class="dialog panel glass">
+            <div class="titlebar row bottom"><div class="grow"><div class="eyebrow" id="where">Internet</div><div class="title caps">Host game</div></div></div>
+            <div class="set-row">
+                <div class="set-words"><div class="set-name">Game name</div></div>
+                <div class="set-control"><input type="text" class="field" id="game-name" maxlength="24" data-first/></div>
+            </div>
+            <div class="set-row">
+                <div class="set-words"><div class="set-name">Players</div></div>
+                <div class="set-control">
+                    <div class="stepper" id="players" data-choices="2|3|4|5|6" data-choice="4">
+                        <div class="arrow">&lt;</div><div class="step-value"></div><div class="arrow">&gt;</div>
+                    </div>
+                </div>
+            </div>
+            <div class="set-row" id="who-row">
+                <div class="set-words"><div class="set-name">Who can join</div></div>
+                <div class="set-control"><div class="switch" id="who"><div class="on">Public</div><div>Private</div></div></div>
+            </div>
+            <div class="foot row">
+                <div class="button" id="cancel" data-hint="Cancel">Cancel</div>
+                <div class="grow"></div>
+                <div class="button main" id="host" data-hint="Host">Host game</div>
+            </div>
+            <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+        </div>
+    </div>
+</body>
+</rml>

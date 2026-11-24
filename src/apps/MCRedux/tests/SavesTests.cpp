@@ -1,6 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
-#include "MCMenuFrames.h"
+#include "MCMenusPictures.h"
 #include "MCScratchFolder.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -432,14 +432,14 @@ namespace
         REQUIRE(window.has_value());
 
         if (const std::optional<std::filesystem::path> path =
-                MCMenuFrames::ShotPath(std::format("saves_{}_{}x{}", what, window->Width, window->Height));
+                MCMenusPictures::ShotPath(std::format("saves_{}_{}x{}", what, window->Width, window->Height));
             path.has_value())
         {
             REQUIRE(display.SaveWindowScreenshot(*path).has_value());
         }
 
         return std::format("{} {}x{}: {:#010x}", what, window->Width, window->Height,
-                           MCMenuFrames::PictureHash(*window));
+                           MCMenusPictures::PictureHash(*window));
     }
 }
 
@@ -487,7 +487,7 @@ TEST_CASE_ISOLATED("game: LOAD GAME, its DELETE question and SAVE GAME draw the 
     struct MCDrawn
     {
         std::string_view What;
-        std::array<uint32_t, MCMenuFrames::FrameWindows.size()> Hashes;
+        std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes;
     };
 
     constexpr std::array<MCDrawn, 3> Drawn = {{
@@ -498,10 +498,10 @@ TEST_CASE_ISOLATED("game: LOAD GAME, its DELETE question and SAVE GAME draw the 
 
     const auto drawEach = [&display](const MCDrawn& drawn)
     {
-        for (size_t i = 0; i < MCMenuFrames::FrameWindows.size(); i++)
+        for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
         {
-            const MCMenuFrames::MCWindowSize& size = MCMenuFrames::FrameWindows[i];
-            REQUIRE(MCMenuFrames::SetWindowPixels(*display, size.Width, size.Height));
+            const MCMenusPictures::MCWindowSize& size = MCMenusPictures::FrameWindows[i];
+            REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
             CHECK_EQ(DrawnWindow(*display, drawn.What),
                      std::format("{} {}x{}: {:#010x}", drawn.What, size.Width, size.Height, drawn.Hashes[i]));
         }
@@ -569,7 +569,7 @@ TEST_CASE_ISOLATED("game: LOAD GAME and SAVE GAME lay out and read at every wind
         REQUIRE(MCRmlMenus::Running().has_value());
         MCRmlMenus& menus = MCRmlMenus::Running()->get();
 
-        for (const MCMenuFrames::MCWindowSize& window : MCMenuFrames::PlayersWindows)
+        for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
         {
             menus.SetWindow(window.Width, window.Height);
             menus.Frame();

@@ -101,8 +101,11 @@ span, em, strong { display: inline; }
 
 /* ---- Grounds ---- */
 
-/* The main menu's painting, its height the window's, its sides painted out at 16:9 and 21:9. */
+/* The ground round the 1998 screens. */
 .stone { background-color: #383b3c; }
+/* The main menu's painting, its height the window's, its sides painted out at 16:9 and 21:9 (on the stone until the
+   painting is there). */
+.painting { background-color: #383b3c; decorator: image(art/main_menu.png cover center center); }
 /* The campaign's screens and the room: the night, no frames; columns 16 apart, each named over a rule. */
 .night { background-color: #0b1116; }
 
@@ -201,6 +204,7 @@ span, em, strong { display: inline; }
     color: #a4b0bc;
     white-space: nowrap;
 }
+.switch > div:last-child { margin-right: 0; }  /* the segments share their borders, inside the switch */
 .switch > .on { background-color: #045454; color: #fcfcfc; }
 .switch.small > div { height: 16dp; line-height: 14dp; padding: 0 8dp; }
 /* The chat (multiplayer): the newest line at its foot, as many above it as its room holds. A sender's name in their player's

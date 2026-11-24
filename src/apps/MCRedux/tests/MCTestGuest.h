@@ -6,15 +6,24 @@
 #include "linkup/MCLinkupMessages.h"
 #include "linkup/MCSessionManager.h"
 #include "gui/MCGuiEvent.h"
+#include "gui/MCScreenChange.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCGameList.h"
+#include "logistics/MCGamesScreen.h"
 #include "logistics/MCLogTextObject.h"
+#include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "platform/MCDirectPlay.h"
+#include "ui/MCRmlDialog.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
+
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 // The tests' side of a multiplayer session the game hosts: a second player joining over the loopback with DirectPlay's
 // stand-in (platform/MCDirectPlay.h), on a thread of its own, answering as a game's build would as far as a test asks.
@@ -851,10 +860,6 @@ namespace MCTestGuest
         return RoomShows(id) && GlobalLog()->SessionScreen->ShownWithGameUp(id);
     }
 
-    /// <summary>The LAN screen's player name entry and its game list (lanscreen.fit's elements).</summary>
-    inline constexpr int32_t LanPlayerName = 4;
-    inline constexpr int32_t LanGames = 2;
-
     /// <summary>Whether <paramref name="screen"/> is logistics' screen now.</summary>
     template <class Screen> bool OnScreen(const Screen& screen)
     {
@@ -867,32 +872,200 @@ namespace MCTestGuest
         return MultiPlayer() != nullptr && MultiPlayer()->SessionManager->CurrentSession() != nullptr;
     }
 
+    // ---- The remade games screens (SPEC-menus.md's stage 3: logistics/MCGamesScreen) ----
+
+    /// <summary>INTERNET's or LAN's screen, once made.</summary>
+    inline MCGuiHandle<MCGamesScreen> Games(MCGamesWhere where)
+    {
+        return MCGamesScreenOf(where);
+    }
+
+    /// <summary>
+    /// Whether INTERNET's or LAN's screen shows (no 1998 screen shown over it), the change that showed it done with
+    /// the input (it holds it while the screens fade).
+    /// </summary>
+    inline bool OnGames(MCGamesWhere where)
+    {
+        const MCGuiHandle<MCGamesScreen> screen = MCGamesScreenOf(where);
+        return screen && screen->Shown() && !MCScreenChange::HoldsInput();
+    }
+
+    inline bool OnLan()
+    {
+        return OnGames(MCGamesWhere::Lan);
+    }
+
+    inline bool OnInternet()
+    {
+        return OnGames(MCGamesWhere::Internet);
+    }
+
+    /// <summary>MULTIPLAYER ACCESS (the 1998 screen) shown, nothing over it, the change that showed it over.</summary>
+    inline bool OnAccess()
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        return logistics->CurrentScreen() == logistics->MultiplayerScreen &&
+               logistics->MultiplayerScreen->IsShowing() && !OnInternet() && !OnLan() && !MCScreenChange::Running();
+    }
+
+    /// <summary>Whether the room (the 1998 session screen) shows.</summary>
+    inline bool InRoom()
+    {
+        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen && GlobalLog()->SessionScreen->IsShowing();
+    }
+
+    /// <summary>The element <paramref name="id"/> in a remade screen's document; none while it isn't open.</summary>
+    inline Rml::Element* ElementOf(const MCRmlScreen& screen, const char* id)
+    {
+        const MCOptionalRef<Rml::ElementDocument> document = screen.Document();
+        return document.has_value() ? document->get().GetElementById(id) : nullptr;
+    }
+
+    /// <summary>The rows a games screen's list shows (its <c>#list</c>'s, the template left out).</summary>
+    inline std::vector<Rml::Element*> RowsOf(const MCRmlScreen& screen)
+    {
+        Rml::ElementList rows;
+
+        if (Rml::Element* list = ElementOf(screen, "list"); list != nullptr)
+        {
+            list->GetElementsByClassName(rows, "list-row");
+        }
+
+        std::erase_if(rows, [](Rml::Element* row) { return !row->IsVisible(); });
+        return rows;
+    }
+
+    /// <summary>The dialog's way back (CANCEL) pressed, and the game settled.</summary>
+    inline void PressDialogCancel()
+    {
+        REQUIRE(MCRmlDialogs::Shown());
+        MCRmlDialogs::Dialog()->PressOther();
+        Settle();
+    }
+
+    /// <summary>
+    /// A player's click on the middle of <paramref name="element"/> of a remade screen: SDL's mouse move, button down
+    /// and up in the window's points (the menus' context is in its pixels), a frame after each.
+    /// </summary>
+    inline void RealClickOn(Rml::Element& element)
+    {
+        SDL_Window& window = MCInput::Display()->Window();
+        const float density = std::max(SDL_GetWindowPixelDensity(&window), 1.0f);
+        const Rml::Vector2f at = element.GetAbsoluteOffset(Rml::BoxArea::Border) + element.GetBox().GetSize() / 2.0f;
+        const float x = at.x / density;
+        const float y = at.y / density;
+        SDL_Event motion{};
+        motion.type = SDL_EVENT_MOUSE_MOTION;
+        motion.motion.windowID = SDL_GetWindowID(&window);
+        motion.motion.x = x;
+        motion.motion.y = y;
+        MCInput::HandleEvent(motion);
+        Step();
+
+        for (const bool down : {true, false})
+        {
+            SDL_Event button{};
+            button.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+            button.button.windowID = SDL_GetWindowID(&window);
+            button.button.button = SDL_BUTTON_LEFT;
+            button.button.down = down;
+            button.button.clicks = 1;
+            button.button.x = x;
+            button.button.y = y;
+            MCInput::HandleEvent(button);
+            Step();
+        }
+    }
+
+    /// <summary>A player's typing of <paramref name="text"/> into the remade screen's box that has the keys (SDL's text event).</summary>
+    inline void RealType(std::string_view text)
+    {
+        const std::string typed(text);
+        SDL_Event event{};
+        event.type = SDL_EVENT_TEXT_INPUT;
+        event.text.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
+        event.text.text = typed.c_str();
+        MCInput::HandleEvent(event);
+        Step();
+    }
+
+    /// <summary>
+    /// The sentence the dialog shows: the remade one's over a remade screen, else the 1998 one's; empty with none.
+    /// </summary>
+    inline std::string DialogText()
+    {
+        if (MCRmlDialogs::Shown())
+        {
+            return MCRmlDialogs::Dialog()->Said().Text;
+        }
+
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        return logistics != nullptr && logistics->MessageDialog != nullptr && logistics->MessageDialog->ShowWindow
+                   ? logistics->MessageDialog->Text
+                   : std::string();
+    }
+
+    /// <summary>The dialog's answer (OK) pressed, the remade one's or the 1998 one's, and the game settled.</summary>
+    inline void PressDialogOk()
+    {
+        if (MCRmlDialogs::Shown())
+        {
+            MCRmlDialogs::Dialog()->PressMain();
+        }
+        else
+        {
+            MCGuiObject& ok = *GlobalLog()->MessageDialog->OkButton;
+            MCScreenInput::Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
+        }
+
+        Settle();
+    }
+
+    /// <summary>
+    /// From the LAN games, hosts a room where the session manager's connection says as <paramref name="player"/>: HOST
+    /// GAME's window with the game's name and its most players, then HOST GAME: the room (the session screen) opens,
+    /// with no frames run (as the 1998 screen's CREATE GAME, whose room the frames' hashes count from).
+    /// </summary>
+    inline void HostOnLan(std::string_view player, std::string_view gameName, int32_t maxPlayers)
+    {
+        REQUIRE(OnLan());
+        MCGamesScreen& lan = *Games(MCGamesWhere::Lan);
+        lan.SetPlayerName(std::string(player));
+        lan.PressHost();
+        REQUIRE(lan.HostWindow());
+        lan.HostWindow()->SetChoices({.GameName = std::string(gameName), .MaxPlayers = maxPlayers});
+        lan.HostWindow()->PressHost();
+    }
+
+    /// <summary>
+    /// From the LAN games, hosts a room on <paramref name="address"/> as <paramref name="player"/>: HOST GAME's window
+    /// with the game's name and its most players, then HOST GAME; the room (the session screen) opens.
+    /// </summary>
+    inline void HostFromLan(std::string_view address, std::string_view player, std::string_view gameName,
+                            int32_t maxPlayers)
+    {
+        REQUIRE(OnLan());
+        MultiPlayer()->SessionManager->ConnectTcp(std::string(address));
+        HostOnLan(player, gameName, maxPlayers);
+    }
+
     /// <summary>
     /// From the LAN games, joins the room the test's host holds on <paramref name="port"/> as <paramref name="name"/>,
     /// as a player picking it from the list does: the room (the session screen) opens.
     /// </summary>
     inline void JoinFromLan(std::string_view port, std::string_view name)
     {
-        REQUIRE(OnScreen(GlobalLog()->LanScreen));
+        REQUIRE(OnLan());
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
         manager.ConnectTcp(std::format("127.0.0.1:{}", port));
-        MCSplashScreen& lan = *GlobalLog()->LanScreen;
-        lan.Element<MCLogTextObject>(LanPlayerName)->SetStringBuffer(name);
-        const auto games = lan.Element<MCGameList>(LanGames);
+        MCGamesScreen& lan = *Games(MCGamesWhere::Lan);
+        lan.SetPlayerName(std::string(name));
 
-        // The list's refresh (its timer's), until the room is listed.
-        REQUIRE(SettleUntil(
-            [&]
-            {
-                MCGuiEvent refresh;
-                refresh.Clear();
-                refresh.Type = MCGuiEventType::Timer;
-                games->HandleEvent(refresh);
-                return games->NumSessions() > 0;
-            }));
-        games->SelectedSession = 0;
-        games->SelectedGuid = games->Sessions.front();
-        JoinGame();
+        // The list's reads (every two seconds), until the room is listed.
+        REQUIRE(SettleUntil([&] { return !lan.Seen().Rows.empty(); }));
+        lan.PickRow(0);
+        REQUIRE(lan.Seen().CanJoin);
+        lan.PressJoin();
         REQUIRE(SettleUntil([] { return OnScreen(GlobalLog()->SessionScreen) && InSession(); }));
         Settle();
     }

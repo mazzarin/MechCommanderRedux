@@ -449,7 +449,7 @@
     <ClInclude Include="tests\MCInternetSpots.h">
       <Filter>tests</Filter>
     </ClInclude>
-    <ClInclude Include="tests\MCMenuFrames.h">
+    <ClInclude Include="tests\MCMenusPictures.h">
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCMock.h">

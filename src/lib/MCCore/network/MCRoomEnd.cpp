@@ -32,11 +32,21 @@ namespace
     constexpr std::string_view LostFormat = "LOST THE CONNECTION TO {}'S GAME.";
     /// <summary>The host's name when the game doesn't know it.</summary>
     constexpr std::string_view SomeHost = "THE HOST";
-    /// <summary>What a guest says while it joins its host <paramref name="name"/>'s room again for a rematch.</summary>
-    constexpr std::string_view RejoiningFormat = "REJOINING {}'S GAME FOR A REMATCH...";
-    /// <summary>What a host says while its internet game's place on the service comes back, and if it can't.</summary>
-    constexpr std::string_view ReopeningText = "OPENING YOUR ROOM AGAIN...";
-    constexpr std::string_view NotReopenedText = "COULDN'T OPEN YOUR ROOM AGAIN.";
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 3): the same over the remade games list, in sentence case with the host's name as
+    /// typed ("Bob closed the game.").
+    /// </summary>
+    constexpr std::string_view ClosedSentence = "{} closed the game.";
+    constexpr std::string_view LostSentence = "Lost the connection to {}'s game.";
+    constexpr std::string_view SomeHostSentence = "the host";
+    /// <summary>
+    /// What a guest says while it joins its host <paramref name="name"/>'s room again for a rematch, over the games list
+    /// (remade: SPEC-menus.md's stage 3, a sentence with the name as typed).
+    /// </summary>
+    constexpr std::string_view RejoiningFormat = "Rejoining {}'s game for a rematch...";
+    /// <summary>What a host says over the games list while its internet game's place on the service comes back, and if it can't.</summary>
+    constexpr std::string_view ReopeningText = "Opening your room again...";
+    constexpr std::string_view NotReopenedText = "Couldn't open your room again.";
 
     /// <summary>A host's wait for its guests to leave on its word, then what it does.</summary>
     struct MCEnding
@@ -126,11 +136,21 @@ namespace
     }
 
     /// <summary>
+    /// <see cref="LineOf"/> over the remade games list: <paramref name="host"/> as typed, in a sentence. A name the host
+    /// said (<paramref name="closedBy"/>) is its own.
+    /// </summary>
+    std::string SentenceOf(const std::optional<std::string>& closedBy, std::string_view host)
+    {
+        return closedBy.has_value() ? std::format(ClosedSentence, *closedBy) : std::format(LostSentence, host);
+    }
+
+    /// <summary>
     /// The host's name in the menus' capitals, as the session has it: its host's player (as the transport marks it), or
     /// the game's host or server.
     /// </summary>
-    std::string HostName(const MCMultiPlayer& game)
+    std::string HostName(const MCMultiPlayer& game, bool capitals = true)
     {
+        const auto named = [capitals](std::string_view name) { return capitals ? Upper(name) : std::string(name); };
         MCSessionManager& manager = *game.SessionManager;
 
         for (const std::shared_ptr<MCFidpPlayer>& player : manager.GetPlayers(nullptr))
@@ -138,7 +158,7 @@ namespace
             if (player != nullptr && player->Id != manager.MyPlayerID && manager.DirectPlay != nullptr &&
                 manager.DirectPlay->IsSessionHostPlayer(player->Id))
             {
-                return Upper(player->Name);
+                return named(player->Name);
             }
         }
 
@@ -146,11 +166,11 @@ namespace
         {
             if (const std::shared_ptr<MCFidpPlayer> host = id != 0 ? manager.GetPlayer(id) : nullptr; host != nullptr)
             {
-                return Upper(host->Name);
+                return named(host->Name);
             }
         }
 
-        return std::string(SomeHost);
+        return std::string(capitals ? SomeHost : SomeHostSentence);
     }
 
     /// <summary>Whether player <paramref name="id"/>'s build takes the host's word that the room ends.</summary>
@@ -426,8 +446,10 @@ auto MCRoomEnd::WaitsForGuests() -> bool
 
 auto MCRoomEnd::GuestLine() -> std::string
 {
+    // The launcher's guest says it in the 1998 dialog's capitals (the name kept as typed, for the games list's line).
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
-    return LineOf(ClosedBy,
+    const std::optional<std::string> closedBy = ClosedBy.has_value() ? std::optional(Upper(*ClosedBy)) : std::nullopt;
+    return LineOf(closedBy,
                   game != nullptr && game->SessionManager != nullptr ? HostName(*game) : std::string(SomeHost));
 }
 
@@ -482,8 +504,6 @@ auto MCRoomEnd::ShowGames(MCGames games, std::string_view line, std::function<vo
                              {
                                  ShowLanScreen();
                              }
-
-                             shown.ShowLogScreen(true, true);
 
                              if (!line.empty())
                              {
@@ -574,7 +594,7 @@ auto MCRoomEnd::HostSaid(uint32_t fromId, int32_t how) -> bool
                                    .Internet = room->From == MCGames::Internet,
                                    .RelayOnly = room->Public,
                                    .PlayerName = room->PlayerName,
-                                   .Text = std::format(RejoiningFormat, HostName(*game))}};
+                                   .Text = std::format(RejoiningFormat, HostName(*game, false))}};
         RejoinHeard = true;
         return false;
     }
@@ -586,7 +606,7 @@ auto MCRoomEnd::HostSaid(uint32_t fromId, int32_t how) -> bool
     }
 
     // At the results the battle is over: the session goes as it does when lost there.
-    ClosedBy = HostName(*game);
+    ClosedBy = HostName(*game, false);
     SDL_Log("Room end: %s closed the room", ClosedBy->c_str());
     return true;
 }
@@ -633,7 +653,8 @@ auto MCRoomEnd::SessionLost() -> bool
         return true;
     }
 
-    std::string line = LineOf(closedBy, HostName(*game));
+    // Said over the games list (remade: SPEC-menus.md's stage 3), in a sentence.
+    std::string line = SentenceOf(closedBy, HostName(*game, false));
     SDL_Log("Room end: the room ended under this game (%s)", line.c_str());
 
     // A match: back to the games once its scenario has ended (MCRoomEnd::AfterMatch).

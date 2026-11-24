@@ -1,6 +1,6 @@
 #include "stdafx.h"
 #include "MCScratchFolder.h"
-#include "MCMenuFrames.h"
+#include "MCMenusPictures.h"
 #include "MCTest.h"
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
@@ -30,14 +30,16 @@
 
 namespace
 {
-    using namespace MCMenuFrames;
-
     constexpr float FrameSeconds = 1.0f / 15.0f;
     /// <summary>Frames a change takes to show (the menus' layout, then the presenter's frame).</summary>
     constexpr int32_t SettleFrames = 3;
     /// <summary>The look's class of the tab chosen, and of a list's row picked.</summary>
     constexpr const char* NowClass = "now";
     constexpr const char* PickedClass = "picked";
+
+    using namespace MCMenusPictures;
+
+    constexpr size_t PixelBytes = 4;
 
     SDL_Event KeyEvent(uint32_t type, SDL_Keycode key, SDL_Keymod held)
     {
@@ -217,7 +219,6 @@ namespace
         MCUiSoftware _Software;
         size_t _Heard = 0;
     };
-
 }
 
 /// <summary>

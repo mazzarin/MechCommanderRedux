@@ -5,6 +5,8 @@
 // their tech bases and resource points, the players on no team, the loaded mission, what the start waits for. Logistics
 // owns it (MCLogistics::Room), so it lives as long as the room's screens; what the room sends and when is unchanged.
 
+#include "lib/MCOptionalRef.h"
+
 class MCRoomModel
 {
 public:
@@ -71,6 +73,62 @@ public:
     /// the start's check last found; empty when it waits for no one.
     /// </summary>
     std::string StartWaits;
+
+    /// <summary>
+    /// Whether a player has the loaded mission's file (the host's inquiry: the 1998 room's LoadMission and FileReport).
+    /// </summary>
+    enum class MCFileStatus : int8_t
+    {
+        /// <summary>No inquiry out.</summary>
+        NotAsked = -1,
+        /// <summary>Waiting for the answer.</summary>
+        Waiting = 0,
+        Missing = 1,
+        Present = 2,
+        /// <summary>Port: the file is there, but the player's game data differ from the host's (as good as missing).</summary>
+        Differs = 3,
+        /// <summary>Port: the file is there; the player's build says nothing of its game data (it plays).</summary>
+        Unchecked = 4,
+    };
+
+    /// <summary>A player shown the room, in a seat of its own (the 1998 room's name slots, in the order it filled them).</summary>
+    struct MCSeat
+    {
+        /// <summary>The player's network id, or <see cref="NoPlayer"/> for an empty seat.</summary>
+        uint32_t Id = NoPlayer;
+        /// <summary>The player's name, the session's as the player was seated.</summary>
+        std::string Name;
+        MCFileStatus Files = MCFileStatus::NotAsked;
+    };
+
+    /// <summary>The players shown the room, a seat each.</summary>
+    std::array<MCSeat, MaxPlayers> Seats;
+
+    // ---- The room's watch (the 1998 room's tick runs it) ----
+
+    /// <summary>Until when (the game clock) the room keeps pinging after it opens.</summary>
+    uint32_t PingUntil = 0;
+    /// <summary>The room still pings.</summary>
+    bool Pinging = false;
+    /// <summary>Port-only (Redux HD): the room has rolled over to this game, whose next look takes it (TakeOverRoom).</summary>
+    bool TakingOver = false;
+    /// <summary>
+    /// Port-only (the personal build): the host's guests whose game was up (they had pinged) when they were last shown
+    /// the room; one shown before it was up is shown it again once it is.
+    /// </summary>
+    std::set<uint32_t> ShownReady;
+    /// <summary>Port-only (the personal build): when (the game clock) the host first saw each player in the session.</summary>
+    std::map<uint32_t, uint32_t> SeenSince;
+
+    /// <summary>
+    /// Player <paramref name="playerId"/> put in seat <paramref name="seat"/> (<see cref="NoPlayer"/> empties it), with
+    /// the session's name for it when the session has it (else the seat's name stays, as the 1998 name's did).
+    /// </summary>
+    void Seat(size_t seat, uint32_t playerId);
+    /// <summary>Player <paramref name="playerId"/>'s seat; none when the room doesn't show it.</summary>
+    MCOptionalRef<MCSeat> SeatOf(uint32_t playerId);
+    /// <summary>Whether the host's inquiry of the mission's file waits for a player's answer.</summary>
+    bool AskingFiles() const;
 
     // ---- What the room's views read ----
 

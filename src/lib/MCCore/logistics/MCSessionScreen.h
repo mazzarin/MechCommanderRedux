@@ -318,20 +318,6 @@ private:
     /// named and the mission is called off.
     /// </summary>
     void FilesAnswered();
-
-    /// <summary>Until when (the game clock) the screen keeps pinging after it opens.</summary>
-    uint32_t _PingUntil = 0;
-    /// <summary>The screen still pings.</summary>
-    bool _Pinging = false;
-    /// <summary>Port-only (Redux HD): the room has rolled over to this game, whose next look takes it (TakeOverRoom).</summary>
-    bool _TakingOver = false;
-    /// <summary>
-    /// Port-only (the personal build): the host's guests whose game was up (they had pinged) when they were last shown
-    /// the room; one shown before it was up is shown it again once it is.
-    /// </summary>
-    std::set<uint32_t> _ShownReady;
-    /// <summary>Port-only (the personal build): when (the game clock) the host first saw each player in the session.</summary>
-    std::map<uint32_t, uint32_t> _SeenSince;
 };
 
 /// <summary>

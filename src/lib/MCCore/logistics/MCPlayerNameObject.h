@@ -1,6 +1,7 @@
 #pragma once
 
 #include "logistics/MCLogObject.h"
+#include "logistics/MCRoomModel.h"
 
 class MCGuiEvent;
 class MCGuiFont;
@@ -15,23 +16,6 @@ class MCPlayerNameObject : public MCLogObject
 public:
     /// <summary>A player id that stands for no player.</summary>
     static constexpr uint32_t NoPlayer = 0xffffffff;
-
-    /// <summary>
-    /// Whether the player has the loaded mission's file (<c>MCSessionScreen::LoadMission</c>, <c>FileReport</c>).
-    /// </summary>
-    enum class MCFileStatus : int8_t
-    {
-        /// <summary>No inquiry out.</summary>
-        NotAsked = -1,
-        /// <summary>Waiting for the answer.</summary>
-        Waiting = 0,
-        Missing = 1,
-        Present = 2,
-        /// <summary>Port: the file is there, but the player's game data differ from the host's (as good as missing).</summary>
-        Differs = 3,
-        /// <summary>Port: the file is there; the player's build says nothing of its game data (it plays).</summary>
-        Unchecked = 4,
-    };
 
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
 
@@ -50,18 +34,22 @@ public:
     /// <summary>Dragging: grabbed on a press (when <see cref="Draggable"/>), follows the mouse, dropped on release.</summary>
     void HandleEvent(MCGuiEvent& event) override;
 
-    void SetPlayerName(std::string_view name);
-
-    /// <summary>Sets the player and takes the name from the session.</summary>
+    /// <summary>
+    /// Sets the player and takes the name from the session. Port-only (SPEC-menus.md's stage 4): its seat's in the room
+    /// model (<see cref="MCRoomModel::Seat"/>), which the name shows.
+    /// </summary>
     void SetPlayerId(uint32_t playerId);
+
+    /// <summary>The player the name shows (its seat's), or <see cref="NoPlayer"/>.</summary>
+    uint32_t PlayerId() const;
+    /// <summary>The name shown (its seat's).</summary>
+    std::string PlayerName() const;
 
     void SetFont(std::shared_ptr<MCGuiFont> newFont);
 
-    MCFileStatus FileStatus = MCFileStatus::NotAsked;
-    std::string PlayerName;
     std::shared_ptr<MCGuiFont> Font;
-    /// <summary>The player's network id, or <see cref="NoPlayer"/>.</summary>
-    uint32_t PlayerId = NoPlayer;
+    /// <summary>Port-only (SPEC-menus.md's stage 4): the room model's seat the name shows (its slot on the screen).</summary>
+    size_t SeatIndex = 0;
     /// <summary>The name can be dragged (the host's screen).</summary>
     bool Draggable = false;
 

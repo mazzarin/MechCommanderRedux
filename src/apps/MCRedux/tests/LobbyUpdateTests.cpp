@@ -380,7 +380,7 @@ namespace
     bool Shows(const MCSessionScreen& screen, uint32_t id)
     {
         return std::ranges::any_of(screen.PlayerNames, [id](const auto& name)
-                                   { return name != nullptr && name->ShowWindow && name->PlayerId == id; });
+                                   { return name != nullptr && name->ShowWindow && name->PlayerId() == id; });
     }
 }
 

@@ -460,12 +460,15 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     DropTargets = {{0xf7, 0x132, 0x199, 0x144},  {0xf7, 0x148, 0x199, 0x15a},  {0xf7, 0x15d, 0x199, 0x16f},
                    {0x1b9, 0x132, 0x25b, 0x144}, {0x1b9, 0x148, 0x25b, 0x15a}, {0x1b9, 0x15d, 0x25a, 0x16f}};
 
-    // The six name slots, each with its player number picture.
+    // The six name slots, each with its player number picture, each showing its seat of the room model (empty).
+    Room().Seats.fill({});
+
     for (size_t slot = 0; slot < PlayerNames.size(); ++slot)
     {
         PlayerNames[slot] = CreateChild<MCPlayerNameObject>([](MCPlayerNameObject& made)
                                                             { made.Init(0xb, UnassignedTop, 0xa0, 0x10, {}); });
         MCPlayerNameObject& nameObject = *PlayerNames[slot];
+        nameObject.SeatIndex = slot;
         nameObject.MoveTo(0xb, UnassignedTop + static_cast<int32_t>(slot) * UnassignedRow, false);
         nameObject.ShowGuiWindow(false);
         nameObject.SetTransparent(true);
@@ -619,9 +622,9 @@ auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
             else
             {
                 // Ping for the first three seconds so the latencies are known.
-                if (_Pinging)
+                if (Room().Pinging)
                 {
-                    if (MCPort::Milliseconds() < _PingUntil)
+                    if (MCPort::Milliseconds() < Room().PingUntil)
                     {
                         if (MultiPlayer()->SessionManager->IsHost == 0)
                         {
@@ -630,7 +633,7 @@ auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
                     }
                     else
                     {
-                        _Pinging = false;
+                        Room().Pinging = false;
                     }
                 }
 
@@ -676,7 +679,7 @@ auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
     {
         // A name was dropped: onto a team slot, or anywhere else (no team).
         const auto nameObject = std::static_pointer_cast<MCPlayerNameObject>(event.TargetObject());
-        const uint32_t id = nameObject->PlayerId;
+        const uint32_t id = nameObject->PlayerId();
         RECT area;
         area.left = nameObject->GlobalX();
         area.top = nameObject->GlobalY();
@@ -787,8 +790,8 @@ auto MCSessionScreen::Activate(bool refresh) -> void
         return;
     }
 
-    _PingUntil = MCPort::Milliseconds() + 3000;
-    _Pinging = true;
+    Room().PingUntil = MCPort::Milliseconds() + 3000;
+    Room().Pinging = true;
     SessionButton->Disabled = false;
     ExitButton->Toggled = false;
     // Port-only (SPEC-menus.md's stage 2): a room that waits for its guests to leave stays with nothing to press when
@@ -863,13 +866,13 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     lights.SetNumPlayers(Room().NumPlayers);
     size_t index = 0;
     // Port-only (the personal build): the host's guests whose games are up as they are shown the room (WatchRoom).
-    _ShownReady.clear();
+    Room().ShownReady.clear();
 
     for (const auto& player : players)
     {
         if (player->HeardPing)
         {
-            _ShownReady.insert(player->Id);
+            Room().ShownReady.insert(player->Id);
         }
     }
 
@@ -1069,7 +1072,7 @@ auto MCSessionScreen::AllShown() -> bool
 
 auto MCSessionScreen::ShownWithGameUp(uint32_t playerId) const -> bool
 {
-    return _ShownReady.contains(playerId);
+    return Room().ShownReady.contains(playerId);
 }
 
 auto MCSessionScreen::WatchRoom() -> void
@@ -1086,7 +1089,7 @@ auto MCSessionScreen::WatchRoom() -> void
 
     // Port-only (Redux HD): a room rolled over to this game (TakeOverRoom). The host's choices were what the room played,
     // as far as every game in it plays them; this game's own (its command line's) are no longer the room's.
-    if (std::exchange(_TakingOver, false))
+    if (std::exchange(Room().TakingOver, false))
     {
         SDL_Log("Session screen: this game hosts the room now (its host has gone), %zu players in it", players.size());
         game.MatchOptions = game.Played;
@@ -1127,7 +1130,7 @@ auto MCSessionScreen::WatchRoom() -> void
 
     // Who joined, and whether each game is up. A player gone is forgotten.
     const uint32_t now = MCPort::Milliseconds();
-    std::erase_if(_SeenSince, [&manager](const auto& seen) { return manager.GetPlayer(seen.first) == nullptr; });
+    std::erase_if(Room().SeenSince, [&manager](const auto& seen) { return manager.GetPlayer(seen.first) == nullptr; });
     bool showAgain = false;
 
     for (const auto& player : players)
@@ -1137,13 +1140,13 @@ auto MCSessionScreen::WatchRoom() -> void
             continue;
         }
 
-        const uint32_t since = _SeenSince.try_emplace(player->Id, now).first->second;
+        const uint32_t since = Room().SeenSince.try_emplace(player->Id, now).first->second;
 
         if (NameOf(player->Id) == nullptr)
         {
             showAgain = showAgain || player->HeardPing || now - since >= ShowAnywayMs;
         }
-        else if (player->HeardPing && !_ShownReady.contains(player->Id))
+        else if (player->HeardPing && !Room().ShownReady.contains(player->Id))
         {
             // Shown the room before its game was up: shown it again now that it is.
             showAgain = true;
@@ -1158,8 +1161,7 @@ auto MCSessionScreen::WatchRoom() -> void
 
     // Nothing under way on the screen: a match, the wait for check-ins after one, a configured match's or a mission's
     // wait for the players' files, a dialog.
-    const bool asking = std::ranges::any_of(PlayerNames, [](const auto& name)
-                                            { return name->FileStatus == MCPlayerNameObject::MCFileStatus::Waiting; });
+    const bool asking = Room().AskingFiles();
 
     if (!showAgain || game.InLogistics || game.InMission || asking || MPConfiguredMatchWaiting() ||
         GlobalLog()->MessageDialog->IsShowing() || GlobalLog()->QuestionDialog->IsShowing())
@@ -1174,7 +1176,7 @@ auto MCSessionScreen::NameOf(uint32_t playerId) -> std::shared_ptr<MCPlayerNameO
 {
     for (auto& candidate : PlayerNames)
     {
-        if (candidate->PlayerId == playerId)
+        if (candidate->PlayerId() == playerId)
         {
             return candidate.Lock();
         }
@@ -1190,7 +1192,7 @@ auto MCSessionScreen::LayOutUnassigned(uint32_t skipId, size_t names, bool skipE
     for (size_t index = 0; index < names; ++index)
     {
         MCPlayerNameObject& nameObject = *PlayerNames[index];
-        const uint32_t id = nameObject.PlayerId;
+        const uint32_t id = nameObject.PlayerId();
 
         if (skipEmpty ? id == NoPlayer : id == skipId)
         {
@@ -1345,14 +1347,14 @@ auto MCSessionScreen::RemovePlayer(uint32_t playerId) -> void
     nameObject->SetPlayerId(NoPlayer);
     Room().NumPlayers = std::max(Room().NumPlayers - 1, 0);
     LayOutUnassigned(NoPlayer, MaxPlayers, true);
-    _ShownReady.erase(playerId);
-    _SeenSince.erase(playerId);
+    Room().ShownReady.erase(playerId);
+    Room().SeenSince.erase(playerId);
     CheckGoodToGo();
 
     // The mission's file asked of it: the answers go on without it (it may have been the last one waited for).
-    if (const MCPlayerNameObject::MCFileStatus asked =
-            std::exchange(nameObject->FileStatus, MCPlayerNameObject::MCFileStatus::NotAsked);
-        asked == MCPlayerNameObject::MCFileStatus::Waiting)
+    if (const MCRoomModel::MCFileStatus asked =
+            std::exchange(Room().Seats.at(nameObject->SeatIndex).Files, MCRoomModel::MCFileStatus::NotAsked);
+        asked == MCRoomModel::MCFileStatus::Waiting)
     {
         FilesAnswered();
     }
@@ -1361,7 +1363,7 @@ auto MCSessionScreen::RemovePlayer(uint32_t playerId) -> void
 auto MCSessionScreen::TakeOverRoom() -> void
 {
     // On the screen's next look (WatchRoom), once the host's leave is through.
-    _TakingOver = true;
+    Room().TakingOver = true;
 }
 
 auto MCSessionScreen::SetTeam1RP(int32_t resourcePoints) const -> void
@@ -1443,9 +1445,9 @@ auto MCSessionScreen::SomeoneCheckedIn() -> void
 {
     bool allIn = true;
 
-    for (size_t index = 0; index < PlayerNames.size(); ++index)
+    for (size_t index = 0; index < Room().Seats.size(); ++index)
     {
-        const uint32_t id = PlayerNames[index]->PlayerId;
+        const uint32_t id = Room().Seats[index].Id;
 
         if (id == NoPlayer)
         {
@@ -1492,15 +1494,16 @@ auto MCSessionScreen::ShowDialog(std::string_view text, std::function<void()> on
 
 auto MCSessionScreen::FileReport(uint32_t playerId, MCFileCheck check) -> void
 {
-    using Status = MCPlayerNameObject::MCFileStatus;
+    using Status = MCRoomModel::MCFileStatus;
 
     // Nothing to do unless an inquiry is out.
-    if (std::ranges::all_of(PlayerNames, [](const auto& name) { return name->FileStatus == Status::NotAsked; }))
+    if (std::ranges::all_of(Room().Seats,
+                            [](const MCRoomModel::MCSeat& seat) { return seat.Files == Status::NotAsked; }))
     {
         return;
     }
 
-    if (std::shared_ptr<MCPlayerNameObject> reporter = NameOf(playerId); reporter != nullptr)
+    if (const MCOptionalRef<MCRoomModel::MCSeat> reporter = Room().SeatOf(playerId); reporter.has_value())
     {
         constexpr auto statusOf = [](MCFileCheck said)
         {
@@ -1519,7 +1522,7 @@ auto MCSessionScreen::FileReport(uint32_t playerId, MCFileCheck check) -> void
             return Status::Missing;
         };
 
-        reporter->FileStatus = statusOf(check);
+        reporter->get().Files = statusOf(check);
     }
 
     FilesAnswered();
@@ -1527,26 +1530,26 @@ auto MCSessionScreen::FileReport(uint32_t playerId, MCFileCheck check) -> void
 
 auto MCSessionScreen::FilesAnswered() -> void
 {
-    using Status = MCPlayerNameObject::MCFileStatus;
+    using Status = MCRoomModel::MCFileStatus;
 
     // Port: the names of the players whose file is so.
     const auto named = [this](Status status)
     {
         return MCNamedPlayers(
-            PlayerNames, [status](const auto& name) { return name->FileStatus == status; },
-            [](const auto& name) -> const std::string& { return name->PlayerName; });
+            Room().Seats, [status](const MCRoomModel::MCSeat& seat) { return seat.Files == status; },
+            [](const MCRoomModel::MCSeat& seat) -> const std::string& { return seat.Name; });
     };
 
     bool allHave = true;
 
-    for (const auto& nameObject : PlayerNames)
+    for (const MCRoomModel::MCSeat& seat : Room().Seats)
     {
-        if (nameObject->FileStatus == Status::Waiting)
+        if (seat.Files == Status::Waiting)
         {
             return;
         }
 
-        if (nameObject->FileStatus == Status::Missing || nameObject->FileStatus == Status::Differs)
+        if (seat.Files == Status::Missing || seat.Files == Status::Differs)
         {
             allHave = false;
         }
@@ -1576,14 +1579,14 @@ auto MCSessionScreen::FilesAnswered() -> void
     std::string text;
     const std::string differing = named(Status::Differs);
 
-    for (const auto& nameObject : PlayerNames)
+    for (MCRoomModel::MCSeat& seat : Room().Seats)
     {
-        if (nameObject->FileStatus == Status::Missing)
+        if (seat.Files == Status::Missing)
         {
-            text += text.empty() ? LoadGameString(0xab, 0xfe) + nameObject->PlayerName : nameObject->PlayerName;
+            text += text.empty() ? LoadGameString(0xab, 0xfe) + seat.Name : seat.Name;
         }
 
-        nameObject->FileStatus = Status::NotAsked;
+        seat.Files = Status::NotAsked;
     }
 
     if (!differing.empty())
@@ -1783,16 +1786,16 @@ auto MCSessionScreen::LoadMission(std::string_view fileName) -> void
                 // The server has it already.
                 const uint32_t serverId = MultiPlayer()->SessionManager->ServerID;
 
-                for (auto& nameObject : PlayerNames)
+                for (MCRoomModel::MCSeat& seat : Room().Seats)
                 {
-                    if (nameObject->PlayerId != NoPlayer)
+                    if (seat.Id != NoPlayer)
                     {
-                        nameObject->FileStatus = MCPlayerNameObject::MCFileStatus::Waiting;
+                        seat.Files = MCRoomModel::MCFileStatus::Waiting;
                     }
 
-                    if (nameObject->PlayerId == serverId)
+                    if (seat.Id == serverId)
                     {
-                        nameObject->FileStatus = MCPlayerNameObject::MCFileStatus::Present;
+                        seat.Files = MCRoomModel::MCFileStatus::Present;
                     }
                 }
 
@@ -1842,9 +1845,9 @@ auto MCSessionScreen::CancelMission() -> void
     MissionText->Clear();
     Room().Description.clear();
 
-    for (auto& nameObject : PlayerNames)
+    for (MCRoomModel::MCSeat& seat : Room().Seats)
     {
-        nameObject->FileStatus = MCPlayerNameObject::MCFileStatus::NotAsked;
+        seat.Files = MCRoomModel::MCFileStatus::NotAsked;
     }
 }
 
@@ -1869,12 +1872,12 @@ auto MCSessionScreen::CheckGoodToGo() -> void
     const auto there = [](uint32_t id) { return id != NoPlayer && !MCLobbyUpdate::Away(id); };
     const auto filled = [&](const auto& players) { return std::ranges::any_of(players, there); };
     const auto awayUnpicked =
-        static_cast<int32_t>(std::ranges::count_if(PlayerNames,
-                                                   [&](const auto& name)
+        static_cast<int32_t>(std::ranges::count_if(Room().Seats,
+                                                   [&](const MCRoomModel::MCSeat& seat)
                                                    {
-                                                       return name != nullptr && MCLobbyUpdate::Away(name->PlayerId) &&
-                                                              FindSlot(Room().Team1Players, name->PlayerId) < 0 &&
-                                                              FindSlot(Room().Team2Players, name->PlayerId) < 0;
+                                                       return MCLobbyUpdate::Away(seat.Id) &&
+                                                              FindSlot(Room().Team1Players, seat.Id) < 0 &&
+                                                              FindSlot(Room().Team2Players, seat.Id) < 0;
                                                    }));
     const std::optional<std::vector<uint32_t>> homeTeam = MultiPlayer()->PlayersOnHomeTeam();
     const std::optional<std::vector<uint32_t>> enemyTeam = MultiPlayer()->PlayersOnEnemyTeam();

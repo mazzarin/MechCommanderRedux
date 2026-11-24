@@ -3,14 +3,11 @@
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
-#include "linkup/MCFidpPlayer.h"
-#include "linkup/MCSessionManager.h"
-#include "network/MCMultiPlayer.h"
+#include "main/MCLogistics.h"
 #include "vfx/MCVfxFunctions.h"
 
 auto MCPlayerNameObject::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view) -> int32_t
 {
-    PlayerName.clear();
     int32_t result = MCLogObject::Init(xPos, yPos, width, height);
     SetFont(LgWhiteFont);
     BackgroundColor = 0xff;
@@ -19,7 +16,6 @@ auto MCPlayerNameObject::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t
 
 auto MCPlayerNameObject::OnDestroy() -> void
 {
-    PlayerName.clear();
     MCLogObject::OnDestroy();
 }
 
@@ -43,7 +39,7 @@ auto MCPlayerNameObject::Draw() -> void
     // The name is left out while it is dragged.
     if (Font != nullptr && !GuiSystem().Grabs(*this))
     {
-        Font->WriteString(_Port->Frame(), 0x1b, 2, PlayerName);
+        Font->WriteString(_Port->Frame(), 0x1b, 2, PlayerName());
     }
 }
 
@@ -93,20 +89,22 @@ auto MCPlayerNameObject::HandleEvent(MCGuiEvent& event) -> void
     MCGuiObject::HandleEvent(event);
 }
 
-auto MCPlayerNameObject::SetPlayerName(std::string_view name) -> void
-{
-    PlayerName = name;
-}
-
 auto MCPlayerNameObject::SetPlayerId(uint32_t newPlayerId) -> void
 {
-    PlayerId = newPlayerId;
-
-    if (MultiPlayer() != nullptr && MultiPlayer()->SessionManager != nullptr &&
-        MultiPlayer()->SessionManager->GetPlayer(newPlayerId) != nullptr)
+    if (GlobalLog() != nullptr)
     {
-        SetPlayerName(MultiPlayer()->SessionManager->GetPlayer(newPlayerId)->Name);
+        GlobalLog()->Room.Seat(SeatIndex, newPlayerId);
     }
+}
+
+auto MCPlayerNameObject::PlayerId() const -> uint32_t
+{
+    return GlobalLog() != nullptr ? GlobalLog()->Room.Seats.at(SeatIndex).Id : NoPlayer;
+}
+
+auto MCPlayerNameObject::PlayerName() const -> std::string
+{
+    return GlobalLog() != nullptr ? GlobalLog()->Room.Seats.at(SeatIndex).Name : std::string();
 }
 
 auto MCPlayerNameObject::SetFont(std::shared_ptr<MCGuiFont> newFont) -> void

@@ -4,7 +4,6 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCPlayerNameObject.h"
 #include "logistics/MCSessionScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCInternetGame.h"
@@ -65,14 +64,14 @@ auto MCRoomModel::Players() const -> std::vector<MCPlayer>
     // The players with a name on the room (the 1998 screen's name slots, by id), the session's names and numbers.
     std::vector<MCPlayer> players;
 
-    for (const MCGuiHandle<MCPlayerNameObject>& name : screen->get().PlayerNames)
+    for (const MCSeat& seat : Seats)
     {
-        if (name == nullptr || name->PlayerId == NoPlayer)
+        if (seat.Id == NoPlayer)
         {
             continue;
         }
 
-        const std::shared_ptr<MCFidpPlayer> session = manager->get().GetPlayer(name->PlayerId);
+        const std::shared_ptr<MCFidpPlayer> session = manager->get().GetPlayer(seat.Id);
 
         if (session == nullptr)
         {
@@ -249,4 +248,29 @@ auto MCRoomModel::Tend() -> void
     {
         game->UpdateMatchOptions();
     }
+}
+
+auto MCRoomModel::Seat(size_t seat, uint32_t playerId) -> void
+{
+    MCSeat& seated = Seats.at(seat);
+    seated.Id = playerId;
+    const MCOptionalRef<MCSessionManager> manager = Manager();
+
+    if (const std::shared_ptr<MCFidpPlayer> player =
+            manager.has_value() && playerId != NoPlayer ? manager->get().GetPlayer(playerId) : nullptr;
+        player != nullptr)
+    {
+        seated.Name = player->Name;
+    }
+}
+
+auto MCRoomModel::SeatOf(uint32_t playerId) -> MCOptionalRef<MCSeat>
+{
+    const auto found = std::ranges::find(Seats, playerId, &MCSeat::Id);
+    return found != Seats.end() && playerId != NoPlayer ? MCOptionalRef<MCSeat>(*found) : std::nullopt;
+}
+
+auto MCRoomModel::AskingFiles() const -> bool
+{
+    return std::ranges::any_of(Seats, [](const MCSeat& seat) { return seat.Files == MCFileStatus::Waiting; });
 }

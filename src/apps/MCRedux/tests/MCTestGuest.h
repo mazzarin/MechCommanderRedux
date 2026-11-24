@@ -849,7 +849,7 @@ namespace MCTestGuest
     inline bool RoomShows(uint32_t id)
     {
         return std::ranges::any_of(GlobalLog()->SessionScreen->PlayerNames, [id](const auto& name)
-                                   { return name != nullptr && name->ShowWindow && name->PlayerId == id; });
+                                   { return name != nullptr && name->ShowWindow && name->PlayerId() == id; });
     }
 
     /// <summary>

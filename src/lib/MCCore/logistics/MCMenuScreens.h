@@ -50,7 +50,10 @@ namespace MCMenuScreens
     /// </summary>
     void AskQuit();
 
-    /// <summary>A launcher's room's LEAVE and Escape (the stack's end): "Leave the game?", whose OK ends the game.</summary>
+    /// <summary>
+    /// A launcher's room's LEAVE and Escape (the stack's end): "Leave the game?", whose OK ends the game (a host's
+    /// goodbye to its guests first: network/MCRoomEnd.h's LeaveLauncherGame).
+    /// </summary>
     void AskLeaveGame();
 
     /// <summary>

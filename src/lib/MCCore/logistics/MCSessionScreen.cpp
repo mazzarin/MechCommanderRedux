@@ -795,8 +795,8 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     Room().Pinging = true;
     SessionButton->Disabled = false;
     ExitButton->Toggled = false;
-    // Port-only (SPEC-menus.md's stage 2): a room that waits for its guests to leave stays with nothing to press when
-    // it's shown again (a guest's late join), as MCRoomEnd::CloseRoom left it.
+    // Port-only (SPEC-menus.md's stage 2): a room that waits for its guests to leave (a REMATCH's) stays with nothing to
+    // press when it's shown again (a guest's late join).
     ExitButton->Disabled = MCRoomEnd::WaitsForGuests();
     StartButton->Disabled = true;
     Room().CanStart = false;

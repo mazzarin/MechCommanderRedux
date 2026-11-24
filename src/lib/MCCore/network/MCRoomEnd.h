@@ -5,9 +5,10 @@
 // CONNECTION), never the main menu.
 //
 // - The room ends under a guest (its host's game gone, whatever the cause, and nobody took over): back to the games,
-//   saying why: "BOB CLOSED THE GAME." when the host said so as it left (its EXIT tells the guests whose builds take it,
-//   MCMatchRule::Rematch, with MCMPMessageType::RoomEnds, and waits a moment for them to leave first), else "LOST THE
-//   CONNECTION TO BOB'S GAME.". A match ended so goes back to the games once its scenario has ended.
+//   saying why: "BOB CLOSED THE GAME." when the host said so as it left (its LEAVE tells the guests whose builds take
+//   it, MCMatchRule::Rematch, with MCMPMessageType::RoomEnds, and goes at once, its session kept apart a moment until
+//   they have left: MCSessionManager::LeaveAfterGoodbye), else "LOST THE CONNECTION TO BOB'S GAME.". A match ended so
+//   goes back to the games once its scenario has ended.
 // - At the match's results the battle is over: a session lost there leaves the results up, and DONE goes back to the
 //   games.
 // - REMATCH: the host's results give it beside DONE when a guest still there takes it (its build has
@@ -19,7 +20,8 @@
 //   for guests away updating (network/MCLobbyUpdate.h). Each guest's results close, and its game joins the room again
 //   as a guest whose host restarts into an update does; one that doesn't come back is said over the games.
 // - A launcher's game (-host, -join) keeps the original's way: its room is the launcher's (the original's message,
-//   whose OK ends the game; the game ends after the results), and it has no REMATCH.
+//   whose OK ends the game; the game ends after the results), and it has no REMATCH. Its host's LEAVE tells its guests
+//   as the menus' does, and the game ends once they have left (RunGame waits for it, the window gone).
 
 class MCSessionScreen;
 
@@ -37,7 +39,7 @@ namespace MCRoomEnd
     /// <summary>What a host's MCMPMessageType::RoomEnds says (its value).</summary>
     enum class MCHow : int32_t
     {
-        /// <summary>The host closes its room (its EXIT).</summary>
+        /// <summary>The host closes its room (its LEAVE).</summary>
         Closed = 0,
         /// <summary>The host hosts its room again for a rematch (REMATCH at the results): its guests join it again.</summary>
         Rematch = 1,
@@ -45,7 +47,8 @@ namespace MCRoomEnd
 
     /// <summary>
     /// How long a host that told its guests the room ends waits at most for them to leave, so the word reaches them
-    /// before its links close (a guest's game busy a moment takes it late).
+    /// before its links close (a guest's game busy a moment takes it late): its REMATCH at the results, and its LEAVE's
+    /// goodbye, kept apart from the screens (MCSessionManager::LeaveAfterGoodbye).
     /// </summary>
     inline constexpr std::chrono::milliseconds LeaveWait{2000};
 
@@ -60,15 +63,23 @@ namespace MCRoomEnd
     void ShowGames(MCGames games, std::string_view line, std::function<void()> then = {});
 
     /// <summary>
-    /// The host's EXIT from its room (logistics/MCConnectMenu.h's LeaveRoom): with guests whose builds take its word, it
-    /// tells them the room closes and leaves once they have (<see cref="LeaveWait"/> at most).
+    /// Port-only (SPEC-menus.md, "In the room"): the host's LEAVE from its room, as it goes (logistics/MCConnectMenu.h's
+    /// CancelToConnect, a launcher's <see cref="LeaveLauncherGame"/>): with guests whose builds take its word, it tells
+    /// them the room closes and leaves the session at once, the goodbye kept apart until they have left
+    /// (<see cref="LeaveWait"/> at most: MCSessionManager::LeaveAfterGoodbye). Nothing on the host's screen waits for it.
     /// </summary>
-    /// <returns>Whether it took the EXIT (the leave comes later); false: the EXIT goes on now.</returns>
+    /// <returns>Whether it said goodbye (the session left); false: none to tell, or the room handed on, the leave the caller's.</returns>
     bool CloseRoom();
 
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 2): whether the host's room is ending (closed, or gone for its rematch) and
-    /// waits for its guests to leave: nothing more to press on it, though it's shown again (a guest's join).
+    /// Port-only (SPEC-menus.md, "In the room"): a launcher's LEAVE ("Leave the game?" answered): the host's goodbye
+    /// (<see cref="CloseRoom"/>), then the game ends; RunGame waits for the goodbye with the window gone.
+    /// </summary>
+    [[noreturn]] void LeaveLauncherGame();
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 2): whether the host's REMATCH waits for its guests to leave: nothing more to
+    /// press on its room, though it's shown again (a guest's join).
     /// </summary>
     bool WaitsForGuests();
 

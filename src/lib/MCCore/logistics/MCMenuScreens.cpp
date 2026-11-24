@@ -24,6 +24,7 @@
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRoomEnd.h"
 #include "ui/MCRmlDialog.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
@@ -394,12 +395,12 @@ auto MCMenuScreens::AskLeaveGame() -> void
                                               .Heading = std::string(LeaveGameQuestion),
                                               .Main = std::string(LeaveWord),
                                               .Other = std::string(CancelWord),
-                                              .OnMain = [] { KillTheGame(); }}))
+                                              .OnMain = [] { MCRoomEnd::LeaveLauncherGame(); }}))
     {
         return;
     }
 
-    Ask(LeaveGameQuestion, [] { KillTheGame(); });
+    Ask(LeaveGameQuestion, [] { MCRoomEnd::LeaveLauncherGame(); });
 }
 
 auto MCMenuScreens::LeaveCampaign() -> void

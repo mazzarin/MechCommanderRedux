@@ -172,6 +172,24 @@ public:
     /// </summary>
     bool LeaveHandsOn() const;
     /// <summary>
+    /// Port-only (SPEC-menus.md, "In the room"), a host whose room closes: it leaves its session at once, the room's
+    /// goodbye (network/MCRoomEnd.h's RoomEnds, sent first) still to reach the players <paramref name="told"/>. The
+    /// session's DirectPlay, and the internet game whose links it rides, are kept apart and pumped each frame
+    /// (<see cref="PumpClosed"/>), the room shut to new players (off the LAN's lists), until those players have left or
+    /// <paramref name="wait"/> passes; then it ends as a host's leave that hands nothing on (MCDirectPlay::Close). This
+    /// manager has no session meanwhile: hosting, or a new connection or internet game while the goodbye rides one,
+    /// ends the goodbye first.
+    /// </summary>
+    void LeaveAfterGoodbye(std::vector<uint32_t> told, std::chrono::milliseconds wait);
+    /// <summary>Port-only (Redux HD): whether a goodbye (<see cref="LeaveAfterGoodbye"/>) is under way.</summary>
+    bool SaysGoodbye() const { return _Goodbye.has_value(); }
+    /// <summary>
+    /// Port-only (Redux HD), the game's end (a launcher's LEAVE): the goodbye and the closed sessions' links pumped until
+    /// they're done (each in its own time at most); an internet game's leaving waits up to <paramref name="internetWait"/>
+    /// to reach the service.
+    /// </summary>
+    void FinishGoodbye(std::chrono::milliseconds internetWait);
+    /// <summary>
     /// Creates group <paramref name="groupName"/> with <paramref name="data"/> attached; DirectPlay puts its id in
     /// <paramref name="groupID"/>.
     /// </summary>
@@ -301,7 +319,8 @@ public:
 
     /// <summary>
     /// Port-only (Redux HD): pumps the closed sessions whose joiners' links are still open (DestroyDirectPlayInterface),
-    /// dropping each once they've closed: every frame, in or out of a session (MCGuiSystem::Run, ProcessMessages).
+    /// dropping each once they've closed, and a host's goodbye (LeaveAfterGoodbye): every frame, in or out of a session
+    /// (MCGuiSystem::Run, ProcessMessages).
     /// </summary>
     void PumpClosed();
     /// <summary>Port-only (Redux HD): whether a closed session's joiners' links are still held open (PumpClosed).</summary>
@@ -437,6 +456,33 @@ public:
 private:
     /// <summary>Port-only (Redux HD): closed sessions' DirectPlay objects whose joiners' links linger (PumpClosed).</summary>
     std::vector<std::unique_ptr<MCDirectPlay>> _Closed;
+
+    /// <summary>Port-only (SPEC-menus.md, "In the room"): a host's goodbye under way (LeaveAfterGoodbye).</summary>
+    struct MCGoodbye
+    {
+        std::unique_ptr<MCDirectPlay> DirectPlay;
+        /// <summary>The internet game the session's links ride, if it is one.</summary>
+        std::unique_ptr<MCInternetGame> Internet;
+        /// <summary>The players told, by id: the goodbye ends when none is left in the session.</summary>
+        std::vector<uint32_t> Told;
+        std::chrono::steady_clock::time_point Until;
+    };
+
+    std::optional<MCGoodbye> _Goodbye;
+
+    /// <summary>The closed sessions' links pumped, each dropped once its joiners have closed theirs.</summary>
+    void PumpClosedLinks();
+    /// <summary>This machine's session and player forgotten, as a leave does; whether it had them.</summary>
+    bool ForgetSession();
+    /// <summary>The goodbye moved along: its links tended, what came in dropped, the players gone noted; ended when due.</summary>
+    void PumpGoodbye(std::chrono::milliseconds internetWait = {});
+    /// <summary>
+    /// The goodbye ended now (its session closed, its joiners' links held open until they've read it); its internet game's
+    /// leaving waits up to <paramref name="internetWait"/>.
+    /// </summary>
+    void EndGoodbye(std::chrono::milliseconds internetWait = {});
+    /// <summary>The goodbye ended now if it rides an internet game (the sockets opened from now on would be its).</summary>
+    void EndInternetGoodbye();
     /// <summary>
     /// Port (Redux HD): the lobby's internet game started (LobbyLaunchArgs.Internet): hosted on the service, or this
     /// game's link to the host open, waiting as the lobby's join does; DP_OK, or why not.

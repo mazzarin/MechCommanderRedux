@@ -123,6 +123,9 @@ namespace MCTestGuest
             return _RoomEnds;
         }
 
+        /// <summary>Whether this player's session was lost under it (DPSYS_SESSIONLOST: its host gone or ended it).</summary>
+        bool Lost() const { return _Lost; }
+
     protected:
         Peer() = default;
         virtual ~Peer() { StopListening(); }
@@ -150,7 +153,10 @@ namespace MCTestGuest
 
                         while (_DirectPlay.Receive(from, to, DPRECEIVE_ALL, buffer, size) == DP_OK)
                         {
-                            Take(from, std::span<const uint8_t>(buffer).first(std::min<size_t>(size, buffer.size())));
+                            const std::span<const uint8_t> message =
+                                std::span<const uint8_t>(buffer).first(std::min<size_t>(size, buffer.size()));
+                            NoteLost(from, message);
+                            Take(from, message);
                         }
 
                         SendWaiting();
@@ -243,6 +249,18 @@ namespace MCTestGuest
             Send(to, message);
         }
 
+        /// <summary>Notes the system's message that the session is lost (its type the first of its words).</summary>
+        void NoteLost(uint32_t from, std::span<const uint8_t> message)
+        {
+            uint32_t type = 0;
+
+            if (from == DPID_SYSMSG && message.size() >= sizeof(type))
+            {
+                std::memcpy(&type, message.data(), sizeof(type));
+                _Lost = _Lost || type == DPSYS_SESSIONLOST;
+            }
+        }
+
         /// <summary>Whether messages wait to be sent.</summary>
         bool Sending()
         {
@@ -273,6 +291,7 @@ namespace MCTestGuest
         std::vector<std::pair<uint32_t, std::vector<uint8_t>>> _ToSend;
         std::atomic<int32_t> _Updatings = 0;
         std::atomic<int32_t> _RestartOffs = 0;
+        std::atomic<bool> _Lost = false;
         /// <summary>What each RoomEnds said (guarded by <see cref="_Mutex"/>).</summary>
         std::vector<int32_t> _RoomEnds;
     };

@@ -142,7 +142,16 @@ void CancelToConnect()
     // Original behaviour (OB-167): the same timer is removed twice (team 2's is left).
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
+
+    // Port-only (SPEC-menus.md, "In the room"): a host's goodbye to its room goes behind its way out (network/MCRoomEnd.h's
+    // CloseRoom), which leaves the session at once: the leave below then finds none to leave.
+    if (fromRoom)
+    {
+        MCRoomEnd::CloseRoom();
+    }
+
     MultiPlayer()->LeaveSession();
+
     GlobalLog()->ResetPlayerLights();
 
     // The room's own: its timer, and its chat (the next room's starts empty, as from the main menu).
@@ -178,19 +187,8 @@ void CancelToMPlayer()
 
 void LeaveRoom(std::string line)
 {
-    // Port-only (Redux HD): a host tells its guests the room closes, and leaves once they have (network/MCRoomEnd.h).
-    if (MCRoomEnd::CloseRoom())
-    {
-        if (!line.empty())
-        {
-            ShowMenuMessage(line);
-        }
-
-        return;
-    }
-
-    // Port-only (SPEC-menus.md's stage 2): the way out through the flow, with the one fade (the host's wait for its
-    // guests above stays live, its EXIT disabled, as its games come through the flow too).
+    // Port-only (SPEC-menus.md's stage 2): the way out through the flow, with the one fade; (SPEC-menus.md, "In the
+    // room") a host's goodbye to its guests goes behind it, nothing waiting for it (CancelToConnect).
     MCScreenFlow::Change("room back",
                          [line = std::move(line)]
                          {

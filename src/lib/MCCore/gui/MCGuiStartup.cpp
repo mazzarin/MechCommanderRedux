@@ -20,6 +20,7 @@
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCRejoinNote.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
@@ -1007,7 +1008,21 @@ auto RunGame(std::string_view commandLine, std::chrono::milliseconds internetLea
     if (const std::shared_ptr<MCMultiPlayer> multiPlayer = MultiPlayer();
         multiPlayer != nullptr && multiPlayer->SessionManager != nullptr)
     {
-        multiPlayer->SessionManager->EndInternet(internetLeaveWait);
+        MCSessionManager& manager = *multiPlayer->SessionManager;
+
+        // Port-only (SPEC-menus.md, "In the room"): a host's goodbye to its room (a launcher's LEAVE) reaches its
+        // guests before the game ends, the window gone first: nothing on the screen waits for it.
+        if (manager.SaysGoodbye() || manager.KeepsClosedLinks())
+        {
+            if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+            {
+                SDL_HideWindow(&display->Window());
+            }
+
+            manager.FinishGoodbye(internetLeaveWait);
+        }
+
+        manager.EndInternet(internetLeaveWait);
     }
 
     ReleaseInternetMenus();

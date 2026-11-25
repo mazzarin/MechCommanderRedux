@@ -1,5 +1,7 @@
 #pragma once
 
+#include <RmlUi/Core/ObserverPtr.h>
+
 #include "lib/MCOptionalRef.h"
 
 namespace Rml
@@ -95,6 +97,9 @@ private:
     bool _KeepPlayed = false;
     std::vector<uint32_t> _Played;
     std::unique_ptr<MCListener> _Listener;
-    /// <summary>The documents attached (RmlUi's; each detached before it closes).</summary>
-    std::vector<Rml::ElementDocument*> _Documents;
+    /// <summary>
+    /// The documents attached (RmlUi's, each detached before it closes), watched: one RmlUi frees without a detach is
+    /// passed over and dropped.
+    /// </summary>
+    std::vector<Rml::ObserverPtr<Rml::Element>> _Documents;
 };

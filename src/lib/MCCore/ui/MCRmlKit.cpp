@@ -298,12 +298,12 @@ void MCRmlKit::Refuse()
 
 void MCRmlKit::Attach(Rml::ElementDocument& document)
 {
-    if (std::ranges::find(_Documents, &document) != _Documents.end())
+    if (std::ranges::find(_Documents, document.GetObserverPtr()) != _Documents.end())
     {
         return;
     }
 
-    _Documents.push_back(&document);
+    _Documents.push_back(document.GetObserverPtr());
     // Clicks first, on their way down (a disabled button's goes no further); keys on their way up, before the
     // document's own moves (Tab, the arrows' nav, Enter's click), which a control's keys stop. A held text box takes no
     // click (RmlUi's disabled: its parent does): its press, on its way down.
@@ -332,7 +332,7 @@ void MCRmlKit::Attach(Rml::ElementDocument& document)
 
 void MCRmlKit::Detach(Rml::ElementDocument& document)
 {
-    const auto found = std::ranges::find(_Documents, &document);
+    const auto found = std::ranges::find(_Documents, document.GetObserverPtr());
 
     if (found == _Documents.end())
     {
@@ -674,8 +674,14 @@ void MCRmlKit::Update(Rml::Context& context)
     Rml::Element* focus = context.GetFocusElement();
     Rml::Element* hover = context.GetHoverElement();
 
-    for (Rml::ElementDocument* document : _Documents)
+    // A document RmlUi freed without a detach is gone from the list (its element's watch says so).
+    std::erase_if(_Documents, [](const Rml::ObserverPtr<Rml::Element>& watched) { return !watched; });
+
+    for (const Rml::ObserverPtr<Rml::Element>& watched : _Documents)
     {
+        // Only documents are attached (Attach).
+        Rml::ElementDocument* document = static_cast<Rml::ElementDocument*>(watched.get());
+
         // The context's own documents: the other layer's are kept up by its own update, with its own hover and focus.
         if (document->GetContext() != &context)
         {

@@ -641,7 +641,7 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it bac
     // Each choice in turn, its words and its speed; then back to AUTO.
     for (size_t i = 0; i < Labels.size(); i++)
     {
-        MCTest::Scope scope(std::string(Labels[i]));
+        const MCTest::Scope scope(Labels[i]);
         CHECK_EQ(MCRemadeTest::StepWords(*prefs, "scroll-speed"), Labels[i]);
         CHECK_EQ(GScrollSpeed, ScrollSpeeds[i]);
         REQUIRE(MCRemadeTest::KeyOn(*prefs, "scroll-speed", SDL_SCANCODE_RIGHT));

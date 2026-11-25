@@ -46,7 +46,8 @@ namespace MCRmlChecks
     /// <summary>
     /// What's wrong with the context's shown documents' boxes: an element shown outside the window or spilling from a
     /// parent that doesn't clip it, two siblings in the flow overlapping inside their borders (placed ones, an overlay,
-    /// may; a shared border is no overlap), a text's line spilling from its element's content box. Empty: nothing.
+    /// may; a shared border is no overlap), a text's line spilling from its element's content box (a wrapped line may
+    /// take the pixel RmlUi rounds its room up by, where the element keeps it as padding). Empty: nothing.
     /// </summary>
     std::string BoxProblems(Rml::Context& context);
 

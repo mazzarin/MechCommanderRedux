@@ -12,6 +12,11 @@ namespace
 {
     /// <summary>How far a box may lie past an edge and still be within it (RmlUi's layout is floats).</summary>
     constexpr float Slack = 0.5f;
+    /// <summary>
+    /// How far past its box's width a wrapped line can run: RmlUi wraps to the width rounded up to a whole pixel
+    /// (LineBox::AddBox), so it lies within a box that keeps a pixel of padding at its right.
+    /// </summary>
+    constexpr float WrapRounding = 1.0f;
     /// <summary>A background at least this opaque is the ground a text is read against (the well at 85%).</summary>
     constexpr uint8_t GroundAlpha = 217;
     /// <summary>A disabled thing's class: its words need only the large contrast.</summary>
@@ -72,6 +77,14 @@ namespace
                values.overflow_y() != Rml::Style::Overflow::Visible;
     }
 
+    /// <summary>Whether <paramref name="element"/>'s words wrap to its box (its white-space breaks lines).</summary>
+    bool Wraps(Rml::Element& element)
+    {
+        const Rml::Style::WhiteSpace space = element.GetComputedValues().white_space();
+        return space == Rml::Style::WhiteSpace::Normal || space == Rml::Style::WhiteSpace::Prewrap ||
+               space == Rml::Style::WhiteSpace::Preline;
+    }
+
     /// <summary>Whether <paramref name="element"/> is placed out of the flow (an overlay, a fade, a ring).</summary>
     bool Placed(Rml::Element& element)
     {
@@ -97,6 +110,10 @@ namespace
             if (auto* text = dynamic_cast<Rml::ElementText*>(&child); text != nullptr)
             {
                 const MCArea content = AreaOf(element, Rml::BoxArea::Content);
+                // A wrapped line may take the pixel RmlUi rounds its room up by, where the box keeps it as padding.
+                const float right = Wraps(element) ? std::max(content.Right + Slack,
+                                                              std::min(content.Right + WrapRounding, parent.Right))
+                                                   : content.Right + Slack;
                 const Rml::Vector2f origin = text->GetAbsoluteOffset(Rml::BoxArea::Border);
                 const Rml::FontMetrics& face =
                     Rml::GetFontEngineInterface()->GetFontMetrics(element.GetFontFaceHandle());
@@ -108,7 +125,7 @@ namespace
                                          origin.y + line.position.y + face.descent};
 
                     // Across its box: a line may run under a line box's leading, never past its sides.
-                    if (letters.Left < content.Left - Slack || letters.Right > content.Right + Slack)
+                    if (letters.Left < content.Left - Slack || letters.Right > right)
                     {
                         wrong += std::format("'{}' spills from {}; ", line.text, NameOf(element));
                     }

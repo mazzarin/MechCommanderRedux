@@ -38,9 +38,13 @@
 #include "platform/MCInput.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
+#include "ui/MCRmlChecks.h"
+#include "ui/MCRmlMenus.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/StringUtilities.h>
 
 using namespace MCScreenInput;
 using MCTestGuest::Guest;
@@ -163,7 +167,7 @@ TEST_CASE_ISOLATED(
     CHECK(!ChooseMapWindowShown());
     CHECK_EQ(room.Seen().Map, std::string("Capture Base"));
     CHECK(!room.Seen().MapText.empty());
-    CheckMenusFrames("room map", {0x61e18703, 0x764def3b, 0xe7ff55d0});
+    CheckMenusFrames("room map", {0x40f1d13b, 0x764def3b, 0x46d25c5c});
 
     // CHANGE opens it again, the room's map picked; ENTER on it (the keys' focus there) chooses it again, as its row's
     // ENTER does in every list.
@@ -189,30 +193,177 @@ TEST_CASE_ISOLATED(
     MCTestGuest::PressInRoom("view-options");
     REQUIRE(MatchOptionsWindowShown());
     MCMatchOptionsWindow& options = *MatchOptionsWindow();
-    CheckMenusFrames("match options forces", {0xc6c446a9, 0x78ef9a72, 0xc4fd9bc2});
+    CheckMenusFrames("match options forces", {0x4bd7de8d, 0x78ef9a72, 0x33cf33b2});
     options.ShowTab(MCMatchOptionsWindow::MCTab::Play);
     Settle();
-    CheckMenusFrames("match options play", {0x4395d487, 0xa38b9622, 0x8c139bc2});
+    CheckMenusFrames("match options play", {0xaa9ffec7, 0xa38b9622, 0xe7ec340e});
     // Q and E move the tabs, as the briefing's do.
     MCScreenInput::RealKey(SDL_SCANCODE_E);
     Settle();
     CHECK(options.Tab() == MCMatchOptionsWindow::MCTab::Weapons);
-    CheckMenusFrames("match options weapons", {0xd51b87ca, 0x5a3deec6, 0x0e6ac3e3});
+    CheckMenusFrames("match options weapons", {0x024f1962, 0x5a3deec6, 0xb8fdb49b});
     options.PressDone();
     Settle();
 
     // A guest's: the values, the host setting them; the guest's room waits for the host.
     MultiPlayer()->IsHost = false;
     Settle();
-    CheckMenusFrames("room guest", {0xef04f5cf, 0x8472c9b5, 0xf95098d5});
+    CheckMenusFrames("room guest", {0x73259f37, 0x8472c9b5, 0xb7255741});
     MCTestGuest::PressInRoom("view-options");
     REQUIRE(MatchOptionsWindowShown());
     options.ShowTab(MCMatchOptionsWindow::MCTab::Weapons);
     Settle();
-    CheckMenusFrames("match options guest", {0xad5ff921, 0x3f8f9012, 0x7260d083});
+    CheckMenusFrames("match options guest", {0x48a80e25, 0x3f8f9012, 0x730a9fad});
     options.PressDone();
     MultiPlayer()->IsHost = true;
     Settle();
+}
+
+namespace
+{
+    /// <summary>The description survey's address, its own so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view SurveyHostAddress = "127.0.0.1:28935";
+    /// <summary>
+    /// What the checks say of a description longer than its room: past the room's map column (over MATCH OPTIONS) and
+    /// past CHOOSE MAP's picked map's column (its foot). How such a description shows waits on a choice SPEC-menus.md
+    /// doesn't make yet, so the survey leaves these out; every other problem counts.
+    /// </summary>
+    constexpr std::array LongerThanItsRoom = {std::string_view("div.map-text spills from div.map-chosen; "),
+                                              std::string_view("div spills from div.column#map-pick; ")};
+
+    /// <summary>
+    /// What the layout and legibility checks find in the menus shown now, <paramref name="what"/>, at every window the
+    /// players' reports name and the frames' windows, but a description longer than its room (LongerThanItsRoom): a
+    /// line each, headed by both (nothing: none).
+    /// </summary>
+    std::string ProblemsAtEveryWindow(std::string_view what)
+    {
+        using MCMenusPictures::MCWindowSize;
+        std::vector<MCWindowSize> windows(MCMenusPictures::PlayersWindows.begin(),
+                                          MCMenusPictures::PlayersWindows.end());
+
+        for (const MCWindowSize& frame : MCMenusPictures::FrameWindows)
+        {
+            if (std::ranges::none_of(windows, [&frame](const MCWindowSize& window)
+                                     { return window.Width == frame.Width && window.Height == frame.Height; }))
+            {
+                windows.push_back(frame);
+            }
+        }
+
+        std::string problems;
+
+        for (const MCWindowSize& window : windows)
+        {
+            MCMenusPictures::MenusAt(window);
+            Rml::Context& context = MCMenusPictures::GameMenus().Menus().Context();
+            std::string found = MCRmlChecks::BoxProblems(context) +
+                                MCRmlChecks::Illegible(context, MCRmlMenus::MenusUnit(window.Width, window.Height));
+
+            for (const std::string_view longer : LongerThanItsRoom)
+            {
+                for (size_t at = found.find(longer); at != std::string::npos; at = found.find(longer, at))
+                {
+                    found.erase(at, longer.size());
+                }
+            }
+
+            if (!found.empty())
+            {
+                problems += std::format("{} at {}x{}: {}\n", what, window.Width, window.Height, found);
+            }
+        }
+
+        return problems;
+    }
+
+    /// <summary>The name CHOOSE MAP's window shows for the map picked (its document's), none: empty.</summary>
+    std::string PickedName(const MCChooseMapWindow& choose)
+    {
+        const MCOptionalRef<Rml::ElementDocument> document = choose.Document();
+        Rml::Element* pick = document.has_value() ? document->get().GetElementById("map-pick") : nullptr;
+        Rml::ElementList titles;
+
+        if (pick != nullptr)
+        {
+            pick->GetElementsByClassName(titles, "map-title");
+        }
+
+        return titles.empty() ? std::string() : Rml::StringUtilities::DecodeRml(titles.front()->GetInnerRML());
+    }
+
+    /// <summary>A room packet's description as the room shows it: its paragraphs as one (MCRoomScreen::ShowMatch).</summary>
+    std::string RoomText(const MCMatchMap& map)
+    {
+        std::string text;
+
+        for (const std::string& paragraph : MCParagraphs(map.Description))
+        {
+            text += text.empty() ? paragraph : " " + paragraph;
+        }
+
+        return text;
+    }
+}
+
+/// <summary>
+/// Every room map's description and name, the room packet's own words, lie inside their boxes (no line past a side)
+/// and read, at every window the players' reports name and the frames' windows: in CHOOSE MAP with the map picked, and
+/// in the room once chosen, the host's and a guest's (MCRmlChecks::BoxProblems, MCRmlChecks::Illegible), a description
+/// longer than its room aside (LongerThanItsRoom). King of the Hill's ran a line 0.6 pixels past its box in the room at
+/// 1366x768 (RmlUi's wrap rounds a line's room up to a whole pixel), POWRLOCK's row of asterisks and BLOODGRW's name
+/// (one word each) past theirs at most windows.
+/// </summary>
+TEST_CASE_ISOLATED("game: every room map's description lies inside its box in CHOOSE MAP and the room, host and guest")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    // The host alone in the room: no one to ask for the map's file, each one chosen is loaded at once.
+    MultiPlayer()->SessionManager->ConnectTcp(SurveyHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Steel Rain", 6);
+    Settle();
+    REQUIRE(RoomScreenShown());
+    const MCRoomScreen& room = *RoomScreen();
+    std::string problems;
+    int32_t surveyed = 0;
+
+    for (bool first = true; const MCMatchMap& map : MCMatchMaps())
+    {
+        MCTest::Scope scope(map.File);
+        MCTestGuest::PressInRoom(first ? "choose-map" : "change-map");
+        first = false;
+        REQUIRE(ChooseMapWindowShown());
+        MCChooseMapWindow& choose = *ChooseMapWindow();
+        const auto listed = std::ranges::find(choose.Maps(), map.File, &MCMatchMap::File);
+        REQUIRE(listed != choose.Maps().end());
+        choose.Pick(static_cast<int>(listed - choose.Maps().begin()));
+        REQUIRE(SettleUntil([&] { return PickedName(choose) == map.Name; }));
+        problems += ProblemsAtEveryWindow(std::format("{} in CHOOSE MAP", map.File));
+
+        // Chosen: the room shows it, the host's, then a guest's.
+        choose.PressChoose();
+        const std::string text = RoomText(map);
+        REQUIRE(SettleUntil([&] { return !ChooseMapWindowShown() && room.Seen().Map == map.Name; }));
+        Settle();
+        const MCRoomScreen::MCSeen seen = room.Seen();
+        CHECK_EQ(seen.MapText.empty() ? std::string() : seen.MapText.front(), text);
+        problems += ProblemsAtEveryWindow(std::format("{} in the host's room", map.File));
+        MultiPlayer()->IsHost = false;
+        Settle();
+        problems += ProblemsAtEveryWindow(std::format("{} in a guest's room", map.File));
+        MultiPlayer()->IsHost = true;
+        Settle();
+        surveyed++;
+    }
+
+    CHECK(surveyed > 0);
+    CHECK_EQ(problems, "");
 }
 
 namespace

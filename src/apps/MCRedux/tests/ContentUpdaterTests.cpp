@@ -4151,8 +4151,8 @@ namespace
 }
 
 TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its download from its first bytes: the main "
-                   "menu's foot says it, and UPDATE's page, opened, what's in of the whole with the version and notes, "
-                   "no INSTALL or SKIP; then RESTART")
+                   "menu's foot says it beside UPDATE, and UPDATE's page what's in of the whole with the version and "
+                   "notes, no INSTALL or SKIP; then RESTART")
 {
     if (!MCTestGame::Available())
     {
@@ -4176,13 +4176,13 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
     REQUIRE(MCTestGame::FinishChanges());
     ScreenFrames();
 
-    // The main menu's foot says it, with no UPDATE (the art alone names no release to update to); the remade page,
-    // opened through the flow (as INTERNET's join to a newer game opens it), shows the download under way, nothing to
-    // answer.
+    // The main menu's foot says it, UPDATE lit beside it from its first bytes (SPEC-install-and-updates.md's Forced
+    // art), a bare "Update" (the art alone names no release to update to); its page shows the download under way,
+    // nothing to answer.
     REQUIRE(MCMainMenuScreens::MainOnTop());
     CHECK(MCRemadeTest::Visible(MCTestGuest::Panel(MCMainPanel::Main), "art"));
-    CHECK(!MCRemadeTest::Visible(MCTestGuest::Panel(MCMainPanel::Main), "update"));
-    MCUpdateScreen::OpenFromMenus();
+    REQUIRE(MCRemadeTest::Visible(MCTestGuest::Panel(MCMainPanel::Main), "update"));
+    MCTestGuest::ClickOn(MCMainPanel::Main, "update");
     REQUIRE(MCTestGame::FinishChanges());
     const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
     REQUIRE(update != nullptr);
@@ -4215,14 +4215,14 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
 namespace
 {
     /// <summary>
-    /// What a lobby's room's line says of the new HD art a program installed alone came for while it downloads (what's in
-    /// of the whole): the 1998 words (logistics/MCUpdateModel.h's UpdateLineText), until the deletions.
+    /// What the remade main menu's foot and a lobby's room's line say of the new HD art a program installed alone came
+    /// for: what's in of the whole, then that it's in.
     /// </summary>
-    constexpr std::string_view DueArtDownloadingLine = "NEW HD ART DOWNLOADING: {}";
-
-    /// <summary>What the remade main menu's foot says of that art: what's in of the whole, then that it's in.</summary>
     constexpr std::string_view FootArtDownloading = "HD art: {}";
     constexpr std::string_view FootArtIn = "New HD art is in";
+
+    /// <summary>The foot's UPDATE for that art alone: it names no release.</summary>
+    constexpr std::string_view FootBareUpdate = "Update";
 
     /// <summary>The notice at a mission's briefing or in a match's room: while that art downloads, then once it's in.</summary>
     constexpr std::string_view DueArtDownloadingNotice =
@@ -4297,11 +4297,11 @@ namespace
     }
 
     /// <summary>
-    /// The main menu (its foot) laid out with nothing spilling or cut and every text over the floor at the frames'
-    /// windows, as tests/RemadeDialogTests.cpp checks a dialog (with <c>--shots</c> each saved as
-    /// <c>main_menu_&lt;name&gt;_WxH</c>).
+    /// The menus' screen on top, <paramref name="screen"/> (main_menu, room), laid out with nothing spilling or cut and
+    /// every text over the floor at the frames' windows, as tests/RemadeDialogTests.cpp checks a dialog (with
+    /// <c>--shots</c> each saved as <c>&lt;screen&gt;_&lt;name&gt;_WxH</c>).
     /// </summary>
-    void CheckFootLaidOut(std::string_view name)
+    void CheckLaidOutAtFrames(std::string_view screen, std::string_view name)
     {
         const MCRmlLayer& layer = MCMenusPictures::GameMenus().Menus();
         MCDisplay& display = *MCInput::Display();
@@ -4310,17 +4310,39 @@ namespace
         {
             REQUIRE(MCMenusPictures::SetWindowPixels(display, window.Width, window.Height));
             ScreenFrames();
-            const std::string where = std::format("{} at {}x{}: ", name, window.Width, window.Height);
+            const std::string where = std::format("{} {} at {}x{}: ", screen, name, window.Width, window.Height);
             CHECK_EQ(where + MCRmlChecks::BoxProblems(layer.Context()) +
                          MCRmlChecks::Illegible(layer.Context(), layer.Unit()),
                      where);
-            MCScreenInput::SaveWindowShot(std::format("main_menu_{}_{}x{}", name, window.Width, window.Height));
+            MCScreenInput::SaveWindowShot(std::format("{}_{}_{}x{}", screen, name, window.Width, window.Height));
         }
+    }
+
+    /// <summary>The main menu laid out at the frames' windows (<see cref="CheckLaidOutAtFrames"/>).</summary>
+    void CheckFootLaidOut(std::string_view name)
+    {
+        CheckLaidOutAtFrames("main_menu", name);
+    }
+
+    /// <summary>
+    /// Whether the room's update line could say <paramref name="words"/>: the room's foot gives it the room between LEAVE
+    /// and what stands right of it (the space before the line).
+    /// </summary>
+    bool RoomLineFits(const MCRoomScreen& room, std::string_view words)
+    {
+        Rml::Element* line = MCTestGuest::ElementOf(room, "update");
+        REQUIRE(line != nullptr);
+        Rml::Element* space = line->GetPreviousSibling();
+        REQUIRE(space != nullptr);
+        const int wider = Rml::ElementUtilities::GetStringWidth(line, std::string(words)) -
+                          Rml::ElementUtilities::GetStringWidth(line, room.Seen().UpdateLine);
+        return static_cast<float>(wider) <= space->GetBox().GetSize(Rml::BoxArea::Content).x;
     }
 }
 
 TEST_CASE_ISOLATED("game: while the new HD art a program installed alone came for downloads, the remade main menu's "
-                   "foot says how much of it is in, beside the version line, with no UPDATE: it names no release")
+                   "foot says how much of it is in, beside the version line, with a bare UPDATE (it names no release) "
+                   "opening UPDATE's page")
 {
     if (!MCTestGame::Available())
     {
@@ -4339,14 +4361,55 @@ TEST_CASE_ISOLATED("game: while the new HD art a program installed alone came fo
     REQUIRE(MCMainMenuScreens::MainOnTop());
     CHECK(MCUpdater::DueArtAlone());
 
-    // What's in of the whole, in the whole's unit; release 9's whole fits there too.
+    // What's in of the whole, in the whole's unit, UPDATE lit beside it; release 9's whole fits there too.
     CHECK_EQ(FootWords("version"), std::format("Redux HD {}", ReleaseOf(RunningShown)));
     CHECK_EQ(FootWords("art"), std::format(FootArtDownloading, MCUpdateWork::CountText(inHand, UpdateBytes(release))));
     CHECK_EQ(FootWords("restart"), "");
-    CHECK_EQ(FootWords("update"), "");
+    CHECK_EQ(FootWords("update"), FootBareUpdate);
     CHECK(FootFits(std::format(FootArtDownloading, MCUpdateWork::CountText(ReleaseNineHdBytes, ReleaseNineHdBytes))));
     CheckFootLaidOut("art_downloading");
+
+    // UPDATE opens its page: the download's meter and STOP.
+    MCTestGuest::ClickOn(MCMainPanel::Main, "update");
+    REQUIRE(MCTestGame::FinishChanges());
+    const std::shared_ptr<MCUpdateScreen> page = MCRemadeTest::OnTop<MCUpdateScreen>();
+    REQUIRE(page != nullptr);
+    CHECK(MCRemadeTest::Visible(*page, "meter"));
+    CHECK_EQ(MCRemadeTest::Words(*page, "second"), "Stop");
     stall->Open = true;
+}
+
+TEST_CASE_ISOLATED("game: once the download of the new HD art a program installed alone came for failed, the remade "
+                   "main menu's foot shows the bare UPDATE alone, its page saying why with RETRY")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // Every download cut off, as a lost connection does.
+    MCHostedRelease release("due-foot-failed");
+    NoteRelease2Due(release);
+    MCUpdaterScope scope(release, false, [host = release.Host.Path()] { return std::make_unique<MCCutSource>(host); });
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(GameFramesUntil([] { return Stage() == MCStage::Failed; }));
+    REQUIRE(MCTestGame::FinishChanges());
+    ScreenFrames();
+    REQUIRE(MCMainMenuScreens::MainOnTop());
+    CHECK(MCUpdater::DueArtAlone());
+
+    CHECK_EQ(FootWords("version"), std::format("Redux HD {}", ReleaseOf(RunningShown)));
+    CHECK_EQ(FootWords("art"), "");
+    CHECK_EQ(FootWords("restart"), "");
+    CHECK_EQ(FootWords("update"), FootBareUpdate);
+    CheckFootLaidOut("art_failed");
+
+    MCTestGuest::ClickOn(MCMainPanel::Main, "update");
+    REQUIRE(MCTestGame::FinishChanges());
+    const std::shared_ptr<MCUpdateScreen> page = MCRemadeTest::OnTop<MCUpdateScreen>();
+    REQUIRE(page != nullptr);
+    CHECK(MCRemadeTest::Words(*page, "status").starts_with("The update failed: "));
+    CHECK_EQ(MCRemadeTest::Words(*page, "act"), "Retry");
 }
 
 TEST_CASE_ISOLATED("game: once the new HD art a program installed alone came for is in, the remade main menu's foot "
@@ -4476,7 +4539,8 @@ TEST_CASE_ISOLATED("game: a mission's briefing says once a run, the new HD art a
 }
 
 TEST_CASE_ISOLATED("game: a match's room says once, as the player hosts it, that the game shows the old HD art while "
-                   "the new art a program installed alone came for downloads; the notice closes as the match begins")
+                   "the new art a program installed alone came for downloads; the notice closes as the match begins; "
+                   "the room's line says the main menu's foot's words")
 {
     if (!MCTestGame::Available())
     {
@@ -4488,20 +4552,22 @@ TEST_CASE_ISOLATED("game: a match's room says once, as the player hosts it, that
     const auto stall = std::make_shared<MCGate>();
     MCUpdaterScope scope(release, false, StallAt(release, stall));
     REQUIRE(MCTestGame::StartLobby(std::format("-host -port {} -player BOB", DueRoomPort)));
-    REQUIRE(GameFramesUntil([&] { return stall->Reached.load(); }));
+    const uint64_t inHand = StalledBytes(release);
+    REQUIRE(GameFramesUntil([&] { return stall->Reached && MCUpdater::Status().Received == inHand; }));
     ScreenFrames();
     MCMenuDialog& dialog = *GlobalLog()->Message;
     REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Room());
     REQUIRE(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string(DueArtDownloadingNotice));
 
-    // The room's own line says it too, release 9's whole fitting its field.
-    const MCSessionScreen& screen = *GlobalLog()->SessionScreen;
-    REQUIRE(screen.UpdateLine != nullptr);
-    CHECK(UpdateLineText().starts_with(DueArtDownloadingLine.substr(0, DueArtDownloadingLine.find('{'))));
-    CHECK(WhiteFont->Width(
-              std::format(DueArtDownloadingLine, MCUpdateWork::ProgressText(ReleaseNineHdBytes, ReleaseNineHdBytes))) <=
-          screen.UpdateLine->Width());
+    // The room's own line says it too, in the main menu's foot's words, release 9's whole fitting the room's foot.
+    const MCGuiHandle<MCRoomScreen> room = RoomScreen();
+    REQUIRE(room);
+    CHECK_EQ(room->Seen().UpdateLine,
+             std::format(FootArtDownloading, MCUpdateWork::CountText(inHand, UpdateBytes(release))));
+    CHECK(RoomLineFits(
+        *room, std::format(FootArtDownloading, MCUpdateWork::CountText(ReleaseNineHdBytes, ReleaseNineHdBytes))));
+    CheckLaidOutAtFrames("room", "art_downloading");
     MCScreenInput::SaveShot("art due notice 1 room", MCScreenInput::ScreenHash());
 
     // The match begins: the notice closes by itself, holding nothing up, and isn't shown again.
@@ -4511,6 +4577,13 @@ TEST_CASE_ISOLATED("game: a match's room says once, as the player hosts it, that
     MultiPlayer()->InLogistics = false;
     ScreenFrames();
     CHECK(!dialog.IsShowing());
+
+    // In: the room's line says so, as the foot does.
+    stall->Open = true;
+    REQUIRE(GameFramesUntil([] { return Stage() == MCStage::Ready; }));
+    ScreenFrames();
+    CHECK_EQ(room->Seen().UpdateLine, FootArtIn);
+    CheckLaidOutAtFrames("room", "art_in");
 }
 
 TEST_CASE_ISOLATED("game: a copy with no release due says nothing of new HD art: the main menu's line names the "

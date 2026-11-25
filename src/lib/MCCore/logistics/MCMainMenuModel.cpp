@@ -38,9 +38,8 @@ namespace
     constexpr std::string_view StandsFormat = "Operation {}, mission {}";
     constexpr std::string_view LineFormat = "{} · {}";
     constexpr std::string_view UpdateFormat = "Update to {}";
-    /// <summary>The foot's line of the HD art a program installed alone came for: what's in of it, then that it's in.</summary>
-    constexpr std::string_view ArtDownloadingFormat = "HD art: {}";
-    constexpr std::string_view ArtInText = "New HD art is in";
+    /// <summary>UPDATE for the HD art a program installed alone came for, which names no release to update to.</summary>
+    constexpr std::string_view BareUpdate = "Update";
     constexpr std::string_view SoloFormat = "Buy {} tons with {} RP";
     constexpr std::string_view OnlineFormat = "{} players online";
     constexpr std::string_view OneOnline = "1 player online";
@@ -160,23 +159,26 @@ auto MCMainMenuModel::Foot() -> MCFoot
     }
 
     const MCUpdater::MCStatus& status = MCUpdater::Status();
+    foot.Art = DueArtLineText();
 
-    // The art due's line while it downloads and once it's in; failed, UPDATE's page says why.
-    if (MCUpdater::DueArt() && status.Stage != MCUpdater::MCStage::Failed)
+    // The art alone: a bare UPDATE while it downloads (its page has the meter and STOP) and once it failed (its page says
+    // why and tries again); once it's in, RESTART in UPDATE's place, the page's action being the same RESTART.
+    if (MCUpdater::DueArtAlone())
     {
-        foot.Art = status.Stage == MCUpdater::MCStage::Downloading
-                       ? std::format(ArtDownloadingFormat, MCUpdateWork::CountText(status.Received, status.Expected))
-                       : std::string(ArtInText);
-
-        // With a release due besides the art, the foot has no room for RESTART too: UPDATE's page has it, putting the
-        // release and the art in together.
-        if (MCUpdater::DueArtAlone())
+        if (!foot.Art.empty() && status.Stage != MCUpdater::MCStage::Downloading)
         {
             foot.Restart = UpdateRestartOffered();
-            return foot;
         }
+        else
+        {
+            foot.Update = std::string(BareUpdate);
+        }
+
+        return foot;
     }
 
+    // A release due besides the art keeps its UPDATE beside the art's line; the foot has no room for RESTART too, so
+    // UPDATE's page has it, putting the release and the art in together.
     foot.Update = std::format(UpdateFormat, ReleaseOf(status.Version));
     return foot;
 }

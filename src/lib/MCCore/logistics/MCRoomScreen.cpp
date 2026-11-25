@@ -513,8 +513,13 @@ void MCRoomScreen::ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players)
          room.StartWaits.empty() ? std::string()
          : !waitsLine.empty()    ? waitsLine
                                  : Sentence(room.StartWaits));
+    // The update waiting, as a launcher's players start here: the HD art a program installed alone came for in the main
+    // menu's foot's words, any other update in the update line's.
+    const std::string artLine = DueArtLineText();
     Keep("update_line", _UpdateLine,
-         room.StartWaits.empty() && MCLobbyUpdate::InRoom() ? Sentence(UpdateLineText()) : std::string());
+         !room.StartWaits.empty() || !MCLobbyUpdate::InRoom() ? std::string()
+         : !artLine.empty()                                   ? artLine
+                                                              : Sentence(UpdateLineText()));
 
     // A guest waits for the host: to choose a map and the teams, then to begin planning.
     const auto host = std::ranges::find(players, true, &MCRoomModel::MCPlayer::Host);

@@ -35,3 +35,11 @@ std::string UpdatePageStatus();
 /// session screen's); empty when none waits.
 /// </summary>
 std::string UpdateLineText();
+
+/// <summary>
+/// Port-only (SPEC-menus.md's main menu and room): what the remade menus' line says of the new HD art a program installed
+/// alone came for (MCUpdater::DueArt), at the main menu's foot and in a lobby's room: what's in of the whole while it
+/// downloads ("HD art: 120 of 340 MB", MCUpdateWork::CountText), then "New HD art is in" until the game starts again with
+/// it; empty when none is due, before its download and once it failed (UPDATE's page says why).
+/// </summary>
+std::string DueArtLineText();

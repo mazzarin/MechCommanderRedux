@@ -107,6 +107,10 @@ namespace
     constexpr std::string_view DueArtRestartLine = "NEW HD ART READY: PLEASE RESTART";
     constexpr std::string_view DueArtReadyLine = "NEW HD ART READY";
 
+    /// <summary>The remade menus' words for that art (DueArtLineText): what's in of the whole (<c>{}</c>), then that it's in.</summary>
+    constexpr std::string_view DueArtCountLine = "HD art: {}";
+    constexpr std::string_view DueArtInLine = "New HD art is in";
+
     /// <summary>What the line under QUIT says while an update waits.</summary>
     std::string NoticeText(const MCStatus& status)
     {
@@ -179,4 +183,29 @@ std::string UpdatePageStatus()
 std::string UpdateLineText()
 {
     return NoticeText(MCUpdater::Status());
+}
+
+std::string DueArtLineText()
+{
+    if (!MCUpdater::DueArt())
+    {
+        return {};
+    }
+
+    const MCStatus& status = MCUpdater::Status();
+
+    switch (status.Stage)
+    {
+        case MCStage::Downloading:
+            return std::format(DueArtCountLine, MCUpdateWork::CountText(status.Received, status.Expected));
+        case MCStage::Ready:
+        case MCStage::Installing:
+            return std::string(DueArtInLine);
+        case MCStage::None:
+        case MCStage::Found:
+        case MCStage::Failed:
+            break;
+    }
+
+    return {};
 }

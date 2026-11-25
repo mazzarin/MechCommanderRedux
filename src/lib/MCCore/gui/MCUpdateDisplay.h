@@ -25,19 +25,13 @@ extern size_t FrPointer;
 /// <summary>Set to show a black screen instead of the frame.</summary>
 extern bool KeepScreenBlack;
 /// <summary>
-/// Port-only (SPEC-menus.md's stage 1): while set, the frame loop's frames draw the loading screen (static over the
-/// screen, the connect shape and the bar as the load last drew them) in place of the screen window: the loading screen
-/// faded in before the mission's load and out after it (MCMission). The load's own frames draw it as ever.
+/// Port-only (SPEC-menus.md's stage 1): while set, the loading screen as designed is up (MCLoadingMenu, over every load
+/// since stage 9) and the frame loop's frames draw nothing under it in place of the screen window: faded in before the
+/// mission's load and out after it from BEGIN MISSION, up for the load alone from a game segment (MCMission).
 /// </summary>
 extern bool LoadingScreenUp;
 /// <summary>The screenshot counter ("scrn%04d.tga").</summary>
 extern int32_t ShotNum;
-/// <summary>
-/// The "connecting" shape <see cref="UpdateDisplay"/> draws with the progress bar (loaded while a scenario loads,
-/// empty otherwise).
-/// </summary>
-MCRegisteredBlock& ConnectShape();
-
 /// <summary>Clears the screen buffer and shows it (with the cursor).</summary>
 void BlankScreen();
 
@@ -64,13 +58,18 @@ private:
 };
 
 /// <summary>
-/// Shows the frame: lets the GUI draw, then optionally writes a screenshot, fills rows with static, draws the
-/// connect shape with a progress bar of <paramref name="progress"/> percent; records the frame rate; draws the
-/// cursor and presents the buffer.
+/// Shows the frame: lets the GUI draw, then optionally writes a screenshot, fills rows with static, shows a load's
+/// progress of <paramref name="progress"/> percent; records the frame rate; draws the cursor and presents the buffer.
 /// </summary>
 /// <param name="screenShot">Write the frame to scrn%04d.tga first.</param>
-/// <param name="staticNoise">Each row turns to static with 1-in-<paramref name="noiseChance"/> odds.</param>
-/// <param name="showProgress">Draw the connect shape and the progress bar.</param>
+/// <param name="staticNoise">
+/// Each row turns to static with 1-in-<paramref name="noiseChance"/> odds. Port-only (SPEC-menus.md's stage 9): under
+/// the loading screen as designed (a load's frames, or LoadingScreenUp's) its dice are rolled and nothing is drawn.
+/// </param>
+/// <param name="showProgress">
+/// A load's frame: the loading screen's meter shows <paramref name="progress"/> (MCLoadingMenu; the original drew the
+/// connect shape and its bar, gone since stage 9).
+/// </param>
 int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bool showProgress, int32_t progress);
 /// <summary>
 /// Port-only: the screen as it stands drawn once as a rehearsal (MCRenderer::RehearsalScope): what its first frame

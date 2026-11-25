@@ -1743,7 +1743,11 @@ MCOptionalRef<MCCampaignScreen> MCCampaignMenu::Screen()
 MCCampaignMenu::MCMissionRead MCCampaignMenu::ReadMission()
 {
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    const std::string path = logistics != nullptr ? logistics->BriefingTextPath : std::string();
+    const std::string scenario = Scenario();
+    // Port-only (SPEC-menus.md's stage 9): with no logistics before the load (-mission's game segment, the benchmark,
+    // the staged battle), the briefing its mission file names, as logistics would have read it.
+    const std::string path = logistics != nullptr ? logistics->BriefingTextPath
+                                                  : MCLogistics::BriefingTextFile(scenario).value_or(std::string());
     const std::string text = path.empty() ? std::string() : MCSmuti::ReadFile(path);
 
     if (text.empty())
@@ -1764,12 +1768,15 @@ MCCampaignMenu::MCMissionRead MCCampaignMenu::ReadMission()
         read.Title = MCRmlDialogs::AsSentence(written.Mission);
     }
 
-    // A campaign's mission: its operation and number in it, as SAVE GAME names it.
-    if (!multiplayer && !Solo && logistics != nullptr)
+    // A campaign's mission: its operation and number in it, as SAVE GAME names it (with no logistics, the game
+    // segment's scenario: the campaign's mission is its scenario, as BackToLogistics keeps them).
+    const std::shared_ptr<MCMission> game = Mission();
+
+    if (!multiplayer && !Solo && (logistics != nullptr || game != nullptr))
     {
         const MCSaves::MCSave save =
             MCSaves::Unsaved(CurPlanet == 0 ? MCSaves::MCCampaign::Original : MCSaves::MCCampaign::Expansion,
-                             logistics->CurrentMission, 0);
+                             logistics != nullptr ? logistics->CurrentMission : game->CurrentScenario, 0);
 
         if (save.Read)
         {
@@ -1783,7 +1790,6 @@ MCCampaignMenu::MCMissionRead MCCampaignMenu::ReadMission()
         read.OperationName = MCMissionNames::Operation(written.Operation);
     }
 
-    const std::string scenario = Scenario();
     read.MapSource = scenario.empty() ? std::string() : std::string(MCRmlArt::MapScheme) + scenario;
     return read;
 }

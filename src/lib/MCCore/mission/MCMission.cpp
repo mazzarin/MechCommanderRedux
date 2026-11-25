@@ -1085,7 +1085,24 @@ auto MCMission::RunFeatureScreen() -> bool
 
 auto MCMission::StartScenario(std::string_view name) -> void
 {
+    // Port-only (SPEC-menus.md's stage 9): a load the menus' BEGIN MISSION didn't lead to (-mission's game segment,
+    // -benchmark, the staged battle and the trailer's recorder, the tests' StartMission, a start no change of screen
+    // could take) shows the loading screen as designed too, as BEGIN MISSION's does: no 1998 loading picture anywhere.
+    // It comes and goes with the load, with no fade: the frames before the battlefield are the load's own, as before.
+    const bool ownLoadingScreen = !LoadingScreenUp;
+
+    if (ownLoadingScreen)
+    {
+        ShowLoadingScreen();
+    }
+
     LoadScenario(name);
+
+    if (ownLoadingScreen)
+    {
+        IntoTheBattlefield();
+    }
+
     EnterScenario();
 }
 
@@ -1594,7 +1611,6 @@ auto MCMission::MatchStartedOrEnded() const -> bool
 auto MCMission::TakeDownLoadingScreen() -> void
 {
     LoadingScreenUp = false;
-    ReleaseLoadingShape();
     // Port-only (SPEC-menus.md's stage 8): the loading screen as designed, in the dark before the battlefield.
     MCLoadingMenu::Hide();
 }
@@ -1624,7 +1640,6 @@ auto MCMission::ShowLoadingScreen() -> void
     // logistics: never over the loading screen or the battlefield.
     MCRmlDialogs::Drop(MCRmlFlow::MCOn::Menus);
     MCLoadingMenu::Show();
-    HoldLoadingShape();
     LoadingScreenUp = true;
     State = MCMissionState::StartScenario;
 }

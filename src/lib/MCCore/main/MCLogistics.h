@@ -214,6 +214,13 @@ public:
     static std::optional<std::string> BriefingMapFile(std::string_view scenario);
 
     /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): the game path of the briefing text campaign mission <paramref name="scenario"/>
+    /// names (its mission file's BriefingFile, as GetCurrentMission reads it into BriefingTextPath), for the loading
+    /// screen of a load with no logistics before it (-mission's game segment); none when the mission file names none.
+    /// </summary>
+    static std::optional<std::string> BriefingTextFile(std::string_view scenario);
+
+    /// <summary>
     /// Port-only: on a sharp screen, has the pack's readers read the HD copy of <see cref="BriefingMapOf"/>
     /// <paramref name="scenario"/> ahead of the briefing's set-up: the way back from a mission's results asks as its
     /// fade begins, so the briefing made near black finds it read.

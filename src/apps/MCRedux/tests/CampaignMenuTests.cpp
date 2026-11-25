@@ -832,6 +832,98 @@ TEST_CASE_ISOLATED("game: DEPLOY's BEGIN MISSION goes to the loading screen and 
     CHECK_EQ(loading.MapSource(), std::string("image(map:mis0101 contain center top)"));
 }
 
+namespace
+{
+    /// <summary>
+    /// The rows of the screen as shown that are 1998's loading static: every pixel one of the static's 32 indices, many
+    /// of them (a row of noise has nearly all 32; a plain row, one or two).
+    /// </summary>
+    size_t StaticRows()
+    {
+        constexpr uint8_t StaticIndices = 0x20;
+        constexpr size_t NoiseLeast = 16;
+        const MCWindow& screen = ScreenPort()->Bitmap();
+        const auto width = static_cast<size_t>(screen.XMax + 1);
+        const std::vector<uint8_t> shown = MCScreenInput::ShownScreen();
+        size_t rows = 0;
+
+        for (size_t start = 0; start + width <= shown.size(); start += width)
+        {
+            const std::span<const uint8_t> row(shown.data() + start, width);
+            std::array<bool, StaticIndices> seen{};
+            bool noise = true;
+
+            for (const uint8_t pixel : row)
+            {
+                if (pixel >= StaticIndices)
+                {
+                    noise = false;
+                    break;
+                }
+
+                seen[pixel] = true;
+            }
+
+            rows += noise && static_cast<size_t>(std::ranges::count(seen, true)) >= NoiseLeast ? 1 : 0;
+        }
+
+        return rows;
+    }
+}
+
+/// <summary>
+/// A load with no menus before it (-mission's game segment, as -benchmark, the staged battle, the trailer's recorder and
+/// the tests' StartMission begin): the loading screen as designed shows over every frame of the load, read from the
+/// mission's own files with no logistics (the operation and number, the name, objectives, orders and map), its meter
+/// filling; 1998's static, connect shape and bar aren't drawn under it; it's gone before the battlefield.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission begun with no menus shows the loading screen as designed, without 1998's static")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    size_t loadFrames = 0;
+    size_t shownFrames = 0;
+    size_t staticRows = 0;
+    int mostPercent = 0;
+    MCTestGame::OnPresent = [&]
+    {
+        if (!LoadingScreenUp)
+        {
+            return;
+        }
+
+        loadFrames++;
+        staticRows += StaticRows();
+
+        if (MCLoadingMenu::Shown())
+        {
+            shownFrames++;
+            mostPercent = std::max(mostPercent, MCLoadingMenu::Screen()->get().Percent());
+        }
+    };
+
+    const bool started = MCTestGame::StartMission(1);
+    MCTestGame::OnPresent = {};
+    REQUIRE(started);
+    CHECK(loadFrames > 0);
+    CHECK_EQ(shownFrames, loadFrames);
+    CHECK_EQ(staticRows, size_t{0});
+    CHECK(mostPercent > 0);
+    CHECK(!LoadingScreenUp);
+    CHECK(!MCLoadingMenu::Shown());
+    CHECK(GlobalLog() == nullptr);
+    REQUIRE(MCLoadingMenu::Screen().has_value());
+    const MCLoadingScreen& loading = MCLoadingMenu::Screen()->get();
+    CHECK_EQ(loading.Eyebrow(), std::string("Operation 1 · Beachhead · Mission 1"));
+    CHECK_EQ(loading.Title(), std::string("Liberate work camps"));
+    CHECK_EQ(loading.Objectives().size(), size_t{3});
+    CHECK_EQ(loading.Orders().size(), MCLoadingMenu::OrdersShown);
+    CHECK_EQ(loading.MapSource(), std::string("image(map:mis0101 contain center top)"));
+}
+
 /// <summary>
 /// The loading screen as designed, shown from the first briefing with its meter at 62%: on the software renderer, the
 /// whole window at 640x480, 1280x720 and 1280x1024, the hashes recorded; at every window the players' reports name,

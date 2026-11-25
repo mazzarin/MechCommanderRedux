@@ -17322,11 +17322,12 @@ namespace
 }
 
 /// <summary>
-/// The loading screen's static (MCRenderer::Noise, colours 0 to 0x1f) on mission 1's screen shown larger, with HD art on:
-/// as fine as the screen, the shown pixels of an original pixel's square unlike each other, not one colour a square as
-/// the original's pixels shown larger are.
+/// The static (MCRenderer::Noise, colours 0 to 0x1f: the battlefield's as a mission starts up, the loading screen's
+/// gone since SPEC-menus.md's stage 9) on mission 1's screen shown larger, with HD art on: as fine as the screen, the
+/// shown pixels of an original pixel's square unlike each other, not one colour a square as the original's pixels shown
+/// larger are.
 /// </summary>
-TEST_CASE_ISOLATED("game: HD art draws the loading screen's static at the screen's own pixels")
+TEST_CASE_ISOLATED("game: HD art draws the static at the screen's own pixels")
 {
     if (!MCTestGame::Available())
     {
@@ -17350,7 +17351,7 @@ TEST_CASE_ISOLATED("game: HD art draws the loading screen's static at the screen
     WritePackPicture(pack, *picture, colors);
     WritePaletteRgb(pack, colors);
 
-    // A band of the screen's rows written as noise as the loading screen writes them (colours 0 to 0x1f, the same rows
+    // A band of the screen's rows written as noise as the static writes them (colours 0 to 0x1f, the same rows
     // each time) and shown; then the original pixels' squares of shown pixels inside it that show more than one colour
     // counted (the original's pixels shown larger show one).
     constexpr int32_t Band = 64;

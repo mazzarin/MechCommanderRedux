@@ -620,20 +620,42 @@ auto MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs as) -> void
     MCHdArt::ReadPicturesAhead(pictures, as);
 }
 
+namespace
+{
+    /// <summary>
+    /// Campaign mission <paramref name="scenario"/>'s mission file's Campaign entry <paramref name="name"/>, as
+    /// GetCurrentMission reads it (at most <paramref name="chars"/> characters); none when the file or the entry can't be
+    /// read.
+    /// </summary>
+    std::optional<std::string> CampaignEntry(std::string_view scenario, std::string_view name, size_t chars)
+    {
+        MCFitIniFile missionFile;
+        std::string text;
+
+        if (missionFile.Open(GamePath(MissionPath, scenario, ".fit")) != 0 || missionFile.SeekBlock("Campaign") != 0 ||
+            !ReadText(missionFile, name, chars, text))
+        {
+            return std::nullopt;
+        }
+
+        return text;
+    }
+}
+
 auto MCLogistics::BriefingMapFile(std::string_view scenario) -> std::optional<std::string>
 {
     // The longest map name GetCurrentMission reads.
     constexpr size_t MapFileChars = 0xff;
-    MCFitIniFile missionFile;
-    std::string map;
+    const std::optional<std::string> map = CampaignEntry(scenario, "MapFile", MapFileChars);
+    return map.has_value() ? std::optional(GamePath(TerrainPath, *map, ".log.tga")) : std::nullopt;
+}
 
-    if (missionFile.Open(GamePath(MissionPath, scenario, ".fit")) != 0 || missionFile.SeekBlock("Campaign") != 0 ||
-        !ReadText(missionFile, "MapFile", MapFileChars, map))
-    {
-        return std::nullopt;
-    }
-
-    return GamePath(TerrainPath, map, ".log.tga");
+auto MCLogistics::BriefingTextFile(std::string_view scenario) -> std::optional<std::string>
+{
+    // The longest briefing name GetCurrentMission reads.
+    constexpr size_t BriefingFileChars = 0x7f;
+    const std::optional<std::string> briefing = CampaignEntry(scenario, "BriefingFile", BriefingFileChars);
+    return briefing.has_value() ? std::optional(GamePath(MissionPath, *briefing)) : std::nullopt;
 }
 
 auto MCLogistics::BriefingMapOf(std::string_view scenario) -> std::optional<MCPicturePixels>

@@ -4,7 +4,10 @@
 // (ui/loading.rml) over the main menu's painting: the mission's name and where it is, its objectives and the orders'
 // first lines, its map, the load's progress along the foot; nothing to press. MCMission::ShowLoadingScreen shows it in
 // the dark after BEGIN MISSION, read from the briefing before logistics goes; the load's frames move its meter
-// (gui/MCUpdateDisplay's bar); MCMission::TakeDownLoadingScreen hides it in the dark before the battlefield.
+// (gui/MCUpdateDisplay's progress); MCMission::TakeDownLoadingScreen hides it in the dark before the battlefield. Since
+// stage 9 every load shows it, 1998's loading picture gone: one with no menus before it (-mission's game segment,
+// -benchmark, the staged battle, the tests') shows it for the load alone (MCMission::StartScenario), read from the
+// mission's own files.
 // In a match the players under the map, each lit once in (the host is told each game's; a guest only knows its own),
 // and the match's start waits behind it (MCMission::StartIntoTheBattle).
 

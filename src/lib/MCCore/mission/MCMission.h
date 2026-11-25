@@ -81,7 +81,8 @@ public:
     /// Leaves logistics and starts scenario <paramref name="scenarioName"/>: creates the results screen and the
     /// scenario, and hooks <c>PlayScenario</c> and the interface callback. Port-only: <see cref="LoadScenario"/>, then
     /// <see cref="EnterScenario"/>, at once (a game segment's start, the tests'); from a briefing they come in a change
-    /// of screen (<see cref="RequestScenario"/>).
+    /// of screen (<see cref="RequestScenario"/>). Port-only (SPEC-menus.md's stage 9): at once, the load shows the
+    /// loading screen as designed too (<see cref="ShowLoadingScreen"/>), taken down as it ends, with no fade.
     /// </summary>
     void StartScenario(std::string_view scenarioName);
 
@@ -269,9 +270,12 @@ private:
     /// (<see cref="EnterScenario"/>). At once where no change can run.
     /// </summary>
     void StartIntoTheBattle(const std::string& scenarioName);
-    /// <summary>Port-only: the loading screen put up while the screen is dark, the briefing faded out.</summary>
+    /// <summary>
+    /// Port-only: the loading screen put up while the screen is dark, the briefing faded out, or (stage 9) at once for a
+    /// load with no change of screen before it (<see cref="StartScenario"/>).
+    /// </summary>
     void ShowLoadingScreen();
-    /// <summary>Port-only: the loading screen taken down (its shape let go of), the battlefield next.</summary>
+    /// <summary>Port-only: the loading screen taken down, the battlefield next.</summary>
     void TakeDownLoadingScreen();
     /// <summary>Port-only: the loading screen taken down for the battlefield, the menus' dialogs with it.</summary>
     void IntoTheBattlefield();

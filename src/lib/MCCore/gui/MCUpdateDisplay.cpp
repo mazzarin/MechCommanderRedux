@@ -16,7 +16,6 @@
 #include "platform/MCDisplay.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
-#include "platform/MCNeverDestroyed.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
@@ -29,11 +28,6 @@ std::array<float, FrameGraphLength> FrameRateArray = {};
 size_t FrPointer = 0;
 bool KeepScreenBlack = false;
 int32_t ShotNum = 0;
-auto ConnectShape() -> MCRegisteredBlock&
-{
-    static MCNeverDestroyed<MCRegisteredBlock> shape;
-    return *shape;
-}
 
 namespace
 {
@@ -168,17 +162,11 @@ namespace
     bool FramesAheadOn = false;
 
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 1): the loading screen as the load last drew it, for the frames that show it
-    /// outside the load's own (LoadingScreenUp): its static's odds (a row in so many stays as it was) and its bar.
+    /// Port-only (SPEC-menus.md's stage 1): the static's odds the load last rolled (a row in so many stays as it was),
+    /// for the frames under the loading screen outside the load's own (LoadingScreenUp), which roll them as it did.
     /// </summary>
     constexpr int32_t LoadingStartNoise = 100;
     int32_t LoadingNoise = LoadingStartNoise;
-    int32_t LoadingBar = 0;
-    /// <summary>
-    /// Port-only: whether the frame loop's loading screen has had its first frame: wiped once, as the screen left by the
-    /// briefing goes, then its static builds up from frame to frame as the load's own frames' does (they never wipe).
-    /// </summary>
-    bool LoadingScreenStarted = false;
 
     /// <summary>The palette waiting for the next frame (MCGuiSystem::ActivatePalette) put in.</summary>
     void ActivatePendingPalette(MCGuiSystem& gui)
@@ -227,12 +215,26 @@ namespace
                     MouseScreenY);
     }
 
-    /// <summary>Turns rows of the screen to static, each with 1-in-<paramref name="noiseChance"/> odds.</summary>
-    void DrawStatic(int32_t noiseChance)
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): whether <see cref="DrawStatic"/> draws its rows, or only rolls their dice.
+    /// </summary>
+    enum class MCStatic : uint8_t
+    {
+        Drawn,
+        /// <summary>Under the loading screen as designed, where 1998's static is gone (see UpdateDisplay).</summary>
+        DiceOnly,
+    };
+
+    /// <summary>
+    /// Turns rows of the screen to static, each with 1-in-<paramref name="noiseChance"/> odds; with
+    /// <see cref="MCStatic::DiceOnly"/>, rolls the same dice and draws nothing.
+    /// </summary>
+    void DrawStatic(int32_t noiseChance, MCStatic shown)
     {
         // Port: the original wrote the noise into the screen's memory; the row goes to the renderer.
         const int32_t pairs = GuiSystem().Width() >> 1;
-        std::vector<uint8_t> line(static_cast<size_t>(pairs) * 2);
+        const bool drawn = shown == MCStatic::Drawn;
+        std::vector<uint8_t> line(drawn ? static_cast<size_t>(pairs) * 2 : 0);
 
         for (int32_t row = 0; row < GuiSystem().Height(); row++)
         {
@@ -244,61 +246,21 @@ namespace
             for (int32_t i = 0; i < pairs; i++)
             {
                 const int32_t noise = MCPort::Rand();
-                line[static_cast<size_t>(i) * 2] = static_cast<uint8_t>(noise & 0x1f);
-                line[static_cast<size_t>(i) * 2 + 1] = static_cast<uint8_t>((noise >> 5) & 0x1f);
+
+                if (drawn)
+                {
+                    line[static_cast<size_t>(i) * 2] = static_cast<uint8_t>(noise & 0x1f);
+                    line[static_cast<size_t>(i) * 2 + 1] = static_cast<uint8_t>((noise >> 5) & 0x1f);
+                }
             }
 
-            MCWindow& screen = ScreenBuffer();
-            // Port-only: as noise, which a sharp screen with HD art on shows at its own pixels.
-            MCRenderer::For(screen).Noise(screen, 0, row, line);
-        }
-    }
-
-    /// <summary>The connect shape at the screen's centre, with a progress bar of <paramref name="progress"/> percent.</summary>
-    void DrawProgress(int32_t progress)
-    {
-        // Port fix: centre on the part of the screen that is shown. While a mission loads, the screen already has
-        // the mission's size (e.g. 1280x720) but the display still shows the menus' 640x480 view of it, which put the
-        // bar half off the screen.
-        int32_t width = GuiSystem().Width();
-        int32_t height = GuiSystem().Height();
-        int32_t viewX = 0;
-        int32_t viewY = 0;
-
-        if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
-        {
-            const SDL_Rect view = display->View();
-
-            if (view.w > 0 && view.h > 0)
+            if (drawn)
             {
-                viewX = view.x;
-                viewY = view.y;
-                width = std::min(width - viewX, view.w);
-                height = std::min(height - viewY, view.h);
+                MCWindow& screen = ScreenBuffer();
+                // Port-only: as noise, which a sharp screen with HD art on shows at its own pixels.
+                MCRenderer::For(screen).Noise(screen, 0, row, line);
             }
         }
-
-        const int32_t centerY = viewY + (height >> 1);
-        const int32_t centerX = viewX + (width >> 1);
-        AGShapeDraw(ScreenPort()->Frame(), ConnectShape().Bytes(), 0, centerX, centerY);
-        const int32_t left = centerX - 0x5f;
-        const auto right = static_cast<int32_t>(progress * 0.01 * 188.0 + left);
-        std::array<MCScreenVertex, 4> bar = {};
-        bar[0].X = left;
-        bar[0].Y = centerY + 3;
-        bar[1].X = right;
-        bar[1].Y = centerY + 3;
-        bar[2].X = right;
-        bar[2].Y = centerY + 10;
-        bar[3].X = left;
-        bar[3].Y = centerY + 10;
-
-        for (MCScreenVertex& vertex : bar)
-        {
-            vertex.C = 0xe40000;
-        }
-
-        VfxFlatPolygon(ScreenPort()->Frame(), bar);
     }
 
     /// <summary>The frame graph: 512 frames, 3 pixels per frame a second, 60 at the top.</summary>
@@ -502,9 +464,9 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
     }
 
     // Port-only (SPEC-menus.md's stage 1): the frame loop's frames while the loading screen is up outside the load's
-    // own (faded in before it, out after it) draw it in place of the screen window, as the load last drew it.
+    // own (faded in before it, out after it) draw nothing in place of the screen window, under the loading screen as
+    // designed (MCLoadingMenu), rolling the static's dice as the load last did.
     const bool loadingScreen = LoadingScreenUp && !showProgress;
-    LoadingScreenStarted = LoadingScreenStarted && LoadingScreenUp;
 
     if (loadingScreen)
     {
@@ -525,17 +487,19 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
 
     if (gui.SmackerWindow == nullptr)
     {
+        // Port-only (SPEC-menus.md's stage 9): under the loading screen as designed (a load's own frames, and the frame
+        // loop's while it's up) the screen is wiped every frame, dark frames too: nothing of the screen left by the
+        // briefing shows under it, and the renderer's frame runs (MCVulkanRenderer::BeginRecording), placing the
+        // pictures the load's fill staged and freeing its upload slots, which 1998's static, drawn every such frame,
+        // ran it for. Without it the fill stalls until play's first frames (2 s on mission 3, its gestures late).
+        if (showProgress || loadingScreen)
+        {
+            VfxPaneWipe(ScreenPort()->Frame(), 0);
+        }
+
         // Port-only (SPEC-menus.md's stage 1): a change of screen's dark frames draw nothing (they show black), so none
         // draws the screens halfway through the work between them.
-        if (loadingScreen && !MCScreenChange::Dark())
-        {
-            if (!LoadingScreenStarted)
-            {
-                VfxPaneWipe(ScreenPort()->Frame(), 0);
-                LoadingScreenStarted = true;
-            }
-        }
-        else if (!MCScreenChange::Dark())
+        if (!loadingScreen && !MCScreenChange::Dark())
         {
             MCFrameLog::Scope draw("draw");
             DrawScreenWindow();
@@ -565,23 +529,22 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
         }
     }
 
+    // Port-only (SPEC-menus.md's stage 9): every load shows the loading screen as designed (MCLoadingMenu), and
+    // 1998's loading picture is gone: the load's static (and the frames' under it outside the load's own) isn't drawn,
+    // and its connect shape and bar aren't loaded or drawn. Its dice are still rolled as it rolled them, so the play
+    // after the load rolls the same (a staged battle, a test's fight, a campaign's state log). The static over the
+    // battlefield as the mission starts up (MCScenario::StartingUp's) is the battle's, drawn as ever.
     if (staticNoise && noiseChance != 0)
     {
-        DrawStatic(noiseChance);
+        DrawStatic(noiseChance, showProgress || loadingScreen ? MCStatic::DiceOnly : MCStatic::Drawn);
     }
 
-    if (!ConnectShape().Empty() && showProgress)
+    if (showProgress)
     {
-        // Port-only (SPEC-memory.md): the bar's last stretch is the mission's art going into memory.
-        LoadingBar = MCHdArt::LoadBarPercent(progress);
         LoadingNoise = noiseChance;
-        DrawProgress(LoadingBar);
-        // Port-only (SPEC-menus.md's stage 8): the loading screen as designed shows the same.
-        MCLoadingMenu::Progress(LoadingBar);
-    }
-    else if (!ConnectShape().Empty() && loadingScreen)
-    {
-        DrawProgress(LoadingBar);
+        // Port-only (SPEC-menus.md's stage 8): the loading screen's meter. Port-only (SPEC-memory.md): the bar's last
+        // stretch is the mission's art going into memory.
+        MCLoadingMenu::Progress(MCHdArt::LoadBarPercent(progress));
     }
 
     FrameRateArray[FrPointer] = std::min(FrameRate, 60.0f);

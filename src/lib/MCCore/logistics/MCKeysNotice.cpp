@@ -1,7 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCKeysNotice.h"
 #include "iface/MCKeyBindings.h"
-#include "logistics/MCLogMenus.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCReportsNotice.h"
 #include "main/MCLogistics.h"

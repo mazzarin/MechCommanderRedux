@@ -7,31 +7,16 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiTimerManager.h"
 #include "lib/MCFitIniFile.h"
-#include "logistics/MCCompInventoryBlock.h"
-#include "logistics/MCCompPurchaseBlock.h"
-#include "logistics/MCInventoryBlock.h"
-#include "logistics/MCLogDialogButton.h"
-#include "logistics/MCLogRows.h"
 #include "logistics/MCLogisticsTabs.h"
-#include "logistics/MCMechInventoryBlock.h"
-#include "logistics/MCMechPurchaseBlock.h"
-#include "logistics/MCMechRepairBlock.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCMissionLogisticsBridge.h"
-#include "logistics/MCPilotInventoryBlock.h"
-#include "logistics/MCRepairScreen.h"
-#include "logistics/MCPilotPurchaseBlock.h"
 #include "logistics/MCPurProfile.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
-#include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCReusableDialog.h"
-#include "logistics/MCSessionScreen.h"
 #include "logistics/MCStore.h"
 #include "logistics/MCUnitLimits.h"
-#include "logistics/MCVehicleInventoryBlock.h"
-#include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCMainMenuModel.h"
 #include "main/MCGameContext.h"
@@ -42,6 +27,7 @@
 #include "object/MCMasterComponent.h"
 #include "object/MCObjectTypeManager.h"
 #include "platform/MCFileSystem.h"
+#include "main/MCLogisticsShared.h"
 
 // The shop and the repair bay (P3-log-2): the shop's lists, prices and stock, the unit limit, what a mech can mount,
 // the repair order, the session screen's player order, and buying and selling by dragging between the panes.
@@ -210,6 +196,15 @@ namespace
             location = {points, points};
         }
     }
+
+    /// <summary>
+    /// Whether the 'MECH BAY fits part <paramref name="masterID"/> weighing <paramref name="tonnage"/> into
+    /// <paramref name="mech"/>.
+    /// </summary>
+    bool CanMount(uint8_t masterID, float tonnage, MCOptionalRef<const MCLogMech> mech)
+    {
+        return MCMechBay::WhyNotFit(masterID, tonnage, mech) == MCMechBay::MCFit::None;
+    }
 }
 
 TEST_CASE("logistics: the session screen lists player ids in order, empty slots last")
@@ -229,10 +224,10 @@ TEST_CASE("logistics: a unit sells for half its value in the campaign, all of it
     REQUIRE(MultiPlayer() == nullptr);
     const bool saved = Solo;
     Solo = false;
-    CHECK_EQ(MCInventoryBlock::SalePrice(2500), 1250);
-    CHECK_EQ(MCInventoryBlock::SalePrice(75), 37);
+    CHECK_EQ(MCStore::SalePrice(2500), 1250);
+    CHECK_EQ(MCStore::SalePrice(75), 37);
     Solo = true;
-    CHECK_EQ(MCInventoryBlock::SalePrice(2500), 2500);
+    CHECK_EQ(MCStore::SalePrice(2500), 2500);
     Solo = saved;
 }
 
@@ -489,17 +484,17 @@ TEST_CASE("game: a mech mounts a component its free tonnage, one of each equipme
     const auto id = [](int32_t value) { return static_cast<uint8_t>(value); };
 
     // Five tons free.
-    CHECK(MCCompInventoryBlock::CanMount(id(weapon), 5.0f, mech));
-    CHECK(!MCCompInventoryBlock::CanMount(id(weapon), 5.5f, mech));
-    CHECK(!MCCompInventoryBlock::CanMount(id(weapon), 0.0f, std::nullopt));
+    CHECK(CanMount(id(weapon), 5.0f, mech));
+    CHECK(!CanMount(id(weapon), 5.5f, mech));
+    CHECK(!CanMount(id(weapon), 0.0f, std::nullopt));
 
     // One ECM: a second is refused, a sensor still fits.
     inventory.AddItem(id(ecm), inventory.CreateStat(0, 0, 0, 1, 0xff), false);
-    CHECK(!MCCompInventoryBlock::CanMount(id(ecm), 0.0f, mech));
-    CHECK(MCCompInventoryBlock::CanMount(id(sensor), 0.0f, mech));
+    CHECK(!CanMount(id(ecm), 0.0f, mech));
+    CHECK(CanMount(id(sensor), 0.0f, mech));
 
     // The restricted components fit only the mechs of name index 5, 14 and 16.
-    for (uint8_t restricted : RestrictedComps)
+    for (uint8_t restricted : MCMechBay::RestrictedComps)
     {
         MCTest::Scope scope(std::format("component {}", restricted));
 
@@ -509,12 +504,12 @@ TEST_CASE("game: a mech mounts a component its free tonnage, one of each equipme
         }
 
         mech.NameIndex = 4;
-        CHECK(!MCCompInventoryBlock::CanMount(restricted, 0.0f, mech));
+        CHECK(!CanMount(restricted, 0.0f, mech));
 
         for (int32_t allowed : {5, 14, 16})
         {
             mech.NameIndex = allowed;
-            CHECK(MCCompInventoryBlock::CanMount(restricted, 0.0f, mech));
+            CHECK(CanMount(restricted, 0.0f, mech));
         }
     }
 }
@@ -705,8 +700,8 @@ TEST_CASE("game: a match's weapon bans take a mech's banned weapons off and off 
     }
 
     REQUIRE(allowedWeapon != 0);
-    CHECK(!MCCompInventoryBlock::CanMount(bannedWeapon, 0.0f, *stripped));
-    CHECK(MCCompInventoryBlock::CanMount(allowedWeapon, 0.0f, *stripped));
+    CHECK(!CanMount(bannedWeapon, 0.0f, *stripped));
+    CHECK(CanMount(allowedWeapon, 0.0f, *stripped));
 
     // The shop: its mech without them for that much less, the components banned not sold, the vehicles carrying one gone.
     MCLogistics& logistics = *GlobalLog();

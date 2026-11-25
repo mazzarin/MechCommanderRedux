@@ -2,7 +2,6 @@
 #include "logistics/MCSavesMenu.h"
 #include "ai/MCMoveGeometry.h"
 #include "logistics/MCCampaignMenu.h"
-#include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCUnitLimits.h"
@@ -726,7 +725,6 @@ void MCSavesScreen::Load(const std::string& name)
 {
     const std::weak_ptr<MCRmlScreen> self = weak_from_this();
     // The save loaded live from the press, a step a frame (after the briefing's document); the briefing set up once dark.
-    LoadingSolo = false;
     MCSavedGameLoad load = MCSaves::LoadSavedGameAhead(name, true);
     std::vector<MCScreenChange::MCPiece> job = MCCampaignMenu::Ahead();
     std::ranges::move(load.Job, std::back_inserter(job));
@@ -791,7 +789,7 @@ void MCSavesScreen::BackToCampaign()
             // The campaign's screens on the tab left (the old save screen's way back, whose 1998 PURCHASING and 'MECH
             // BAY are the remade campaign's tabs).
             MCCampaignMenu::ComeBack();
-            GlobalLog()->SetUpBriefingScreen(false);
+            GlobalLog()->SetUpBriefingScreen();
             SoundSystem()->PlayDigitalMusic(LogisticsMusic, true);
         },
         MCCampaignMenu::Ahead());

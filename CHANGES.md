@@ -299,15 +299,23 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - A vehicle crew name of 9 or more characters no longer overwrites the vehicle's speed, structure and armor.
 - Empty inventories, and items with fewer copies than their count, no longer crash the inventory.
 - The briefing no longer crashes on a mech without a pilot or engine, or on a missing movie.
-- Clicking the briefing's OPERATION BRIEFING tab again restarts its movie, as the tab's help says. A second click before
-  the movie began, or one while it played, stopped it and left the operation picture; MISSION BRIEFING clicked just
-  after it no longer flips back to the movie (OB-191).
+- The briefing's operation movie plays once, from its start, however quickly it is clicked again. In the original, a
+  second click on OPERATION BRIEFING before the movie began, or one while it played, stopped it and left the operation
+  picture, and MISSION BRIEFING clicked just after it flipped back to the movie (OB-191).
 - The mission results no longer crash without a best pilot, and no longer overflow when they find more pilots than they
   made room for.
 - With two or more campaigns, the campaign name is no longer garbage.
 - The purchase and repair tickers no longer show garbage text.
 - The marks of a fourth or later drop zone no longer overwrite the drop zone data.
 - Fixed several memory leaks in the logistics screens.
+- The menus are remade, and the 1998 screens are gone with these bugs of theirs:
+  - A component picked up with the right mouse button could be lost when it couldn't be mounted (OB-079).
+  - Ticker text wider than the ticker never scrolled (OB-072). The ticker is gone: the hint line and the players' row
+    do its jobs.
+  - Clicking the mission results' scroll bar scrolled to about 15 pixels below the click (OB-057).
+  - The purchase screen's chat button stopped blinking for new messages (OB-096).
+  - The Ctrl+Alt resource cheat on the purchase and repair screens never fired (OB-077).
+  - A key typed after a shorter text brought back what a longer one had left past its end (OB-161).
 - Refitting a mech assigns its critical slots as intended. This changes how the game plays, because a component is
   lost with the location that holds it.
   - Large weapons are spread over the side torsos and arms. The original put nearly all of them in the left arm, so
@@ -485,20 +493,15 @@ These bugs are in the original MechCommander Gold. Some of these bugs are kept o
 ### Logistics and Menus
 
 - **A damaged engine can be removed from a mech by an item repair.**
-- A component picked up with the right mouse button can be lost when it can't be mounted.
 - Moving two mechs, vehicles or pilots in a row between lists can corrupt both lists.
 - Removing a unit from its drop slot, or loading a campaign, can remove the wrong pilot.
 - A lance holding only vehicles can show 0 tons.
-- Ticker text wider than the ticker never scrolls.
 - Pilots of the same rank are listed in a scrambled order in the mission results.
-- Clicking the mission results' scroll bar scrolls to about 15 pixels below the click.
 - Backspace leaves the deleted character on screen until the next one is typed.
 - An over-long centred line of briefing text shows its last character doubled.
 - Dragging the internal structure or engine slider left only redraws its knob after the repair.
-- The purchase screen's chat button stops blinking for new messages.
 - Non-weapon equipment shows a range of "0.0 m".
 - A multiplayer save always uses the default pilot costs.
-- The Ctrl+Alt resource cheat on the purchase and repair screens never fires.
 - Small memory leaks when logistics widgets are destroyed, the vehicle pane is redrawn, or a multiplayer session ends.
 
 ### Interface

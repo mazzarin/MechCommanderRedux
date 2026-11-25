@@ -18,6 +18,12 @@ struct MCLogInventoryStat;
 
 namespace MCMechBay
 {
+    /// <summary>
+    /// The master components a mech can only mount when its name index is 5, 0xe or 0x10 (a game rule:
+    /// <see cref="WhyNotFit"/>).
+    /// </summary>
+    inline constexpr std::array<uint8_t, 5> RestrictedComps = {15, 37, 38, 42, 43};
+
     /// <summary>A repair knob.</summary>
     enum class MCKnob : uint8_t
     {
@@ -187,6 +193,13 @@ namespace MCMechBay
     /// <paramref name="mech"/> (the original's greyed rows).
     /// </summary>
     MCFit WhyNotFit(uint8_t masterID, float tonnage, MCOptionalRef<const MCLogMech> mech);
+
+    /// <summary>
+    /// Adds a spare component of <paramref name="masterID"/> with no copies counted yet (one copy record) to the
+    /// component inventory (1998's CompInventoryBlock::AddSpare, which made its inventory row too).
+    /// </summary>
+    /// <returns>The new item.</returns>
+    std::shared_ptr<MCLogInventoryItem> AddSpare(uint8_t masterID);
 
     /// <summary>
     /// Fits a new copy of the part <paramref name="masterID"/> (with a weapon's ammunition) into <paramref name="mech"/>,

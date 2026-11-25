@@ -15,7 +15,6 @@
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCChatView.h"
 #include "logistics/MCLogChat.h"
-#include "logistics/MCLogMenus.h"
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "logistics/MCMenuDialog.h"
 #include "gui/MCGuiRef.h"
@@ -557,7 +556,7 @@ auto MCLogistics::LoadMatchMission(std::string_view mission) -> bool
                          {
                              if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
                              {
-                                 logistics->SetUpBriefingScreen(false);
+                                 logistics->SetUpBriefingScreen();
                              }
                          });
     return true;

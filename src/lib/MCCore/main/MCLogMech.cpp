@@ -1,11 +1,25 @@
 #include "stdafx.h"
 #include "main/MCLogMech.h"
-#include "logistics/MCMechInventoryBlock.h"
-#include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCPurProfile.h"
 #include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
 #include "object/MCBattleMech.h"
+
+namespace
+{
+    /// <summary>
+    /// A weapon's worth in the condition figures: its damage per 10 seconds, as a short, times its long range over 24,
+    /// as a short.
+    /// </summary>
+    int16_t WeaponWorth(const MCMasterComponent& component)
+    {
+        auto perTen = static_cast<int16_t>(static_cast<int32_t>(static_cast<double>(component.Damage) * 10.0 /
+                                                                static_cast<double>(component.RecycleTime)));
+        return static_cast<int16_t>(
+            static_cast<int32_t>(static_cast<double>(perTen) * static_cast<double>(component.WeaponRange[3]) *
+                                 static_cast<double>(0.041666668f)));
+    }
+}
 
 MCLogPart::MCLogPart() = default;
 
@@ -309,4 +323,102 @@ auto MCLogMech::LoadDescription(int32_t descIndex) -> void
     }
 
     Description = LoadDescriptionText(DescIndex);
+}
+
+auto MCLogMech::CalcStatus() -> float
+{
+    StatusValue = 0.0f;
+
+    if (PilotIndex < 0 && NetworkPilot.expired())
+    {
+        return 0.0f;
+    }
+
+    float pilotFactor = 0.0f;
+    std::shared_ptr<MCLogWarrior> warrior;
+
+    if (!LocalPart)
+    {
+        warrior = NetworkPilot.lock();
+    }
+    else
+    {
+        GlobalLog()->AssignedWarriorList->GetWarriorInfo(PilotIndex, warrior);
+    }
+
+    if (warrior != nullptr)
+    {
+        pilotFactor = static_cast<float>(static_cast<double>(warrior->Skills[3]) * 0.02);
+    }
+
+    // The firepower left: the undamaged weapons' worth over all weapons' worth (0/0 without a pilot).
+    double working = 0.0;
+    double total = 0.0;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : Inventory->Items)
+    {
+        const MCMasterComponent& component = MasterComponentList[item->MasterID];
+
+        if (!IsWeapon(component.Form) || item->Stats.empty())
+        {
+            continue;
+        }
+
+        int16_t value = WeaponWorth(component);
+
+        for (const std::shared_ptr<MCLogInventoryStat>& stat : item->Stats)
+        {
+            if (stat->Hits == 0)
+            {
+                working += static_cast<double>(value) * pilotFactor;
+            }
+
+            total += static_cast<double>(value) * pilotFactor;
+        }
+    }
+
+    auto firepower = static_cast<float>(working / total);
+
+    if (std::isnan(firepower) || firepower == 0.0f)
+    {
+        return StatusValue;
+    }
+
+    // The body: the head's armor, the weaker of two torso locations, the legs' and the side torsos' armor.
+    auto head = static_cast<float>(static_cast<double>(Armor[0].CurArmor) / Armor[0].MaxArmor * 0.6 + 0.4);
+    double weakCurrent = Armor[1].CurArmor;
+    double weakMaximum = Armor[1].MaxArmor;
+
+    if (static_cast<double>(Armor[8].CurArmor) < weakCurrent)
+    {
+        weakCurrent = Armor[8].CurArmor;
+        weakMaximum = Armor[8].MaxArmor;
+    }
+
+    auto legs = static_cast<float>(static_cast<double>(Armor[5].CurArmor + Armor[4].CurArmor) /
+                                       (Armor[5].MaxArmor + Armor[4].MaxArmor) * 0.25 +
+                                   0.75);
+    double sides = static_cast<double>(Armor[9].CurArmor + Armor[10].CurArmor + Armor[3].CurArmor + Armor[2].CurArmor) /
+                       (Armor[10].MaxArmor + Armor[9].MaxArmor + Armor[3].MaxArmor + Armor[2].MaxArmor) * 0.25 +
+                   0.75;
+    double body = sides * ((weakCurrent / weakMaximum + 1.0) * 0.5) * legs * legs * head;
+
+    if (std::isnan(body) || body == 0.0)
+    {
+        return StatusValue;
+    }
+
+    // The pilot's wounds.
+    static constexpr float woundFactors[7] = {1.0f, 0.95f, 0.85f, 0.75f, 0.5f, 0.3f, 0.0f};
+    float woundFactor = head;
+
+    if (warrior != nullptr)
+    {
+        auto wounds = static_cast<int32_t>(warrior->Wounds);
+        // Port fix: wounds past the table read 0 (the original read the stack beyond it).
+        woundFactor = wounds >= 0 && wounds < 7 ? woundFactors[wounds] : 0.0f;
+    }
+
+    StatusValue = static_cast<float>(static_cast<double>(woundFactor) * body * firepower);
+    return StatusValue;
 }

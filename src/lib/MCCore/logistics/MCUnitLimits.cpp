@@ -1,9 +1,10 @@
 #include "stdafx.h"
 #include "logistics/MCUnitLimits.h"
-#include "logistics/MCLogRows.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
 #include "network/MCMultiPlayer.h"
+#include "logistics/MCMenuDialog.h"
+#include "main/MCLogisticsShared.h"
 
 int GMoreUnits = 0;
 int32_t ResourcePoints = 0;

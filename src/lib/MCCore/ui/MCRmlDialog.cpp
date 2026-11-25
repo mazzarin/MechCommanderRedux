@@ -47,13 +47,6 @@ namespace
         return KeptOnLayers()[on == MCRmlFlow::MCOn::Mission ? 1 : 0];
     }
 
-    /// <summary>The 1998 boxes shown while the menus ran (MCRmlDialogs::NoteOldBox).</summary>
-    size_t& OldBoxCount()
-    {
-        static size_t count = 0;
-        return count;
-    }
-
     /// <summary>What the dialogs belong to when they don't say (MCRmlDialogs::SetPlace).</summary>
     std::string& Place()
     {
@@ -372,17 +365,6 @@ bool MCRmlDialogs::Shown()
 {
     return std::ranges::any_of(KeptOnLayers(),
                                [](const MCGuiHandle<MCRmlDialog>& kept) { return kept && kept->Shown(); });
-}
-
-void MCRmlDialogs::NoteOldBox(std::string_view text)
-{
-    SDL_Log("Dialogs: a 1998 box shows: %.*s", static_cast<int>(text.size()), text.data());
-    ++OldBoxCount();
-}
-
-size_t MCRmlDialogs::OldBoxes()
-{
-    return OldBoxCount();
 }
 
 void MCRmlDialogs::EndWait()

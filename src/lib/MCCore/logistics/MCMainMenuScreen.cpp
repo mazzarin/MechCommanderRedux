@@ -5,7 +5,6 @@
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCQuestionWindow.h"
 #include "logistics/MCSavesMenu.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCInternetLobby.h"

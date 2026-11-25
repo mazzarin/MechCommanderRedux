@@ -14,19 +14,12 @@
 #include "gui/MCScreenFlow.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCInternetMenu.h"
-#include "logistics/MCLogButton.h"
 #include "logistics/MCLogChat.h"
-#include "logistics/MCLogMenus.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCReusableDialog.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateModel.h"
-#include "logistics/MCUpdatePage.h"
 #include "logistics/MCUpdateScreen.h"
 #include "gui/MCGuiStartup.h"
 #include "network/MCLobbyUpdate.h"
@@ -105,7 +98,7 @@ namespace
     /// <summary>INTERNET opened from MULTIPLAYER ACCESS, its list answered with no games, the player's name set.</summary>
     MCGamesScreen& OpenInternetScreen(MCServiceScript::ListScript& list)
     {
-        ConnectScreen();
+        MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
         Settle();
         MCTestGuest::PressInternet();
         REQUIRE(SettleUntil([] { return OnInternet(); }));
@@ -285,7 +278,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER offers INTERNET, with how many are online,
     REQUIRE(MCTestGame::StartLogistics());
 
     // MULTIPLAYER (the main menu's panel): INTERNET and LAN, the count under INTERNET once the service answers.
-    ConnectScreen();
+    MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
     REQUIRE(SettleUntil(
         [] { return OnAccess() && MCTestGuest::Panel(MCMainPanel::Multiplayer).OnlineLine() == "37 players online"; }));
     CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
@@ -504,7 +497,7 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     MCFakeGames::MCFakeGamesService service;
     const MCServicesScope scope(list, service);
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
+    MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
     Settle();
     MCTestGuest::PressInternet();
     REQUIRE(SettleUntil([] { return OnInternet(); }));
@@ -589,7 +582,7 @@ TEST_CASE_ISOLATED("game: INTERNET says why it can't list games, and RETRY tries
     MCServiceScript::SetupScope scope(MCServiceScript::ListOpener(list),
                                       MCServiceScript::Answering(R"({"online":1})", asked), Service, Version);
     REQUIRE(MCTestGame::StartLogistics());
-    ConnectScreen();
+    MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
     Settle();
     MCTestGuest::PressInternet();
     REQUIRE(SettleUntil([] { return OnInternet(); }));
@@ -1026,7 +1019,6 @@ TEST_CASE_ISOLATED("game: a newer game picked offers the update with JOIN GAME, 
     PressDialogOk();
     // Port-only (SPEC-menus.md's stage 6): the remade UPDATE over INTERNET, through the screens' flow.
     REQUIRE(SettleUntil([] { return MCUpdateScreen::Shows() && !MCScreenChange::Running(); }));
-    CHECK(UpdatePageShown());
     CHECK(!OnInternet());
     const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
     REQUIRE(update != nullptr);
@@ -1069,11 +1061,12 @@ TEST_CASE_ISOLATED("game: INTERNET's UPDATE comes back to INTERNET")
     REQUIRE(MCTestGame::StartLogistics());
     MCGamesScreen& screen = OpenInternetScreen(list);
     screen.PressUpdate();
-    REQUIRE(SettleUntil([] { return UpdatePageShown() && !MCScreenChange::Running(); }));
+    REQUIRE(SettleUntil([] { return MCUpdateScreen::Shows() && !MCScreenChange::Running(); }));
     CHECK(MCScreenFlow::Shown() == MCMenuScreens::Update());
-    HideUpdatePage();
+    // DONE: the way back.
+    CHECK(MCScreenFlow::Back());
     REQUIRE(SettleUntil([] { return OnInternet(); }));
-    CHECK(!UpdatePageShown());
+    CHECK(!MCUpdateScreen::Shows());
 }
 
 /// <summary>

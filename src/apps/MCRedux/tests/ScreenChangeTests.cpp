@@ -8,7 +8,6 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFilesAhead.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
 #include "main/MCLogMech.h"
@@ -17,7 +16,6 @@
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
-#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "platform/MCDisplay.h"
@@ -42,9 +40,9 @@ namespace
 {
     using MCScreenChange::MCPhase;
 
-    /// <summary>The colour of the window round the menus' 640x480 frame (SPEC-menus.md's stone, #383b3c).</summary>
+    /// <summary>A colour round the view: the stone the 1998 menus' 640x480 frame sat on (#383b3c).</summary>
     constexpr SDL_Color MenuStone{0x38, 0x3b, 0x3c, SDL_ALPHA_OPAQUE};
-    /// <summary>The colour round a mission's view, which fills the window.</summary>
+    /// <summary>The colour round a view that fills the window (the menus', a mission's).</summary>
     constexpr SDL_Color Black{0, 0, 0, SDL_ALPHA_OPAQUE};
     /// <summary>The most frames a change of screen into a mission or back may take in the tests (20 seconds).</summary>
     constexpr int32_t MostFrames = 300;
@@ -288,7 +286,7 @@ TEST_CASE_ISOLATED("screen change: a job runs live before the fade-out, and can 
 /// dark frame between; the save, the menus' teardown and the load run behind the loading screen (the next change's job,
 /// live), which then fades out,
 /// and the battlefield fades in at the window's size from its first frame. The player's clicks and keys are held
-/// meanwhile. The menus sit in their 640x480 frame on the stone; the battlefield fills the window.
+/// meanwhile. The menus and the battlefield fill the window.
 /// </summary>
 TEST_CASE_ISOLATED("game: BEGIN MISSION fades into the loading screen, and the loading screen into the battlefield")
 {
@@ -318,9 +316,9 @@ TEST_CASE_ISOLATED("game: BEGIN MISSION fades into the loading screen, and the l
     }
 
     const MCDisplay& display = *MCInput::Display();
-    CHECK(SameColor(display.Surround(), MenuStone));
-    CHECK(display.View().w == MenuFrameWidth);
-    CHECK(display.View().h == MenuFrameHeight);
+    CHECK(SameColor(display.Surround(), Black));
+    CHECK_EQ(display.View().w, GuiSystem().Width());
+    CHECK_EQ(display.View().h, GuiSystem().Height());
 
     const size_t finished = MCScreenChange::Finished();
     std::vector<MCShown> shown;
@@ -350,7 +348,7 @@ TEST_CASE_ISOLATED("game: BEGIN MISSION fades into the loading screen, and the l
     CheckFade(briefing, true, "the briefing's fade-out");
     CHECK(std::ranges::all_of(briefing, [](const MCShown& frame)
                               { return frame.Menus && frame.State == MCMissionState::Logistics; }));
-    CHECK(std::ranges::all_of(briefing, [](const MCShown& frame) { return SameColor(frame.Surround, MenuStone); }));
+    CHECK(std::ranges::all_of(briefing, [](const MCShown& frame) { return SameColor(frame.Surround, Black); }));
 
     // The loading screen next, fading in at once: no frame dark between.
     REQUIRE(briefing.size() < shown.size());
@@ -370,7 +368,7 @@ TEST_CASE_ISOLATED("game: BEGIN MISSION fades into the loading screen, and the l
     REQUIRE(loadingOut != loading.end());
     CheckFade(loading.subspan(static_cast<size_t>(loadingOut - loading.begin())), true,
               "the loading screen's fade-out");
-    CHECK(std::ranges::all_of(loading, [](const MCShown& frame) { return SameColor(frame.Surround, MenuStone); }));
+    CHECK(std::ranges::all_of(loading, [](const MCShown& frame) { return SameColor(frame.Surround, Black); }));
     // The load's own frames, the change into the battle's job, show the loading screen clear.
     CHECK(std::ranges::all_of(loading,
                               [](const MCShown& frame) { return frame.Phase != MCPhase::Working || frame.Fade == 0; }));
@@ -389,8 +387,8 @@ TEST_CASE_ISOLATED("game: BEGIN MISSION fades into the loading screen, and the l
 /// <summary>
 /// At a player's large window, a mission's results sit in the middle of the battlefield, and the remade dialog in the
 /// middle of the window. Their DONE fades them out live over the battlefield; dark, the scenario ends and the menus are
-/// made again, a piece a frame, and the next screen fades in from its first frame, in the menus' frame on the stone,
-/// where the remade dialog sits in the window's middle.
+/// made again, a piece a frame, and the next screen fades in from its first frame, filling the window, where the remade
+/// dialog sits in the window's middle.
 /// </summary>
 TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefield, and fade out to the next screen")
 {
@@ -441,9 +439,9 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
     REQUIRE(logistics != nullptr);
     CHECK(MCMenuScreens::Top() != MCScreenFlow::NoScreen);
     CHECK_EQ(MCFilesAhead::HeldCount(), 0u);
-    CHECK(SameColor(display.Surround(), MenuStone));
-    CHECK_EQ(display.View().w, MenuFrameWidth);
-    CHECK_EQ(display.View().h, MenuFrameHeight);
+    CHECK(SameColor(display.Surround(), Black));
+    CHECK_EQ(display.View().w, width);
+    CHECK_EQ(display.View().h, height);
     CheckDialogCentred(MCRmlFlow::MCOn::Menus);
 
     // The results fade out live over the battlefield.
@@ -459,12 +457,12 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
         RunOf(shown, out.size(), [](const MCShown& frame) { return frame.Phase == MCPhase::Dark; });
     CHECK(std::ranges::all_of(dark, [](const MCShown& frame) { return frame.Fade == MCScreenChange::Black; }));
 
-    // The next screen fades in from its first frame, in the menus' frame.
+    // The next screen fades in from its first frame, filling the window.
     const size_t inFrom = out.size() + dark.size();
     const std::span<const MCShown> in =
         RunOf(shown, inFrom, [](const MCShown& frame) { return frame.Phase == MCPhase::In; });
     CheckFade(in, false, "the next screen's fade-in");
     CHECK(std::ranges::all_of(in, [](const MCShown& frame)
-                              { return frame.Menus && !frame.Battle && SameColor(frame.Surround, MenuStone); }));
+                              { return frame.Menus && !frame.Battle && SameColor(frame.Surround, Black); }));
     CheckAfterChange(shown, inFrom + in.size());
 }

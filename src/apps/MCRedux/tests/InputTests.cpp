@@ -193,9 +193,9 @@ TEST_CASE("input: the system's arrow stands in for the game's drawn cursor over 
 }
 
 /// <summary>
-/// Full screen in a 16:9 window: over the remade main menu the mouse reaches the whole window (not just the 1998 frame
-/// in its middle: playtest 1's "15% deadzone on each side"), and a move at the window's edge is the menus'; in the
-/// mission begun from them, and under its pause, it stays on the battle's picture as before.
+/// Full screen in a 16:9 window: over the remade main menu the mouse reaches the whole window (playtest 1's "15%
+/// deadzone on each side" was the 1998 frame in its middle, gone with the 1998 menus), and a move at the window's edge
+/// is the menus'; in the mission begun from them, and under its pause, it stays on the battle's picture as before.
 /// </summary>
 TEST_CASE_ISOLATED(
     "game: full screen, the mouse reaches the whole window over the remade menus, the battle's picture in a mission")
@@ -214,11 +214,8 @@ TEST_CASE_ISOLATED(
     MCInput::TakeAsFullscreen(true);
     MCTestGame::RunFrame(FlowFrame);
 
-    // The 1998 frame sits in the window's middle; the mouse goes past it, to the window's sides.
-    const std::optional<SDL_Rect> frame = MCInput::PictureArea();
-    REQUIRE(frame.has_value());
-    CHECK(frame->x > MCInput::CornerGuardPoints);
-    CHECK(frame->x + frame->w < WideWidth - MCInput::CornerGuardPoints);
+    // The mouse reaches the window's sides.
+    REQUIRE(MCInput::PictureArea().has_value());
     CHECK_EQ(AreaWords(AskedArea()), AreaWords(WideWindowGuarded()));
 
     // A move at the window's left side reaches the main menu's document.

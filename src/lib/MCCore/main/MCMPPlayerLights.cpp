@@ -1,18 +1,9 @@
 #include "stdafx.h"
 #include "main/MCMPPlayerLights.h"
-#include "main/MCMPPlayerLightsView.h"
 
 auto MCMPPlayerLights::SetNumPlayers(int32_t count) -> void
 {
     NumPlayers = count;
-
-    for (const MCGuiHandle<MCMPPlayerLightsView>& handle : Views)
-    {
-        if (const std::shared_ptr<MCMPPlayerLightsView> view = handle.Lock(); view != nullptr)
-        {
-            view->FitLights();
-        }
-    }
 }
 
 auto MCMPPlayerLights::SetPlayerID(int32_t light, uint32_t playerID) -> void
@@ -38,31 +29,4 @@ auto MCMPPlayerLights::SetPlayerStatus(uint32_t playerID, int32_t status) -> voi
     {
         PlayerStatus[static_cast<size_t>(light)] = status;
     }
-
-    // Every view's timer starts now, so the one showing the lights blinks in the original's step whichever it is.
-    if (!TimerRunning && status == 2)
-    {
-        for (const MCGuiHandle<MCMPPlayerLightsView>& handle : Views)
-        {
-            if (const std::shared_ptr<MCMPPlayerLightsView> view = handle.Lock(); view != nullptr)
-            {
-                view->StartBlinkTimer();
-            }
-        }
-
-        TimerRunning = true;
-    }
-}
-
-auto MCMPPlayerLights::ShownView() const -> std::shared_ptr<MCMPPlayerLightsView>
-{
-    for (const MCGuiHandle<MCMPPlayerLightsView>& handle : Views)
-    {
-        if (const std::shared_ptr<MCMPPlayerLightsView> view = handle.Lock(); view != nullptr && view->IsShowing())
-        {
-            return view;
-        }
-    }
-
-    return nullptr;
 }

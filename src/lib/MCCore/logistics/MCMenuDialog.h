@@ -1,17 +1,16 @@
 #pragma once
 
-// Port-only (SPEC-menus.md's stage 9, step 2, "Models and views"): the logistics screens' message dialog, question dialog
-// and refit list as models, pulled out of the 1998 box (logistics/MCReusableDialog): what one says, its buttons and what
-// they run, the callback its answer goes to, its timeout. Logistics owns them (MCLogistics::Message, Question, Refit), so
-// they live as long as the boxes did. Shown, one says itself on the remade dialog (MCRmlDialogs), over a remade screen or
-// none; its view, the 1998 box, never shows it (the game stops where the menus can't start: MCRmlFlow::Broken). What it
-// says, its answers and its timeout are the box's, unchanged.
+// Port-only (SPEC-menus.md's stage 9, step 2, "Models and views"): the logistics screens' message dialog, question
+// dialog and refit list as models, pulled out of the 1998 box (logistics\logmain.cpp's ReusableDialog): what one says,
+// its buttons and what they run, the callback its answer goes to, its timeout. Logistics owns them
+// (MCLogistics::Message, Question, Refit), so they live as long as the boxes did. Shown, one says itself on the remade
+// dialog (MCRmlDialogs), over a remade screen or none (the 1998 box is gone; the game stops where the menus can't start:
+// MCRmlFlow::Broken). What it says, its answers and its timeout are the box's, unchanged.
 
 #include "gui/MCGuiRef.h"
 
 class MCGuiObject;
 class MCMenuDialogTimer;
-class MCReusableDialog;
 
 class MCMenuDialog final : public std::enable_shared_from_this<MCMenuDialog>
 {
@@ -47,11 +46,6 @@ public:
     MCMenuDialog(const MCMenuDialog&) = delete;
     MCMenuDialog& operator=(const MCMenuDialog&) = delete;
 
-    /// <summary>Its view: the 1998 box <paramref name="view"/>, which passes its keys and clicks here.</summary>
-    void SetView(MCGuiHandle<MCReusableDialog> view);
-    /// <summary>The 1998 box (none once logistics closes it).</summary>
-    const MCGuiHandle<MCReusableDialog>& View() const { return _View; }
-
     /// <summary>Sets the text (up to its first NUL). Port: a newline starts a line. Its OK shows again (<see cref="SetTwoButton"/>).</summary>
     void SetText(std::string_view text);
     /// <summary>Its CANCEL shown or not; its OK shown again (after a wait hid it).</summary>
@@ -82,8 +76,6 @@ public:
     /// callback with 0). Nothing when it asks for none.
     /// </summary>
     void TakeKey(uint32_t key);
-    /// <summary>The 1998 box asking for a key gets the keyboard (over a chat line's), which <see cref="Deactivate"/> gives back.</summary>
-    void TakeKeyboard();
     /// <summary>
     /// Closes it after <paramref name="milliseconds"/> with <see cref="TimeoutResult"/>, as its timeout would (the room's
     /// waiting dialog, closing itself once everyone has the mission's file).
@@ -107,8 +99,7 @@ public:
     /// <summary>
     /// Port-only: when set, the dialog asks for a key: a key pressed while it shows (but Enter, Escape and a modifier
     /// alone) goes here in a binding's form (<c>MCKeyBindings::FromKeyEvent</c>); true closes the dialog as OK does (its
-    /// callback with 0). Cleared with the callbacks. Whoever sets it gives the dialog the keyboard
-    /// (<see cref="TakeKeyboard"/>).
+    /// callback with 0). Cleared with the callbacks.
     /// </summary>
     std::function<bool(uint32_t key)> KeyTaker;
 
@@ -125,7 +116,6 @@ private:
     /// <summary>Its timeout started, if it has one.</summary>
     void StartTimeout();
 
-    MCGuiHandle<MCReusableDialog> _View;
     /// <summary>The object its timeouts' timers go to (the GUI's timers go to GUI objects).</summary>
     MCGuiRef<MCMenuDialogTimer> _Timer;
     /// <summary>Said on the remade dialog by its last <see cref="Activate"/>, not yet answered.</summary>
@@ -133,3 +123,36 @@ private:
     /// <summary>What it said there.</summary>
     std::string _Said;
 };
+
+/// <summary>
+/// The one-button message dialog with <paramref name="text"/>: an enabled OK button showing <paramref name="upArt"/> /
+/// <paramref name="downArt"/>, and <paramref name="callback"/> for the answer.
+/// </summary>
+void ShowMenuMessage(std::string_view text, std::function<void(int32_t)> callback = nullptr,
+                     std::string_view upArt = "bh_okay.tga", std::string_view downArt = "bg_okay.tga");
+
+/// <summary>As the other overload, with string <paramref name="stringId"/>.</summary>
+void ShowMenuMessage(uint32_t stringId, std::function<void(int32_t)> callback = nullptr,
+                     std::string_view upArt = "bh_okay.tga", std::string_view downArt = "bg_okay.tga");
+
+/// <summary>
+/// The two-button question dialog <paramref name="dialog"/> with string <paramref name="stringId"/>: OK runs
+/// <paramref name="okExec"/>, cancel <paramref name="cancelExec"/>; the cancel button shows
+/// <paramref name="cancelDownArt"/> when pressed. With <paramref name="enableButtons"/> both buttons are enabled.
+/// </summary>
+/// <remarks>The functions are kept as pointers: the logistics screens ask the OK button whether it runs DoExit.</remarks>
+void AskMenuQuestion(MCMenuDialog& dialog, uint32_t stringId, std::function<void()> okExec,
+                     std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons);
+
+/// <summary>As the other overload, with <paramref name="text"/> (port: a question the game's strings don't hold).</summary>
+void AskMenuQuestion(MCMenuDialog& dialog, std::string_view text, std::function<void()> okExec,
+                     std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons);
+
+/// <summary>
+/// Shows the one-button message dialog with string <paramref name="stringId"/> and no callback; with
+/// <paramref name="okayArt"/>, the button first gets the "okay" pictures and is enabled.
+/// </summary>
+void ShowLogMessage(uint32_t stringId, bool okayArt = true);
+
+/// <summary>As the other overload, with <paramref name="text"/>.</summary>
+void ShowLogMessage(std::string_view text, bool okayArt = true);

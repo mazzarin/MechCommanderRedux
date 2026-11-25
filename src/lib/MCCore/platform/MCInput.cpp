@@ -364,8 +364,7 @@ namespace
     /// full screen and focused, the picture. The original's full screen switched the monitor to the game's resolution,
     /// so the mouse never left the picture; letterboxed, the hidden cursor would wander into the bars while the game's
     /// cursor stuck at the edge. Port-only (SPEC-menus.md): while the remade menus fill the window (their screen is the
-    /// window, the 1998 frame in its middle), the whole window. Kept to either, the cursor stays off its corners too
-    /// (MCInput::GuardCorners).
+    /// window), the whole window. Kept to either, the cursor stays off its corners too (MCInput::GuardCorners).
     /// </summary>
     void applyMouseRect()
     {

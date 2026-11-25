@@ -2,7 +2,6 @@
 #include "logistics/MCDeploy.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCGameStrings.h"
 #include "main/MCLogMech.h"
@@ -16,6 +15,9 @@
 #include "object/MCMasterComponent.h"
 #include "platform/MCInput.h"
 #include "sprite/MCHdArt.h"
+
+int32_t CurDeployTonnage = 0;
+int32_t MaxDeployTonnage = 0;
 
 namespace
 {

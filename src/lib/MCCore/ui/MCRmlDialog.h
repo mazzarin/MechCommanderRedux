@@ -129,15 +129,7 @@ namespace MCRmlDialogs
     /// <summary>Whether it shows (on either layer).</summary>
     bool Shown();
 
-    /// <summary>
-    /// Port-only (SPEC-menus.md's stage 9): a 1998 dialog box shown (MCReusableDialog's, MCPurchaseDlg's, the version
-    /// box) with the words <paramref name="text"/>: logged and counted, as none should show (the tests read
-    /// <see cref="OldBoxes"/>).
-    /// </summary>
-    void NoteOldBox(std::string_view text);
-    size_t OldBoxes();
-
-    /// <summary>A wait shown by <see cref="Waiting"/> ended (the 1998 dialog's Deactivate): the dialog closes.</summary>
+    /// <summary>A wait shown by <see cref="Waiting"/> ended (a menu dialog's Deactivate): the dialog closes.</summary>
     void EndWait();
 
     /// <summary>

@@ -1,7 +1,5 @@
 #include "stdafx.h"
 #include "logistics/MCStore.h"
-#include "logistics/MCCompInventoryBlock.h"
-#include "logistics/MCLogRows.h"
 #include "logistics/MCMechBay.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
@@ -18,6 +16,7 @@
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCMasterComponent.h"
+#include "main/MCLogisticsShared.h"
 
 namespace
 {
@@ -306,7 +305,7 @@ void MCStore::SellMech(MCLogMech& sold, int32_t price)
 
             if (stockItem == nullptr)
             {
-                stockItem = MCCompInventoryBlock::AddSpare(masterID);
+                stockItem = MCMechBay::AddSpare(masterID);
             }
 
             ++stockItem->Count;

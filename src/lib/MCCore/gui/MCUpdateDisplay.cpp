@@ -12,7 +12,7 @@
 #include "lib/MCFirstUse.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
-#include "mission/MCMissionResultsScreen.h"
+#include "mission/MCMissionEnd.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
@@ -86,31 +86,14 @@ namespace
         font->WriteString(ScreenPort()->Frame(), right - 3 - textWidth, top + 2, text);
     }
 
-    /// <summary>
-    /// Whether the display shows the whole screen: a running scenario, and its results over the battlefield as it ended.
-    /// </summary>
-    bool ShowsWholeScreen()
-    {
-        return Mission() != nullptr &&
-               (Mission()->State == MCMissionState::Scenario || Mission()->State == MCMissionState::Results);
-    }
-
-    /// <summary>
-    /// Port-only (SPEC-menus.md's stage 1): the menus' stone colour, which the window shows around the 640x480 frame the
-    /// screens not yet remade sit in, until the stone itself comes (#383b3c).
-    /// </summary>
-    constexpr SDL_Color MenuStone{0x38, 0x3b, 0x3c, SDL_ALPHA_OPAQUE};
-    /// <summary>The window around a view that fills it, or a movie's.</summary>
+    /// <summary>The window around a view smaller than it (a movie's): black.</summary>
     constexpr SDL_Color NoSurround{0, 0, 0, SDL_ALPHA_OPAQUE};
 
     /// <summary>
-    /// Port: picks the part of the screen the display shows. A running scenario uses the whole screen, and so do its
-    /// results, centred over the battlefield as it ended (port-only, SPEC-menus.md's stage 1: they were shown in the
-    /// screen's top-left 640x480 too, over the battlefield's corner). The menus and the loading screen are laid out for
-    /// 640x480 and drawn in the top-left corner of a larger screen, so the display shows just that corner: the window is
-    /// the menus' screen, the window in units (MCDisplay::MenuScale), the 640x480 frame in its middle, on the stone's
-    /// colour. A full-screen movie is centred on the screen, so the view is a 640x480 (or the movie's size, if larger)
-    /// centred on it, on black.
+    /// Port: picks the part of the screen the display shows: the whole screen (a scenario, its results, the remade
+    /// screens over it; port-only, SPEC-menus.md's stage 9: the 640x480 frame the 1998 menus sat in is gone with them). A
+    /// full-screen movie is centred on the screen, so the view is a 640x480 (or the movie's size, if larger) centred on
+    /// it, on black.
     /// </summary>
     void UpdateDisplayView(MCDisplay& display)
     {
@@ -118,7 +101,6 @@ namespace
         int32_t y = 0;
         int32_t width = display.Width();
         int32_t height = display.Height();
-        SDL_Color surround = NoSurround;
         const std::shared_ptr<MCGuiObject> movie = HasGuiSystem() ? GuiSystem().SmackerWindow.Lock() : nullptr;
 
         if (movie != nullptr)
@@ -128,14 +110,8 @@ namespace
             x = movie->GlobalX() + movie->Width() / 2 - width / 2;
             y = movie->GlobalY() + movie->Height() / 2 - height / 2;
         }
-        else if (!ShowsWholeScreen())
-        {
-            width = MenuFrameWidth;
-            height = MenuFrameHeight;
-            surround = MenuStone;
-        }
 
-        display.SetSurround(surround);
+        display.SetSurround(NoSurround);
 
         if (display.SetView(x, y, width, height))
         {
@@ -476,8 +452,6 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
 
     std::scoped_lock lock(MouseCritSec);
     InMouseCritSec = 1;
-    // Port: dragged objects draw into the cursor while the frame is drawn (MCHardwareCursorCarry).
-    MCHardwareCursorNewFrame();
     // Port: a new frame's op tables (translucent UI over the world view; see MCUnderlay).
     MCRenderer::ResetOpTables();
     // Port-only: the HD pictures read ahead kept, before the frame's draws look for them.

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCGameStrings.h"
+#include "sound/MCSoundSystem.h"
 
 auto LogWeightClass(float tonnage) -> int32_t
 {
@@ -86,4 +87,97 @@ auto MPPurchaseFileName(MCFitIniFile& file) -> std::string
     }
 
     return purchaseName;
+}
+
+auto PlayLogSound(uint32_t sampleId) -> void
+{
+    // A test may run the controls without a sound system.
+    if (const std::shared_ptr<MCSoundSystem> sound = SoundSystem(); sound != nullptr)
+    {
+        sound->PlayInterfaceSample(sampleId);
+    }
+}
+
+auto InternalClassString(int32_t internals) -> uint32_t
+{
+    return internals < 0x24   ? 100u
+           : internals < 0x38 ? 0x4fu
+           : internals < 0x51 ? 0x65u
+           : internals < 0x79 ? 0x51u
+                              : 0x66u;
+}
+
+auto WeightClassString(float tonnage) -> uint32_t
+{
+    if (tonnage < 40.0f)
+    {
+        return 0x4f;
+    }
+
+    if (tonnage < 60.0f)
+    {
+        return 0x50;
+    }
+
+    if (tonnage < 80.0f)
+    {
+        return 0x51;
+    }
+
+    return 0x52;
+}
+
+auto ArmorClassString(float armorTonnage) -> uint32_t
+{
+    if (armorTonnage <= 2.0f)
+    {
+        return 100;
+    }
+
+    if (armorTonnage <= 7.0f)
+    {
+        return 0x4f;
+    }
+
+    if (armorTonnage <= 12.0f)
+    {
+        return 0x65;
+    }
+
+    if (armorTonnage <= 17.0f)
+    {
+        return 0x51;
+    }
+
+    return 0x66;
+}
+
+auto PrepareInfoDescription(std::string& description) -> void
+{
+    if (description.size() > 3)
+    {
+        description[3] = '9';
+    }
+}
+
+auto ComponentForm(uint8_t masterID) -> MCComponentForm
+{
+    return MasterComponentList[masterID].Form;
+}
+
+auto IsWeapon(MCComponentForm form) -> bool
+{
+    return form == MCComponentForm::WeaponEnergy || form == MCComponentForm::WeaponBallistic ||
+           form == MCComponentForm::WeaponMissile;
+}
+
+auto IsEquipment(MCComponentForm form) -> bool
+{
+    return form == MCComponentForm::Sensor || form == MCComponentForm::Ecm || form == MCComponentForm::Probe;
+}
+
+auto UsesAmmo(uint8_t masterID) -> bool
+{
+    return ComponentForm(masterID) == MCComponentForm::WeaponBallistic ||
+           ComponentForm(masterID) == MCComponentForm::WeaponMissile;
 }

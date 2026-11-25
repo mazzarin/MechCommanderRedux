@@ -9,7 +9,6 @@
 #include "logistics/MCMatchOptionRows.h"
 #include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCSessionScreen.h"
 #include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCGameSession.h"

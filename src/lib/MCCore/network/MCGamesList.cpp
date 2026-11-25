@@ -3,7 +3,6 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCGameList.h"
 #include "main/MCUpdater.h"
 #include "network/MCInternetGame.h"
 #include "network/MCMultiPlayer.h"
@@ -13,6 +12,37 @@
 namespace
 {
     using Clock = std::chrono::steady_clock;
+
+    /// <summary>
+    /// Sessions dropped from the lists because they had no players (never listed again; the 1998 game list's, which
+    /// shared them).
+    /// </summary>
+    std::vector<_GUID>& DeletedSessions()
+    {
+        static std::vector<_GUID> deleted;
+        return deleted;
+    }
+
+    /// <summary>Whether <paramref name="session"/> was dropped from the lists (it had no players).</summary>
+    bool IsSessionDeleted(const MCFidpSession& session)
+    {
+        return std::ranges::any_of(DeletedSessions(), [&](const _GUID& deleted)
+                                   { return MCSameGuid(session.SessionDesc.guidInstance, deleted); });
+    }
+
+    /// <summary>
+    /// Asks for sessions without listing them, so the first read of a list just shown lists those that answered (a read
+    /// doesn't wait for answers: they're listed by the next).
+    /// </summary>
+    void AskForSessions()
+    {
+        const std::shared_ptr<MCMultiPlayer> multiPlayer = MultiPlayer();
+
+        if (multiPlayer != nullptr && multiPlayer->SessionManager != nullptr)
+        {
+            multiPlayer->SessionManager->GetSessions(false);
+        }
+    }
 
     /// <summary>This network's games read again every two seconds, as the 1998 LAN screen's poll did.</summary>
     constexpr auto LanReadEvery = std::chrono::milliseconds(2000);
@@ -191,7 +221,7 @@ void MCGamesList::Open()
 
     // This network asked now; its answers are read by the next read (a read doesn't wait for answers).
     _LanListed = false;
-    MCGameList::AskForSessions();
+    AskForSessions();
     _NextLanRead = Clock::now() + LanReadEvery;
 }
 
@@ -217,7 +247,7 @@ void MCGamesList::Retry()
         return;
     }
 
-    MCGameList::AskForSessions();
+    AskForSessions();
     _NextLanRead = Clock::now() + LanReadEvery;
 }
 
@@ -260,7 +290,7 @@ bool MCGamesList::ReadLanGames()
         {
             const std::shared_ptr<MCFidpSession>& session = (*sessions)[i];
 
-            if (MCGameList::IsSessionDeleted(*session))
+            if (IsSessionDeleted(*session))
             {
                 break;
             }
@@ -269,7 +299,7 @@ bool MCGamesList::ReadLanGames()
 
             if (players.empty())
             {
-                MCGameList::DeletedSessions.push_back(session->SessionDesc.guidInstance);
+                DeletedSessions().push_back(session->SessionDesc.guidInstance);
                 continue;
             }
 

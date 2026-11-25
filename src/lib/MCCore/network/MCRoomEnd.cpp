@@ -7,14 +7,11 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCInternetMenu.h"
-#include "logistics/MCLogMenus.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
@@ -792,7 +789,6 @@ auto MCRoomEnd::LeaveToGames() -> void
                              (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx);
     // Port (Redux HD): an internet game's room goes back to the INTERNET screen.
     const bool fromInternetGame = fromRoom && MultiPlayer()->SessionManager->Internet != nullptr;
-    WhackTimer = true;
     // Original behaviour (OB-167): the same timer is removed twice (team 2's is left).
     GlobalLog()->Room.StopBoxTimers();
 
@@ -828,8 +824,9 @@ auto MCRoomEnd::LeaveToGames() -> void
         return;
     }
 
-    // Port-only (stage 7): the remade MULTIPLAYER (the modem's and serial's screens aren't made).
-    ConnectScreen();
+    // Port-only (stage 7): the remade MULTIPLAYER (the modem's and serial's screens aren't made), shown at once: the way
+    // to it runs in a change's dark work.
+    MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
 }
 
 auto MCRoomEnd::LeaveForLauncher() -> void

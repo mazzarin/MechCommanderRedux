@@ -361,11 +361,6 @@ auto MCGuiSystem::CanChangeScreen() const -> bool
     return _DisplayReady && !_Stopping;
 }
 
-auto MCGuiSystem::ShownView() const -> SDL_Rect
-{
-    return _Display != nullptr ? _Display->View() : SDL_Rect{0, 0, MenuFrameWidth, MenuFrameHeight};
-}
-
 auto MCGuiSystem::FadeDownCurrentPalette(std::span<const std::function<void()>> whileFading, int32_t workFrom) -> void
 {
     if (!CanFade())

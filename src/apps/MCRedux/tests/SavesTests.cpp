@@ -8,10 +8,8 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "lib/MCFile.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCMissionNames.h"
 #include "logistics/MCSaves.h"
@@ -996,7 +994,7 @@ TEST_CASE_ISOLATED("game: LOAD GAME and SAVE GAME work from the mouse")
 /// OB-161 on the remade SAVE GAME: a save picked puts its name in NAME, so a shorter one's goes in after a longer one's;
 /// a key typed after it then follows the shorter name alone. 1998's text box ended a text set into it but not a
 /// character typed into it, so a key typed after the shorter name brought back what the longer one had left past its
-/// end ("Annz, second try" for "Annz": the 1998 box's own, kept there as OB-161).
+/// end ("Annz, second try" for "Annz": OB-161, gone with the 1998 box).
 /// </summary>
 TEST_CASE_ISOLATED("game: SAVE GAME's NAME, a shorter save's name put in after a longer one's, takes a key typed after "
                    "it alone (OB-161)")

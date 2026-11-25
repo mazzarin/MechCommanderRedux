@@ -8,7 +8,6 @@
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCSettingsModel.h"
-#include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCPrefs.h"
 #include "main/MCSystemConfig.h"

@@ -8,10 +8,8 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "lib/MCFatal.h"
-#include "logistics/MCLogMenus.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCReusableDialog.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
@@ -26,9 +24,8 @@
 #include "ui/MCRmlSystem.h"
 
 // Port-only (SPEC-menus.md's stage 9): every dialog the game said in the 1998 box says itself in the remade one
-// (ui/dialog.rml): with no remade screen under it, and over the battlefield at the mission's INTERFACE SIZE. The 1998
-// box never shows (MCRmlDialogs::NoteOldBox counts any); where the menus can't go on, the game stops with the start
-// check's words (MCRmlFlow::Broken).
+// (ui/dialog.rml): with no remade screen under it, and over the battlefield at the mission's INTERFACE SIZE (the 1998
+// box is gone); where the menus can't go on, the game stops with the start check's words (MCRmlFlow::Broken).
 
 namespace
 {
@@ -139,7 +136,7 @@ namespace
 /// <summary>
 /// A message said in logistics with no remade screen showing (each hidden, as a launcher's game shows none before its
 /// join) is the remade dialog's, in sentence case, laid out at the frames' windows; its OK (Enter) runs what the message
-/// asked. The 1998 box never shows.
+/// asked.
 /// </summary>
 TEST_CASE_ISOLATED("game: a message with no remade screen under it is the remade dialog, never the 1998 box")
 {
@@ -152,7 +149,6 @@ TEST_CASE_ISOLATED("game: a message with no remade screen under it is the remade
     REQUIRE(MCTestGame::StartLogistics());
     RunWhileChanging();
     Menus().Menus().HideAll();
-    const size_t oldBoxes = MCRmlDialogs::OldBoxes();
     REQUIRE(!MCRmlFlow::Showing());
 
     std::optional<int32_t> answered;
@@ -168,12 +164,11 @@ TEST_CASE_ISOLATED("game: a message with no remade screen under it is the remade
     CHECK(!MCRmlDialogs::Shown());
     CHECK(answered.has_value());
     CHECK(!GlobalLog()->Message->IsShowing());
-    CHECK_EQ(MCRmlDialogs::OldBoxes(), oldBoxes);
 }
 
 /// <summary>
 /// The version box (Ctrl+Alt+V with cheats on) in a mission: the remade dialog over the battlefield, on the mission's
-/// layer at its INTERFACE SIZE, laid out at the frames' windows; Enter closes it. The 1998 box never shows.
+/// layer at its INTERFACE SIZE, laid out at the frames' windows; Enter closes it.
 /// </summary>
 TEST_CASE_ISOLATED("game: the version box over the battlefield is the remade dialog at the mission's size")
 {
@@ -183,7 +178,6 @@ TEST_CASE_ISOLATED("game: the version box over the battlefield is the remade dia
     }
 
     REQUIRE(MCTestGame::StartMission(1));
-    const size_t oldBoxes = MCRmlDialogs::OldBoxes();
     const bool cheats = CheatsOn;
     CheatsOn = true;
     MCScreenInput::RealKeyEvent(SDL_SCANCODE_LCTRL, true, SDL_KMOD_LCTRL);
@@ -206,7 +200,6 @@ TEST_CASE_ISOLATED("game: the version box over the battlefield is the remade dia
     RunFrames(SettleFrames);
     CHECK(!dialog->Shown());
     CHECK(!MCRmlDialogs::Shown());
-    CHECK_EQ(MCRmlDialogs::OldBoxes(), oldBoxes);
 }
 
 /// <summary>
@@ -238,7 +231,6 @@ TEST_CASE_ISOLATED("game: the menus failing once the game is going stop it with 
         });
     REQUIRE(stopped.has_value());
     CHECK_EQ(*stopped, MCWithRepair(MCRmlFlow::FilesMissing));
-    CHECK_EQ(MCRmlDialogs::OldBoxes(), 0u);
 }
 
 /// <summary>
@@ -282,5 +274,4 @@ TEST_CASE_ISOLATED("game: a remade screen that can't be read stops the game with
         });
     REQUIRE(stopped.has_value());
     CHECK_EQ(*stopped, MCWithRepair(MCRmlFlow::FilesMissing));
-    CHECK_EQ(MCRmlDialogs::OldBoxes(), 0u);
 }

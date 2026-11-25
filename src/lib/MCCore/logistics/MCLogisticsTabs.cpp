@@ -1,8 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCBriefingText.h"
-#include "logistics/MCLogObject.h"
-#include "logistics/MCLogRows.h"
 #include "logistics/MCMatchMaps.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
@@ -26,6 +24,8 @@
 #include "ui/MCRmlKit.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlModel.h"
+#include "logistics/MCMenuDialog.h"
+#include "main/MCLogisticsShared.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>

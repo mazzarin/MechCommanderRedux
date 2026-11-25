@@ -7,7 +7,6 @@
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCRegistrySettings.h"
-#include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCInternetGame.h"
 #include "network/MCLobbyUpdate.h"

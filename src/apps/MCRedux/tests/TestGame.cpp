@@ -33,8 +33,6 @@
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
-#include "mission/MCMissionResultsScreen.h"
-#include "gui/MCGuiMessageBox.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
@@ -820,27 +818,6 @@ namespace MCTestGame
 
     namespace
     {
-        /// <summary>The 1998 boxes MCRmlDialogs had counted at the last frame's end.</summary>
-        size_t& OldBoxesSeen()
-        {
-            static size_t seen = 0;
-            return seen;
-        }
-
-        /// <summary>Port-only (SPEC-menus.md's stage 9): a 1998 dialog box shown fails the test.</summary>
-        void CheckNoOldBox()
-        {
-            const size_t boxes = MCRmlDialogs::OldBoxes();
-
-            if (boxes == OldBoxesSeen())
-            {
-                return;
-            }
-
-            OldBoxesSeen() = boxes;
-            FAIL_CHECK("a 1998 dialog box showed (the log's \"Dialogs:\" line names it)");
-        }
-
         /// <summary>What <see cref="OldMenusMade"/> said at the last frame's end (each finding fails once).</summary>
         std::optional<std::string>& OldMenusSeen()
         {
@@ -862,7 +839,7 @@ namespace MCTestGame
 
             if (made.has_value())
             {
-                FAIL_CHECK(std::format("a 1998 menu screen or its art was made: {}", *made));
+                FAIL_CHECK(std::format("the 1998 menus' art was loaded: {}", *made));
             }
         }
 
@@ -892,51 +869,8 @@ namespace MCTestGame
 
     std::optional<std::string> OldMenusMade()
     {
-        if (const std::shared_ptr<MCGuiObject> window = ScreenWindow(); window != nullptr)
-        {
-            for (const std::shared_ptr<MCGuiObject>& child : window->Children())
-            {
-                if (dynamic_cast<const MCLogObject*>(child.get()) != nullptr ||
-                    dynamic_cast<const MCGuiMessageBox*>(child.get()) != nullptr ||
-                    dynamic_cast<const MCMissionResultsScreen*>(child.get()) != nullptr)
-                {
-                    const MCGuiObject& made = *child;
-                    return std::format("a {} under the screen window", typeid(made).name());
-                }
-            }
-        }
-
         if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
         {
-            // Held is made: none of them is ever set (their types' own files go with SPEC-menus.md's stage 9 too).
-            const auto held = [](const auto& handle) { return !handle.Weak().expired(); };
-            const std::array<bool, 12> screens = {
-                held(logistics->SessionScreen),  held(logistics->SerialScreen),   held(logistics->ConnectScreen),
-                held(logistics->ModemScreen),    held(logistics->MainScreen),     held(logistics->MultiplayerScreen),
-                held(logistics->LoadScreen),     held(logistics->SaveScreen),     held(logistics->PrefScreen),
-                held(logistics->BriefingScreen), held(logistics->PurchaseScreen), held(logistics->RepairScreen)};
-
-            if (logistics->CurrentScreen() != nullptr || std::ranges::contains(screens, true))
-            {
-                return "a logistics screen";
-            }
-
-            const auto viewed = [&held](const std::shared_ptr<MCMenuDialog>& dialog)
-            { return dialog != nullptr && held(dialog->View()); };
-
-            if (held(logistics->PurchaseDialog) || held(logistics->MessageDialog) || held(logistics->QuestionDialog) ||
-                held(logistics->RefitDialog) || viewed(logistics->Message) || viewed(logistics->Question) ||
-                viewed(logistics->Refit))
-            {
-                return "a logistics dialog's 1998 window";
-            }
-
-            if (held(logistics->ChatWindow) || !logistics->ChatWindows.empty() || logistics->Ticker != nullptr ||
-                !logistics->TickerLines.empty() || held(logistics->DragIcon))
-            {
-                return "a logistics chat window, the ticker or the drag icon";
-            }
-
             if (std::optional<std::string> art = OldArtLoaded(*logistics); art.has_value())
             {
                 return std::format("logistics' {}", *art);
@@ -1017,7 +951,6 @@ namespace MCTestGame
             stateLog << std::format("{} 0x{:08x}\n", stateFrame++, StateHash()) << std::flush;
         }
 
-        CheckNoOldBox();
         CheckNoOldMenus();
     }
 }

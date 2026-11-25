@@ -1,14 +1,12 @@
 #pragma once
 
-#include "gui/MCGuiRef.h"
 // Original source: mcx\logistics.cpp (LogMech).
 
 #include "main/MCLogPart.h"
 
-class MCMechRepairBlock;
 class MCLogWarrior;
 
-/// <summary>A mech in logistics: armor, internals, the critical-slot layout, its pilot and its screen widgets.</summary>
+/// <summary>A mech in logistics: armor, internals, the critical-slot layout and its pilot.</summary>
 /// <remarks>Original source: <c>logistics.cpp</c>, 600 (0x258) bytes.</remarks>
 class MCLogMech : public MCLogPart
 {

@@ -1,7 +1,5 @@
 #include "stdafx.h"
 #include "logistics/MCMechBay.h"
-#include "logistics/MCCompInventoryBlock.h"
-#include "logistics/MCLogRows.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCInventoryList.h"
 #include "main/MCLogMechList.h"
@@ -12,6 +10,7 @@
 #include "main/MCLogistics.h"
 #include "main/MCWeaponBans.h"
 #include "object/MCMasterComponent.h"
+#include "main/MCLogisticsShared.h"
 
 namespace
 {
@@ -839,7 +838,7 @@ MCMechBay::MCSpareRow MCMechBay::ToSpares(const MCTaken& taken, std::shared_ptr<
 
     if (spare == nullptr)
     {
-        spare = MCCompInventoryBlock::AddSpare(taken.MasterID);
+        spare = AddSpare(taken.MasterID);
     }
 
     if (spare->Count != 0)
@@ -1048,4 +1047,14 @@ void MCMechBay::LeaveForce(MCLogVehicle& vehicle)
     vehicle.Deployed = false;
     vehicle.Assigned = false;
     logistics.ReorderVehicles();
+}
+
+std::shared_ptr<MCLogInventoryItem> MCMechBay::AddSpare(uint8_t masterID)
+{
+    MCInventoryList& spares = *GlobalLog()->ComponentInventory;
+    spares.AddItem(masterID, spares.CreateStat(masterID, 0, 1, 0, 0xff), false);
+    std::shared_ptr<MCLogInventoryItem> item = spares.GetItemInfo(spares.GetIndexFromMasterID(masterID));
+    MCInventoryList::ListAsSpare(*item);
+    item->InventoryIndex = spares.NumItems() - 1;
+    return item;
 }

@@ -7,14 +7,11 @@
 #include "linkup/MCSessionManager.h"
 #include "gui/MCGuiEvent.h"
 #include "gui/MCScreenChange.h"
-#include "logistics/MCConnectMenu.h"
-#include "logistics/MCGameList.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
@@ -1261,7 +1258,7 @@ namespace MCTestGuest
     inline void OpenLan()
     {
         MCMainMenuModel::SetNetworkForTests(true);
-        ConnectScreen();
+        MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
         const bool access = SettleUntil(OnAccess);
         MCMainMenuModel::SetNetworkForTests(std::nullopt);
         REQUIRE(access);

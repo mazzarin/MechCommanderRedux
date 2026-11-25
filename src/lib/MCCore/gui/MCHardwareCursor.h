@@ -1,13 +1,10 @@
 #pragma once
 
 // Port-only: the game's cursor shown as the system (hardware) cursor instead of drawn into the frame, so it follows
-// the mouse at the desktop's rate. While something is dragged (the logistics screens' DragIcon), the dragged picture
-// becomes part of the cursor too. PREFS "SoftwareCursor" (gSoftwareCursor) keeps the original's drawn cursor.
+// the mouse at the desktop's rate. PREFS "SoftwareCursor" (gSoftwareCursor) keeps the original's drawn cursor.
 
 #include "platform/MCCursor.h"
 #include "platform/MCRegisteredBlock.h"
-
-class MCGuiObject;
 
 /// <summary>
 /// A cursor shape as a cursor picture: shape <paramref name="shapeNum"/> of <paramref name="shapeTable"/> as
@@ -25,19 +22,5 @@ MCCursorImage MCCursorImageFromPane(const MCPane& pane, int32_t hotX, int32_t ho
 /// </summary>
 void MCHardwareCursorPreload(std::span<const MCRegisteredBlock> shapes);
 
-/// <summary>Forgets what the last frame's cursor carried; <c>UpdateDisplay</c> calls it before the GUI draws.</summary>
-void MCHardwareCursorNewFrame();
-
-/// <summary>
-/// Called by a dragged object instead of drawing itself: when the system cursor is on and the mouse (where the game
-/// last saw it) is over <paramref name="object"/>, takes the object's picture <paramref name="pixels"/> into this
-/// frame's cursor, at the same place under the mouse.
-/// </summary>
-/// <returns>True when the cursor carries the object, which then must not draw itself.</returns>
-bool MCHardwareCursorCarry(MCGuiObject& object, const MCPane& pixels);
-
-/// <summary>
-/// Shows the current cursor shape (<c>application->cursorShape</c>, -1 for none), over whatever
-/// <see cref="MCHardwareCursorCarry"/> took this frame, as the system cursor.
-/// </summary>
+/// <summary>Shows the current cursor shape (<c>application->cursorShape</c>, -1 for none) as the system cursor.</summary>
 void MCHardwareCursorUpdate();

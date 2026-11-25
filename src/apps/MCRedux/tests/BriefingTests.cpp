@@ -12,12 +12,8 @@
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCMainMenuScreen.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCDeploy.h"
-#include "logistics/MCHdOptionsPanel.h"
-#include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
@@ -26,7 +22,6 @@
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
-#include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCRegistrySettings.h"
 #include "main/MCArtModes.h"
 #include "main/MCGameContext.h"
@@ -1133,7 +1128,7 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::MechBay);
 
         // The main menu, and the save refused: the load screen stays up, saying so, with no campaign behind it.
-        logistics->SetUpMainScreen(false);
+        logistics->SetUpMainScreen();
         Settle();
         REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Main());
         LoadFromScreen("p3refused");
@@ -1167,7 +1162,7 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         CHECK(!logistics->ForceMechList->Mechs.empty());
         CHECK(!logistics->AssignedWarriorList->Warriors.empty());
         CHECK(!logistics->PurMechList->Mechs.empty());
-        logistics->SetUpMainScreen(false);
+        logistics->SetUpMainScreen();
         Settle();
     }
 }
@@ -1305,7 +1300,7 @@ TEST_CASE_ISOLATED(
     logistics->CurrentMission = goodMission;
 
     // The main menu as a start finds it (no campaign loaded): CONTINUE the good save.
-    logistics->SetUpMainScreen(false);
+    logistics->SetUpMainScreen();
     Settle();
     logistics->CurrentMission = -1;
     MCTestGuest::Panel(MCMainPanel::Main).Refresh();
@@ -1362,7 +1357,7 @@ TEST_CASE_ISOLATED(
     LoadFromScreen(GoodSave);
     CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK_EQ(logistics->CurrentMission, goodMission);
-    logistics->SetUpMainScreen(false);
+    logistics->SetUpMainScreen();
     Settle();
 }
 

@@ -123,9 +123,9 @@ namespace MCTestGame
     std::filesystem::path UserFolder();
 
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 9): what of the 1998 menus is made, if anything: a 1998 screen, window or control
-    /// under the screen window, one logistics holds (its screens, dialogs' views, chat windows, ticker), or their art
-    /// loaded (logistics', or what a mission keeps of it); none otherwise. Every frame checks it (RunFrame).
+    /// Port-only (SPEC-menus.md's stage 9): what of the 1998 menus is made, if anything: their classes are gone with
+    /// them, so their art loaded (logistics', or what a mission keeps of it); none otherwise. Every frame checks it
+    /// (RunFrame).
     /// </summary>
     std::optional<std::string> OldMenusMade();
 

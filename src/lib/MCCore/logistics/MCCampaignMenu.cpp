@@ -4,7 +4,6 @@
 #include "ai/MCMoveGeometry.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCChatView.h"
 #include "logistics/MCLogPort.h"
@@ -32,6 +31,7 @@
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
 #include "ui/MCRmlModel.h"
+#include "logistics/MCDeploy.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -137,10 +137,6 @@ namespace
     constexpr std::string_view ZoneTagPicture = "image({})";
     /// <summary>A length in whole pixels, as RmlUi reads it.</summary>
     constexpr std::string_view PixelsFormat = "{:.0f}px";
-    /// <summary>The 1998 briefing's map area on its screen, in pixels each way (its first to its last).</summary>
-    constexpr float MapAreaWidth = static_cast<float>(MCBriefingScreen::MapRight - MCBriefingScreen::MapLeft + 1);
-    constexpr float MapAreaHeight = static_cast<float>(MCBriefingScreen::MapBottom - MCBriefingScreen::MapTop + 1);
-
     // The shapes in MCTail's order, so a tail finds its own.
     static_assert(std::ranges::all_of(std::views::iota(size_t{0}, ZoneTagShapes.size()), [](size_t i)
                                       { return ZoneTagShapes[i].Tail == static_cast<MCCampaignMenu::MCTail>(i); }));
@@ -1449,6 +1445,8 @@ void MCCampaignScreen::OnMouse(Rml::Event& event)
 
 void MCCampaignScreen::PlayVideo()
 {
+    // OB-191 (fixed): PLAY again while the operation's video shows does nothing, so it plays once, from its start. The
+    // original's tab stopped the movie on a quick second click, and MISSION BRIEFING just after it flipped back to it.
     if (!_Video || MCVideoMenu::Shown())
     {
         return;
@@ -1794,6 +1792,20 @@ MCCampaignMenu::MCMissionRead MCCampaignMenu::ReadMission()
     return read;
 }
 
+auto MCCampaignMenu::MapPointOf(float worldX, float worldY, float scale) -> SDL_FPoint
+{
+    // The original's sums, in its mix of float and double.
+    constexpr float r = 0.70710677f;
+    constexpr double AcrossMiddle = 490.0;
+    constexpr double DownMiddle = 141.0;
+    constexpr double DownMargin = 31.0;
+    const float yR = worldY * r;
+    const auto diff = static_cast<float>(yR - static_cast<double>(worldX) * r);
+    const double across = (static_cast<double>(worldX) * r + yR) / scale;
+    const auto down = static_cast<float>(diff / scale);
+    return SDL_FPoint{static_cast<float>(across + AcrossMiddle), static_cast<float>(DownMiddle - down + DownMargin)};
+}
+
 MCCampaignMenu::MCZoneTag MCCampaignMenu::ZoneTag(int group, float x, float y, float width, float height)
 {
     std::optional<MCZoneTag> best;
@@ -1860,9 +1872,9 @@ MCCampaignMenu::MCZoneMap MCCampaignMenu::ZoneTags()
 
         // Where 1998 marked it on its screen, in the picture it stretched over the map area.
         const MCLogistics::DropZonePosition& at = logistics->DropZonePositions[zone];
-        const SDL_FPoint marked = MCBriefingScreen::MapPointOf(at.X, at.Y, marks.Scale);
-        const float x = (marked.x - static_cast<float>(MCBriefingScreen::MapLeft)) / MapAreaWidth * map.Width;
-        const float y = (marked.y - static_cast<float>(MCBriefingScreen::MapTop)) / MapAreaHeight * map.Height;
+        const SDL_FPoint marked = MapPointOf(at.X, at.Y, marks.Scale);
+        const float x = (marked.x - static_cast<float>(MapLeft)) / MapAreaWidth * map.Width;
+        const float y = (marked.y - static_cast<float>(MapTop)) / MapAreaHeight * map.Height;
         map.Tags.push_back(ZoneTag(group, x, y, map.Width, map.Height));
     }
 

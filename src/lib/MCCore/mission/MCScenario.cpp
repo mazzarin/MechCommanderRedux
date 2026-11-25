@@ -6,7 +6,6 @@
 #include "engine/MCElementBuffer.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
-#include "logistics/MCBriefingScreen.h"
 #include "sprite/MCSpriteManager.h"
 #include "abl/MCAblRuntime.h"
 #include "ai/MCMoveSystem.h"
@@ -28,6 +27,7 @@
 #include "platform/MCFrameLog.h"
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTerrain.h"
+#include "logistics/MCDeploy.h"
 
 float ActualTime = 0.0f;
 int NextStep = 0;

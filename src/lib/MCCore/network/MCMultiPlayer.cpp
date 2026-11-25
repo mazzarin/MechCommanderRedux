@@ -7,6 +7,7 @@
 #include "network/MCMechHandover.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "gui/MCUpdateDisplay.h"
+#include "gui/MCGuiGlobals.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
 #include "linkup/MCFidpGroup.h"
@@ -14,10 +15,7 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "logistics/MCLogChat.h"
-#include "logistics/MCLogToolButton.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCGameStrings.h"
 #include "main/MCTelemetry.h"
@@ -1275,7 +1273,8 @@ void ShowWaitingDialog(std::string_view text)
         return;
     }
 
-    // Port-only (SPEC-menus.md's stage 3): the remade dialog's wait; the 1998 dialog's Deactivate ends it.
+    // Port-only (SPEC-menus.md's stage 3): the remade dialog's wait, in the message's place; the message's Deactivate
+    // ends it (MCMenuDialog::Deactivate).
     MCRmlDialogs::Waiting(text);
 }
 

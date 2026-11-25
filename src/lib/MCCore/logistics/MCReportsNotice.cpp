@@ -1,13 +1,10 @@
 #include "stdafx.h"
 #include "logistics/MCReportsNotice.h"
-#include "logistics/MCLogMenus.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCRoomScreen.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCSplashScreen.h"
-#include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCPrefs.h"
 #include "ui/MCRmlFlow.h"
 #include "main/MCLogistics.h"
@@ -194,7 +191,7 @@ bool NoticeScreenFree()
     // so is the remade room, which a launcher's game never leaves. Only with nothing over it: a notice already shown
     // holds the next (each frame asks again).
     return logistics != nullptr && OnNoticeScreen(*logistics) && !logistics->Message->IsShowing() &&
-           !logistics->Question->IsShowing() && !UpdatePageShown() &&
+           !logistics->Question->IsShowing() && !MCUpdateScreen::Shows() &&
            (!RemadeShows() || MCMainMenuScreens::MainOnTop() || RoomScreenOnTop());
 }
 

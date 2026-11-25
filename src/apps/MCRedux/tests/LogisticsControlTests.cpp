@@ -13,7 +13,6 @@
 #include "gui/MCGuiTimerManager.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
-#include "logistics/MCLogRows.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuDialog.h"
@@ -24,10 +23,6 @@
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
-#include "logistics/MCMechPurchaseBlock.h"
-#include "logistics/MCPilotPurchaseBlock.h"
-#include "logistics/MCVehiclePurchaseBlock.h"
-#include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCUnitLimits.h"
 #include "logistics/MCPurProfile.h"
 #include "main/MCGameContext.h"
@@ -35,6 +30,7 @@
 #include "main/MCLogistics.h"
 #include "object/MCMasterComponent.h"
 #include "ui/MCRmlDialog.h"
+#include "main/MCLogisticsShared.h"
 
 // The logistics screens' controls (P3-log-1): the ports and the base object, the text formatter, the ticker, text
 // fields, scrolling text, the game list, the slider, the save list's sort, ini-built screens, the purchase dialog and
@@ -158,27 +154,6 @@ TEST_CASE("logistics: a port makes a new zeroed bitmap on every Init")
     CHECK(std::all_of(port.Pixels().data(), port.Pixels().data() + 12, [](uint8_t pixel) { return pixel == 0; }));
     CHECK_EQ(port.Frame().X1, 3);
     CHECK_EQ(port.Frame().Y1, 2);
-}
-
-TEST_CASE("logistics: an object made without a port has none; with one, a picture")
-{
-    LogisticsScreen screen;
-    MCGuiRef<MCLogObject> bare = MCGuiTree::NewRoot<MCLogObject>();
-    bare->InitWithoutPort(1, 2, 30, 40);
-    CHECK(bare->Lport() == nullptr);
-    CHECK_EQ(bare->Width(), 30);
-    CHECK_EQ(bare->Height(), 40);
-
-    MCGuiRef<MCLogObject> plain = MCGuiTree::NewRoot<MCLogObject>();
-    REQUIRE_EQ(plain->Init(0, 0, 8, 6), 0);
-    REQUIRE(plain->Lport() != nullptr);
-    CHECK(!plain->Lport()->IsView());
-    CHECK_EQ(plain->Lport()->Width(), 8);
-
-    // Destroyed, it frees its port (the pin keeps its memory to look).
-    const std::shared_ptr<MCLogObject> destroyed = plain.Pin();
-    plain.reset();
-    CHECK(destroyed->Lport() == nullptr);
 }
 
 // The text formatter
@@ -548,22 +523,4 @@ TEST_CASE_ISOLATED("game: REFIT ALL's question has a line per part it has no spa
     REQUIRE(MCRmlDialogs::Shown());
     CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text, question({damaged.front()}));
     MCRemadeTest::AnswerDialog(false);
-    CHECK_EQ(MCRmlDialogs::OldBoxes(), 0u);
-}
-
-// The resource figure
-
-TEST_CASE("logistics: the resource figure shows the points in state 0 and nothing in the heap's old states")
-{
-    const int32_t savedPoints = ResourcePoints;
-    const int32_t savedState = ResourceDisplayState;
-    ResourcePoints = 12345;
-    ResourceDisplayState = 0;
-    CHECK_EQ(ResourceFigureText(), std::string("12345"));
-    ResourceDisplayState = 1;
-    CHECK(ResourceFigureText().empty());
-    ResourceDisplayState = 2;
-    CHECK(ResourceFigureText().empty());
-    ResourcePoints = savedPoints;
-    ResourceDisplayState = savedState;
 }

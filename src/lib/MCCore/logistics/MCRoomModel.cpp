@@ -12,7 +12,6 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCLogMenus.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"

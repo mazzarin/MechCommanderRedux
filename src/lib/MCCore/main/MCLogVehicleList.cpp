@@ -2,7 +2,6 @@
 #include "main/MCLogVehicleList.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCMissionLogisticsBridge.h"
-#include "logistics/MCLogRows.h"
 #include "main/MCGameStrings.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"

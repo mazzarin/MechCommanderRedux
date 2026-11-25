@@ -6,10 +6,7 @@
 #include "lib/MCFile.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCCampaignMenu.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCInternetMenu.h"
-#include "logistics/MCLoadSaveMenu.h"
-#include "logistics/MCLogDialogButton.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"
@@ -234,7 +231,6 @@ auto MCMainMenuModel::SetNetworkForTests(std::optional<bool> network) -> void
 
 auto MCMainMenuModel::Play(const std::string& name, bool campaign) -> MCSavedGameLoad
 {
-    LoadingSolo = false;
     return MCSaves::LoadSavedGameAhead(name, campaign);
 }
 
@@ -273,9 +269,7 @@ auto MCMainMenuModel::Cinema() -> void
 
 auto MCMainMenuModel::ToMainMenu() -> void
 {
-    WhackTimer = true;
-    GlobalLog()->SetUpMainScreen(true);
-    LoadingSolo = false;
+    GlobalLog()->SetUpMainScreen();
     // Swapped in place, outside a change of screen: the palette 1998's main menu sets goes in at once. No 1998 screen
     // shows, and the next frame's palette fade would darken the remade menu to black (2.2 s on this Mac at 60 Hz).
     ActivatePaletteNow();
@@ -316,7 +310,7 @@ namespace
     /// <summary>The briefing of the campaign started, in place of the main menu (BeginCampaign's end).</summary>
     void ShowCampaignStarted()
     {
-        GlobalLog()->SetUpBriefingScreen(false);
+        GlobalLog()->SetUpBriefingScreen();
     }
 
     /// <summary>
@@ -388,7 +382,7 @@ void ReturnToGame()
     // Port-only (SPEC-menus.md's stage 8): the remade briefing on the tab it was left on (1998's PURCHASING and 'MECH
     // BAY, its own screens, came back as they were left: the remade campaign's pages are its tabs).
     MCCampaignMenu::ComeBack();
-    GlobalLog()->SetUpBriefingScreen(false);
+    GlobalLog()->SetUpBriefingScreen();
 }
 
 void GameOverMan()
@@ -404,9 +398,7 @@ void Cancel()
         return;
     }
 
-    WhackTimer = true;
-    GlobalLog()->SetUpMainScreen(true);
-    LoadingSolo = false;
+    GlobalLog()->SetUpMainScreen();
 }
 
 void DoExit()
@@ -422,7 +414,7 @@ void DoExit()
         LeaveMatch();
     }
 
-    GlobalLog()->SetUpMainScreen(false);
+    GlobalLog()->SetUpMainScreen();
 }
 
 void LeaveMatch()

@@ -1,8 +1,85 @@
 #include "stdafx.h"
 #include "main/MCLogistics.h"
-#include "logistics/MCMechInventoryBlock.h"
-#include "logistics/MCVehicleInventoryBlock.h"
 #include "network/MCMultiPlayer.h"
+#include "vfx/MCAgShape.h"
+#include "vfx/MCVfxFunctions.h"
+
+namespace
+{
+    /// <summary>
+    /// The colours that replace the mech and vehicle diagram shapes' pixels 0xea, 0xe8 and 0xe7, per damage state (armor
+    /// left: 0 under 76%, 1 under 51%, 2 under 26%, 3 armor and structure gone; above that the shape keeps its own).
+    /// </summary>
+    constexpr std::array<std::array<uint8_t, 3>, 4> IconFade = {
+        {{242, 241, 240}, {245, 244, 243}, {239, 238, 237}, {19, 19, 19}}};
+
+    /// <summary>The damage state of a diagram location from its armor left (-1 = undamaged).</summary>
+    int32_t DiagramState(int32_t percent, uint8_t internals)
+    {
+        if (percent == 0)
+        {
+            return internals == 0 ? 3 : 2;
+        }
+
+        if (percent < 0x1a)
+        {
+            return 2;
+        }
+
+        if (percent < 0x33)
+        {
+            return 1;
+        }
+
+        return percent < 0x4c ? 0 : -1;
+    }
+
+    /// <summary>
+    /// Draws diagram shape <paramref name="location"/> of <paramref name="shapes"/> at (<paramref name="xPos"/>,
+    /// <paramref name="yPos"/>) of <paramref name="port"/>, recoloured for <paramref name="state"/>.
+    /// </summary>
+    /// <remarks>
+    /// The original drew the shape into a 0x19 x 0x1e picture wiped to 0xff, recoloured its pixels 0xe7, 0xe8 and 0xea
+    /// to the state's <see cref="IconFade"/> colours in memory, and copied the picture keyed on 0xff. The port draws the
+    /// shape in place through a table that does the recolouring, which comes out the same.
+    /// </remarks>
+    void DrawDiagram(std::span<const uint8_t> shapes, int32_t location, int32_t state, MCLogPort& port, int32_t xPos,
+                     int32_t yPos)
+    {
+        MCLogBlockPort diagram(port.Frame(), xPos, yPos, 0x19, 0x1e, true);
+
+        if (state < 0 || MCAgShapeIsAlpha(shapes, location))
+        {
+            AGShapeDraw(diagram.Frame(), shapes, location, 0, 0);
+            return;
+        }
+
+        // Built once and registered: a renderer reads translate tables only from registered blocks (the GPU drew an
+        // unregistered one as the identity, so no damage showed).
+        static const auto& recolor = []() -> const std::array<std::array<uint8_t, 256>, 4>&
+        {
+            static std::array<std::array<uint8_t, 256>, 4> tables{};
+
+            for (size_t fade = 0; fade < tables.size(); ++fade)
+            {
+                for (size_t color = 0; color < 256; ++color)
+                {
+                    tables[fade][color] = static_cast<uint8_t>(color);
+                }
+
+                tables[fade][0xe7] = IconFade[fade][2];
+                tables[fade][0xe8] = IconFade[fade][1];
+                tables[fade][0xea] = IconFade[fade][0];
+            }
+
+            MCRenderer::RegisterData(std::span(tables[0].data(), sizeof(tables)), MCDataKind::Tables);
+            return tables;
+        }();
+
+        MCAgDrawShape(diagram.Frame(), shapes, location, 0, 0, MCShapeOp::Xlat,
+                      MCColorTable(recolor[static_cast<size_t>(state)]));
+    }
+}
 
 auto MCLogistics::SetPilot(int32_t mechIndex, int32_t pilotIndex) const -> void
 {
@@ -305,4 +382,43 @@ auto MCLogistics::RequiredAssigned() const -> bool
                                }) &&
            std::ranges::none_of(forceVehicles, [](const std::shared_ptr<MCLogVehicle>& vehicle)
                                 { return vehicle->Required && !vehicle->Deployed; });
+}
+
+auto MCLogistics::MechBodyLocState(const MCLogMech& mech, int32_t location) -> int32_t
+{
+    const MCLogMech::ArmorPoints& armor = mech.Armor[location];
+    int32_t percent = static_cast<int32_t>(static_cast<double>(armor.CurArmor) / armor.MaxArmor * 100.0f);
+
+    if (location >= 1 && location <= 3)
+    {
+        // A torso counts its weaker side, front or rear.
+        const MCLogMech::ArmorPoints& rear = mech.Armor[location + 7];
+        int32_t rearPercent = static_cast<int32_t>(static_cast<double>(rear.CurArmor) / rear.MaxArmor * 100.0f);
+
+        if (rearPercent < percent)
+        {
+            percent = rearPercent;
+        }
+    }
+
+    return DiagramState(percent, mech.Internals[location].CurArmor);
+}
+
+auto MCLogistics::VehicleBodyLocState(const MCLogVehicle& vehicle, int32_t location) -> std::optional<int32_t>
+{
+    uint8_t maxArmor = vehicle.MaxArmorPoints[location];
+
+    if (maxArmor == 0)
+    {
+        return std::nullopt;
+    }
+
+    int32_t percent = static_cast<int32_t>(static_cast<double>(vehicle.CurArmorPoints[location]) / maxArmor * 100.0f);
+    return DiagramState(percent, vehicle.CurInternalStructure[location]);
+}
+
+auto MCLogistics::DrawBodyLoc(std::span<const uint8_t> shapes, int32_t location, int32_t state, MCLogPort& port,
+                              int32_t xPos, int32_t yPos) -> void
+{
+    DrawDiagram(shapes, location, state, port, xPos, yPos);
 }

@@ -1,11 +1,8 @@
 #include "stdafx.h"
 #include "logistics/MCDueArtNotice.h"
-#include "logistics/MCBriefingScreen.h"
-#include "logistics/MCLogMenus.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCBenchmark.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
@@ -103,7 +100,7 @@ void ShowDueArtNotice()
 
     // A benchmark's run (main/MCBenchmark.h) goes through the briefing by itself: nothing stops it.
     if (Seen || text.empty() || MCBenchmark::Running() || !OnNoticeScreen(*logistics) || dialog.IsShowing() ||
-        logistics->Question->IsShowing() || UpdatePageShown())
+        logistics->Question->IsShowing() || MCUpdateScreen::Shows())
     {
         return;
     }

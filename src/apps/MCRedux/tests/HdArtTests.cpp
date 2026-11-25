@@ -41,7 +41,6 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCArtWords.h"
-#include "logistics/MCBriefingScreen.h"
 #include "main/MCInventoryList.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCDeploy.h"
@@ -52,14 +51,9 @@
 #include "logistics/MCSettingsModel.h"
 #include "logistics/MCStore.h"
 #include "main/MCLogPart.h"
-#include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCInternetMenu.h"
-#include "logistics/MCLogTextObject.h"
-#include "logistics/MCMatchOptionsTab.h"
-#include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
-#include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCArtModes.h"
 #include "main/MCGameContext.h"
 #include "sound/MCHdAudio.h"
@@ -134,42 +128,23 @@
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
-#include "logistics/MCLoadSaveMenu.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
 #include "logistics/MCPurProfile.h"
 #include "lib/MCFile.h"
 #include "logistics/MCMainMenuModel.h"
-#include "logistics/MCPreferencesMenu.h"
 #include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
 // The final audit's screen tour and call stacks.
-#include "gui/MCScrollPane.h"
 #include "gui/MCUpdateDisplay.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCConnectMenu.h"
-#include "logistics/MCLogTextObject.h"
-#include "logistics/MCMechBriefBlock.h"
-#include "logistics/MCPurchaseScreen.h"
-#include "logistics/MCRepairScreen.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCReusableDialog.h"
-#include "logistics/MCMatchOptionsTab.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCGenericScreen.h"
 #include "main/MCLogMech.h"
 #include "mission/MCMission.h"
-#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "MCVersion.h"
-#if __has_include("logistics/MCLogTextButton.h")
-// A build with the preferences' CONTROLS panel (the controls branch): the tour shows it.
-#include "logistics/MCLogTextButton.h"
-#include "logistics/MCUpdatePage.h"
-#define MC_AUDIT_CONTROLS 1
-#endif
 #include <random>
 #if __has_include(<execinfo.h>) && __has_include(<dlfcn.h>)
 #include <dlfcn.h>
@@ -13506,8 +13481,7 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
 
         std::cout << std::format("  {}: {}\n", name, path.string());
 
-        // Port-only: with --sharp-menus-window 1, the whole window too, as it shows round the view (the menus' frame on
-        // the stone, SPEC-menus.md's stage 1).
+        // Port-only: with --sharp-menus-window 1, the whole window too, as it shows round the view.
         if (MCTest::Option("sharp-menus-window").has_value())
         {
             const std::filesystem::path window =
@@ -13714,13 +13688,13 @@ namespace
 /// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from; and the
 /// pictures the port makes, which the pack draws in its font: every word the port's text buttons show
 /// (MCTextButtonLabels), named as the art's buttons are (<c>textbutton\b&lt;state&gt;_text_&lt;word&gt;.tga</c>, the
-/// state's letter h up, g pressed, n grayed); the main menu's UPDATE button (logistics/MCUpdatePage.h) as the menu's own
-/// are named (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>); the session screen's MATCH OPTIONS tabs
-/// (logistics/MCMatchOptionsTab.h: <c>matchtabs\lsbdw02_match.tga</c> behind MULTIPLAYER CHAT,
-/// <c>matchtabs\lsbdw03_match.tga</c> in front); the results screen's REMATCH (mission/MCMissionResultsScreen.h),
-/// named as the faces it is made from (<c>rematchbutton\mr_ms01_rematch.tga</c> up, <c>mr_ms02_rematch.tga</c> held);
-/// and MULTIPLAYER ACCESS's LAN button and the INTERNET screen's panel (logistics/MCArtWords.h), named as the pictures
-/// they're made from (<c>lanbutton\b&lt;state&gt;_lan_lan.tga</c> on NETWORK's plates, <c>internetpanel\lan00_internet.tga</c>).
+/// state's letter h up, g pressed, n grayed); the 1998 main menu's UPDATE button as the menu's own are named
+/// (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>); the 1998 session screen's MATCH OPTIONS tabs
+/// (<c>matchtabs\lsbdw02_match.tga</c> behind MULTIPLAYER CHAT, <c>matchtabs\lsbdw03_match.tga</c> in front); the 1998
+/// results screen's REMATCH, named as the faces it is made from (<c>rematchbutton\mr_ms01_rematch.tga</c> up, <c>mr_ms02_rematch.tga</c> held);
+/// and MULTIPLAYER ACCESS's LAN button and the INTERNET screen's panel, named as the pictures they're made from
+/// (<c>lanbutton\b&lt;state&gt;_lan_lan.tga</c> on NETWORK's plates, <c>internetpanel\lan00_internet.tga</c>). The made
+/// words are logistics/MCArtWords.h's (stage 9's census decides whether new packs still make them: nothing draws them).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD art generator")
 {
@@ -13804,10 +13778,10 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
     const MCFitResult<std::string> mainScreenArt = mainScreenFit.Read<std::string>("NormalArt");
     REQUIRE(mainScreenArt.has_value());
     const std::vector<uint8_t> mainScreenPalette = mainScreenFit.Read<bool>("UseBackPalette").value_or(false)
-                                                       ? MCGenericScreen::PaletteFromArt(*mainScreenArt)
+                                                       ? PaletteFromArt(*mainScreenArt)
                                                        : std::vector<uint8_t>();
     mainScreenFit.Close();
-    const MCMenuButtonPictures update = UpdateButtonPictures(mainScreenPalette);
+    const MCButtonPictures update = UpdateButtonPictures(mainScreenPalette);
 
     for (const auto& [state, picture] :
          {std::pair{'h', update.Up}, std::pair{'g', update.Down}, std::pair{'n', update.Gray}})
@@ -13817,7 +13791,7 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
         ++pictures;
     }
 
-    // The session screen's MATCH OPTIONS tabs (logistics/MCMatchOptionsTab.h), named as the tabs they're made from.
+    // The 1998 session screen's MATCH OPTIONS tabs, named as the tabs they're made from.
     REQUIRE(tabsColors.has_value());
 
     for (const auto& [front, name] : {std::pair{MCSessionTab::Chat, "matchtabs\\lsbdw02_match.tga"},
@@ -13829,7 +13803,7 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
         ++pictures;
     }
 
-    // The results screen's REMATCH (mission/MCMissionResultsScreen.h), named as the faces it's made from.
+    // The 1998 results screen's REMATCH, named as the faces it's made from.
     const MCRematchFaces rematch = RematchFaces();
     REQUIRE(rematch.Up != nullptr);
     REQUIRE(rematch.Down != nullptr);
@@ -13844,7 +13818,7 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
         ++pictures;
     }
 
-    // MULTIPLAYER ACCESS's LAN button and the INTERNET screen's panel (logistics/MCArtWords.h).
+    // MULTIPLAYER ACCESS's LAN button and the INTERNET screen's panel.
     const std::optional<MCButtonPictures> lan = MCLanButtonPictures();
     REQUIRE(lan.has_value());
 
@@ -13866,7 +13840,6 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
                  internetPanel->Height(), *panelColors, written);
     ++pictures;
 
-#if MC_AUDIT_CONTROLS
     // Every word the port's text buttons show, in the preferences' colours (ACCEPT's, whose pictures they're made of):
     // the 1998 preferences kept the palette shown, logistics' (MCGenericScreen::ShowGuiWindow), and none is made since
     // SPEC-menus.md's stage 9.
@@ -13887,8 +13860,6 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
             ++pictures;
         }
     }
-
-#endif
 
     std::cout << std::format("  {} pictures ({} distinct) in {}, {} skipped\n", pictures, written.size(),
                              folder.string(), skipped);
@@ -15461,7 +15432,7 @@ namespace
                                                   Version);
         // MULTIPLAYER (remade: the main menu's panel, SPEC-menus.md's stage 7): INTERNET (the count online under it)
         // and LAN; "No network connection." without one.
-        ConnectScreen();
+        MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
         RunUntil(MCTestGuest::OnAccess, AnswerFrames);
 
         if (!MCTestGuest::OnAccess() || MCTestGuest::Panel(MCMainPanel::Multiplayer).Offline())

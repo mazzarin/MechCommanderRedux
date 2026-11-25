@@ -1,8 +1,8 @@
 #pragma once
 
 // Port-only (SPEC-menus.md's stage 8): DEPLOY's rules, the original's (logistics\logbri.cpp's BriefingScreen and
-// MechBriefBlock), in one place both the 1998 briefing screen's blocks (logistics/MCMechBriefBlock) and the remade DEPLOY
-// (logistics/MCCampaignMenu) call: which units wait in READY AREA, which drop slots the player may fill and what is in
+// MechBriefBlock), in one place the remade DEPLOY (logistics/MCCampaignMenu) calls (the 1998 briefing screen's blocks
+// did too, until SPEC-menus.md's stage 9): which units wait in READY AREA, which drop slots the player may fill and what is in
 // them, each group's tons and the drop's, what fits under the drop's limit (FitsTonnage), the moves (a unit put in a
 // slot, swapped with the one there, sent to the first open slot, taken out), why a unit can't drop, and BEGIN
 // MISSION's checks. The moves change the deploy data as the original's did, and tell the other players in a match;
@@ -10,6 +10,12 @@
 
 class MCLogMech;
 class MCLogPart;
+
+/// <summary>The tonnage of the units in the drop slots.</summary>
+extern int32_t CurDeployTonnage;
+
+/// <summary>The mission's drop tonnage limit.</summary>
+extern int32_t MaxDeployTonnage;
 
 namespace MCDeploy
 {

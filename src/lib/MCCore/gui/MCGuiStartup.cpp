@@ -13,7 +13,6 @@
 #include "linkup/MCSessionManager.h"
 #include "main/MCBenchmark.h"
 #include "main/MCGamePaths.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCInternetMenu.h"
 #include "main/MCGameContext.h"
 #include "main/MCGameSession.h"

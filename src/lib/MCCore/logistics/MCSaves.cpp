@@ -4,7 +4,6 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCMissionNames.h"
-#include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
@@ -809,7 +808,7 @@ bool MCSaves::ShowSavedGame(int32_t result)
         return false;
     }
 
-    GlobalLog()->SetUpBriefingScreen(false);
+    GlobalLog()->SetUpBriefingScreen();
     SoundSystem()->PlayDigitalMusic(BriefingMusic, true);
     return true;
 }

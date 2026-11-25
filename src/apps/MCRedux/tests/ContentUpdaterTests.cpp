@@ -13,20 +13,14 @@
 #include "TestGame.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
-#include "logistics/MCBriefingScreen.h"
-#include "logistics/MCGenericScreen.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCQuestionWindow.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCReusableDialog.h"
-#include "logistics/MCSessionScreen.h"
 #include "logistics/MCSettingsModel.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateModel.h"
-#include "logistics/MCUpdatePage.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
@@ -4530,7 +4524,7 @@ TEST_CASE_ISOLATED("game: a mission's briefing says once a run, the new HD art a
     CHECK(!dialog.IsShowing());
 
     // Once a run: the briefing shown again from the main menu, it doesn't show again.
-    GlobalLog()->SetUpMainScreen(false);
+    GlobalLog()->SetUpMainScreen();
     SettleScreen();
     ReturnToGame();
     SettleScreen();

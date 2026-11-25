@@ -8,7 +8,6 @@
 #include "gui/MCGuiSystem.h"
 #include "iface/MCTacticalInterface.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCConnectMenu.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"

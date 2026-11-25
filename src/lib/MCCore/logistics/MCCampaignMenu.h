@@ -4,10 +4,8 @@
 // (ui/campaign.rml) under the bar every campaign screen shares (MAIN MENU, the four tabs, RP, the clock): BRIEFING reads
 // the mission (its map, title, objectives, fire support, orders and warnings: logistics/MCBriefingText), DEPLOY chooses
 // the force (READY AREA's cards, the drop's three groups, the weight and BEGIN MISSION: logistics/MCDeploy's rules, the
-// 1998 briefing's own). MCLogistics::SetUpBriefingScreen shows it over the 1998 briefing, which is set up as ever and
-// hidden, staying logistics' screen; PURCHASING and the 'MECH BAY are the 1998 screens until step 2, their tabs and
-// BRIEFING buttons going through a change of screen (gui/MCScreenFlow.h). The flow's "campaign" kind
-// (logistics/MCMenuScreens) shows while this does.
+// 1998 briefing's own). MCLogistics::SetUpBriefingScreen shows it; PURCHASING and the 'MECH BAY are its tabs too
+// (logistics/MCLogisticsTabs). The flow's "campaign" kind (logistics/MCMenuScreens) shows while this does.
 
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCChatView.h"
@@ -392,6 +390,25 @@ private:
 namespace MCCampaignMenu
 {
     /// <summary>
+    /// The 1998 briefing's map area on its screen, the mission's tac map picture stretched over it: its first and last
+    /// pixels each way (283 pixels square).
+    /// </summary>
+    constexpr int32_t MapLeft = 0x159;
+    constexpr int32_t MapTop = 0x1a;
+    constexpr int32_t MapRight = 0x273;
+    constexpr int32_t MapBottom = 0x134;
+    /// <summary>The 1998 briefing's map area on its screen, in pixels each way (its first to its last).</summary>
+    constexpr float MapAreaWidth = static_cast<float>(MapRight - MapLeft + 1);
+    constexpr float MapAreaHeight = static_cast<float>(MapBottom - MapTop + 1);
+
+    /// <summary>
+    /// Where the 1998 briefing marked the world position (<paramref name="worldX"/>, <paramref name="worldY"/>) on its
+    /// map, in its screen's pixels: the map turned 45 degrees, <paramref name="scale"/> world units to a map pixel
+    /// (MCLogistics::MCZoneMarks::Scale). Port: the original's drop zone marker worked it out in place.
+    /// </summary>
+    SDL_FPoint MapPointOf(float worldX, float worldY, float scale);
+
+    /// <summary>
     /// The tag of group <paramref name="group"/> with its tail's tip at (<paramref name="x"/>, <paramref name="y"/>) on
     /// a map picture <paramref name="width"/> by <paramref name="height"/> (its own pixels): the tail at the bottom
     /// right, as 1998's flags, unless the tag would cross the picture's edge; then the first of the other corners
@@ -401,7 +418,7 @@ namespace MCCampaignMenu
 
     /// <summary>
     /// In a match, the briefing map's picture and the tags of this game's team's three drop zones on it, each zone
-    /// placed as 1998's briefing marked it (MCBriefingScreen::MapPointOf); outside a match, none.
+    /// placed as 1998's briefing marked it; outside a match, none.
     /// </summary>
     MCZoneMap ZoneTags();
 
@@ -433,9 +450,8 @@ namespace MCCampaignMenu
     std::vector<MCScreenChange::MCPiece> Ahead();
 
     /// <summary>
-    /// The screen shown over the 1998 briefing, set up for the mission now: on BRIEFING, or the tab it was left on when
-    /// the 1998 PURCHASING or 'MECH BAY's BRIEFING button comes back (<see cref="ComeBack"/>). Port-only (stage 9): where
-    /// it can't be read, the game stops (MCRmlFlow::Broken).
+    /// The screen shown, set up for the mission now: on BRIEFING, or the tab it was left on when it comes back
+    /// (<see cref="ComeBack"/>). Port-only (stage 9): where it can't be read, the game stops (MCRmlFlow::Broken).
     /// </summary>
     void Show();
 
@@ -446,12 +462,12 @@ namespace MCCampaignMenu
     std::vector<MCScreenChange::MCPiece> ShowPieces();
 
     /// <summary>
-    /// The next <see cref="Show"/> is the way back to the screen (from the 1998 PURCHASING or 'MECH BAY, the main menu's
-    /// RETURN TO GAME, SAVE GAME's "Game saved."): the tab it was left on.
+    /// The next <see cref="Show"/> is the way back to the screen (the main menu's RETURN TO GAME, SAVE GAME's "Game
+    /// saved."): the tab it was left on.
     /// </summary>
     void ComeBack();
 
-    /// <summary>The screen hidden (an old screen comes up, the loading screen).</summary>
+    /// <summary>The screen hidden (another screen comes up, the loading screen).</summary>
     void Hide();
 
     /// <summary>The screen, while the menus have it.</summary>

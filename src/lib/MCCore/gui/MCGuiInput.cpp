@@ -15,7 +15,6 @@
 #include "main/MCErrorReport.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCPauseScreen.h"
 #include "network/MCMultiPlayer.h"

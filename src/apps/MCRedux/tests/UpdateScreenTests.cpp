@@ -8,12 +8,8 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
-#include "logistics/MCGenericScreen.h"
-#include "logistics/MCLogButton.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateModel.h"
-#include "logistics/MCUpdatePage.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
@@ -115,7 +111,6 @@ namespace
         std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
         REQUIRE(update != nullptr);
         CHECK(MCUpdateScreen::Shows());
-        CHECK(UpdatePageShown());
         CHECK(!MCMainMenuScreens::Shown(MCMainPanel::Main));
         return update;
     }

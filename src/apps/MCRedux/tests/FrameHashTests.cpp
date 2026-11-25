@@ -15,7 +15,6 @@
 #include "iface/MCTacticalInterface.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
-#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "gui/MCUpdateDisplay.h"

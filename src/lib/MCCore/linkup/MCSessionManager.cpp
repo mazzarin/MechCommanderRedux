@@ -7,7 +7,6 @@
 #include "lib/MCFatal.h"
 #include "logistics/MCLogChat.h"
 #include "logistics/MCRegistrySettings.h"
-#include "logistics/MCSessionScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCLogistics.h"
 #include "network/MCInternetGame.h"

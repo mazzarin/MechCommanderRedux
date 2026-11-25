@@ -9,15 +9,12 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "lib/MCFile.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCChatView.h"
 #include "logistics/MCDeploy.h"
 #include "logistics/MCLoadingMenu.h"
 #include "logistics/MCLogChat.h"
-#include "logistics/MCLogMenus.h"
-#include "logistics/MCLogRows.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
@@ -66,6 +63,8 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include "object/MCMasterComponent.h"
+#include "logistics/MCMenuDialog.h"
+#include "main/MCLogisticsShared.h"
 
 // Port-only (SPEC-menus.md's stage 8): the campaign's screens remade, BRIEFING and DEPLOY (logistics/MCCampaignMenu),
 // with DEPLOY's rules the 1998 briefing's own (logistics/MCDeploy).
@@ -1063,7 +1062,7 @@ TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space hol
 /// the window shows (MCCampaignScreen::PlayVideo, as a click or Space reaching it would) leaves the video as it is, at
 /// once and once its frames come; CLOSE at once leaves BRIEFING with nothing to start later. 1998's operation tab armed a
 /// start for each click, the later one stopping the movie the first had started, and the mission tab clicked just after
-/// left a start waiting, which flipped back to the movie (fixed on the 1998 briefing, MCBriefingScreen's OB-191).
+/// left a start waiting, which flipped back to the movie (OB-191, fixed on the 1998 briefing and gone with it).
 /// </summary>
 TEST_CASE_ISOLATED(
     "game: BRIEFING's PLAY pressed again at once plays the operation's video once, from its start, and on "
@@ -1614,7 +1613,7 @@ namespace
     /// <summary>
     /// A match's BRIEFING's drop zone tags, planned by <see cref="PlanMatch"/> on ARENA (its zones away from its map's
     /// edges): the team's three of the mission's six from <paramref name="firstZone"/> (1998's MarkedZone), F1 to F3,
-    /// each zone where 1998's briefing marked it (MCBriefingScreen::MapPointOf) in the picture it stretched over its
+    /// each zone where 1998's briefing marked it (MCCampaignMenu::MapPointOf) in the picture it stretched over its
     /// map area, each tag inside the picture with its tail at the bottom right; at every window the players' reports
     /// name and the frames' (4:3 to 21:9) each tail's tip within a pixel of its zone on the map as drawn (the picture
     /// fitted to its box at its left and top), each tag at the picture's scale; the screen laid out with no problems.
@@ -1643,8 +1642,8 @@ namespace
         CHECK_EQ(map.Height, static_cast<float>(picture->Height));
         REQUIRE_EQ(map.Tags.size(), Zones);
         // 1998 stretched the picture over its map area, its first to its last pixel each way.
-        const float areaWidth = static_cast<float>(MCBriefingScreen::MapRight - MCBriefingScreen::MapLeft + 1);
-        const float areaHeight = static_cast<float>(MCBriefingScreen::MapBottom - MCBriefingScreen::MapTop + 1);
+        const float areaWidth = static_cast<float>(MCCampaignMenu::MapRight - MCCampaignMenu::MapLeft + 1);
+        const float areaHeight = static_cast<float>(MCCampaignMenu::MapBottom - MCCampaignMenu::MapTop + 1);
 
         for (size_t i = 0; i < Zones; ++i)
         {
@@ -1652,10 +1651,10 @@ namespace
             const MCCampaignMenu::MCZoneTag& tag = map.Tags[i];
             const MCLogistics::DropZonePosition& zone =
                 logistics->DropZonePositions[static_cast<size_t>(firstZone) + i];
-            const SDL_FPoint marked = MCBriefingScreen::MapPointOf(zone.X, zone.Y, marks.Scale);
+            const SDL_FPoint marked = MCCampaignMenu::MapPointOf(zone.X, zone.Y, marks.Scale);
             CHECK_EQ(tag.Group, static_cast<int>(i + 1));
-            CHECK(std::abs(tag.X - (marked.x - MCBriefingScreen::MapLeft) / areaWidth * map.Width) < Exact);
-            CHECK(std::abs(tag.Y - (marked.y - MCBriefingScreen::MapTop) / areaHeight * map.Height) < Exact);
+            CHECK(std::abs(tag.X - (marked.x - MCCampaignMenu::MapLeft) / areaWidth * map.Width) < Exact);
+            CHECK(std::abs(tag.Y - (marked.y - MCCampaignMenu::MapTop) / areaHeight * map.Height) < Exact);
             CHECK(tag.Tail == MCCampaignMenu::MCTail::BottomRight);
             CHECK(tag.Left >= 0.0f && tag.Top >= 0.0f && tag.Left + tag.Width <= map.Width &&
                   tag.Top + tag.Height <= map.Height);

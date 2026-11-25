@@ -19,7 +19,6 @@
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCChooseMapWindow.h"
 #include "logistics/MCMainMenuScreen.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMatchOptionsWindow.h"
@@ -1197,7 +1196,7 @@ namespace
         constexpr int ListedInGames = 12;
         const auto dialogShown = [] { return MCRmlDialogs::Shown(); };
 
-        ConnectScreen();
+        MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
         REQUIRE(RunPaced(time, OnAccess, MostChangeSeconds));
 
         // INTERNET, its games listed, the first picked.

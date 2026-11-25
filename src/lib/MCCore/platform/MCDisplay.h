@@ -302,8 +302,8 @@ public:
     bool FadeScales() const { return _FadeScales; }
 
     /// <summary>
-    /// Port-only: the colour the window shows around the view (black unless set; the menus' stone colour around their
-    /// 640x480 frame), faded with the picture. Takes effect at the next <see cref="Present"/>.
+    /// Port-only: the colour the window shows around the view (black unless set), faded with the picture. Takes effect
+    /// at the next <see cref="Present"/>.
     /// </summary>
     void SetSurround(SDL_Color color) { _Surround = color; }
 

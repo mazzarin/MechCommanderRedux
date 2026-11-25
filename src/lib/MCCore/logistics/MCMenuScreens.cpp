@@ -3,10 +3,8 @@
 #include "gui/MCScreenChange.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCCampaignMenu.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCInternetMenu.h"
-#include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCPrefsScreen.h"
@@ -23,6 +21,7 @@
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
 #include "ui/MCRmlFlow.h"
+#include "main/MCLogisticsShared.h"
 
 namespace
 {
@@ -41,12 +40,10 @@ namespace
         return MCMenuScreens::Top() == id && !MCRmlFlow::Showing();
     }
 
-    /// <summary>The main menu shown, as CANCEL showed it from the screens over it (RETURN TO GAME's state kept).</summary>
+    /// <summary>The main menu shown, as CANCEL showed it from the screens over it.</summary>
     void ShowMainMenu()
     {
-        WhackTimer = true;
-        GlobalLog()->SetUpMainScreen(true);
-        LoadingSolo = false;
+        GlobalLog()->SetUpMainScreen();
     }
 
     /// <summary>A question with OK and CANCEL saying <paramref name="text"/>, whose OK runs <paramref name="yes"/>.</summary>
@@ -317,7 +314,7 @@ auto MCMenuScreens::ShowBack(MCScreenId id, MCBackWay way) -> void
 
     if (id == Campaign())
     {
-        logistics.SetUpBriefingScreen(false);
+        logistics.SetUpBriefingScreen();
         logistics.ShowLogScreen(true, false);
         return;
     }
@@ -413,7 +410,7 @@ auto MCMenuScreens::LeaveCampaign() -> void
 
     // The original's at the press: the sound (the operation's video goes as the briefing hides).
     PlayLogSound(MainMenuSample);
-    MCScreenFlow::Change("campaign back", [] { GlobalLog()->SetUpMainScreen(false); });
+    MCScreenFlow::Change("campaign back", [] { GlobalLog()->SetUpMainScreen(); });
 }
 
 auto MCMenuScreens::ExitToGames() -> void

@@ -2,7 +2,6 @@
 #include "gui/MCHardwareCursor.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
-#include "platform/MCInput.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
@@ -11,10 +10,6 @@ namespace
 {
     /// <summary>The GUI's slots for cursor shapes (MCGuiSystem::CursorShapes; those past them aren't shown).</summary>
     constexpr size_t CursorShapeSlots = 128;
-
-    /// <summary>What this frame's cursor carries (MCHardwareCursorCarry).</summary>
-    bool Carrying = false;
-    MCCursorImage Carried;
 
     /// <summary>
     /// Port-only: whether the shapes were preloaded, and the HD art pack then (its version, and whether HD art was on):
@@ -179,41 +174,6 @@ void MCHardwareCursorPreload(std::span<const MCRegisteredBlock> shapes)
                       });
 }
 
-void MCHardwareCursorNewFrame()
-{
-    Carrying = false;
-}
-
-bool MCHardwareCursorCarry(MCGuiObject& object, const MCPane& pixels)
-{
-    if (GSoftwareCursor != 0 || MCInput::Display() == nullptr)
-    {
-        return false;
-    }
-
-    // The object was placed from the mouse position of the message the game handled last; the same offset under
-    // the live mouse keeps it where the game put it relative to the cursor.
-    const MCPoint mouse = MCInput::GetMessagePos();
-    const int32_t offsetX = mouse.x - object.GlobalX();
-    const int32_t offsetY = mouse.y - object.GlobalY();
-
-    if (offsetX < 0 || offsetY < 0 || offsetX >= object.Width() || offsetY >= object.Height())
-    {
-        return false;
-    }
-
-    MCCursorImage image = MCCursorImageFromPane(pixels, offsetX, offsetY);
-
-    if (image.Width == 0)
-    {
-        return false;
-    }
-
-    Carried = std::move(image);
-    Carrying = true;
-    return true;
-}
-
 void MCHardwareCursorUpdate()
 {
     // Port-only: HD art turned on or off, or another pack: the pictures again.
@@ -225,13 +185,7 @@ void MCHardwareCursorUpdate()
     const int32_t shape = GuiSystem().CursorShape;
     const bool hasShape = shape >= 0 && MCCursor::ShapeImage(static_cast<size_t>(shape)).Width > 0;
 
-    if (Carrying)
-    {
-        Carrying = false;
-        MCCursor::Show(hasShape ? MCCursorImage::Overlay(Carried, MCCursor::ShapeImage(static_cast<size_t>(shape)))
-                                : Carried);
-    }
-    else if (hasShape)
+    if (hasShape)
     {
         MCCursor::ShowShape(static_cast<size_t>(shape));
     }

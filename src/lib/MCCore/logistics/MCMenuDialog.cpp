@@ -3,7 +3,8 @@
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiObject.h"
 #include "gui/MCGuiSystem.h"
-#include "logistics/MCReusableDialog.h"
+#include "main/MCGameStrings.h"
+#include "main/MCLogistics.h"
 #include "ui/MCRmlDialog.h"
 
 /// <summary>The GUI object a dialog's timeouts' timers go to: its timer closes the dialog with its timeout's result.</summary>
@@ -77,16 +78,6 @@ MCMenuDialog::MCMenuDialog() = default;
 
 MCMenuDialog::~MCMenuDialog() = default;
 
-void MCMenuDialog::SetView(MCGuiHandle<MCReusableDialog> view)
-{
-    _View = std::move(view);
-
-    if (const std::shared_ptr<MCReusableDialog> shown = _View.Lock(); shown != nullptr)
-    {
-        shown->SetModel(weak_from_this());
-    }
-}
-
 void MCMenuDialog::SetText(std::string_view text)
 {
     Text = text.substr(0, text.find('\0'));
@@ -100,11 +91,6 @@ void MCMenuDialog::SetTwoButton(bool two)
     // followed one (COULDN'T JOIN THE ROOM AGAIN...) had nothing to click, only Return closing it.
     Ok.Shown = true;
     Cancel.Shown = two;
-
-    if (const std::shared_ptr<MCReusableDialog> view = _View.Lock(); view != nullptr)
-    {
-        view->Lay();
-    }
 }
 
 bool MCMenuDialog::IsShowing() const
@@ -161,12 +147,6 @@ void MCMenuDialog::SayOverRemade()
 
     MCRmlDialogs::Show(std::move(say));
     _SaidOverRemade = true;
-
-    if (const std::shared_ptr<MCReusableDialog> view = _View.Lock(); view != nullptr)
-    {
-        view->HideOld(false);
-    }
-
     StartTimeout();
 }
 
@@ -199,7 +179,6 @@ void MCMenuDialog::Deactivate(int32_t result)
     // Port-only: kept alive through its answer (here, and in Enter, Escape, TakeKey and AnswerRemade), which may end
     // logistics, and the dialog with it, before it returns.
     const std::shared_ptr<MCMenuDialog> pinned = shared_from_this();
-    const std::shared_ptr<MCReusableDialog> view = _View.Lock();
 
     // Port-only (SPEC-menus.md's stage 4): said over the remade screens, it grabbed nothing; closed by its timeout (or by
     // its owner), the remade dialog closes too.
@@ -211,25 +190,10 @@ void MCMenuDialog::Deactivate(int32_t result)
         }
 
         _SaidOverRemade = false;
-
-        if (view != nullptr)
-        {
-            view->HideOld(false);
-        }
-    }
-    else if (view != nullptr)
-    {
-        view->HideOld(true);
     }
 
     // Port-only (SPEC-menus.md's stage 3): a wait said over a remade screen in this dialog's place ends with it.
     MCRmlDialogs::EndWait();
-
-    // Port-only: the keyboard a dialog asking for a key held (KeyTaker) goes back.
-    if (view != nullptr && GuiSystem().HasText(*view))
-    {
-        GuiSystem().ReleaseText();
-    }
 
     // The original also skipped a callback pointer IsBadReadPtr rejected. Called from a copy: it may set another.
     if (Callback)
@@ -284,10 +248,75 @@ void MCMenuDialog::TakeKey(uint32_t key)
     }
 }
 
-void MCMenuDialog::TakeKeyboard()
+auto ShowMenuMessage(std::string_view text, std::function<void(int32_t)> callback, std::string_view upArt,
+                     std::string_view downArt) -> void
 {
-    if (const std::shared_ptr<MCReusableDialog> view = _View.Lock(); view != nullptr)
+    // Port-only (SPEC-menus.md's stage 4): over a remade screen, the remade dialog says it (MCMenuDialog::Activate).
+    MCMenuDialog& dialog = *GlobalLog()->Message;
+    dialog.SetText(text);
+    dialog.SetTwoButton(false);
+    dialog.Callback = std::move(callback);
+    dialog.Ok.SetPictures(upArt, downArt);
+    dialog.Ok.Disabled = false;
+    dialog.Activate();
+}
+
+auto ShowMenuMessage(uint32_t stringId, std::function<void(int32_t)> callback, std::string_view upArt,
+                     std::string_view downArt) -> void
+{
+    ShowMenuMessage(LoadGameString(stringId, 0xfe), std::move(callback), upArt, downArt);
+}
+
+auto AskMenuQuestion(MCMenuDialog& dialog, uint32_t stringId, std::function<void()> okExec,
+                     std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons) -> void
+{
+    AskMenuQuestion(dialog, LoadGameString(stringId, 0xfe), std::move(okExec), std::move(cancelExec), cancelDownArt,
+                    enableButtons);
+}
+
+auto AskMenuQuestion(MCMenuDialog& dialog, std::string_view text, std::function<void()> okExec,
+                     std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons) -> void
+{
+    // Over a remade screen the dialog says itself in the remade one (MCMenuDialog::Activate), its buttons its own.
+    dialog.SetText(text);
+    dialog.SetTwoButton(true);
+    dialog.Callback = nullptr;
+    dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+
+    if (enableButtons)
     {
-        GuiSystem().SetText(view);
+        dialog.Ok.Disabled = false;
     }
+
+    dialog.Ok.Exec = std::move(okExec);
+    dialog.Cancel.SetPictures("bh_cancl.tga", cancelDownArt);
+
+    if (enableButtons)
+    {
+        dialog.Cancel.Disabled = false;
+    }
+
+    dialog.Cancel.Exec = std::move(cancelExec);
+    dialog.Activate();
+}
+
+auto ShowLogMessage(uint32_t stringId, bool okayArt) -> void
+{
+    ShowLogMessage(LoadGameString(stringId, 0xfe), okayArt);
+}
+
+auto ShowLogMessage(std::string_view text, bool okayArt) -> void
+{
+    MCMenuDialog& dialog = *GlobalLog()->Message;
+    dialog.SetText(text);
+    dialog.SetTwoButton(false);
+    dialog.Callback = nullptr;
+
+    if (okayArt)
+    {
+        dialog.Ok.SetPictures("bh_okay.tga", "bg_okay.tga");
+        dialog.Ok.Disabled = false;
+    }
+
+    dialog.Activate();
 }

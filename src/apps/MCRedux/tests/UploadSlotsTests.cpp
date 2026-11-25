@@ -38,25 +38,30 @@ namespace
         }
 
         std::span<uint8_t> Memory() override { return _Memory; }
-        SDL_GPUTransferBuffer* Buffer() override { return reinterpret_cast<SDL_GPUTransferBuffer*>(_Buffer); }
-
-        bool Done(SDL_GPUFence* fence) override
+        MCOptionalRef<SDL_GPUTransferBuffer> Buffer() override
         {
-            std::scoped_lock lock(_Fences->Lock);
-            return _Fences->Done[Number(fence)];
+            // A number for a buffer, never read (SDL's buffers are opaque).
+            return _Buffer != 0 ? MCOptionalRef<SDL_GPUTransferBuffer>(*reinterpret_cast<SDL_GPUTransferBuffer*>(_Buffer))
+                                : std::nullopt;
         }
 
-        bool Wait(SDL_GPUFence* fence) override
+        bool Done(SDL_GPUFence& fence) override
         {
             std::scoped_lock lock(_Fences->Lock);
-            _Fences->Done[Number(fence)] = true;
+            return _Fences->Done[Number(&fence)];
+        }
+
+        bool Wait(SDL_GPUFence& fence) override
+        {
+            std::scoped_lock lock(_Fences->Lock);
+            _Fences->Done[Number(&fence)] = true;
             return true;
         }
 
-        void Release(SDL_GPUFence* fence) override
+        void Release(SDL_GPUFence& fence) override
         {
             std::scoped_lock lock(_Fences->Lock);
-            _Fences->Released.push_back(Number(fence));
+            _Fences->Released.push_back(Number(&fence));
         }
 
         void Flush() override {}

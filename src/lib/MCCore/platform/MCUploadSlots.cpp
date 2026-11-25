@@ -25,6 +25,16 @@ namespace
         "upload slots full (frame)", "upload slots full (near)", "upload slots full (fill)",
         "upload slots full (ground)"};
 
+    /// <summary>
+    /// <paramref name="backing"/>'s transfer buffer, as SDL's copies take it: kept with the slots while the backing
+    /// lives (null for a test's, which has none).
+    /// </summary>
+    SDL_GPUTransferBuffer* CopiesRead(MCUploadSlots::MCBacking& backing)
+    {
+        const MCOptionalRef<SDL_GPUTransferBuffer> buffer = backing.Buffer();
+        return buffer.has_value() ? &buffer->get() : nullptr;
+    }
+
     /// <summary>SDL's transfer buffer, mapped once, and the GPU's fences.</summary>
     class MCSdlBacking final : public MCUploadSlots::MCBacking
     {
@@ -41,10 +51,16 @@ namespace
         MCSdlBacking& operator=(const MCSdlBacking&) = delete;
 
         std::span<uint8_t> Memory() override { return _Memory; }
-        SDL_GPUTransferBuffer* Buffer() override { return _Buffer.get(); }
-        bool Done(SDL_GPUFence* fence) override { return SDL_QueryGPUFence(_Device.get(), fence); }
-        bool Wait(SDL_GPUFence* fence) override { return SDL_WaitForGPUFences(_Device.get(), true, &fence, 1); }
-        void Release(SDL_GPUFence* fence) override { SDL_ReleaseGPUFence(_Device.get(), fence); }
+        MCOptionalRef<SDL_GPUTransferBuffer> Buffer() override { return *_Buffer; }
+        bool Done(SDL_GPUFence& fence) override { return SDL_QueryGPUFence(_Device.get(), &fence); }
+
+        bool Wait(SDL_GPUFence& fence) override
+        {
+            SDL_GPUFence* const fences[] = {&fence};
+            return SDL_WaitForGPUFences(_Device.get(), true, fences, 1);
+        }
+
+        void Release(SDL_GPUFence& fence) override { SDL_ReleaseGPUFence(_Device.get(), &fence); }
 
         // On managed storage (an Intel Mac's card) this marks the buffer modified; elsewhere it does nothing.
         void Flush() override { SDL_UnmapGPUTransferBuffer(_Device.get(), _Buffer.get()); }
@@ -240,7 +256,7 @@ void MCUploadSlots::SetBytes(std::optional<size_t> bytes)
 MCUploadSlots::MCUploadSlots(Key, std::unique_ptr<MCBacking> backing, MCMakeBacking more)
     : _Backing(std::move(backing)), _MakeMore(std::move(more))
 {
-    _Buffer = _Backing->Buffer();
+    _Buffer = CopiesRead(*_Backing);
     _Memory = _Backing->Memory();
     _States.assign(_Memory.size() / SlotBytes, MCSlot{});
     _StartSlots = _States.size();
@@ -297,7 +313,7 @@ std::expected<void, std::string> MCUploadSlots::Grow(size_t bytes)
     {
         std::scoped_lock lock(_Lock);
         _More = std::move(*more);
-        _MoreBuffer = _More->Buffer();
+        _MoreBuffer = CopiesRead(*_More);
         _MoreMemory = _More->Memory();
         const size_t added = _MoreMemory.size() / SlotBytes;
         _States.resize(_StartSlots + added);
@@ -656,7 +672,7 @@ size_t MCUploadSlots::ReclaimLocked()
     std::erase_if(_Sent,
                   [&](const MCBatch& batch)
                   {
-                      if (!_Backing->Done(batch.Fence))
+                      if (!_Backing->Done(*batch.Fence))
                       {
                           return false;
                       }
@@ -684,7 +700,7 @@ size_t MCUploadSlots::ReclaimLocked()
                           }
                       }
 
-                      _Backing->Release(batch.Fence);
+                      _Backing->Release(*batch.Fence);
                       return true;
                   });
 
@@ -724,7 +740,7 @@ bool MCUploadSlots::WaitForAll()
         {
             // A fence that can't be waited for is kept (let go before its commands have run, it may be handed out again
             // and seem done too soon), and so are its slots.
-            if (!_Backing->Wait(batch.Fence))
+            if (!_Backing->Wait(*batch.Fence))
             {
                 SDL_Log("MCUploadSlots: can't wait for an upload's copies (%s); its slots stay taken", SDL_GetError());
                 waited = false;

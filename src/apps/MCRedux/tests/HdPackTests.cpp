@@ -4186,10 +4186,10 @@ namespace
         explicit FillSlotsBacking(size_t slots) : _Memory(slots * MCUploadSlots::SlotBytes) {}
 
         std::span<uint8_t> Memory() override { return _Memory; }
-        SDL_GPUTransferBuffer* Buffer() override { return nullptr; }
-        bool Done(SDL_GPUFence*) override { return true; }
-        bool Wait(SDL_GPUFence*) override { return true; }
-        void Release(SDL_GPUFence*) override {}
+        MCOptionalRef<SDL_GPUTransferBuffer> Buffer() override { return std::nullopt; }
+        bool Done(SDL_GPUFence&) override { return true; }
+        bool Wait(SDL_GPUFence&) override { return true; }
+        void Release(SDL_GPUFence&) override {}
         void Flush() override {}
 
     private:

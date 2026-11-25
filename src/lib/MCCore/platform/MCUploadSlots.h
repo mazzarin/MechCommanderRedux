@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lib/MCOptionalRef.h"
+
 #include <SDL3/SDL_gpu.h>
 
 #include <array>
@@ -118,13 +120,13 @@ public:
         /// <summary>The slots' memory, mapped for good.</summary>
         virtual std::span<uint8_t> Memory() = 0;
         /// <summary>The transfer buffer the copies read (none for a test's).</summary>
-        virtual SDL_GPUTransferBuffer* Buffer() = 0;
+        virtual MCOptionalRef<SDL_GPUTransferBuffer> Buffer() = 0;
         /// <summary>Whether <paramref name="fence"/>'s commands have run.</summary>
-        virtual bool Done(SDL_GPUFence* fence) = 0;
+        virtual bool Done(SDL_GPUFence& fence) = 0;
         /// <summary>Waits until <paramref name="fence"/>'s commands have run; false if it can't.</summary>
-        virtual bool Wait(SDL_GPUFence* fence) = 0;
+        virtual bool Wait(SDL_GPUFence& fence) = 0;
         /// <summary>Gives <paramref name="fence"/> back (only once it's done).</summary>
-        virtual void Release(SDL_GPUFence* fence) = 0;
+        virtual void Release(SDL_GPUFence& fence) = 0;
         /// <summary>What's written is made the GPU's to read, before copies that read it are recorded.</summary>
         virtual void Flush() = 0;
     };

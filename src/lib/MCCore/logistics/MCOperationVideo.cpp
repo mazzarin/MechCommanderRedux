@@ -54,7 +54,9 @@ namespace
 
 // MCOperationVideo
 
-MCOperationVideo::MCOperationVideo() = default;
+MCOperationVideo::MCOperationVideo(Key)
+{
+}
 
 MCOperationVideo::~MCOperationVideo() = default;
 
@@ -69,7 +71,7 @@ std::expected<std::unique_ptr<MCOperationVideo>, std::string> MCOperationVideo::
         return std::unexpected(std::format("the operation's video {} can't be read", path));
     }
 
-    std::unique_ptr<MCOperationVideo> video(new MCOperationVideo());
+    auto video = std::make_unique<MCOperationVideo>(Key{});
     const MCSmackerPlayer& player = *movie->Player;
     video->_Indices.resize(static_cast<size_t>(player.Width()) * static_cast<size_t>(player.Height()));
     video->_Movie = std::move(movie);

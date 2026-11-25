@@ -16,6 +16,12 @@ struct MCUiTexture;
 /// <summary>The operation's video played: its frames as the menus draw them (a live picture), held or going.</summary>
 class MCOperationVideo
 {
+    /// <summary>Only <see cref="Open"/> makes one.</summary>
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
 public:
     /// <summary>
     /// The movie <paramref name="cinema"/> (the mission's OperationCinema) opened, from its first frame; with
@@ -24,6 +30,7 @@ public:
     /// </summary>
     static std::expected<std::unique_ptr<MCOperationVideo>, std::string> Open(std::string_view cinema, bool incoming);
 
+    explicit MCOperationVideo(Key);
     ~MCOperationVideo();
     MCOperationVideo(const MCOperationVideo&) = delete;
     MCOperationVideo& operator=(const MCOperationVideo&) = delete;
@@ -55,8 +62,6 @@ public:
     const std::shared_ptr<const MCUiTexture>& Picture() const { return _Picture; }
 
 private:
-    MCOperationVideo();
-
     /// <summary>The frame just decoded (<paramref name="frame"/>, in <see cref="_Indices"/>) as a picture.</summary>
     std::shared_ptr<const MCUiTexture> Pictured(uint32_t frame);
     /// <summary>The HD frames dropped, saying why (the 1998 frames show on).</summary>

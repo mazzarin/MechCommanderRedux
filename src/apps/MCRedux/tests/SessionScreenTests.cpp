@@ -1421,11 +1421,26 @@ TEST_CASE_ISOLATED(
 
     // The room's messages (SPEC-menus.md's stage 9, step 2): what CAT's game was sent from ANN's, its chat and then its
     // taking the room over, in the same order and bytes as the 1998 session screen sent them (recorded from it before
-    // the room's logic left it; the same in every run).
+    // the room's logic left it).
     Settle();
     const std::array ids = {MCTestGuest::MCNamedId{bobId, "BOB"}, MCTestGuest::MCNamedId{ann, "ANN"},
                             MCTestGuest::MCNamedId{cat.Id(), "CAT"}};
     constexpr std::array<uint16_t, 16> CatTypes = {13, 13, 42, 49, 37, 41, 41, 44, 44, 43, 43, 39, 43, 43, 41, 40};
     constexpr uint64_t CatDigest = 0x98f12fc85f8a5d4cull;
-    MCTestGuest::CheckRecorded(cat, ids, ann, cat.Instance(), CatTypes, CatDigest);
+    // Or the room shown to CAT twice, the second the first's twelve messages again: when CAT's first ping to ANN's game
+    // as the host comes after that game's first room tick as the host, the takeover's show finds CAT not yet heard, and
+    // WatchRoom shows the room again once it is (its guest "shown the room before its game was up"). Which comes first
+    // is the network's: 2 runs of 6 on one build (24 Nov), both recording this.
+    constexpr std::array<uint16_t, 28> CatTypesShownTwice = {13, 13, 42, 49, 37, 41, 41, 44, 44, 43, 43, 39, 43, 43,
+                                                             42, 49, 37, 41, 41, 44, 44, 43, 43, 39, 43, 43, 41, 40};
+    constexpr uint64_t CatDigestShownTwice = 0xaa1cd18f02dc0233ull;
+
+    if (cat.Recorded().size() == CatTypesShownTwice.size())
+    {
+        MCTestGuest::CheckRecorded(cat, ids, ann, cat.Instance(), CatTypesShownTwice, CatDigestShownTwice);
+    }
+    else
+    {
+        MCTestGuest::CheckRecorded(cat, ids, ann, cat.Instance(), CatTypes, CatDigest);
+    }
 }

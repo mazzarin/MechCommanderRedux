@@ -68,16 +68,29 @@ namespace MCMainMenuModel
 
     MCSoloList SoloMissions();
 
-    /// <summary>The menus' foot: the version running ("Redux HD 0.6.3"; none without an updater), UPDATE's word while an update waits.</summary>
+    /// <summary>
+    /// The menus' foot: the version running ("Redux HD 0.6.3"; none without an updater); UPDATE's word while an update
+    /// to a release waits ("Update to 0.7.1"); and, while the HD art a program installed alone came for downloads or
+    /// waits for its restart (MCUpdater::DueArt), its line ("HD art: 120 of 340 MB", "New HD art is in"), with RESTART
+    /// once it's in where the game can start again. That art alone has no UPDATE (it names no release to update to). A
+    /// release due besides it keeps its UPDATE beside the art's line, and RESTART is then UPDATE's page's alone (the
+    /// foot can't hold the version line, the art's line, RESTART and UPDATE). A failed download shows UPDATE alone, its
+    /// page saying why (RETRY).
+    /// </summary>
     struct MCFoot
     {
         std::string Version;
         std::string Update;
+        std::string Art;
+        bool Restart = false;
 
         bool operator==(const MCFoot&) const = default;
     };
 
     MCFoot Foot();
+
+    /// <summary>The foot's RESTART: the art in, the game starts again with it, as UPDATE's RESTART does.</summary>
+    void RestartForArt();
 
     /// <summary>
     /// MULTIPLAYER entered (1998's MULTIPLAYER ACCESS): no single mission's game, the multiplayer game made and started

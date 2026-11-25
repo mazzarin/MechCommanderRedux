@@ -33,6 +33,15 @@ namespace
         return static_cast<double>(bytes) / unit.Bytes;
     }
 
+    /// <summary>Below this many of a whole's MB, a short count gives them to a tenth (CountText); from it, whole.</summary>
+    constexpr double WholeMegabytesFrom = 10.0;
+
+    /// <summary>The digits after the point a short count gives in <paramref name="unit"/>, for a whole of <paramref name="whole"/> bytes.</summary>
+    int CountDecimals(uint64_t whole, const MCUnit& unit)
+    {
+        return unit.Bytes == BytesPerMegabyte && InUnit(whole, unit) >= WholeMegabytesFrom ? 0 : 1;
+    }
+
     /// <summary>Speeds in decimal units, as sizes are: from here a speed shows in MB a second (999.95 KB/S is 1.0 MB/S).</summary>
     constexpr double BytesPerKilobyte = 1e3;
     constexpr double SpeedInMegabytes = 999.95e3;
@@ -107,6 +116,20 @@ std::string MCUpdateWork::ProgressText(uint64_t received, uint64_t whole)
 {
     const MCUnit unit = UnitFor(whole);
     return std::format("{:.1f} OF {:.1f} {}", InUnit(received, unit), InUnit(whole, unit), unit.Name);
+}
+
+std::string MCUpdateWork::CountText(uint64_t received, uint64_t whole)
+{
+    if (whole == 0)
+    {
+        const MCUnit unit = UnitFor(received);
+        return std::format("{:.{}f} {}", InUnit(received, unit), CountDecimals(received, unit), unit.Name);
+    }
+
+    const MCUnit unit = UnitFor(whole);
+    const int decimals = CountDecimals(whole, unit);
+    return std::format("{:.{}f} of {:.{}f} {}", InUnit(received, unit), decimals, InUnit(whole, unit), decimals,
+                       unit.Name);
 }
 
 std::string MCUpdateWork::SpeedText(double bytesPerSecond)

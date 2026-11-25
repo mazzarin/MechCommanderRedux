@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCContentFixture.h"
 #include "MCFakeUpdaterBackend.h"
+#include "MCMenusPictures.h"
 #include "../MCContentAtStart.h"
 #include "../MCFirstStart.h"
 #include "../MCGameFolder.h"
@@ -14,8 +15,8 @@
 #include "gui/MCGuiGlobals.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCGenericScreen.h"
-#include "logistics/MCLogButton.h"
 #include "logistics/MCMainMenuModel.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCQuestionWindow.h"
@@ -29,7 +30,11 @@
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
+#include "network/MCIntroNote.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRejoinNote.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
 #include "platform/MCSocket.h"
 #include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
@@ -41,7 +46,12 @@
 #include "update/MCUpdatePlace.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
+#include "ui/MCRmlChecks.h"
+#include "ui/MCRmlLayer.h"
+#include "ui/MCRmlMenus.h"
 
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -53,7 +63,7 @@
 // beside it. The HD pack got and removed at the release installed (HD OPTIONS), an update planned for the sets chosen,
 // and the first start's install into a folder an installer prepared, with its window (MCFirstStart.h). The art a
 // program installed alone came for (a list in a format its old game couldn't read), not fetched before the game opens
-// and downloaded by itself once it's open; while it isn't in, the main menu's line and a notice at a mission's briefing
+// and downloaded by itself once it's open; while it isn't in, the main menu's foot and a notice at a mission's briefing
 // or a match's room say the game shows the old art.
 
 namespace
@@ -4140,9 +4150,9 @@ namespace
     }
 }
 
-TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its download from its first bytes: UPDATE "
-                   "lit, its page saying what's in of the whole with the version and notes, no INSTALL or SKIP; then "
-                   "RESTART")
+TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its download from its first bytes: the main "
+                   "menu's foot says it, and UPDATE's page, opened, what's in of the whole with the version and notes, "
+                   "no INSTALL or SKIP; then RESTART")
 {
     if (!MCTestGame::Available())
     {
@@ -4166,10 +4176,13 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
     REQUIRE(MCTestGame::FinishChanges());
     ScreenFrames();
 
-    // The main menu's UPDATE shows (at its foot); the remade page it opens shows the download under way, nothing to
+    // The main menu's foot says it, with no UPDATE (the art alone names no release to update to); the remade page,
+    // opened through the flow (as INTERNET's join to a newer game opens it), shows the download under way, nothing to
     // answer.
     REQUIRE(MCMainMenuScreens::MainOnTop());
-    MCTestGuest::ClickOn(MCMainPanel::Main, "update");
+    CHECK(MCRemadeTest::Visible(MCTestGuest::Panel(MCMainPanel::Main), "art"));
+    CHECK(!MCRemadeTest::Visible(MCTestGuest::Panel(MCMainPanel::Main), "update"));
+    MCUpdateScreen::OpenFromMenus();
     REQUIRE(MCTestGame::FinishChanges());
     const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
     REQUIRE(update != nullptr);
@@ -4202,11 +4215,14 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
 namespace
 {
     /// <summary>
-    /// What the line under the main menu's buttons says of the new HD art a program installed alone came for: while it
-    /// downloads (what's in of the whole), then once it's in.
+    /// What a lobby's room's line says of the new HD art a program installed alone came for while it downloads (what's in
+    /// of the whole): the 1998 words (logistics/MCUpdateModel.h's UpdateLineText), until the deletions.
     /// </summary>
     constexpr std::string_view DueArtDownloadingLine = "NEW HD ART DOWNLOADING: {}";
-    constexpr std::string_view DueArtReadyLine = "NEW HD ART READY: PLEASE RESTART";
+
+    /// <summary>What the remade main menu's foot says of that art: what's in of the whole, then that it's in.</summary>
+    constexpr std::string_view FootArtDownloading = "HD art: {}";
+    constexpr std::string_view FootArtIn = "New HD art is in";
 
     /// <summary>The notice at a mission's briefing or in a match's room: while that art downloads, then once it's in.</summary>
     constexpr std::string_view DueArtDownloadingNotice =
@@ -4254,48 +4270,169 @@ namespace
         return std::filesystem::file_size(release.Host.Path() / "patches" / "terrain-1-2.hdiff") + uint64_t{SendBytes};
     }
 
-    /// <summary>Whether <paramref name="text"/> fits the box under the main menu's buttons (as wide as UPDATE).</summary>
-    bool FitsUnderButtons(std::string_view text)
+    /// <summary>The remade main menu's foot's <paramref name="id"/> (version, art, restart, update): its words while it shows, else none.</summary>
+    std::string FootWords(const char* id)
     {
-        const std::shared_ptr<MCLogButton> update = GlobalLog()->MainScreen->CinemaButton.Lock();
-        REQUIRE(update != nullptr);
-        return WhiteFont->Width(text) <= update->Width();
+        const MCMainMenuScreen& main = MCTestGuest::Panel(MCMainPanel::Main);
+        return MCRemadeTest::Visible(main, id) ? MCRemadeTest::Words(main, id) : std::string();
+    }
+
+    /// <summary>
+    /// Whether the foot's art line could say <paramref name="words"/> beside what else the foot shows: the version line
+    /// gives up the room it has past its words.
+    /// </summary>
+    bool FootFits(std::string_view words)
+    {
+        const MCMainMenuScreen& main = MCTestGuest::Panel(MCMainPanel::Main);
+        Rml::Element* art = MCTestGuest::ElementOf(main, "art");
+        Rml::Element* version = MCTestGuest::ElementOf(main, "version");
+        REQUIRE(art != nullptr);
+        REQUIRE(version != nullptr);
+        const int wider = Rml::ElementUtilities::GetStringWidth(art, std::string(words)) -
+                          Rml::ElementUtilities::GetStringWidth(art, MCRemadeTest::Words(main, "art"));
+        const float spare =
+            version->GetBox().GetSize(Rml::BoxArea::Content).x -
+            static_cast<float>(Rml::ElementUtilities::GetStringWidth(version, MCRemadeTest::Words(main, "version")));
+        return static_cast<float>(wider) <= spare;
+    }
+
+    /// <summary>
+    /// The main menu (its foot) laid out with nothing spilling or cut and every text over the floor at the frames'
+    /// windows, as tests/RemadeDialogTests.cpp checks a dialog (with <c>--shots</c> each saved as
+    /// <c>main_menu_&lt;name&gt;_WxH</c>).
+    /// </summary>
+    void CheckFootLaidOut(std::string_view name)
+    {
+        const MCRmlLayer& layer = MCMenusPictures::GameMenus().Menus();
+        MCDisplay& display = *MCInput::Display();
+
+        for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::FrameWindows)
+        {
+            REQUIRE(MCMenusPictures::SetWindowPixels(display, window.Width, window.Height));
+            ScreenFrames();
+            const std::string where = std::format("{} at {}x{}: ", name, window.Width, window.Height);
+            CHECK_EQ(where + MCRmlChecks::BoxProblems(layer.Context()) +
+                         MCRmlChecks::Illegible(layer.Context(), layer.Unit()),
+                     where);
+            MCScreenInput::SaveWindowShot(std::format("main_menu_{}_{}x{}", name, window.Width, window.Height));
+        }
     }
 }
 
-TEST_CASE_ISOLATED("game: while the new HD art a program installed alone came for downloads, the line under the main "
-                   "menu's buttons says how much of it is in; once it's in, to press RESTART")
+TEST_CASE_ISOLATED("game: while the new HD art a program installed alone came for downloads, the remade main menu's "
+                   "foot says how much of it is in, beside the version line, with no UPDATE: it names no release")
 {
     if (!MCTestGame::Available())
     {
         return;
     }
 
-    MCHostedRelease release("due-line");
+    MCHostedRelease release("due-foot");
     NoteRelease2Due(release);
     const auto stall = std::make_shared<MCGate>();
     MCUpdaterScope scope(release, false, StallAt(release, stall));
-    const MCTestGame::OldMainMenu oldMenu;
     REQUIRE(MCTestGame::StartLogistics());
     const uint64_t inHand = StalledBytes(release);
     REQUIRE(GameFramesUntil([&] { return stall->Reached && MCUpdater::Status().Received == inHand; }));
+    REQUIRE(MCTestGame::FinishChanges());
     ScreenFrames();
+    REQUIRE(MCMainMenuScreens::MainOnTop());
+    CHECK(MCUpdater::DueArtAlone());
 
-    // Downloading: what's in of the whole, in the box under QUIT; release 9's whole fits there too.
-    CHECK_EQ(UpdateLineText(),
-             std::format(DueArtDownloadingLine, MCUpdateWork::ProgressText(inHand, UpdateBytes(release))));
-    CHECK(FitsUnderButtons(UpdateLineText()));
-    CHECK(FitsUnderButtons(
-        std::format(DueArtDownloadingLine, MCUpdateWork::ProgressText(ReleaseNineHdBytes, ReleaseNineHdBytes))));
-    MCScreenInput::SaveShot("art due line 0 downloading", MCScreenInput::ScreenHash());
+    // What's in of the whole, in the whole's unit; release 9's whole fits there too.
+    CHECK_EQ(FootWords("version"), std::format("Redux HD {}", ReleaseOf(RunningShown)));
+    CHECK_EQ(FootWords("art"), std::format(FootArtDownloading, MCUpdateWork::CountText(inHand, UpdateBytes(release))));
+    CHECK_EQ(FootWords("restart"), "");
+    CHECK_EQ(FootWords("update"), "");
+    CHECK(FootFits(std::format(FootArtDownloading, MCUpdateWork::CountText(ReleaseNineHdBytes, ReleaseNineHdBytes))));
+    CheckFootLaidOut("art_downloading");
+    stall->Open = true;
+}
 
-    // In and checked: RESTART (the UPDATE page's) puts it in.
+TEST_CASE_ISOLATED("game: once the new HD art a program installed alone came for is in, the remade main menu's foot "
+                   "says so with RESTART, which starts the game again with it, the next start skipping the intro")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("due-foot-in");
+    NoteRelease2Due(release);
+    MCUpdaterScope scope(release, false);
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(GameFramesUntil([] { return Stage() == MCStage::Ready; }));
+    REQUIRE(MCTestGame::FinishChanges());
+    ScreenFrames();
+    REQUIRE(MCMainMenuScreens::MainOnTop());
+    CHECK(release.Armed());
+
+    CHECK_EQ(FootWords("version"), std::format("Redux HD {}", ReleaseOf(RunningShown)));
+    CHECK_EQ(FootWords("art"), FootArtIn);
+    CHECK_EQ(FootWords("restart"), "Restart");
+    CHECK_EQ(FootWords("update"), "");
+    CheckFootLaidOut("art_in");
+
+    // RESTART: the update goes in as the game quits and starts again, its next start skipping the intro.
+    MCTestGuest::ClickOn(MCMainPanel::Main, "restart");
+    ScreenFrames();
+    CHECK(Stage() == MCStage::Installing);
+    CHECK_EQ(*scope.Quits, 1);
+    CHECK(MCUpdater::RestartWanted());
+    CHECK(MCIntroNote::TakeAtStart(MCTestGame::UserFolder(), MCRejoinNote::Now()));
+    CHECK_EQ(FootWords("art"), FootArtIn);
+    CHECK_EQ(FootWords("restart"), "");
+}
+
+TEST_CASE_ISOLATED("game: with a release due besides the new HD art a program installed alone came for, the remade "
+                   "main menu's foot keeps that release's UPDATE beside the art's line, downloading and in; RESTART is "
+                   "then UPDATE's page's")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // Release 3 out, past release 2 whose art is due: it brings the art, and is a release of its own.
+    MCHostedRelease release("due-foot-later");
+    NoteRelease2Due(release);
+    release.Publish(2, 3, RunningBuild);
+    const auto stall = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false, StallAt(release, stall));
+    REQUIRE(MCTestGame::StartLogistics());
+    const uint64_t inHand = StalledBytes(release);
+    REQUIRE(GameFramesUntil([&] { return stall->Reached && MCUpdater::Status().Received == inHand; }));
+    REQUIRE(MCTestGame::FinishChanges());
+    ScreenFrames();
+    REQUIRE(MCMainMenuScreens::MainOnTop());
+    CHECK(MCUpdater::DueArt());
+    CHECK(!MCUpdater::DueArtAlone());
+
+    const std::string update = std::format("Update to {}", ReleaseVersion);
+    CHECK_EQ(FootWords("art"), std::format(FootArtDownloading, MCUpdateWork::CountText(inHand, UpdateBytes(release))));
+    CHECK_EQ(FootWords("restart"), "");
+    CHECK_EQ(FootWords("update"), update);
+    CHECK(FootFits(std::format(FootArtDownloading, MCUpdateWork::CountText(ReleaseNineHdBytes, ReleaseNineHdBytes))));
+    CheckFootLaidOut("art_downloading_release");
+
+    // In: the art's line, the release's UPDATE still beside it; the foot has no room for RESTART too (the version line,
+    // the art's line, RESTART and UPDATE run past it at every window), so RESTART is UPDATE's page's, putting the
+    // release and the art in together.
     stall->Open = true;
     REQUIRE(GameFramesUntil([] { return Stage() == MCStage::Ready; }));
     ScreenFrames();
-    CHECK_EQ(UpdateLineText(), std::string(DueArtReadyLine));
-    CHECK(FitsUnderButtons(UpdateLineText()));
-    MCScreenInput::SaveShot("art due line 1 ready", MCScreenInput::ScreenHash());
+    CHECK_EQ(FootWords("version"), std::format("Redux HD {}", ReleaseOf(RunningShown)));
+    CHECK_EQ(FootWords("art"), FootArtIn);
+    CHECK_EQ(FootWords("restart"), "");
+    CHECK_EQ(FootWords("update"), update);
+    CheckFootLaidOut("art_in_release");
+
+    // UPDATE opens the release's page, with its RESTART.
+    MCTestGuest::ClickOn(MCMainPanel::Main, "update");
+    REQUIRE(MCTestGame::FinishChanges());
+    const std::shared_ptr<MCUpdateScreen> page = MCRemadeTest::OnTop<MCUpdateScreen>();
+    REQUIRE(page != nullptr);
+    CHECK_EQ(MCRemadeTest::Words(*page, "act"), "Restart");
 }
 
 TEST_CASE_ISOLATED("game: a mission's briefing says once a run, the new HD art a program installed alone came for in "

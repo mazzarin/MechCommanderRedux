@@ -38,6 +38,9 @@ namespace
     constexpr std::string_view StandsFormat = "Operation {}, mission {}";
     constexpr std::string_view LineFormat = "{} · {}";
     constexpr std::string_view UpdateFormat = "Update to {}";
+    /// <summary>The foot's line of the HD art a program installed alone came for: what's in of it, then that it's in.</summary>
+    constexpr std::string_view ArtDownloadingFormat = "HD art: {}";
+    constexpr std::string_view ArtInText = "New HD art is in";
     constexpr std::string_view SoloFormat = "Buy {} tons with {} RP";
     constexpr std::string_view OnlineFormat = "{} players online";
     constexpr std::string_view OneOnline = "1 player online";
@@ -149,9 +152,41 @@ auto MCMainMenuModel::SoloMissions() -> MCSoloList
 
 auto MCMainMenuModel::Foot() -> MCFoot
 {
-    const bool waiting = MCUpdater::Available() && MCUpdater::Waiting();
-    return {.Version = VersionLineText(MCUpdater::RunningVersion()),
-            .Update = waiting ? std::format(UpdateFormat, ReleaseOf(MCUpdater::Status().Version)) : std::string()};
+    MCFoot foot{.Version = VersionLineText(MCUpdater::RunningVersion())};
+
+    if (!MCUpdater::Available() || !MCUpdater::Waiting())
+    {
+        return foot;
+    }
+
+    const MCUpdater::MCStatus& status = MCUpdater::Status();
+
+    // The art due's line while it downloads and once it's in; failed, UPDATE's page says why.
+    if (MCUpdater::DueArt() && status.Stage != MCUpdater::MCStage::Failed)
+    {
+        foot.Art = status.Stage == MCUpdater::MCStage::Downloading
+                       ? std::format(ArtDownloadingFormat, MCUpdateWork::CountText(status.Received, status.Expected))
+                       : std::string(ArtInText);
+
+        // With a release due besides the art, the foot has no room for RESTART too: UPDATE's page has it, putting the
+        // release and the art in together.
+        if (MCUpdater::DueArtAlone())
+        {
+            foot.Restart = UpdateRestartOffered();
+            return foot;
+        }
+    }
+
+    foot.Update = std::format(UpdateFormat, ReleaseOf(status.Version));
+    return foot;
+}
+
+auto MCMainMenuModel::RestartForArt() -> void
+{
+    if (UpdateRestartOffered())
+    {
+        RestartForUpdate();
+    }
 }
 
 auto MCMainMenuModel::EnterMultiplayer() -> void

@@ -18,7 +18,8 @@ enum class MCMainPanel : uint8_t
 
 /// <summary>
 /// Port-only (SPEC-menus.md, "Main menu" and "MULTIPLAYER"; stage 7): the main menu remade, a panel in the painting's
-/// window (<c>ui/main_menu*.rml</c>, one template), its version line and UPDATE at its foot. Four screens of the flow,
+/// window (<c>ui/main_menu*.rml</c>, one template), its version line and UPDATE at its foot (and the HD art's line while
+/// the art a program installed alone came for downloads, with RESTART once it's in). Four screens of the flow,
 /// each a document on the template: the main menu (CONTINUE, CAMPAIGNS, LOAD GAME, SOLO MISSIONS, MULTIPLAYER,
 /// PREFERENCES, ORIGINAL CINEMA, QUIT; RETURN TO GAME and SAVE GAME between missions), and its submenus CAMPAIGNS,
 /// SOLO MISSIONS and MULTIPLAYER, swapped in its place from it with no fade, the painting staying. Each reads what it
@@ -70,7 +71,7 @@ private:
     void RefreshCampaigns();
     void RefreshSolo();
     void RefreshMultiplayer();
-    /// <summary>The version line and UPDATE, set only where they changed.</summary>
+    /// <summary>The version line, the HD art's line with its RESTART, and UPDATE, set only where they changed.</summary>
     void RefreshFoot();
     /// <summary>The main menu's choices pressed.</summary>
     void Continue();
@@ -105,6 +106,9 @@ private:
     std::string _Version;
     std::string _Update;
     bool _CanUpdate = false;
+    std::string _Art;
+    bool _HasArt = false;
+    bool _CanRestart = false;
     bool _Returns = false;
     std::string _ReturnLine;
     bool _Continues = false;

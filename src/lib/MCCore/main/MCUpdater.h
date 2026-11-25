@@ -359,6 +359,13 @@ namespace MCUpdater
     /// </summary>
     bool DueArt();
 
+    /// <summary>
+    /// Port-only (SPEC-menus.md's main menu foot): whether the update shown is that art alone: its own release's content,
+    /// with no program and no later release (MCContentUpdater::MCOffer::Later). One that brings more is a release due
+    /// besides the art, so the main menu's foot shows its UPDATE beside the art's line.
+    /// </summary>
+    bool DueArtAlone();
+
     /// <summary>The player's answer (from the UPDATE page), passed to the backend.</summary>
     void Answer(MCAnswer answer);
 

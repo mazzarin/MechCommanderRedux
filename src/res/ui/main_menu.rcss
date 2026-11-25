@@ -62,7 +62,8 @@
 .actions .row > .grow { flex: 1 1 0; }
 .gap-foot { height: 12dp; }
 
-#foot { margin: 0 12dp; padding-top: 8dp; border-top: 1dp #2a3742; }
+/* The foot: the version line at the left; at the right the HD art's line and its RESTART, then UPDATE. */
+#foot { margin: 0 12dp; padding-top: 8dp; border-top: 1dp #2a3742; gap: 8dp; }
 
 /* The legal lines, painted into the 1998 painting's bottom rows, set again in Fine, at 4:3's width at most so the
    lines come out even; the bar holds four (three at most windows, four where the letters' whole pixels run wider). */

@@ -5,13 +5,18 @@
 </head>
 <!-- Port-only (SPEC-menus.md, "Main menu"; stage 7): the main menu's frame, the style frames' main_menu_frame.rml: the
      painting whole, the menu where 1998 cut its window, the version line and UPDATE at the menu's foot, the legal lines
-     along the window's foot. The main menu and its submenus (main_menu*.rml) fill its list (logistics/MCMainMenuScreen). -->
+     along the window's foot. The main menu and its submenus (main_menu*.rml) fill its list (logistics/MCMainMenuScreen).
+     While the HD art a program installed alone came for downloads, its line takes UPDATE's place ("HD art: 120 of 340
+     MB"), then "New HD art is in" with RESTART; a release due besides it keeps its UPDATE at the right, RESTART then on
+     UPDATE's page (stage 9). -->
 <body class="painting">
     <div class="screen43">
         <div id="menu" class="panel glass">
             <div id="menu-list"></div>
             <div id="foot" class="row">
                 <div class="fine grey grow nowrap" id="version">{{version}}</div>
+                <div class="fine grey nowrap" id="art" data-if="hasArt">{{art}}</div>
+                <div class="button small" id="restart" data-if="canRestart">Restart</div>
                 <div class="button small" id="update" data-if="canUpdate">{{update}}</div>
             </div>
         </div>

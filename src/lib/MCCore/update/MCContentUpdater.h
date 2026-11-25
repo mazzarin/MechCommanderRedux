@@ -167,6 +167,8 @@ namespace MCContentUpdater
         /// didn't pick its size), and the player isn't asked (SPEC-install-and-updates.md's Forced art).
         /// </summary>
         bool Due = false;
+        /// <summary>Due, and its release is a later one than the art's: a release of its own besides the art.</summary>
+        bool Later = false;
 
         /// <summary>What the content downloads.</summary>
         uint64_t ContentBytes() const;

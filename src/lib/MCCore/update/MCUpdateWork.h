@@ -115,6 +115,13 @@ namespace MCUpdateWork
     /// <summary>Bytes in of a whole, both in the whole's unit: "1.2 OF 5.5 GB".</summary>
     std::string ProgressText(uint64_t received, uint64_t whole);
 
+    /// <summary>
+    /// Port-only (SPEC-menus.md's main menu foot): bytes in of a whole as a short line counts them, both in the whole's
+    /// unit: GB to a tenth ("3.1 of 7.4 GB"), MB whole ("120 of 340 MB") but to a tenth under 10 MB ("0.4 of 2.5 MB");
+    /// with the whole not known (0), what's in alone, in its own unit ("120 MB").
+    /// </summary>
+    std::string CountText(uint64_t received, uint64_t whole);
+
     /// <summary>A download's speed, in decimal units: MB a second to a tenth from 1 MB ("10.4 MB/S"), else KB ("850 KB/S").</summary>
     std::string SpeedText(double bytesPerSecond);
 

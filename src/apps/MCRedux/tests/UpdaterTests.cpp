@@ -432,6 +432,13 @@ TEST_CASE("updater: a size is shown as the setup gives it: decimal GB to a tenth
     CHECK_EQ(MCUpdateWork::ProgressText(1'200'000'000, 5'500'000'000), std::string("1.2 OF 5.5 GB"));
     CHECK_EQ(MCUpdateWork::ProgressText(300'000'000, 5'500'000'000), std::string("0.3 OF 5.5 GB"));
     CHECK_EQ(MCUpdateWork::ProgressText(1'500'000, 7'000'000), std::string("1.5 OF 7.0 MB"));
+
+    // The main menu foot's count: GB to a tenth, MB whole from 10 MB, to a tenth below; the whole not known, what's in.
+    CHECK_EQ(MCUpdateWork::CountText(3'100'000'000, 7'400'000'000), std::string("3.1 of 7.4 GB"));
+    CHECK_EQ(MCUpdateWork::CountText(120'400'000, 340'200'000), std::string("120 of 340 MB"));
+    CHECK_EQ(MCUpdateWork::CountText(400'000, 2'500'000), std::string("0.4 of 2.5 MB"));
+    CHECK_EQ(MCUpdateWork::CountText(120'400'000, 0), std::string("120 MB"));
+    CHECK_EQ(MCUpdateWork::CountText(1'500'000'000, 0), std::string("1.5 GB"));
 }
 
 TEST_CASE("update work: a download's speed and time left read as the first start's window shows them")

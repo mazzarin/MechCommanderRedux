@@ -57,6 +57,7 @@ namespace
     constexpr const char* CinemaId = "cinema";
     constexpr const char* QuitId = "quit";
     constexpr const char* UpdateId = "update";
+    constexpr const char* RestartId = "restart";
     constexpr const char* BackId = "back";
     constexpr const char* MainId = "main";
     constexpr const char* NewId = "new";
@@ -171,6 +172,9 @@ void MCMainMenuScreen::MakeModels(Rml::Context& context)
     model.Value("version", _Version);
     model.Value("update", _Update);
     model.Value("canUpdate", _CanUpdate);
+    model.Value("art", _Art);
+    model.Value("hasArt", _HasArt);
+    model.Value("canRestart", _CanRestart);
 
     switch (_Panel)
     {
@@ -222,6 +226,7 @@ void MCMainMenuScreen::OnLoaded(Rml::ElementDocument& /*document*/)
     };
 
     OnClick(UpdateId, [] { MCUpdateScreen::OpenFromMenus(); });
+    OnClick(RestartId, [] { MCMainMenuModel::RestartForArt(); });
 
     if (_Panel != MCMainPanel::Main)
     {
@@ -447,11 +452,14 @@ void MCMainMenuScreen::RefreshFoot()
 {
     MCMainMenuModel::MCFoot foot = MCMainMenuModel::Foot();
 
-    if (foot.Version != _Version || foot.Update != _Update)
+    if (foot.Version != _Version || foot.Update != _Update || foot.Art != _Art || foot.Restart != _CanRestart)
     {
         _Version = std::move(foot.Version);
         _Update = std::move(foot.Update);
         _CanUpdate = !_Update.empty();
+        _Art = std::move(foot.Art);
+        _HasArt = !_Art.empty();
+        _CanRestart = foot.Restart;
 
         if (_Model != nullptr)
         {

@@ -1483,6 +1483,11 @@ auto MCUpdater::DueArt() -> bool
            Offer->Content->Plan.Record.Sets.contains(MCContentList::HdSet);
 }
 
+auto MCUpdater::DueArtAlone() -> bool
+{
+    return DueArt() && !Offer->ProgramBuild && !Offer->Later;
+}
+
 auto MCUpdater::Answer(MCAnswer answer) -> void
 {
     if (!Available())

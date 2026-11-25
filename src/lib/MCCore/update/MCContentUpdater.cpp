@@ -558,8 +558,9 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
         offer.Content = std::move(*content);
     }
 
-    // The art due comes by itself, unasked.
+    // The art due comes by itself, unasked; with a later release than the art's, that release comes too.
     offer.Due = bringsDue && offer.Content != nullptr;
+    offer.Later = offer.Due && MCReleaseFile::OrderOf(release) > MCReleaseFile::MCOrder{due->Epoch, due->Release};
 
     if (offer.Due)
     {

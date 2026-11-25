@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCOptionalRef.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCUiDraws.h"
 
@@ -39,7 +40,7 @@ public:
     std::expected<void, std::string> Draw(const MCUiDraws& draws);
 
     /// <summary>The picture drawn last (RGBA32, premultiplied; none before the first).</summary>
-    const SDL_Surface* Picture() const { return _Surface.get(); }
+    MCOptionalRef<const SDL_Surface> Picture() const { return MCOptionalOf<const SDL_Surface>(_Surface.get()); }
 
     /// <summary>The boxes of the picture the last <see cref="Draw"/> drew (they may overlap); none: it's as it was.</summary>
     const std::vector<SDL_Rect>& Changed() const { return _Changed; }

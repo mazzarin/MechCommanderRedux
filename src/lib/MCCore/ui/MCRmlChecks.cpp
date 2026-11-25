@@ -327,15 +327,15 @@ namespace
     }
 
     /// <summary>The context's documents shown, in order.</summary>
-    std::vector<Rml::ElementDocument*> ShownDocuments(Rml::Context& context)
+    std::vector<std::reference_wrapper<Rml::ElementDocument>> ShownDocuments(Rml::Context& context)
     {
-        std::vector<Rml::ElementDocument*> shown;
+        std::vector<std::reference_wrapper<Rml::ElementDocument>> shown;
 
         for (int i = 0; i < context.GetNumDocuments(); ++i)
         {
             if (Rml::ElementDocument* document = context.GetDocument(i); document != nullptr && document->IsVisible())
             {
-                shown.push_back(document);
+                shown.push_back(*document);
             }
         }
 
@@ -361,9 +361,9 @@ namespace MCRmlChecks
         std::vector<MCText> found;
         const MCArea window = WindowOf(context);
 
-        for (Rml::ElementDocument* document : ShownDocuments(context))
+        for (Rml::ElementDocument& document : ShownDocuments(context))
         {
-            Walk(*document, unit, window, window, found);
+            Walk(document, unit, window, window, found);
         }
 
         return found;
@@ -374,9 +374,9 @@ namespace MCRmlChecks
         std::string wrong;
         const MCArea window = WindowOf(context);
 
-        for (Rml::ElementDocument* document : ShownDocuments(context))
+        for (Rml::ElementDocument& document : ShownDocuments(context))
         {
-            CheckBoxes(*document, window, window, wrong);
+            CheckBoxes(document, window, window, wrong);
         }
 
         return wrong;

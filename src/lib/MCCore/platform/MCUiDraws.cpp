@@ -13,6 +13,12 @@ namespace
 
     constexpr size_t PixelBytes = 4;
 
+    /// <summary>The pictures' numbers, across the run (<see cref="MCUiMakeTexture"/>).</summary>
+    std::atomic<uint64_t> NextTextureId{1};
+
+    /// <summary>A premultiplied colour that keeps what it multiplies (a picture's own colours).</summary>
+    constexpr std::array<uint8_t, 4> White{255, 255, 255, 255};
+
     /// <summary>
     /// <paramref name="place"/> texels into a texture <paramref name="size"/> wide: a whole texel when it lies that near
     /// one.
@@ -179,6 +185,35 @@ namespace
         quad.Texels = SDL_FRect{texelLeft, texelTop, texelRight - texelLeft, texelBottom - texelTop};
         return quad;
     }
+}
+
+std::shared_ptr<const MCUiTexture> MCUiMakeTexture(int32_t width, int32_t height, std::vector<uint8_t> pixels,
+                                                   bool smooth)
+{
+    auto texture = std::make_shared<MCUiTexture>();
+    texture->Id = NextTextureId.fetch_add(1, std::memory_order_relaxed);
+    texture->Width = width;
+    texture->Height = height;
+    texture->Pixels = std::move(pixels);
+    texture->Smooth = smooth;
+    return texture;
+}
+
+std::shared_ptr<const MCUiGeometry> MCUiPictureRectangle(int32_t width, int32_t height)
+{
+    const auto right = static_cast<float>(width);
+    const auto bottom = static_cast<float>(height);
+    auto geometry = std::make_shared<MCUiGeometry>();
+    geometry->Vertices = {
+        MCUiVertex{.X = 0.0f, .Y = 0.0f, .Color = White, .U = 0.0f, .V = 0.0f},
+        MCUiVertex{.X = right, .Y = 0.0f, .Color = White, .U = 1.0f, .V = 0.0f},
+        MCUiVertex{.X = right, .Y = bottom, .Color = White, .U = 1.0f, .V = 1.0f},
+        MCUiVertex{.X = 0.0f, .Y = bottom, .Color = White, .U = 0.0f, .V = 1.0f},
+    };
+
+    // Two triangles sharing the diagonal from the top left to the bottom right (MCUiPieces takes them as one rectangle).
+    geometry->Indices = {0, 1, 2, 0, 2, 3};
+    return geometry;
 }
 
 std::expected<MCSdlHandle<SDL_Surface>, std::string> MCUiScaled(const MCUiTexture& picture, const SDL_Rect& part,

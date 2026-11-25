@@ -133,9 +133,10 @@ namespace MCInput
     void SetGameCursor(std::shared_ptr<SDL_Cursor> cursor);
 
     /// <summary>
-    /// Port-only: whether the game draws its own cursor into its frame now (the software cursor, PREFS SoftwareCursor,
-    /// with a shape up). While the layer over the game has the mouse (<see cref="LayerHasMouse"/>), its screens would
-    /// cover that cursor: the system's arrow shows in its place (<see cref="ShownCursor"/>), and the game draws none.
+    /// Port-only: whether the game draws its own cursor now (the software cursor, PREFS SoftwareCursor, with a shape
+    /// up): into its frame, or, where the frame can't carry it at the mouse (under the layer's screens, drawn over the
+    /// frame, or over the bars beside it), over the whole window (MCCursor::DrawShapeOver). The system shows none then
+    /// (<see cref="ShownCursor"/>).
     /// </summary>
     void SetDrawnCursor(bool drawn);
 
@@ -168,7 +169,7 @@ namespace MCInput
         int Counter = 0;
         /// <summary>Whether the game gave its cursor as a system cursor (<see cref="SetGameCursor"/>).</summary>
         bool GameCursor = false;
-        /// <summary>Port-only: whether the game draws its cursor into its frame (<see cref="SetDrawnCursor"/>).</summary>
+        /// <summary>Port-only: whether the game draws its cursor (<see cref="SetDrawnCursor"/>).</summary>
         bool DrawnCursor = false;
         /// <summary>Port-only: what the layer over the game shows (<see cref="SetEventLayer"/>).</summary>
         MCLayerShows Layer = MCLayerShows::Nothing;
@@ -178,9 +179,9 @@ namespace MCInput
 
     /// <summary>
     /// The cursor the window shows: the system's arrow while the <see cref="ShowCursor"/> counter says so; else the
-    /// game's cursor if it gave one; else, while the layer over the game shows a screen (port-only: drawn over the
-    /// game's frame and its bars), the arrow in place of the cursor the game draws into the frame, if it draws one; else
-    /// the arrow over the letterbox bars, where the cursor drawn into the frame can't follow the mouse; else none.
+    /// game's cursor if it gave one; else none while the game draws its own (port-only: in its frame, or over the window
+    /// where the frame can't carry it), or while the layer over the game shows a screen (a cursor the game hides stays
+    /// hidden); else the arrow over the letterbox bars; else none.
     /// </summary>
     MCShownCursor ShownCursor(const MCCursorShowing& showing);
 
@@ -291,16 +292,26 @@ namespace MCInput
     /// mouse event (<see cref="GetCursorPos"/>). None: the game sees them all. Window events (closing, resizing, focus)
     /// always reach the game too. <paramref name="shows"/> says what the layer shows (asked as each pump starts: a
     /// screen swapped for another within a frame moves no mouse; none: nothing). While its screens fill the window, the
-    /// mouse may go anywhere in it, full screen too (<see cref="MouseArea"/>); while it shows any, the system's arrow
-    /// stands in for a cursor the game draws into its frame (<see cref="SetDrawnCursor"/>).
+    /// mouse may go anywhere in it, full screen too (<see cref="MouseArea"/>); while it shows any, a cursor the game
+    /// draws is drawn over them (<see cref="SetDrawnCursor"/>).
     /// </summary>
     void SetEventLayer(std::function<bool(const SDL_Event&)> layer, std::function<MCLayerShows()> shows = {});
 
     /// <summary>
-    /// Port-only: whether the layer over the game shows a screen, as the pump last asked (<see cref="SetEventLayer"/>):
-    /// the mouse is its, and a cursor the game drew into its frame would be under its screens (<see cref="SetDrawnCursor"/>).
+    /// Port-only: whether the layer over the game shows a screen now (<see cref="SetEventLayer"/>, asked now, not as the
+    /// pump last asked): its screens are drawn over the frame, and a cursor the game drew into it would be under them
+    /// (<see cref="SetDrawnCursor"/>).
     /// </summary>
-    bool LayerHasMouse();
+    bool LayerShowsScreen();
+
+    /// <summary>Port-only: whether the mouse is over the window's letterbox bars, not the picture, as its last event put it.</summary>
+    bool OverBars();
+
+    /// <summary>
+    /// Port-only: the window pixel the mouse is over, as its last event (or the game's warp) put it, the window pixel it
+    /// falls in as the menus take it; before any, where the game's cursor is. None without a display.
+    /// </summary>
+    std::optional<SDL_Point> MousePixel();
 
     /// <summary>The VK code Windows gives the key at <paramref name="scancode"/> (US layout for the symbol keys; letters follow <paramref name="key"/>).</summary>
     /// <param name="scancode">The physical key.</param>

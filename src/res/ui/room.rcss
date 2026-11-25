@@ -84,6 +84,10 @@
 .map-title { font-size: 11.63dp; line-height: 15dp; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
 .map-change { margin-top: 10dp; }
 .map-text { font-size: 9.51dp; line-height: 12dp; color: #dce4e4; margin-top: 8dp; }
+/* The map's own words, 1998's (its name and description): RmlUi wraps a line to its box's width rounded up to a whole
+   pixel, so they wrap a pixel short of their box and none runs past it; a word longer than a line (BLOODGRW's name,
+   POWRLOCK's row of asterisks) breaks at the box's edge, as a save's name does. */
+.map-title, .map-text .para { padding-right: 1px; word-break: break-word; }
 
 /* The match options as played, a row each in MATCH OPTIONS' order, the tonnage limit first: the mission's, one value,
    or the host's for each team, a value under each team's name (right-aligned with the other values); WEAPONS as how

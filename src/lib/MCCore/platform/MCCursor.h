@@ -83,6 +83,19 @@ namespace MCCursor
     /// </summary>
     void Show(const MCCursorImage& picture);
 
+    /// <summary>
+    /// Port-only (SPEC-menus.md): preloaded shape <paramref name="shape"/> drawn over the whole window, over the menus'
+    /// draws too, with its hot spot on window pixel <paramref name="at"/> (MCDisplay::SetCursorOver), for the software
+    /// cursor where the game's frame can't carry it: the picture <see cref="ShowShape"/> would show as the system's
+    /// (its HD copy where the pack has one, recoloured as there), at the size the battle shows the game's cursor in this
+    /// window (MCDisplay::FollowingPixelScale). Made again only when its shape, colours or size change; an empty
+    /// picture draws none.
+    /// </summary>
+    void DrawShapeOver(size_t shape, SDL_Point at);
+
+    /// <summary>Port-only: no cursor drawn over the window (<see cref="DrawShapeOver"/>); cheap to call every frame.</summary>
+    void DrawNothingOver();
+
     /// <summary>How many SDL cursors have been made (tests).</summary>
     uint64_t CursorsMade();
 

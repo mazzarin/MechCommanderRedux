@@ -576,6 +576,71 @@ void MCDisplay::PixelScale(float& scaleX, float& scaleY) const
     scaleY = viewport.H / static_cast<float>(_View.h);
 }
 
+void MCDisplay::FollowingPixelScale(float& scaleX, float& scaleY) const
+{
+    int pixelWidth = 0;
+    int pixelHeight = 0;
+
+    if (!_FollowWindow || !WindowPixelSize(pixelWidth, pixelHeight))
+    {
+        PixelScale(scaleX, scaleY);
+        return;
+    }
+
+    const SDL_Point screen = ScreenSizeFor(pixelWidth, pixelHeight);
+    const MCViewport viewport = _Presenter->Viewport(screen.x, screen.y);
+
+    if (screen.x <= 0 || screen.y <= 0 || viewport.W <= 0.0f || viewport.H <= 0.0f)
+    {
+        PixelScale(scaleX, scaleY);
+        return;
+    }
+
+    scaleX = viewport.W / static_cast<float>(screen.x);
+    scaleY = viewport.H / static_cast<float>(screen.y);
+}
+
+std::shared_ptr<const MCUiDraws> MCDisplay::ShownOverlay()
+{
+    if (!_CursorOver.has_value())
+    {
+        _ShownOverlay.reset();
+        _ShownMenus.reset();
+        return _Overlay;
+    }
+
+    // Over the menus' window, or, with none up, the window's pixels now.
+    int width = _Overlay != nullptr ? _Overlay->Width : 0;
+    int height = _Overlay != nullptr ? _Overlay->Height : 0;
+
+    if (_Overlay == nullptr && !WindowPixelSize(width, height))
+    {
+        return nullptr;
+    }
+
+    if (_ShownOverlay != nullptr && _ShownMenus == _Overlay && _ShownOverlay->Width == width &&
+        _ShownOverlay->Height == height && !_ShownOverlay->Draws.empty() &&
+        MCUiSameDraw(_ShownOverlay->Draws.back(), *_CursorOver))
+    {
+        return _ShownOverlay;
+    }
+
+    auto shown = std::make_shared<MCUiDraws>();
+    shown->Width = width;
+    shown->Height = height;
+
+    if (_Overlay != nullptr)
+    {
+        shown->Draws.reserve(_Overlay->Draws.size() + 1);
+        shown->Draws.insert(shown->Draws.end(), _Overlay->Draws.begin(), _Overlay->Draws.end());
+    }
+
+    shown->Draws.push_back(*_CursorOver);
+    _ShownOverlay = std::move(shown);
+    _ShownMenus = _Overlay;
+    return _ShownOverlay;
+}
+
 MCFrame MCDisplay::LayoutFrame() const
 {
     MCFrame frame{.Screen = *_Screen};
@@ -621,7 +686,7 @@ MCFrame MCDisplay::BuildFrame(bool allColors)
     frame.Fade = _Fade;
     frame.FadeScales = _FadeScales;
     frame.Number = _Presents;
-    frame.Overlay = _Overlay;
+    frame.Overlay = ShownOverlay();
     return frame;
 }
 
@@ -787,23 +852,25 @@ std::expected<MCDisplay::MCShownScreen, std::string> MCDisplay::ReadWindow()
         }
     }
 
-    if (_Overlay == nullptr || _Overlay->Draws.empty())
+    const std::shared_ptr<const MCUiDraws> drawn = ShownOverlay();
+
+    if (drawn == nullptr || drawn->Draws.empty())
     {
         return window;
     }
 
-    auto overlay = _Presenter->ReadOverlay(*_Overlay);
+    auto overlay = _Presenter->ReadOverlay(*drawn);
 
     if (!overlay)
     {
         return std::unexpected(overlay.error());
     }
 
-    if (_Overlay->Width != width || _Overlay->Height != height ||
+    if (drawn->Width != width || drawn->Height != height ||
         overlay->size() != static_cast<size_t>(width) * static_cast<size_t>(height))
     {
-        return std::unexpected(std::format("the menus' draws are for a {}x{} window, not this {}x{} one",
-                                           _Overlay->Width, _Overlay->Height, width, height));
+        return std::unexpected(std::format("the menus' draws are for a {}x{} window, not this {}x{} one", drawn->Width,
+                                           drawn->Height, width, height));
     }
 
     // Premultiplied over the picture: each channel its own plus the picture's times what the menus leave of it.

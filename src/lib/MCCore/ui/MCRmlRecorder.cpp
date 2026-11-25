@@ -8,9 +8,6 @@ namespace
 {
     /// <summary>The bytes of an RGBA8 pixel.</summary>
     constexpr size_t PixelBytes = 4;
-
-    /// <summary>The pictures' numbers, across every recorder of the run.</summary>
-    std::atomic<uint64_t> NextTextureId{1};
 }
 
 MCRmlRecorder::MCRmlRecorder(MCLoader loader) : _Loader(std::move(loader))
@@ -35,13 +32,7 @@ std::shared_ptr<const MCUiDraws> MCRmlRecorder::Finish()
 std::shared_ptr<const MCUiTexture> MCRmlRecorder::MakeTexture(int32_t width, int32_t height,
                                                               std::vector<uint8_t> pixels, bool smooth)
 {
-    auto texture = std::make_shared<MCUiTexture>();
-    texture->Id = NextTextureId.fetch_add(1, std::memory_order_relaxed);
-    texture->Width = width;
-    texture->Height = height;
-    texture->Pixels = std::move(pixels);
-    texture->Smooth = smooth;
-    return texture;
+    return MCUiMakeTexture(width, height, std::move(pixels), smooth);
 }
 
 Rml::CompiledGeometryHandle MCRmlRecorder::CompileGeometry(Rml::Span<const Rml::Vertex> vertices,

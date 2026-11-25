@@ -2,6 +2,7 @@
 #include "gui/MCHardwareCursor.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
+#include "platform/MCInput.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
@@ -142,14 +143,21 @@ void MCHardwareCursorPreload(std::span<const MCRegisteredBlock> shapes)
                       });
 }
 
+namespace
+{
+    /// <summary>Port-only: HD art turned on or off, or another pack: the pictures made again.</summary>
+    void FollowHdArt()
+    {
+        if (Preloaded && (MCHdArt::PackVersion() != PreloadedPack || MCHdArt::Active() != PreloadedHdArt))
+        {
+            MCHardwareCursorPreload(GuiSystem().CursorShapes());
+        }
+    }
+}
+
 void MCHardwareCursorUpdate()
 {
-    // Port-only: HD art turned on or off, or another pack: the pictures again.
-    if (Preloaded && (MCHdArt::PackVersion() != PreloadedPack || MCHdArt::Active() != PreloadedHdArt))
-    {
-        MCHardwareCursorPreload(GuiSystem().CursorShapes());
-    }
-
+    FollowHdArt();
     const int32_t shape = GuiSystem().CursorShape;
     const bool hasShape = shape >= 0 && MCCursor::ShapeImage(static_cast<size_t>(shape)).Width > 0;
 
@@ -161,4 +169,19 @@ void MCHardwareCursorUpdate()
     {
         MCCursor::Hide();
     }
+}
+
+void MCCursorDrawnOver(bool over)
+{
+    const int32_t shape = GuiSystem().CursorShape;
+    const std::optional<SDL_Point> at = over && shape >= 0 ? MCInput::MousePixel() : std::nullopt;
+
+    if (!at.has_value())
+    {
+        MCCursor::DrawNothingOver();
+        return;
+    }
+
+    FollowHdArt();
+    MCCursor::DrawShapeOver(static_cast<size_t>(shape), *at);
 }

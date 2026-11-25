@@ -1,5 +1,6 @@
 #pragma once
 
+#include <RmlUi/Core/ObserverPtr.h>
 #include <SDL3/SDL_events.h>
 
 #include "gui/MCGuiRef.h"
@@ -194,13 +195,14 @@ private:
     /// <summary>RmlUi's (its context owns the document; the screen closes it).</summary>
     Rml::ElementDocument* _Document = nullptr;
     /// <summary>
-    /// The screen's listeners on its elements (an Rml::EventListener each), and what they listen to; shared, so an
-    /// action running when the screen is destroyed lives until it returns.
+    /// The screen's listeners on its elements (an Rml::EventListener each), and what they listen to, watched (an
+    /// element RmlUi replaces takes its listeners with it); shared, so an action running when the screen is destroyed
+    /// lives until it returns.
     /// </summary>
     class MCAction;
     struct MCListening
     {
-        Rml::Element* Element = nullptr;
+        Rml::ObserverPtr<Rml::Element> Element;
         int Event = 0;
         std::shared_ptr<MCAction> Action;
     };

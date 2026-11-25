@@ -334,8 +334,8 @@ bool MCRmlScreen::Listen(const std::string& id, Rml::EventId event, std::functio
 
     auto action = std::make_shared<MCAction>(weak_from_this(), std::move(act));
     element->AddEventListener(event, action.get());
-    _Listening.push_back(
-        MCListening{.Element = element, .Event = static_cast<int>(event), .Action = std::move(action)});
+    _Listening.push_back(MCListening{
+        .Element = element->GetObserverPtr(), .Event = static_cast<int>(event), .Action = std::move(action)});
     return true;
 }
 
@@ -365,8 +365,9 @@ bool MCRmlScreen::OnText(const std::string& id, std::function<void(const std::st
         weak_from_this(), [act = std::move(act)](Rml::Event& event)
         { act(event.GetParameter<Rml::String>("value", ""), event.GetParameter<bool>("linebreak", false)); });
     element->AddEventListener(Rml::EventId::Change, action.get());
-    _Listening.push_back(
-        MCListening{.Element = element, .Event = static_cast<int>(Rml::EventId::Change), .Action = std::move(action)});
+    _Listening.push_back(MCListening{.Element = element->GetObserverPtr(),
+                                     .Event = static_cast<int>(Rml::EventId::Change),
+                                     .Action = std::move(action)});
     return true;
 }
 
@@ -389,8 +390,9 @@ bool MCRmlScreen::OnChangeIn(const std::string& id, std::function<void(const std
                                                      event.GetParameter<int>("value", 0));
                                              });
     element->AddEventListener(Rml::EventId::Change, action.get());
-    _Listening.push_back(
-        MCListening{.Element = element, .Event = static_cast<int>(Rml::EventId::Change), .Action = std::move(action)});
+    _Listening.push_back(MCListening{.Element = element->GetObserverPtr(),
+                                     .Event = static_cast<int>(Rml::EventId::Change),
+                                     .Action = std::move(action)});
     return true;
 }
 
@@ -419,8 +421,9 @@ void MCRmlScreen::TakeKeysFirst()
                                                  }
                                              });
     _Document->AddEventListener(Rml::EventId::Keydown, action.get());
-    _Listening.push_back(MCListening{
-        .Element = _Document, .Event = static_cast<int>(Rml::EventId::Keydown), .Action = std::move(action)});
+    _Listening.push_back(MCListening{.Element = _Document->GetObserverPtr(),
+                                     .Event = static_cast<int>(Rml::EventId::Keydown),
+                                     .Action = std::move(action)});
 }
 
 void MCRmlScreen::Destroy()
@@ -436,10 +439,15 @@ void MCRmlScreen::Destroy()
 
     if (_Document != nullptr)
     {
-        // The listeners off their elements first: RmlUi destroys a closed document's elements a frame later.
+        // The listeners off their elements first: RmlUi destroys a closed document's elements a frame later. One whose
+        // element is gone already (rows put in again) went with it.
         for (MCListening& listening : _Listening)
         {
-            listening.Element->RemoveEventListener(static_cast<Rml::EventId>(listening.Event), listening.Action.get());
+            if (listening.Element)
+            {
+                listening.Element->RemoveEventListener(static_cast<Rml::EventId>(listening.Event),
+                                                       listening.Action.get());
+            }
         }
 
         _Listening.clear();

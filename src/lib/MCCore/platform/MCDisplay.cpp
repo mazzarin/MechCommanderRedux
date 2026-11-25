@@ -3,6 +3,7 @@
 #include "main/MCGameContext.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCRenderer.h"
+#include "platform/MCSdlHandle.h"
 #include "platform/MCSdlPresenter.h"
 #include "platform/MCVulkanPresenter.h"
 #include "sprite/MCHdArt.h"
@@ -743,16 +744,15 @@ std::expected<void, std::string> MCDisplay::SaveShownScreenshot(const std::files
         return std::unexpected(screen.error());
     }
 
-    SDL_Surface* surface = SDL_CreateSurfaceFrom(screen->Width, screen->Height, SDL_PIXELFORMAT_RGBA32,
-                                                 screen->Pixels.data(), screen->Width * sizeof(SDL_Color));
+    const MCSdlHandle<SDL_Surface> surface(SDL_CreateSurfaceFrom(
+        screen->Width, screen->Height, SDL_PIXELFORMAT_RGBA32, screen->Pixels.data(), screen->Width * sizeof(SDL_Color)));
 
     if (surface == nullptr)
     {
         return std::unexpected(SdlError("SDL_CreateSurfaceFrom"));
     }
 
-    const bool saved = SDL_SavePNG(surface, MCFileSystem::ToUtf8(path).c_str());
-    SDL_DestroySurface(surface);
+    const bool saved = SDL_SavePNG(surface.get(), MCFileSystem::ToUtf8(path).c_str());
 
     if (!saved)
     {

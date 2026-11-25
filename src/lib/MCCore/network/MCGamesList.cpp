@@ -130,10 +130,14 @@ namespace
         return key;
     }
 
-    MCSessionManager* Manager()
+    /// <summary>
+    /// The game's multiplayer when it has a SessionManager (null otherwise). Its caller holds this pin for as long as
+    /// it uses the manager, which, once made, lives as long as the game.
+    /// </summary>
+    std::shared_ptr<MCMultiPlayer> ManagedGame()
     {
-        const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
-        return game != nullptr ? game->SessionManager.get() : nullptr;
+        std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+        return game != nullptr && game->SessionManager != nullptr ? game : nullptr;
     }
 
     /// <summary>A host's refusal at the door (the options it lacks, in the host's capitals) in a sentence.</summary>
@@ -277,14 +281,15 @@ bool MCGamesList::Update()
 
 bool MCGamesList::ReadLanGames()
 {
-    MCSessionManager* manager = Manager();
+    const std::shared_ptr<MCMultiPlayer> multiPlayer = ManagedGame();
     std::vector<MCListedGame> games;
 
-    if (manager != nullptr)
+    if (multiPlayer != nullptr)
     {
+        MCSessionManager& manager = *multiPlayer->SessionManager;
         // The sessions that have players (an empty one is remembered as gone and never listed again; the scan stops at
         // the first such), as the 1998 LAN screen's list kept them, each with its players read before joining.
-        const std::optional<std::vector<std::shared_ptr<MCFidpSession>>> sessions = manager->GetSessions(false);
+        const std::optional<std::vector<std::shared_ptr<MCFidpSession>>> sessions = manager.GetSessions(false);
 
         for (size_t i = 0; sessions.has_value() && i < sessions->size(); i++)
         {
@@ -295,7 +300,7 @@ bool MCGamesList::ReadLanGames()
                 break;
             }
 
-            const std::vector<std::shared_ptr<MCFidpPlayer>>& players = manager->GetPlayers(session);
+            const std::vector<std::shared_ptr<MCFidpPlayer>>& players = manager.GetPlayers(session);
 
             if (players.empty())
             {
@@ -420,9 +425,9 @@ bool MCGameJoin::Begin(MCAsk ask)
     _NeedsUpdate = false;
     _Searches = 0;
     _NextSearch = Clock::now();
-    MCSessionManager* manager = Manager();
+    const std::shared_ptr<MCMultiPlayer> multiPlayer = ManagedGame();
 
-    if (manager == nullptr)
+    if (multiPlayer == nullptr)
     {
         Refuse(_Ask->Hosting ? std::string(NotHostedText) : std::format(UnreachableFormat, _Ask->Shown), true);
         return false;
@@ -437,11 +442,12 @@ bool MCGameJoin::Begin(MCAsk ask)
     // The connection is chosen first (choosing it again would leave the session, and the game with it); a guest's
     // address is its game's code, as the links name it. A public game (a host's choice, or a guest's game from the
     // service's list) takes relays only.
-    manager->ConnectTcp(_Ask->Hosting ? std::string_view() : std::string_view(_Ask->Key));
+    MCSessionManager& manager = *multiPlayer->SessionManager;
+    manager.ConnectTcp(_Ask->Hosting ? std::string_view() : std::string_view(_Ask->Key));
     const bool isPublic = _Ask->Hosting ? _Ask->Public : !_Ask->Typed;
 
-    if (!manager->BeginInternet(_Ask->Hosting, _Ask->Hosting ? std::string_view() : std::string_view(_Ask->Key),
-                                isPublic))
+    if (!manager.BeginInternet(_Ask->Hosting, _Ask->Hosting ? std::string_view() : std::string_view(_Ask->Key),
+                               isPublic))
     {
         Refuse(std::string(NoInternetText));
         return false;
@@ -460,10 +466,10 @@ void MCGameJoin::Refuse(std::string text, bool canRetry, bool needsUpdate)
     _NeedsUpdate = needsUpdate;
     _End = MCEnd::Refused;
 
-    if (MCSessionManager* manager = Manager();
-        manager != nullptr && _Ask.has_value() && _Ask->Where == MCGamesWhere::Internet)
+    if (const std::shared_ptr<MCMultiPlayer> multiPlayer = ManagedGame();
+        multiPlayer != nullptr && _Ask.has_value() && _Ask->Where == MCGamesWhere::Internet)
     {
-        manager->EndInternet();
+        multiPlayer->SessionManager->EndInternet();
     }
 }
 
@@ -532,12 +538,12 @@ auto MCGameJoin::Tend() -> MCEnd
 
 auto MCGameJoin::TendLan() -> MCEnd
 {
-    MCSessionManager* manager = Manager();
+    const std::shared_ptr<MCMultiPlayer> multiPlayer = MultiPlayer();
     const MCAsk& ask = *_Ask;
 
     if (ask.Hosting)
     {
-        if (MultiPlayer()->CreateSession(ask.GameName, ask.PlayerName, ask.MaxPlayers) != 0)
+        if (multiPlayer->CreateSession(ask.GameName, ask.PlayerName, ask.MaxPlayers) != 0)
         {
             Refuse(std::string(NotHostedText), true);
             return _End;
@@ -547,7 +553,8 @@ auto MCGameJoin::TendLan() -> MCEnd
     }
 
     // The session as last heard (the list's read doesn't wait for answers, nor does this).
-    const std::optional<std::vector<std::shared_ptr<MCFidpSession>>> sessions = manager->GetSessions(false);
+    MCSessionManager& manager = *multiPlayer->SessionManager;
+    const std::optional<std::vector<std::shared_ptr<MCFidpSession>>> sessions = manager.GetSessions(false);
     std::shared_ptr<MCFidpSession> room;
 
     for (size_t i = 0; sessions.has_value() && i < sessions->size() && room == nullptr; i++)
@@ -570,20 +577,20 @@ auto MCGameJoin::TendLan() -> MCEnd
         return _End;
     }
 
-    if (manager->JoinSession(room->SessionDesc.guidInstance, ask.PlayerName) == 0)
+    if (manager.JoinSession(room->SessionDesc.guidInstance, ask.PlayerName) == 0)
     {
-        NumLanPlayers = static_cast<int32_t>(manager->GetPlayers(nullptr).size());
+        NumLanPlayers = static_cast<int32_t>(manager.GetPlayers(nullptr).size());
         return MCEnd::Joined;
     }
 
     // The host refused this game at the door, saying why, or the room can't be joined.
-    if (const std::string refusal = manager->RefusalReason(); !refusal.empty())
+    if (const std::string refusal = manager.RefusalReason(); !refusal.empty())
     {
         Refuse(LacksText(refusal));
         return _End;
     }
 
-    switch (manager->LastRoomRefusal)
+    switch (manager.LastRoomRefusal)
     {
         case MCRoomRefusal::Full:
             Refuse(std::format(FullFormat, ask.Shown));
@@ -601,19 +608,20 @@ auto MCGameJoin::TendLan() -> MCEnd
 
 auto MCGameJoin::TendInternet() -> MCEnd
 {
-    MCSessionManager* manager = Manager();
+    const std::shared_ptr<MCMultiPlayer> multiPlayer = ManagedGame();
 
-    if (manager == nullptr || manager->Internet == nullptr)
+    if (multiPlayer == nullptr || multiPlayer->SessionManager->Internet == nullptr)
     {
         RefuseFor(std::nullopt);
         return _End;
     }
 
-    const MCInternetGame::Stage stage = manager->Internet->Update();
+    MCSessionManager& manager = *multiPlayer->SessionManager;
+    const MCInternetGame::Stage stage = manager.Internet->Update();
 
     if (stage == MCInternetGame::Stage::Failed)
     {
-        RefuseFor(manager->Internet->Refusal());
+        RefuseFor(manager.Internet->Refusal());
         return _End;
     }
 
@@ -626,7 +634,7 @@ auto MCGameJoin::TendInternet() -> MCEnd
 
     if (ask.Hosting)
     {
-        if (MultiPlayer()->CreateSession(ask.GameName, ask.PlayerName, ask.MaxPlayers) != 0)
+        if (multiPlayer->CreateSession(ask.GameName, ask.PlayerName, ask.MaxPlayers) != 0)
         {
             Refuse(std::string(NotHostedText), true);
             return _End;
@@ -651,7 +659,7 @@ auto MCGameJoin::TendInternet() -> MCEnd
         return _End;
     }
 
-    const std::optional<std::vector<std::shared_ptr<MCFidpSession>>> rooms = manager->GetSessions();
+    const std::optional<std::vector<std::shared_ptr<MCFidpSession>>> rooms = manager.GetSessions();
 
     if (!rooms.has_value() || rooms->empty())
     {
@@ -666,14 +674,14 @@ auto MCGameJoin::TendInternet() -> MCEnd
         return _End;
     }
 
-    if (manager->JoinSession(room.SessionDesc.guidInstance, ask.PlayerName) == 0)
+    if (manager.JoinSession(room.SessionDesc.guidInstance, ask.PlayerName) == 0)
     {
-        NumLanPlayers = static_cast<int32_t>(manager->GetPlayers(nullptr).size());
+        NumLanPlayers = static_cast<int32_t>(manager.GetPlayers(nullptr).size());
         return MCEnd::Joined;
     }
 
     // The host refused this game at the door, saying why, or the room can't be joined.
-    const std::string refusal = manager->RefusalReason();
+    const std::string refusal = manager.RefusalReason();
     Refuse(!refusal.empty() ? LacksText(refusal) : std::format(UnreachableFormat, ask.Shown), refusal.empty());
     return _End;
 }
@@ -688,8 +696,9 @@ void MCGameJoin::CallOff()
     SDL_Log("Games: %s %s called off", _Ask->Hosting ? "hosting" : "joining", _Ask->Shown.c_str());
     _End = MCEnd::CalledOff;
 
-    if (MCSessionManager* manager = Manager(); manager != nullptr && _Ask->Where == MCGamesWhere::Internet)
+    if (const std::shared_ptr<MCMultiPlayer> multiPlayer = ManagedGame();
+        multiPlayer != nullptr && _Ask->Where == MCGamesWhere::Internet)
     {
-        manager->EndInternet();
+        multiPlayer->SessionManager->EndInternet();
     }
 }

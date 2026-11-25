@@ -194,8 +194,11 @@ private:
     std::string _Error;
     /// <summary>The layer, which outlives its screens (it destroys them first).</summary>
     MCOptionalRef<MCRmlLayer> _Layer;
-    /// <summary>RmlUi's (its context owns the document; the screen closes it).</summary>
-    Rml::ElementDocument* _Document = nullptr;
+    /// <summary>
+    /// The document, RmlUi's (its context owns it; the screen closes it), watched: one RmlUi freed first (its
+    /// shutdown) is none.
+    /// </summary>
+    Rml::ObserverPtr<Rml::Element> _Document;
     /// <summary>
     /// The screen's listeners on its elements (an Rml::EventListener each), and what they listen to, watched (an
     /// element RmlUi replaces takes its listeners with it); shared, so an action running when the screen is destroyed

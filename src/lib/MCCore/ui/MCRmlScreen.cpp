@@ -93,17 +93,18 @@ MCRmlLayer& MCRmlScreen::Layer() const
 
 MCOptionalRef<Rml::ElementDocument> MCRmlScreen::Document() const
 {
-    return MCOptionalOf(_Document);
+    // Only a document is watched (Read).
+    return MCOptionalOf(static_cast<Rml::ElementDocument*>(_Document.get()));
 }
 
 MCOptionalRef<Rml::Element> MCRmlScreen::ElementById(const std::string& id) const
 {
-    return _Document != nullptr ? MCOptionalOf(_Document->GetElementById(id)) : std::nullopt;
+    return _Document ? MCOptionalOf(_Document->GetElementById(id)) : std::nullopt;
 }
 
 void MCRmlScreen::ReadStyle()
 {
-    if (_Destroyed || _Document != nullptr || !_Error.empty())
+    if (_Destroyed || _Document || !_Error.empty())
     {
         return;
     }
@@ -138,27 +139,29 @@ void MCRmlScreen::ReadStyle()
 
 void MCRmlScreen::Read()
 {
-    if (_Destroyed || _Document != nullptr || !_Error.empty())
+    if (_Destroyed || _Document || !_Error.empty())
     {
         return;
     }
 
     Rml::Context& context = Layer().Context();
     MakeModels(context);
-    _Document = _Text.empty() ? context.LoadDocument(_Path) : context.LoadDocumentFromMemory(_Text, _Path);
+    Rml::ElementDocument* const document =
+        _Text.empty() ? context.LoadDocument(_Path) : context.LoadDocumentFromMemory(_Text, _Path);
     _Text.clear();
     _Text.shrink_to_fit();
 
-    if (_Document == nullptr)
+    if (document == nullptr)
     {
         Unreadable();
         return;
     }
 
     // Hidden until shown: it is styled and laid out, and its first frame recorded, while the screen before shows.
-    _Document->Hide();
-    Layer().Kit().Attach(*_Document);
-    OnLoaded(*_Document);
+    _Document = document->GetObserverPtr();
+    document->Hide();
+    Layer().Kit().Attach(*document);
+    OnLoaded(*document);
 }
 
 void MCRmlScreen::Unreadable()
@@ -168,9 +171,9 @@ void MCRmlScreen::Unreadable()
 
 void MCRmlScreen::LayOut()
 {
-    if (_Document != nullptr)
+    if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
     {
-        _Document->UpdateDocument();
+        document->get().UpdateDocument();
     }
 }
 
@@ -178,7 +181,7 @@ void MCRmlScreen::Record()
 {
     // A hidden document draws nothing, so its first draw (its letters' textures and its pictures' reads) is made by
     // its first shown frame; here what can be made without showing it: its layout, done.
-    _Recorded = _Document != nullptr;
+    _Recorded = static_cast<bool>(_Document);
 }
 
 std::vector<MCScreenChange::MCPiece> MCRmlScreen::Prepare()
@@ -232,17 +235,18 @@ MCOptionalRef<Rml::Element> MCRmlScreen::FirstFocus(Rml::ElementDocument& docume
 
 void MCRmlScreen::Show()
 {
-    if (_Document == nullptr || _Destroyed)
+    if (!_Document || _Destroyed)
     {
         return;
     }
 
     OnShow();
     ShowKeys();
-    _Document->Show(Modal ? Rml::ModalFlag::Modal : Rml::ModalFlag::None, Rml::FocusFlag::Document);
+    Rml::ElementDocument& document = Document()->get();
+    document.Show(Modal ? Rml::ModalFlag::Modal : Rml::ModalFlag::None, Rml::FocusFlag::Document);
 
     // The focus on what the player most likely wants, without its ring until a key is pressed.
-    if (const MCOptionalRef<Rml::Element> first = FirstFocus(*_Document); first.has_value())
+    if (const MCOptionalRef<Rml::Element> first = FirstFocus(document); first.has_value())
     {
         first->get().Focus(false);
     }
@@ -253,7 +257,7 @@ void MCRmlScreen::Show()
 
 void MCRmlScreen::ShowKeys()
 {
-    if (_Document == nullptr)
+    if (!_Document)
     {
         return;
     }
@@ -277,9 +281,9 @@ void MCRmlScreen::ShowKeys()
 
 void MCRmlScreen::Hide()
 {
-    if (_Document != nullptr && _Shown)
+    if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value() && _Shown)
     {
-        _Document->Hide();
+        document->get().Hide();
     }
 
     if (_Shown)
@@ -305,13 +309,13 @@ void MCRmlScreen::FocusBelow()
     Rml::Element* focus = Layer().Context().GetFocusElement();
     const MCOptionalRef<MCRmlScreen> top = Layer().Top();
 
-    if (_Document == nullptr || focus == nullptr || focus->GetOwnerDocument() != _Document || !top.has_value() ||
-        top->get()._Document == nullptr)
+    if (!_Document || focus == nullptr || focus->GetOwnerDocument() != _Document.get() || !top.has_value() ||
+        !top->get()._Document)
     {
         return;
     }
 
-    Rml::ElementDocument& below = *top->get()._Document;
+    Rml::ElementDocument& below = top->get().Document()->get();
 
     if (Rml::Element* leaf = below.GetFocusLeafNode(); leaf != &below && leaf->IsVisible(true))
     {
@@ -408,7 +412,7 @@ bool MCRmlScreen::OnKey(int /*key*/, int /*modifiers*/)
 
 void MCRmlScreen::TakeKeysFirst()
 {
-    if (_Document == nullptr)
+    if (!_Document)
     {
         SDL_Log("Menus: %s has no document to take its keys from", _Path.c_str());
         return;
@@ -426,9 +430,8 @@ void MCRmlScreen::TakeKeysFirst()
                                                  }
                                              });
     _Document->AddEventListener(Rml::EventId::Keydown, action.get());
-    _Listening.push_back(MCListening{.Element = _Document->GetObserverPtr(),
-                                     .Event = static_cast<int>(Rml::EventId::Keydown),
-                                     .Action = std::move(action)});
+    _Listening.push_back(MCListening{
+        .Element = _Document, .Event = static_cast<int>(Rml::EventId::Keydown), .Action = std::move(action)});
 }
 
 void MCRmlScreen::Destroy()
@@ -442,7 +445,7 @@ void MCRmlScreen::Destroy()
     _Destroyed = true;
     Hide();
 
-    if (_Document != nullptr)
+    if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
     {
         // The listeners off their elements first: RmlUi destroys a closed document's elements a frame later. One whose
         // element is gone already (rows put in again) went with it.
@@ -459,11 +462,11 @@ void MCRmlScreen::Destroy()
 
         if (_Layer.has_value())
         {
-            Layer().Kit().Detach(*_Document);
+            Layer().Kit().Detach(*document);
         }
 
-        _Document->Close();
-        _Document = nullptr;
+        document->get().Close();
+        _Document.reset();
     }
 
     if (_Layer.has_value())

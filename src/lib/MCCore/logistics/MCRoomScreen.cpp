@@ -48,6 +48,8 @@ namespace
     constexpr std::string_view NoTimeLimit = "0:00";
     constexpr std::string_view ToPlanning = "to begin planning.";
     constexpr std::string_view ToChoose = "to choose a map and the teams.";
+    constexpr std::string_view ToChooseMap = "to choose a map.";
+    constexpr std::string_view ToChooseTeams = "to choose the teams.";
     constexpr std::string_view AllWeaponsFormat = "All {}";
     constexpr std::string_view SomeWeaponsFormat = "{} of {}";
 
@@ -412,8 +414,9 @@ void MCRoomScreen::ShowTeams(const std::vector<MCRoomModel::MCPlayer>& players)
 
 void MCRoomScreen::ShowMatch()
 {
+    // The host's mission, or a guest's as its host named it (a guest has no file of the room's).
     const MCRoomModel& room = Room();
-    const bool hasMap = !room.MissionFile.empty();
+    const bool hasMap = room.HasMission();
     Keep("has_map", _HasMap, hasMap);
     Keep("map_title", _MapTitle, hasMap ? room.MissionName : std::string());
     Keep("map_pic", _MapPic,
@@ -516,14 +519,18 @@ void MCRoomScreen::ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players)
     Keep("update_line", _UpdateLine,
          room.StartWaits.empty() && MCLobbyUpdate::InRoom() ? Sentence(UpdateLineText()) : std::string());
 
-    // A guest waits for the host: to choose a map and the teams, then to begin planning.
+    // A guest waits for the host: to choose a map and the teams, or whichever is left, then to begin planning.
     const auto host = std::ranges::find(players, true, &MCRoomModel::MCPlayer::Host);
-    const bool placed = std::ranges::all_of(players, [](const MCRoomModel::MCPlayer& player)
-                                            { return player.Team != MCRoomModel::NoTeam; });
+    const bool hasMap = room.HasMission();
+    const bool placed = !players.empty() && std::ranges::all_of(players, [](const MCRoomModel::MCPlayer& player)
+                                                                { return player.Team != MCRoomModel::NoTeam; });
     Keep("wait_name", _WaitName, host != players.end() && !room.Hosting() ? host->Name : std::string());
     Keep("wait_colour", _WaitColour, host != players.end() ? MCChatView::ColourOf(host->Number) : std::string());
     Keep("wait_what", _WaitWhat,
-         std::string(!room.MissionFile.empty() && placed && !players.empty() ? ToPlanning : ToChoose));
+         std::string(hasMap && placed ? ToPlanning
+                     : hasMap         ? ToChooseTeams
+                     : placed         ? ToChooseMap
+                                      : ToChoose));
     Keep("can_begin", _CanBegin, room.Hosting() && room.CanStart && game != nullptr);
 }
 
@@ -562,6 +569,13 @@ void MCRoomScreen::ShowControls()
             points->SetAttribute(ValueAttribute, shown);
         }
     }
+
+    // Off a team the chat goes to all (its TEAM held): the switch says so, though it was on TEAM before.
+    if (Rml::Element* to = document->get().GetElementById(ToId);
+        to != nullptr && !_CanTeamChat && MCRmlKit::Choice(*to) == TeamChoice)
+    {
+        MCRmlKit::SetChoice(*to, AllChoice);
+    }
 }
 
 MCRoomScreen::MCSeen MCRoomScreen::Seen() const
@@ -573,6 +587,8 @@ MCRoomScreen::MCSeen MCRoomScreen::Seen() const
                 .Points1 = _Points1,
                 .Points2 = _Points2,
                 .Map = _HasMap ? _MapTitle : std::string(),
+                .MapPicture = _HasMap ? _MapPic : std::string(),
+                .MapTime = _HasMap ? _MapTime : std::string(),
                 .UpdateLine = _UpdateLine,
                 .Hosting = _Hosting,
                 .CanBegin = _CanBegin};

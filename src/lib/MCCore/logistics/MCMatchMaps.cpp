@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCMatchMaps.h"
+#include "MCPort.h"
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
@@ -17,6 +18,22 @@ namespace
     constexpr int32_t DescriptionPacket = 1;
     /// <summary>Digits in a group of points' thousands.</summary>
     constexpr size_t DigitsGrouped = 3;
+    /// <summary>What a description's line may have round its words.</summary>
+    constexpr std::string_view Blanks = " \t";
+
+    /// <summary>Whether <paramref name="line"/> is <see cref="NoArtilleryLine"/>, whatever its capitals and blanks.</summary>
+    bool SaysNoArtillery(std::string_view line)
+    {
+        const size_t first = line.find_first_not_of(Blanks);
+
+        if (first == std::string_view::npos)
+        {
+            return false;
+        }
+
+        const std::string_view words = line.substr(first, line.find_last_not_of(Blanks) - first + 1);
+        return MCPort::StrICmp(words, NoArtilleryLine) == 0;
+    }
 }
 
 std::string MCGroupedPoints(int32_t points)
@@ -87,6 +104,7 @@ std::optional<MCMatchMap> MCReadMatchMap(std::string_view file)
         }
     }
 
+    map.NoArtillery = std::ranges::any_of(map.Description, SaysNoArtillery);
     return map;
 }
 

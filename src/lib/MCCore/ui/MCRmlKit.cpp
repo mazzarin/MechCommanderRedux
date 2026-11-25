@@ -22,10 +22,15 @@ namespace
     /// <summary>A switch Q and E step as tabs (a screen's groups: LOAD GAME's campaigns).</summary>
     constexpr const char* TabsSwitchAttribute = "data-tabs";
     constexpr const char* OnClass = "on";
+    /// <summary>A switch's choice held (the room's TEAM while the player is on no team): it can't be chosen.</summary>
+    constexpr const char* HeldClass = "held";
     constexpr const char* StepperClass = "stepper";
     constexpr const char* ArrowClass = "arrow";
     constexpr const char* StepValueClass = "step-value";
     constexpr const char* RowClass = "list-row";
+    constexpr const char* FieldClass = "field";
+    /// <summary>The mouse's left button, in RmlUi's events (their button parameter).</summary>
+    constexpr int LeftButton = 0;
     constexpr const char* PickedClass = "picked";
     constexpr const char* RingClass = "focus-ring";
     constexpr const char* FadeClass = "fade";
@@ -158,6 +163,10 @@ public:
         {
             _Kit.OnKeyDown(event);
         }
+        else if (event == Rml::EventId::Mousedown)
+        {
+            _Kit.OnMouseDown(event);
+        }
     }
 
 private:
@@ -197,9 +206,11 @@ void MCRmlKit::Attach(Rml::ElementDocument& document)
 
     _Documents.push_back(&document);
     // Clicks first, on their way down (a disabled button's goes no further); keys on their way up, before the
-    // document's own moves (Tab, the arrows' nav, Enter's click), which a control's keys stop.
+    // document's own moves (Tab, the arrows' nav, Enter's click), which a control's keys stop. A held text box takes no
+    // click (RmlUi's disabled: its parent does): its press, on its way down.
     document.AddEventListener(Rml::EventId::Click, _Listener.get(), true);
     document.AddEventListener(Rml::EventId::Keydown, _Listener.get(), false);
+    document.AddEventListener(Rml::EventId::Mousedown, _Listener.get(), true);
 
     // The steppers' words and arrows, as their choices stand.
     Rml::ElementList steppers;
@@ -231,6 +242,7 @@ void MCRmlKit::Detach(Rml::ElementDocument& document)
 
     document.RemoveEventListener(Rml::EventId::Click, _Listener.get(), true);
     document.RemoveEventListener(Rml::EventId::Keydown, _Listener.get(), false);
+    document.RemoveEventListener(Rml::EventId::Mousedown, _Listener.get(), true);
     _Documents.erase(found);
 }
 
@@ -330,7 +342,15 @@ bool MCRmlKit::Step(Rml::Element& control, int step)
         return false;
     }
 
-    Play(step > 0 ? OnSound : OffSound);
+    if (control.IsClassSet(SwitchClass) && control.GetChild(next) != nullptr &&
+        control.GetChild(next)->IsClassSet(HeldClass))
+    {
+        // A choice held: nothing moves onto it.
+        return false;
+    }
+
+    // 1998's button press, on or back.
+    Play(PressSound);
     Choose(control, next, true);
     return true;
 }
@@ -428,6 +448,14 @@ void MCRmlKit::OnClick(Rml::Event& event)
         {
             if (choice->GetParentNode() == control)
             {
+                // A choice held refuses the click, as a held switch does (its screen never sees it).
+                if (choice->IsClassSet(HeldClass))
+                {
+                    Play(OffClickSound);
+                    event.StopPropagation();
+                    break;
+                }
+
                 Step(*control, IndexOf(*choice) - Choice(*control));
                 break;
             }
@@ -454,6 +482,16 @@ void MCRmlKit::OnClick(Rml::Event& event)
     if (Up(target, ButtonClass) != nullptr)
     {
         Play(PressSound);
+    }
+}
+
+void MCRmlKit::OnMouseDown(Rml::Event& event)
+{
+    // A held text box (the room's points on a locked map): the refusal of something off, as a held switch's click.
+    if (Rml::Element* field = Up(event.GetTargetElement(), FieldClass);
+        field != nullptr && field->IsClassSet(OffClass) && event.GetParameter<int>("button", LeftButton) == LeftButton)
+    {
+        Play(OffClickSound);
     }
 }
 

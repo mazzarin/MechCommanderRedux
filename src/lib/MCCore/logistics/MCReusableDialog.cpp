@@ -250,12 +250,6 @@ auto MCReusableDialog::IsShowing() -> bool
     return model != nullptr ? model->IsShowing() : ShownOld();
 }
 
-auto MCReusableDialog::OldBoxOnly() -> bool&
-{
-    static bool only = false;
-    return only;
-}
-
 auto MCReusableDialog::Deactivate(int32_t result) -> void
 {
     if (const std::shared_ptr<MCMenuDialog> model = _Model.lock(); model != nullptr)

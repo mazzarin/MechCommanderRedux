@@ -567,24 +567,13 @@ bool MCResultsScreen::Finished() const
 
 // MCResultsMenu
 
-bool& MCResultsMenu::Remade()
-{
-    static bool remade = true;
-    return remade;
-}
-
-bool MCResultsMenu::Wanted()
-{
-    return Remade() && MCRmlFlow::Menus().has_value();
-}
-
 void MCResultsMenu::BeforeMission()
 {
     std::string& eyebrow = MissionEyebrow();
     eyebrow.clear();
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
-    if (!Remade() || logistics == nullptr)
+    if (logistics == nullptr)
     {
         return;
     }
@@ -609,21 +598,12 @@ void MCResultsMenu::BeforeMission()
     }
 }
 
-bool MCResultsMenu::Show()
+void MCResultsMenu::Show()
 {
-    const MCOptionalRef<MCResultsScreen> made =
-        Wanted() ? MCRmlFlow::MadeNow(TheScreen(), "the results", MCRmlFlow::MCOn::Mission) : std::nullopt;
-
-    if (!made.has_value())
-    {
-        return false;
-    }
-
-    MCResultsScreen& screen = made->get();
+    MCResultsScreen& screen = MCRmlFlow::Needed(TheScreen(), "the results", MCRmlFlow::MCOn::Mission);
     screen.SetUp();
     screen.Layer().Context().Update();
     screen.Show();
-    return true;
 }
 
 bool MCResultsMenu::Up()

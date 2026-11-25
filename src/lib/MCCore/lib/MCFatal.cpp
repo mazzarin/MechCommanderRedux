@@ -3,6 +3,7 @@
 #include "main/MCMissionGlobals.h"
 
 bool MCNoMessageBoxes = false;
+std::function<void(std::string_view report)> MCFatalHook;
 
 namespace
 {
@@ -12,14 +13,25 @@ namespace
         return std::format("{:08X} : {}{}", errCode, message, message2);
     }
 
-    /// <summary>Logs <paramref name="report"/>, shows it (unless the tests run), and ends the process.</summary>
-    [[noreturn]] void ShowFatal(const std::string& report)
+    /// <summary>What the original's error reports were titled.</summary>
+    constexpr std::string_view FatalTitle = "MechCommander";
+
+    /// <summary>
+    /// Logs <paramref name="report"/>, tells the tests' hook (MCFatalHook), shows it titled <paramref name="title"/>
+    /// (unless the tests run), and ends the process.
+    /// </summary>
+    [[noreturn]] void ShowFatal(const std::string& report, std::string_view title = FatalTitle)
     {
         SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "%s", report.c_str());
 
+        if (MCFatalHook)
+        {
+            MCFatalHook(report);
+        }
+
         if (!MCNoMessageBoxes)
         {
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "MechCommander", report.c_str(), nullptr);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, std::string(title).c_str(), report.c_str(), nullptr);
         }
 
         std::exit(1);
@@ -42,6 +54,16 @@ void FatalMsg(std::string_view message)
 void GeneralMsg(std::string_view message)
 {
     FatalMsg(message);
+}
+
+std::string MCWithRepair(std::string_view text)
+{
+    return std::format("{}\n\n{}", text, MCRepairText);
+}
+
+void MCFatalRepair(std::string_view text)
+{
+    ShowFatal(MCWithRepair(text), MCReportTitle);
 }
 
 std::function<void(std::string_view report, const std::source_location& where)> MCAssertHook;

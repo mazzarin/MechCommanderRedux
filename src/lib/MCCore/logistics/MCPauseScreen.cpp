@@ -75,30 +75,21 @@ MCPauseScreen::MCPauseScreen(bool multiplayer) : MCSettingsScreen(true), _Multip
     Keys = {{"Esc", "Resume"}};
 }
 
-bool MCPauseScreen::OpenOverMission()
+void MCPauseScreen::OpenOverMission()
 {
     if (Shows())
     {
-        return true;
-    }
-
-    const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-
-    if (!menus.has_value())
-    {
-        return false;
+        return;
     }
 
     const bool multiplayer = MultiPlayer() != nullptr;
-    const MCGuiHandle<MCPauseScreen> pause = menus->get().Mission().CreateChild<MCPauseScreen>(
+    const MCGuiHandle<MCPauseScreen> pause = MCRmlFlow::Menus().Mission().CreateChild<MCPauseScreen>(
         [](MCPauseScreen& made) { made.Back = [&made] { made.Resume(); }; }, multiplayer);
 
+    // Port-only (stage 9): no 1998 pause in its place.
     if (const std::expected<void, std::string> opened = pause->Open(); !opened)
     {
-        SDL_Log("MCPauseScreen: cannot open %s: %s; the mission pauses as the original's did", PauseDocument,
-                opened.error().c_str());
-        pause->Close();
-        return false;
+        MCRmlFlow::Broken(std::format("the pause {} can't open: {}", PauseDocument, opened.error()));
     }
 
     ThePause = pause;
@@ -117,8 +108,6 @@ bool MCPauseScreen::OpenOverMission()
         GamePaused = true;
         pause->_Paused = true;
     }
-
-    return true;
 }
 
 bool MCPauseScreen::Shows()

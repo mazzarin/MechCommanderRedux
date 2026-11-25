@@ -17,6 +17,7 @@
 #include "main/MCSystemConfig.h"
 #include "main/MCUpdater.h"
 #include "linkup/MCSessionManager.h"
+#include "lib/MCFatal.h"
 #include "lib/MCThreadKeeper.h"
 #include "network/MCInternetGame.h"
 #include "network/MCMultiPlayer.h"
@@ -89,7 +90,7 @@ namespace
     constexpr std::string_view GetContentOption = "--get-content";
 
     /// <summary>What the game's messages are titled: its name.</summary>
-    constexpr std::string_view MessageTitle = "MechCommander Redux HD";
+    constexpr std::string_view MessageTitle = MCReportTitle;
     /// <summary>
     /// How long a quitting game waits for its internet game's leaving to reach the service, each socket's close through
     /// (MCWebSocket::Finished; the trial's wait; the service frees a place it isn't told of after 5 minutes).
@@ -182,22 +183,6 @@ namespace
     }
 
     /// <summary>
-    /// How the player repairs a copy missing what the program brings: the setup run again on Windows; the Mac's app,
-    /// which comes whole, downloaded again.
-    /// </summary>
-#ifdef _WIN32
-    constexpr std::string_view RepairText = "Run the Redux HD setup again to repair the install.";
-#else
-    constexpr std::string_view RepairText = "Download Redux HD again to repair it.";
-#endif
-
-    /// <summary><paramref name="text"/>, what's wrong with the copy, then how to repair it.</summary>
-    std::string WithRepair(std::string_view text)
-    {
-        return std::format("{}\n\n{}", text, RepairText);
-    }
-
-    /// <summary>
     /// Shows <paramref name="text"/>, why the game doesn't start, as <see cref="Report"/> does; on the Mac in a message
     /// box too unless MCRedux was started from a terminal: an app opened from the Finder has none, so Report's text would
     /// reach no one.
@@ -217,12 +202,12 @@ namespace
     /// <summary>
     /// Port-only (SPEC-menus.md): whether the remade menus' files, which come with the program (the Mac app's resources,
     /// beside the programs on Windows), load; when they don't, the player is told how to repair the copy, and the game
-    /// doesn't start.
+    /// doesn't start. Should the menus fail once the game is going, it stops with the same words (MCRmlFlow::Broken).
     /// </summary>
     bool MenusLoad()
     {
         return MCRmlFlow::FilesLoad(MCRmlFiles::AppFolder(),
-                                    [](std::string_view missing) { ReportStop(WithRepair(missing)); });
+                                    [](std::string_view missing) { ReportStop(MCWithRepair(missing)); });
     }
 
     /// <summary>
@@ -526,7 +511,7 @@ namespace
             // The game may be a mix of two versions: the player is told, and plays on as it is.
             SDL_Log("Updates: the program update stopped midway is left as it is (%s): the setup repairs it",
                     recovered.Error.c_str());
-            Report(WithRepair(std::format(StuckSwapFormat, recovered.Error)), true);
+            Report(MCWithRepair(std::format(StuckSwapFormat, recovered.Error)), true);
         }
     }
 

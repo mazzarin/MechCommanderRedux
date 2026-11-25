@@ -27,7 +27,6 @@
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
-#include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -137,30 +136,11 @@ namespace MCTestGame
 
     namespace
     {
-        /// <summary>An OldMainMenu lives: logistics' main screen shows in the remade main menu's place.</summary>
-        bool oldMainMenu = false;
-
-        /// <summary>
-        /// The main menu up: the flow's top (MCMenuScreens::Top), the remade main menu shown in its place, or with an
-        /// OldMainMenu the 1998 one.
-        /// </summary>
+        /// <summary>The main menu up: the flow's top (MCMenuScreens::Top), the remade main menu shown in its place.</summary>
         bool MainMenuUp()
         {
-            return MCMenuScreens::Top() == MCMenuScreens::Main() &&
-                   (oldMainMenu || MCMainMenuScreens::Shown(MCMainPanel::Main));
+            return MCMenuScreens::Top() == MCMenuScreens::Main() && MCMainMenuScreens::Shown(MCMainPanel::Main);
         }
-    }
-
-    OldMainMenu::OldMainMenu()
-    {
-        oldMainMenu = true;
-        MCMainMenuScreens::SetOldForTests(true);
-    }
-
-    OldMainMenu::~OldMainMenu()
-    {
-        MCMainMenuScreens::SetOldForTests(false);
-        oldMainMenu = false;
     }
 
     std::filesystem::path UserFolder()
@@ -809,17 +789,7 @@ namespace MCTestGame
             return seen;
         }
 
-        /// <summary>How many OldBoxAllowed live.</summary>
-        int& OldBoxAllowances()
-        {
-            static int allowances = 0;
-            return allowances;
-        }
-
-        /// <summary>
-        /// Port-only (SPEC-menus.md's stage 9): a 1998 dialog box shown while the menus ran fails the test, but in the
-        /// 1998 screens' own tests (MCReusableDialog::OldBoxOnly) or while an OldBoxAllowed lives.
-        /// </summary>
+        /// <summary>Port-only (SPEC-menus.md's stage 9): a 1998 dialog box shown fails the test.</summary>
         void CheckNoOldBox()
         {
             const size_t boxes = MCRmlDialogs::OldBoxes();
@@ -830,11 +800,7 @@ namespace MCTestGame
             }
 
             OldBoxesSeen() = boxes;
-
-            if (OldBoxAllowances() == 0 && !MCReusableDialog::OldBoxOnly())
-            {
-                FAIL_CHECK("a 1998 dialog box showed while the menus ran (the log's \"Dialogs:\" line names it)");
-            }
+            FAIL_CHECK("a 1998 dialog box showed (the log's \"Dialogs:\" line names it)");
         }
     }
 
@@ -901,17 +867,6 @@ namespace MCTestGame
         }
 
         CheckNoOldBox();
-    }
-
-    OldBoxAllowed::OldBoxAllowed()
-    {
-        ++OldBoxAllowances();
-    }
-
-    OldBoxAllowed::~OldBoxAllowed()
-    {
-        --OldBoxAllowances();
-        OldBoxesSeen() = MCRmlDialogs::OldBoxes();
     }
 }
 

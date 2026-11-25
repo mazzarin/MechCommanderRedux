@@ -311,7 +311,6 @@ TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line o
     MCFakeUpdater updater;
     Guest guest("ANN");
     REQUIRE(HostLobbyRoom("28883", {guest}));
-    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     REQUIRE(RoomScreenShown());
 
     // Nothing waits: no line in the room's foot (the remade room, SPEC-menus.md's stage 4).
@@ -343,7 +342,6 @@ TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line o
     REQUIRE(SettleUntil([] { return RoomScreenShown() && !MCScreenChange::Running(); }));
     CHECK(!MCUpdateScreen::Shows());
     CHECK(MCTestGuest::RoomShows(guest.Id()));
-    CHECK(!screen.ShowWindow);
 }
 
 namespace

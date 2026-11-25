@@ -24,7 +24,6 @@
 #include <utility>
 
 #include "iface/MCKeyBindings.h"
-#include "logistics/MCCampaignMenu.h"
 #include "lib/MCFatal.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCUtf8Path.h"
@@ -584,9 +583,6 @@ int main(int argc, char** argv)
     // The CONTROLS screen names keys as a US keyboard does, whatever this machine's layout, so its pictures are the
     // same on every machine.
     MCKeyBindings::SetLayout(nullptr);
-    // The remade campaign screens, as the game shows them; the tests of the 1998 briefing's, PURCHASING's and the 'MECH
-    // BAY's blocks (kept until stage 9) turn them off (MCCampaignMenu::Remade).
-    MCCampaignMenu::Remade() = true;
     std::vector<std::string> arguments;
 
     for (int i = 0; i < argc; i++)

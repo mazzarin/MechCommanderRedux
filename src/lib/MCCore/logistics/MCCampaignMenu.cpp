@@ -1660,46 +1660,29 @@ std::vector<MCCampaignMenu::MCMatchPlayer> MCCampaignMenu::MatchPlayers()
     return shown;
 }
 
-bool& MCCampaignMenu::Remade()
-{
-    static bool remade = true;
-    return remade;
-}
-
-bool MCCampaignMenu::Wanted()
-{
-    return Remade() && MCRmlFlow::Menus().has_value();
-}
-
 std::vector<MCScreenChange::MCPiece> MCCampaignMenu::Ahead()
 {
-    return Wanted() ? MCRmlFlow::ReadAhead(TheScreen(), BriefingName) : std::vector<MCScreenChange::MCPiece>{};
+    return MCRmlFlow::ReadAhead(TheScreen(), BriefingName);
 }
 
 void MCCampaignMenu::ComeBack()
 {
-    // Only for a show that comes: the 1998 briefing's way back keeps no flag for a later one.
-    ComingBack = Wanted();
+    ComingBack = true;
 }
 
 namespace
 {
     /// <summary>
     /// <see cref="MCCampaignMenu::Show"/>'s first part: the screen made if it isn't and set up for the mission now, on
-    /// BRIEFING or the tab it comes back to; none when it can't show.
+    /// BRIEFING or the tab it comes back to. Port-only (stage 9): where it can't be read the game stops
+    /// (MCRmlFlow::Broken): there is no other briefing to show.
     /// </summary>
-    MCOptionalRef<MCCampaignScreen> SetUpToShow()
+    MCCampaignScreen& SetUpToShow()
     {
         const MCCampaignScreen::MCTab tab = ComingBack ? LeftOn : MCCampaignScreen::MCTab::Briefing;
         ComingBack = false;
-        const MCOptionalRef<MCCampaignScreen> made =
-            MCCampaignMenu::Remade() ? MCRmlFlow::MadeNow(TheScreen(), BriefingName) : std::nullopt;
-
-        if (made.has_value())
-        {
-            made->get().SetUp(tab);
-        }
-
+        MCCampaignScreen& made = MCRmlFlow::Needed(TheScreen(), BriefingName);
+        made.SetUp(tab);
         return made;
     }
 
@@ -1710,21 +1693,14 @@ namespace
     }
 }
 
-bool MCCampaignMenu::Show()
+void MCCampaignMenu::Show()
 {
-    const MCOptionalRef<MCCampaignScreen> made = SetUpToShow();
-
-    if (!made.has_value())
-    {
-        return false;
-    }
-
-    LayOut(made->get());
-    made->get().Show();
-    return true;
+    MCCampaignScreen& made = SetUpToShow();
+    LayOut(made);
+    made.Show();
 }
 
-std::vector<MCScreenChange::MCPiece> MCCampaignMenu::ShowPieces(std::function<void()> otherwise)
+std::vector<MCScreenChange::MCPiece> MCCampaignMenu::ShowPieces()
 {
     // Whether the first piece set the screen up: the others lay out and show only a screen it set up. A piece each, as a
     // briefing's first set-up (its text read, 2.5 ms on the M4 Pro) and layout (4.6) would hold a dark frame together.
@@ -1742,14 +1718,10 @@ std::vector<MCScreenChange::MCPiece> MCCampaignMenu::ShowPieces(std::function<vo
 
     return {{.Part = "change.campaign screen",
              .Run =
-                 [setUp, otherwise = std::move(otherwise)]
+                 [setUp]
              {
-                 *setUp = SetUpToShow().has_value();
-
-                 if (!*setUp && otherwise != nullptr)
-                 {
-                     otherwise();
-                 }
+                 SetUpToShow();
+                 *setUp = true;
              }},
             {.Part = "change.campaign layout", .Run = ifSetUp(LayOut)},
             {.Part = "change.campaign shown", .Run = ifSetUp([](MCCampaignScreen& screen) { screen.Show(); })}};

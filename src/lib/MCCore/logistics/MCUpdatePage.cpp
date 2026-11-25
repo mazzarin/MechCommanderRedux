@@ -1050,8 +1050,8 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     cinema->OverPicture = pictures.Up;
     cinema->DownPicture = pictures.Down;
     cinema->GrayPicture = pictures.Gray;
-    // Port-only (stage 6): the remade UPDATE, through the screens' flow (the old page when the menus' RmlUi can't start).
-    cinema->Callback().SetExec(MCUpdateScreen::OpenFromMenus);
+    // Port-only (stage 6): the remade UPDATE, through the screens' flow.
+    cinema->Callback().SetExec(MCUpdateScreen::Open);
     MenuButton = cinema;
 
     // The line under QUIT, in amber at its brightest.

@@ -43,6 +43,7 @@
 #include "main/MCLogMech.h"
 #include "main/MCLogistics.h"
 #include "object/MCMasterComponent.h"
+#include "ui/MCRmlDialog.h"
 
 // The logistics screens' controls (P3-log-1): the ports and the base object, the text formatter, the ticker, text
 // fields, scrolling text, the game list, the slider, the save list's sort, ini-built screens, the purchase dialog and
@@ -765,29 +766,23 @@ TEST_CASE("game: the message dialog grows a middle piece for every two lines, an
     CHECK(!dialog->Ok.Exec);
 }
 
-TEST_CASE("game: the message dialog's timeout closes it after its time, with its result")
+/// <summary>
+/// A message dialog with a timeout (a launcher's leave, the room's countdown) closes after its time with its result:
+/// said by the remade dialog (the 1998 box is gone), its time counted by the GUI's timers in the game's clock.
+/// </summary>
+TEST_CASE_ISOLATED("game: the message dialog's timeout closes it after its time, with its result")
 {
-    LogisticsScreen screen;
-
-    if (!screen.LoadRetail())
+    if (!MCTestGame::Available())
     {
         return;
     }
 
-    // Shown by its 1998 box (as where the menus can't start): this test's GUI runs no remade screens.
-    struct OldBoxOnly
-    {
-        OldBoxOnly() { MCReusableDialog::OldBoxOnly() = true; }
-        ~OldBoxOnly() { MCReusableDialog::OldBoxOnly() = false; }
-    } oldBoxOnly;
-
+    REQUIRE(MCTestGame::StartLogistics());
     constexpr int32_t Timeout = 3000;
     constexpr int32_t TimeoutResult = 7;
-    constexpr uint64_t NanosecondsAMillisecond = 1'000'000;
-    MCGuiRef<MCReusableDialog> view = MCGuiTree::NewRoot<MCReusableDialog>();
-    REQUIRE_EQ(view->Init(0, 0, 4, 4, {}), 0);
+    constexpr float SecondsAMillisecond = 0.001f;
+    constexpr float TimeoutSeconds = static_cast<float>(Timeout) * SecondsAMillisecond;
     const auto dialog = std::make_shared<MCMenuDialog>();
-    dialog->SetView(view.Handle());
     dialog->SetText("Game saved.");
     dialog->SetTwoButton(false);
     std::vector<int32_t> results;
@@ -796,25 +791,22 @@ TEST_CASE("game: the message dialog's timeout closes it after its time, with its
     dialog->TimeoutResult = TimeoutResult;
     dialog->Activate();
     CHECK(dialog->IsShowing());
-    CHECK(view->ShowWindow != 0);
+    REQUIRE(MCRmlDialogs::Shown());
+    CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text, std::string("Game saved."));
 
-    // Its time is up only past its milliseconds, as the GUI's timers count.
-    screen.Clock.Advance(Timeout * NanosecondsAMillisecond);
-    screen.Gui->RunFrameCallbacks();
+    // Its time is up only past its milliseconds, as the GUI's timers count (each frame's whole milliseconds).
+    MCTestGame::RunFrame(TimeoutSeconds);
     CHECK(dialog->IsShowing());
     CHECK(results.empty());
-    screen.Clock.Advance(NanosecondsAMillisecond);
-    screen.Gui->RunFrameCallbacks();
+    MCTestGame::RunFrame(SecondsAMillisecond);
     CHECK(!dialog->IsShowing());
-    CHECK(view->ShowWindow == 0);
     REQUIRE_EQ(results.size(), 1u);
     CHECK_EQ(results[0], TimeoutResult);
     // Cleared with the callbacks: shown again, it waits for an answer.
     CHECK_EQ(dialog->Timeout, 0);
     CHECK_EQ(dialog->TimeoutResult, 0);
     dialog->Activate();
-    screen.Clock.Advance(2 * Timeout * NanosecondsAMillisecond);
-    screen.Gui->RunFrameCallbacks();
+    MCTestGame::RunFrame(2 * TimeoutSeconds);
     CHECK(dialog->IsShowing());
     dialog->Deactivate(0);
 
@@ -824,8 +816,8 @@ TEST_CASE("game: the message dialog's timeout closes it after its time, with its
     dialog->TimeoutResult = TimeoutResult;
     dialog->Activate();
     dialog->KeepCallbacks = true;
-    screen.Clock.Advance((Timeout + 1) * NanosecondsAMillisecond);
-    screen.Gui->RunFrameCallbacks();
+    MCTestGame::RunFrame(TimeoutSeconds);
+    MCTestGame::RunFrame(SecondsAMillisecond);
     REQUIRE_EQ(results.size(), 2u);
     CHECK(dialog->Callback);
     dialog->Deactivate(0);

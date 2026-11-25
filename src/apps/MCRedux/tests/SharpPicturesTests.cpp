@@ -13,9 +13,7 @@
 #include "logistics/MCMainMenuScreen.h"
 #include "lib/MCFilesAhead.h"
 #include "lib/MCFnvHash.h"
-#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCLogPort.h"
-#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -423,15 +421,13 @@ namespace
         REQUIRE(MCInput::Display()->SharpScreen());
         return renderer;
     }
-
-    /// <summary>The sharp pictures the renderer has taken made ahead and redrawn itself, together.</summary>
-    size_t SharpTaken(const MCVulkanRenderer& renderer)
-    {
-        const MCVulkanRenderer::SharpCounts counts = renderer.SharpPictures();
-        return counts.TakenAhead + counts.Redrawn;
-    }
 }
 
+/// <summary>
+/// The screen as it stands rehearsed (as a fade into a screen rehearses it) shows nothing: what's shown is the remade
+/// main menu still, and the frame after redraws none of the sharp pictures it shows. Port-only (SPEC-menus.md's stage
+/// 9): the 1998 briefing it rehearsed showed only with the remade screens off, which went with the 1998 fallbacks.
+/// </summary>
 TEST_CASE_ISOLATED("game: a screen rehearsed shows nothing, and its first frame finds what it shows ready")
 {
     if (!MCTestGame::Available())
@@ -439,39 +435,16 @@ TEST_CASE_ISOLATED("game: a screen rehearsed shows nothing, and its first frame 
         return;
     }
 
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
-
-    // 1998's main menu under the briefing's fade, as its sharp pictures were (the remade one is drawn by the menus' own
-    // layer; stage 8 remakes the briefing).
-    const MCTestGame::OldMainMenu oldMenu;
     const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     const std::vector<uint8_t> menu = ShownBytes();
-
-    // The briefing set up as NEW CAMPAIGN's fade sets it up, at once (its palette waits for the next frame's fade),
-    // then rehearsed: what it shows is taken and sent up, and the main menu is still what's shown.
-    BeginCampaign("mechcmdr1", "start0", true);
-    MCSharpPictures::WaitForMade();
-    const size_t before = SharpTaken(*renderer);
+    const size_t rehearsals = RehearsalsRun();
     RehearseScreen();
-    const size_t rehearsed = SharpTaken(*renderer);
-    CHECK(rehearsed > before);
+    CHECK_EQ(RehearsalsRun(), rehearsals + 1);
     CHECK(ShownBytes() == menu);
 
-    // The frame that fades the menu out and draws the briefing redraws nothing, and its draw takes next to nothing:
-    // the briefing's text and line art were the rehearsal's (the fade rehearses it again, finding it all done, then
-    // readies the screens a slide from it brings in, which takes theirs). What the draw takes is the letter its text,
-    // typed out as time passes, has come to since (one, here).
-    constexpr size_t MostTyped = 2;
-    std::vector<size_t> taken;
-    MCTestGame::OnPresent = [&] { taken.push_back(SharpTaken(*renderer)); };
+    const size_t redrawn = renderer->SharpPictures().Redrawn;
     MCTestGame::RunFrame(FrameSeconds);
-    MCTestGame::OnPresent = {};
-    REQUIRE(taken.size() > 1);
-    CHECK_EQ(renderer->SharpPictures().Redrawn, 0u);
-    CHECK(taken.front() >= rehearsed);
-    CHECK(taken.back() - taken[taken.size() - 2] <= MostTyped);
-    CHECK(ShownBytes() != menu);
+    CHECK_EQ(renderer->SharpPictures().Redrawn, redrawn);
     GHdArt = 0;
 }
 

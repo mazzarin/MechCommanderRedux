@@ -96,10 +96,10 @@ private:
 namespace MCLoadingMenu
 {
     /// <summary>
-    /// The loading screen shown for the mission logistics has now, its meter empty, when the remade screens are wanted
-    /// (MCCampaignMenu::Wanted); false when it isn't shown (the 1998 one is drawn then).
+    /// The loading screen shown for the mission logistics has now, its meter empty. Port-only (stage 9): where it can't
+    /// be read, the game stops (MCRmlFlow::Needed).
     /// </summary>
-    bool Show();
+    void Show();
 
     /// <summary>The load's progress (a percentage), shown on its meter while it shows.</summary>
     void Progress(int percent);

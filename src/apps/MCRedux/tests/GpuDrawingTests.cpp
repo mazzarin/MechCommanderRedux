@@ -975,63 +975,6 @@ TEST_CASE_ISOLATED("game: the GPU alone draws mission 1's battle without per-fra
     CHECK_EQ(MCRenderer::UnregisteredDraws(), 0);
 }
 
-/// <summary>Mirror mode on the logistics screens: the main menu, the briefing, the purchase and repair screens.</summary>
-TEST_CASE_ISOLATED("game: the GPU draws the logistics screens as the software renderer does")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
-
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::Mirror);
-    REQUIRE(MCTestGame::StartLogistics());
-    const std::shared_ptr<MCVulkanRenderer> renderer = MirrorRenderer();
-
-    if (renderer == nullptr)
-    {
-        return;
-    }
-
-    // Each screen settles, and then its frames send the GPU no new pictures (its art went up when first shown).
-    const auto settle = [renderer]
-    {
-        int64_t pictures = 0;
-
-        for (int32_t frame = 0; frame < 30; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-            pictures += frame >= 20 ? renderer->LastFrameUploads().Pictures : 0;
-        }
-
-        CHECK_EQ(pictures, 0);
-    };
-
-    settle();
-    NewCampaign();
-    settle();
-
-    // The operation movie (stream uploads, compared with the software frames).
-    MCBriefingScreen& briefing = *GlobalLog()->BriefingScreen;
-    int32_t movieFrames = 0;
-
-    for (int32_t frame = 0; frame < 300 && movieFrames < 30; frame++)
-    {
-        MCTestGame::RunFrame(1.0f / 30.0f);
-        movieFrames += briefing.SmackerWindow != nullptr && briefing.SmackerWindow->Movie != nullptr ? 1 : 0;
-    }
-
-    CHECK_EQ(movieFrames, 30);
-    CHECK(renderer->LastFrameUploads().Pictures == 0);
-    GlobalLog()->SetUpPurchaseScreen(true);
-    settle();
-    GlobalLog()->SetUpRepairScreen(true);
-    settle();
-    CheckMirror(*renderer);
-}
-
 /// <summary>
 /// Mirror mode on the mission's mech bar, with every mech's right arm shot off and its left arm and torsos damaged:
 /// each location of its icon's diagram is recoloured for its damage through a translate table, which the GPU must take

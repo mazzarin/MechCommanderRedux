@@ -64,25 +64,6 @@ void AskGivenWayKeys()
     // (SPEC-menus.md's stage 7): over the remade main menu the remade dialog asks, taking the key itself.
     const MCKeyCommand command = givenWay->Command;
 
-    if (MCRmlDialogs::AskKey(
-            GivenWayText(*givenWay), [command](uint32_t key) { return TakeKey(command, key); }, [] { SavePrefs(); }))
-    {
-        return;
-    }
-
-    ShowMenuMessage(GivenWayText(*givenWay), [](int32_t) { SavePrefs(); });
-    MCMenuDialog& dialog = *GlobalLog()->Message;
-    dialog.KeyTaker = [&dialog, command](uint32_t key)
-    {
-        if (const std::optional<std::string> refused = TakeKey(command, key); refused.has_value())
-        {
-            dialog.SetText(*refused);
-            dialog.Activate();
-            return false;
-        }
-
-        return true;
-    };
-
-    dialog.TakeKeyboard();
+    MCRmlDialogs::AskKey(
+        GivenWayText(*givenWay), [command](uint32_t key) { return TakeKey(command, key); }, [] { SavePrefs(); });
 }

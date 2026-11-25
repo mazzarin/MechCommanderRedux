@@ -120,11 +120,7 @@ void ConnectScreen()
         shown->ShowGuiWindow(false);
     }
 
-    if (!MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer))
-    {
-        SDL_Log("Menus: MULTIPLAYER can't show: the main menu instead");
-        GlobalLog()->SetUpMainScreen(true);
-    }
+    MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
 }
 
 void CancelToSession()

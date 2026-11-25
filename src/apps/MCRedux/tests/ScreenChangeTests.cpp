@@ -4,7 +4,6 @@
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
 #include "gui/MCGuiGlobals.h"
-#include "gui/MCGuiMessageBox.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCUpdateDisplay.h"
@@ -24,6 +23,8 @@
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCPresenter.h"
+#include "ui/MCRmlDialog.h"
+#include "ui/MCRmlFlow.h"
 #include "ui/MCRmlLayer.h"
 #include "vfx/MCVfx.h"
 
@@ -49,6 +50,8 @@ namespace
     constexpr int32_t MostFrames = 300;
     /// <summary>The remade results' panel (ui/results.rml), and how far from the window's middle its own may be (a pixel's rounding).</summary>
     constexpr const char* ResultsPanel = "results";
+    /// <summary>The remade dialog's panel (ui/dialog.rml).</summary>
+    constexpr const char* DialogPanel = "dialog";
     constexpr float MiddleSlack = 1.0f;
 
     /// <summary>A frame shown, as the tests read it at its present.</summary>
@@ -152,24 +155,26 @@ namespace
                                   { return frame.Phase == MCPhase::None && frame.Fade == 0; }));
     }
 
-    /// <summary>Whether <paramref name="box"/> sits in the middle of <paramref name="area"/> (to a unit, as halves round).</summary>
-    bool CentredOn(MCGuiObject& box, SDL_Rect area)
+    /// <summary>
+    /// The remade dialog said on <paramref name="on"/>'s layer (as the version box is in a mission, a message in the
+    /// menus) sits in the middle of the window.
+    /// </summary>
+    void CheckDialogCentred(MCRmlFlow::MCOn on)
     {
-        const int32_t left = area.x + (area.w - box.Width()) / 2;
-        const int32_t top = area.y + (area.h - box.Height()) / 2;
-        return std::abs(box.GlobalX() - left) <= 1 && std::abs(box.GlobalY() - top) <= 1;
-    }
-
-    /// <summary>A message box made on the screen (as the version dialog is) sits in the middle of <paramref name="area"/>.</summary>
-    void CheckMessageBoxCentredOn(SDL_Rect area)
-    {
-        // The 1998 box's own placement (where the menus can't start).
-        const MCTestGame::OldBoxAllowed allowed;
-        const MCGuiHandle<MCGuiMessageBox> box =
-            ScreenWindow()->CreateChild<MCGuiMessageBox>([](MCGuiMessageBox& made) { made.Init("Centred"); });
-        REQUIRE(box != nullptr);
-        CHECK(CentredOn(*box, area));
-        CloseGuiObject(box);
+        MCRmlDialogs::Show(MCRmlDialog::MCSay{.Text = "Centred."}, on);
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        const MCGuiHandle<MCRmlDialog> dialog = MCRmlDialogs::Dialog(on);
+        REQUIRE(dialog);
+        REQUIRE(dialog->Shown());
+        Rml::Element* panel = MCRemadeTest::Find(*dialog, DialogPanel);
+        REQUIRE(panel != nullptr);
+        const Rml::Vector2f middle =
+            panel->GetAbsoluteOffset(Rml::BoxArea::Border) + panel->GetBox().GetSize(Rml::BoxArea::Border) / 2.0f;
+        const Rml::Vector2i window = dialog->Layer().Context().GetDimensions();
+        CHECK(std::fabs(middle.x - static_cast<float>(window.x) / 2.0f) <= MiddleSlack);
+        CHECK(std::fabs(middle.y - static_cast<float>(window.y) / 2.0f) <= MiddleSlack);
+        MCRmlDialogs::Close();
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     }
 }
 
@@ -382,10 +387,10 @@ TEST_CASE_ISOLATED("game: BEGIN MISSION fades into the loading screen, and the l
 }
 
 /// <summary>
-/// At a player's large window, a mission's results sit in the middle of the battlefield, and a message box in the
+/// At a player's large window, a mission's results sit in the middle of the battlefield, and the remade dialog in the
 /// middle of the window. Their DONE fades them out live over the battlefield; dark, the scenario ends and the menus are
 /// made again, a piece a frame, and the next screen fades in from its first frame, in the menus' frame on the stone,
-/// where a message box sits in the frame's middle.
+/// where the remade dialog sits in the window's middle.
 /// </summary>
 TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefield, and fade out to the next screen")
 {
@@ -418,7 +423,7 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
     CHECK_EQ(display.View().w, width);
     CHECK_EQ(display.View().h, height);
     CHECK(SameColor(display.Surround(), Black));
-    CheckMessageBoxCentredOn(SDL_Rect{0, 0, width, height});
+    CheckDialogCentred(MCRmlFlow::MCOn::Mission);
 
     const size_t finished = MCScreenChange::Finished();
     std::vector<MCShown> shown;
@@ -440,7 +445,7 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
     CHECK(SameColor(display.Surround(), MenuStone));
     CHECK_EQ(display.View().w, MenuFrameWidth);
     CHECK_EQ(display.View().h, MenuFrameHeight);
-    CheckMessageBoxCentredOn(SDL_Rect{0, 0, MenuFrameWidth, MenuFrameHeight});
+    CheckDialogCentred(MCRmlFlow::MCOn::Menus);
 
     // The results fade out live over the battlefield.
     const std::span<const MCShown> out =

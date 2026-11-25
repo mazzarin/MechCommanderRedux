@@ -815,7 +815,7 @@ MCScreenFlow::MCScreenKind MCSavesMenu::Kind(MCSavesScreen::MCMode mode)
     kind.Prepare = [made = std::move(kind.Prepare), mode]
     {
         // Read (first time), then filled for this opening and its data shown, then laid out and recorded; nothing when
-        // the menus can't start.
+        // it can't be read.
         std::vector<MCScreenChange::MCPiece> pieces = made();
         const auto fill = [mode]
         {

@@ -664,9 +664,8 @@ TEST_CASE_ISOLATED("game: SAVE GAME saves under the name typed, asks before writ
     RunWhileChanging();
     MCMenuScreens::LeaveCampaign();
     RunWhileChanging();
-    REQUIRE(MCRmlFlow::Menus().has_value());
     double clock = 0.0;
-    MCRmlMenus::Running()->get().SetClock([&clock] { return clock; });
+    MCRmlFlow::Menus().SetClock([&clock] { return clock; });
 
     // The default name, saved by Enter in it: "Game saved.", gone by itself 3 seconds on, the campaign again.
     const std::string first = MCFormatPrintf(LoadGameString(0x37c, 0x95).c_str(), 0);

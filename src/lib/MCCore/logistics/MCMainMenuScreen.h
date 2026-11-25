@@ -135,7 +135,7 @@ namespace MCMainMenuScreens
 
     /// <summary>
     /// The panel's preparation, a piece a frame (made first, if it isn't): a change's job that shows it next (the
-    /// intro's end); none when the menus can't start.
+    /// intro's end); none when it can't be made.
     /// </summary>
     std::vector<MCScreenChange::MCPiece> Prepare(MCMainPanel panel);
 
@@ -144,16 +144,15 @@ namespace MCMainMenuScreens
 
     /// <summary>
     /// Logistics shows its main screen (MCLogistics::ShowLogScreen): the remade main menu shown at once in its place,
-    /// another panel shown hidden; false when the menus' RmlUi can't start or its document can't be read (the 1998
-    /// screen shows).
+    /// another panel shown hidden.
     /// </summary>
-    bool ShowMain();
+    void ShowMain();
 
     /// <summary>
-    /// <paramref name="panel"/> shown at once, the panel shown before hidden (a change's dark work, a landing); false when
-    /// it can't be made.
+    /// <paramref name="panel"/> shown at once, the panel shown before hidden (a change's dark work, a landing).
+    /// Port-only (stage 9): where it can't be made or read, the game stops (MCRmlFlow::Broken).
     /// </summary>
-    bool ShowNow(MCMainPanel panel);
+    void ShowNow(MCMainPanel panel);
 
     /// <summary>A submenu swapped in for the main menu, in place, with no fade (its choice pressed).</summary>
     void SwapTo(MCMainPanel panel);
@@ -175,10 +174,4 @@ namespace MCMainMenuScreens
 
     /// <summary>The online count let go (ReleaseInternetMenus, at the game's quit).</summary>
     void Release();
-
-    /// <summary>
-    /// For the tests of 1998's main menu (mainScreen.fit, kept until stage 9): logistics' main screen shows as when the
-    /// menus' RmlUi can't start, the remade main menu not shown in its place.
-    /// </summary>
-    void SetOldForTests(bool old);
 }

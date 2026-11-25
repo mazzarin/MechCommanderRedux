@@ -1279,19 +1279,8 @@ void ShowWaitingDialog(std::string_view text)
         return;
     }
 
-    // Port-only (SPEC-menus.md's stage 3): over a remade screen, the remade dialog's wait (the 1998 one would show under
-    // it); the 1998 dialog's Deactivate ends it.
-    if (MCRmlDialogs::Waiting(text))
-    {
-        return;
-    }
-
-    MCMenuDialog& dialog = *GlobalLog()->Message;
-    dialog.SetText(text);
-    dialog.Ok.Shown = false;
-    dialog.Cancel.Shown = false;
-    dialog.Callback = nullptr;
-    dialog.Activate();
+    // Port-only (SPEC-menus.md's stage 3): the remade dialog's wait; the 1998 dialog's Deactivate ends it.
+    MCRmlDialogs::Waiting(text);
 }
 
 void ShowConnectStatus()

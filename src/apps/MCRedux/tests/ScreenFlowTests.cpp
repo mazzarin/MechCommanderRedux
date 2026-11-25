@@ -556,10 +556,10 @@ TEST_CASE_ISOLATED("screen flow: a launcher's join draws its frames, and its CAN
     REQUIRE(MCTestGame::StartLogistics());
     RunWhileChanging();
     // A launcher's game never shows the main menu: the join's screen alone.
-    MCRmlFlow::Menus()->get().Menus().HideAll();
+    MCRmlFlow::Menus().Menus().HideAll();
     LobbyLaunchArgs.IsHost = false;
     LobbyLaunchArgs.SessionName = "Steel Rain";
-    REQUIRE(ShowLauncherScreen());
+    ShowLauncherScreen();
     MCTestGame::RunFrame(FrameSeconds);
     MCTestGame::RunFrame(FrameSeconds);
     REQUIRE(LauncherScreenShown());

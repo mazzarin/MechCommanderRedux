@@ -299,40 +299,6 @@ TEST_CASE_ISOLATED("game: the main menu opens its screens in their states, and c
     CHECK(logistics->CurrentMission != -1);
 }
 
-/// <summary>
-/// The main menu offers LOAD MISSION while there are saved games, and the load screen lists each by name, sorted (two
-/// here, unreadable: listed without an operation, mission or points). The recorded logistics frames run with none.
-/// </summary>
-TEST_CASE_ISOLATED("game: the main menu offers LOAD MISSION while there are saves, and the load screen lists them")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    static constexpr std::array<std::string_view, 2> Saves = {"Bravo", "Alpha"};
-    std::optional<MCTestGame::PinnedSaves> saves;
-    const MCTestGame::OldMainMenu oldMenu;
-    REQUIRE(MCTestGame::StartLogistics([&saves] { saves.emplace(Saves); }));
-    Settle();
-    std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    CHECK(!logistics->MainScreen->Element<MCLogButton>(MCTestGame::MainMenuLoadButton)->Disabled);
-
-    // The pinned saves are empty files: reading each as the screen opens logs it by name (no assert), and lists it by
-    // name.
-    LoadScreen();
-    Settle();
-
-    REQUIRE(logistics->CurrentScreen() == logistics->LoadScreen);
-    const std::vector<MCFileScrollPane::File>& files = logistics->LoadScreen->FilePane->Files;
-    REQUIRE_EQ(files.size(), Saves.size());
-    CHECK_EQ(files[0].Name, std::string("Alpha"));
-    CHECK_EQ(files[1].Name, std::string("Bravo"));
-    Cancel();
-    Settle();
-    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
-}
-
 namespace
 {
     /// <summary>The middle of drop slot <paramref name="slot"/>.</summary>
@@ -397,18 +363,6 @@ namespace
         return playing();
     }
 
-    /// <summary>
-    /// From the main menu, a new campaign's first mission: its briefing, the first mech in the first drop slot, the
-    /// launch button, then frames until the scenario is up.
-    /// </summary>
-    /// <returns>Whether the scenario is up.</returns>
-    bool LaunchFirstMission()
-    {
-        NewCampaign();
-        Settle();
-        DeployFirstMech();
-        return Launch();
-    }
 }
 
 namespace
@@ -481,79 +435,6 @@ namespace
 
         return playing();
     }
-}
-
-TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the drop tonnage")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
-
-    REQUIRE(MCTestGame::StartLogistics());
-    Settle();
-    NewCampaign();
-    Settle();
-    std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    MCBriefingScreen& briefing = *logistics->BriefingScreen;
-    REQUIRE(logistics->CurrentScreen().get() == &briefing);
-    REQUIRE(logistics->LocalDropSlot[0]);
-    REQUIRE(!logistics->HammerDown);
-    MCListView& pane = *briefing.DeployPane;
-    REQUIRE(pane.NumberOfChildren() > 0);
-    std::shared_ptr<MCLogMech> mech = FirstDeployMech(briefing);
-    REQUIRE(mech != nullptr);
-    REQUIRE(pane.RowOf<MCMechBriefBlock>(static_cast<const MCLogPart&>(*mech)) != nullptr);
-    REQUIRE(mech->Deployed == 0);
-    const auto tons = static_cast<int32_t>(mech->CurTonnage);
-    const int32_t startTons = CurDeployTonnage;
-    const auto& slot0 = logistics->DeploySlots[0][0];
-    REQUIRE_EQ(slot0.Unit, -1);
-    const POINT middle = SlotMiddle(0);
-    const POINT paneMiddle{pane.GlobalX() + pane.Width() / 2, pane.GlobalY() + pane.Height() / 2};
-
-    // Into the first slot: the lance's tonnage grows by the mech's, the block shows in the slot.
-    MaxDeployTonnage = startTons + tons;
-    DragMech(*mech, middle.x, middle.y);
-    CHECK(mech->Deployed != 0);
-    CHECK_EQ(slot0.Unit, logistics->ForceMechList->GetMechIndex(mech));
-    CHECK_EQ(CurDeployTonnage, startTons + tons);
-    const std::shared_ptr<MCBriefingBox> box = briefing.BriefingBox.Lock();
-    REQUIRE(box != nullptr);
-    CHECK(box->Mech() == mech);
-    CHECK(box->ParentObject().get() == &briefing);
-    const std::shared_ptr<MCMechBriefBlock> slotBlock = briefing.SlotBlocks[0].Lock();
-    REQUIRE(slotBlock != nullptr);
-    CHECK(slotBlock->Mech() == mech);
-    CHECK(slotBlock->ParentObject().get() == &briefing);
-    CHECK(pane.RowOf<MCMechBriefBlock>(static_cast<const MCLogPart&>(*mech)) == nullptr);
-    CHECK(std::ranges::find(briefing.UndeployedMechs, logistics->ForceMechList->GetMechIndex(mech)) ==
-          briefing.UndeployedMechs.end());
-
-    // Back to the deploy pane: the slot is empty again.
-    DragMech(*mech, paneMiddle.x, paneMiddle.y);
-    CHECK(mech->Deployed == 0);
-    CHECK_EQ(slot0.Unit, -1);
-    CHECK_EQ(CurDeployTonnage, startTons);
-    CHECK(briefing.SlotBlocks[0] == nullptr);
-    CHECK(briefing.BlockOf(*mech) == pane.RowOf<MCMechBriefBlock>(static_cast<const MCLogPart&>(*mech)));
-    CHECK(briefing.BlockOf(*mech) != nullptr);
-
-    // A ton over the limit: refused with the message, the mech stays in the pane.
-    MaxDeployTonnage = startTons + tons - 1;
-    DragMech(*mech, middle.x, middle.y);
-    CHECK(mech->Deployed == 0);
-    CHECK_EQ(slot0.Unit, -1);
-    CHECK_EQ(CurDeployTonnage, startTons);
-    CHECK(logistics->MessageDialog->ShowWindow != 0);
-    CHECK(briefing.SlotBlocks[0] == nullptr);
-    CHECK(pane.RowOf<MCMechBriefBlock>(static_cast<const MCLogPart&>(*mech)) != nullptr);
 }
 
 namespace
@@ -955,31 +836,6 @@ TEST_CASE_ISOLATED("game: a deployed unit sold on another screen leaves its drop
     CHECK(MCDeploy::SlotUnit(0) == nullptr);
     REQUIRE(!screen.Groups().empty());
     CHECK_EQ(screen.Groups()[0].Cards[0].Kind, std::to_underlying(MCCampaignScreen::MCCardKind::Empty));
-}
-
-/// <summary>
-/// The launch button starts the mission once its click is handled: logistics and its screens are gone, and the
-/// loading frames never draw the briefing screen whose click asked for it.
-/// </summary>
-TEST_CASE_ISOLATED("game: the launch button leaves logistics and starts the mission")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
-
-    REQUIRE(MCTestGame::StartLogistics());
-    Settle();
-    std::weak_ptr<MCLogistics> logistics = GlobalLog();
-    std::weak_ptr<MCBriefingScreen> briefing = GlobalLog()->BriefingScreen;
-    REQUIRE(LaunchFirstMission());
-    CHECK(Mission()->State == MCMissionState::Scenario);
-    CHECK(GlobalLog() == nullptr);
-    CHECK(logistics.expired());
-    CHECK(briefing.expired());
 }
 
 /// <summary>

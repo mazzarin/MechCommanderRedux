@@ -18,10 +18,10 @@ public:
     explicit MCPauseScreen(bool multiplayer);
 
     /// <summary>
-    /// Escape in a mission: the pause opened, the keys held down let go (their release would never reach the battle);
-    /// false when the menus' RmlUi can't start, so the mission pauses as 1998's did.
+    /// Escape in a mission: the pause opened, the keys held down let go (their release would never reach the battle).
+    /// Port-only (stage 9): where it can't be read, the game stops (MCRmlFlow::Broken).
     /// </summary>
-    static bool OpenOverMission();
+    static void OpenOverMission();
     /// <summary>Whether the pause (or Preferences from it) shows: the battle's edges don't scroll under it.</summary>
     static bool Shows();
     /// <summary>The mission ends (its results come, a match's other players won): the pause goes, its changes kept.</summary>

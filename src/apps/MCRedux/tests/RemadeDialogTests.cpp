@@ -7,6 +7,7 @@
 #include "gui/MCGuiMessageBox.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
+#include "lib/MCFatal.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
@@ -22,9 +23,10 @@
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
 
-// Port-only (SPEC-menus.md's stage 9, step 1): every dialog the game still said in the 1998 box says itself in the
-// remade one (ui/dialog.rml) while the menus run: with no remade screen under it, and over the battlefield at the
-// mission's INTERFACE SIZE; the 1998 box shows only where the menus can't start (MCRmlDialogs::NoteOldBox counts any).
+// Port-only (SPEC-menus.md's stage 9): every dialog the game said in the 1998 box says itself in the remade one
+// (ui/dialog.rml): with no remade screen under it, and over the battlefield at the mission's INTERFACE SIZE. The 1998
+// box never shows (MCRmlDialogs::NoteOldBox counts any); where the menus can't go on, the game stops with the start
+// check's words (MCRmlFlow::Broken).
 
 namespace
 {
@@ -108,8 +110,9 @@ namespace
 }
 
 /// <summary>
-/// A message said in logistics with no remade screen showing (over 1998's main menu) is the remade dialog's, in
-/// sentence case, laid out at the frames' windows; its OK (Enter) runs what the message asked. The 1998 box never shows.
+/// A message said in logistics with no remade screen showing (each hidden, as a launcher's game shows none before its
+/// join) is the remade dialog's, in sentence case, laid out at the frames' windows; its OK (Enter) runs what the message
+/// asked. The 1998 box never shows.
 /// </summary>
 TEST_CASE_ISOLATED("game: a message with no remade screen under it is the remade dialog, never the 1998 box")
 {
@@ -118,10 +121,10 @@ TEST_CASE_ISOLATED("game: a message with no remade screen under it is the remade
         return;
     }
 
-    // Over a 1998 screen: logistics' main menu 1998's, nothing remade showing.
-    const MCTestGame::OldMainMenu oldMenu;
+    // Logistics with nothing remade showing.
     REQUIRE(MCTestGame::StartLogistics());
     RunWhileChanging();
+    Menus().Menus().HideAll();
     const size_t oldBoxes = MCRmlDialogs::OldBoxes();
     REQUIRE(!MCRmlFlow::Showing());
 
@@ -179,4 +182,50 @@ TEST_CASE_ISOLATED("game: the version box over the battlefield is the remade dia
     CHECK(!dialog->Shown());
     CHECK(!MCRmlDialogs::Shown());
     CHECK_EQ(MCRmlDialogs::OldBoxes(), oldBoxes);
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 9): the menus' RmlUi failing once the game is going (here it can't start, another
+/// held, after the start's check passed) stops the game as the start's check does: MCFatal with its words and how to
+/// repair the copy, never a 1998 screen in the remade one's place.
+/// </summary>
+TEST_CASE_ISOLATED("game: the menus failing once the game is going stop it with the start check's words")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The report the game stopped with, thrown by the fatal hook to end the game here instead of the process.
+    struct MCStopped
+    {
+        std::string Report;
+    };
+
+    MCFatalHook = [](std::string_view report) { throw MCStopped{std::string(report)}; };
+    std::unique_ptr<MCRmlMenus> held;
+    std::optional<std::string> stopped;
+
+    try
+    {
+        // The game's own RmlUi stopped and another started in its place (RmlUi is one per program): the main menu's
+        // screen finds the game's can't start.
+        static_cast<void>(MCTestGame::StartLogistics(
+            [&held]
+            {
+                MCRmlFlow::Stop();
+                auto made = MCRmlMenus::Create(MCRmlMenus::MCOptions{});
+                REQUIRE(made.has_value());
+                held = std::move(*made);
+            }));
+    }
+    catch (const MCStopped& stop)
+    {
+        stopped = stop.Report;
+    }
+
+    MCFatalHook = nullptr;
+    REQUIRE(stopped.has_value());
+    CHECK_EQ(*stopped, MCWithRepair(MCRmlFlow::FilesMissing));
+    CHECK_EQ(MCRmlDialogs::OldBoxes(), 0u);
 }

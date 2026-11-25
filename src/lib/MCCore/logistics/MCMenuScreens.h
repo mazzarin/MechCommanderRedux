@@ -72,7 +72,7 @@ namespace MCMenuScreens
     /// <summary>
     /// The way back from a mission or a session onto the flow's screen <paramref name="id"/>, shown as
     /// <paramref name="way"/> says: the main menu (logistics' main screen with the main menu's state, shown with its
-    /// palette), SOLO MISSIONS (the main menu where it can't show) or the campaign's briefing. The caller's landing
+    /// palette), SOLO MISSIONS or the campaign's briefing. The caller's landing
     /// (MCScreenFlow::Land) and Noted stay its own.
     /// </summary>
     void ShowBack(MCScreenFlow::MCScreenId id, MCBackWay way);

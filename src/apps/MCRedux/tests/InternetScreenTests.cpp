@@ -544,7 +544,7 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     CheckMenusFrames("internet join update", {0xe9b629b6, 0x81ef53bc, 0xe5945793});
     PressDialogCancel();
 
-    REQUIRE(MCRmlDialogs::Message("No game has the code M3VD."));
+    MCRmlDialogs::Message("No game has the code M3VD.");
     Settle();
     CheckMenusFrames("internet message", {0x072194db, 0x8be6c178, 0x2d4d5699});
     PressDialogOk();

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "ui/MCRmlFlow.h"
 #include "gui/MCScreenChange.h"
+#include "lib/MCFatal.h"
 #include "logistics/MCIdleCheck.h"
 #include "main/MCHdSettings.h"
 #include "platform/MCDisplay.h"
@@ -23,9 +24,6 @@ namespace
         return made;
     }
 
-    /// <summary>Whether the menus' RmlUi couldn't start once (said once in the log, not every frame).</summary>
-    bool StartFailed = false;
-
     /// <summary>Whether the menus' pictures are HD, as PREFS' HD ART says.</summary>
     bool HdArt()
     {
@@ -46,17 +44,10 @@ namespace
         std::erase_if(MadeScreens(), [&name](const MCMadeScreen& kept) { return kept.first == name; });
     }
 
-    /// <summary>The kind's screen made now (its menus started); none when they can't start.</summary>
+    /// <summary>The kind's screen made now (its menus started); none when it can't be made.</summary>
     MCGuiHandle<MCRmlScreen> MakeNow(const std::string& name, const MCRmlFlow::MCMake& make)
     {
-        const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-
-        if (!menus.has_value())
-        {
-            return {};
-        }
-
-        MCGuiHandle<MCRmlScreen> made = make(menus->get().Menus());
+        MCGuiHandle<MCRmlScreen> made = make(MCRmlFlow::Menus().Menus());
         std::erase_if(MadeScreens(), [&name](const MCMadeScreen& kept) { return kept.first == name; });
         MadeScreens().emplace_back(name, made);
         return made;
@@ -74,12 +65,12 @@ namespace
     }
 }
 
-MCOptionalRef<MCRmlMenus> MCRmlFlow::Menus()
+MCRmlMenus& MCRmlFlow::Menus()
 {
     if (const MCOptionalRef<MCRmlMenus> running = MCRmlMenus::Running(); running.has_value())
     {
         running->get().SetHd(HdArt());
-        return running;
+        return running->get();
     }
 
     int width = MCRmlMenus::ScreenWidth;
@@ -94,13 +85,7 @@ MCOptionalRef<MCRmlMenus> MCRmlFlow::Menus()
 
     if (!started)
     {
-        if (!StartFailed)
-        {
-            SDL_Log("Menus: the remade screens can't start: %s", started.error().c_str());
-            StartFailed = true;
-        }
-
-        return std::nullopt;
+        Broken(std::format("the remade screens can't start: {}", started.error()));
     }
 
     // A change of screen holds the player's clicks and keys until the next screen is in, as the 1998 screens' are
@@ -109,13 +94,18 @@ MCOptionalRef<MCRmlMenus> MCRmlFlow::Menus()
     // The player's input on a remade screen counts as on the 1998 ones (an internet game's idle check: INTERNET keeps
     // its list, a room doesn't ask "Still there?").
     started->get().OnPlayerInput([] { MCIdleCheck::Input(); });
-    return MCOptionalRef<MCRmlMenus>(started->get());
+    return started->get();
+}
+
+void MCRmlFlow::Broken(std::string_view why)
+{
+    SDL_Log("Menus: the game can't go on: %.*s", static_cast<int>(why.size()), why.data());
+    MCFatalRepair(FilesMissing);
 }
 
 void MCRmlFlow::Stop()
 {
     MadeScreens().clear();
-    StartFailed = false;
     MCRmlMenus::Stop();
 }
 

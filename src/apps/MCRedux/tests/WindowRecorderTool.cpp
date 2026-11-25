@@ -871,7 +871,7 @@ namespace
 
         FlowChange(time, KeyDown(SDL_SCANCODE_ESCAPE));
         LetGo(time, SDL_SCANCODE_ESCAPE);
-        FlowChange(time, [] { MCUpdateScreen::OpenFromMenus(); });
+        FlowChange(time, [] { MCUpdateScreen::Open(); });
         RunPacedFor(time, SecondsAfter);
         FlowChange(time, KeyDown(SDL_SCANCODE_ESCAPE));
         LetGo(time, SDL_SCANCODE_ESCAPE);

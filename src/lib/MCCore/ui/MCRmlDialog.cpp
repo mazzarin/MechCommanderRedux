@@ -210,9 +210,10 @@ void MCRmlDialog::Say(MCSay say)
 
     if (!Document().has_value())
     {
+        // Port-only (SPEC-menus.md's stage 9): no 1998 box says it instead, so a dialog that can't open stops the game.
         if (const auto opened = Open(); !opened)
         {
-            SDL_Log("Menus: the dialog can't open: %s", opened.error().c_str());
+            MCRmlFlow::Broken(std::format("the dialog can't open: {}", opened.error()));
         }
 
         return;
@@ -311,25 +312,20 @@ MCGuiHandle<MCRmlDialog> MCRmlDialogs::Dialog(MCRmlFlow::MCOn on)
         return kept;
     }
 
-    const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-
-    if (!menus.has_value())
-    {
-        return {};
-    }
-
-    MCRmlLayer& layer = on == MCRmlFlow::MCOn::Mission ? menus->get().Mission() : menus->get().Menus();
+    MCRmlMenus& menus = MCRmlFlow::Menus();
+    MCRmlLayer& layer = on == MCRmlFlow::MCOn::Mission ? menus.Mission() : menus.Menus();
     kept = layer.CreateChild<MCRmlDialog>([on](MCRmlDialog& made) { made.SetLayer(on); });
     return kept;
 }
 
-bool MCRmlDialogs::Show(MCRmlDialog::MCSay say, MCRmlFlow::MCOn on)
+void MCRmlDialogs::Show(MCRmlDialog::MCSay say, MCRmlFlow::MCOn on)
 {
     const MCGuiHandle<MCRmlDialog> dialog = Dialog(on);
 
+    // Port-only (SPEC-menus.md's stage 9): with no 1998 box to say it instead, a dialog not made stops the game.
     if (!dialog)
     {
-        return false;
+        MCRmlFlow::Broken(std::format("the dialog can't say: {}", say.Text.empty() ? say.Heading : say.Text));
     }
 
     if (say.Eyebrow.empty())
@@ -339,7 +335,6 @@ bool MCRmlDialogs::Show(MCRmlDialog::MCSay say, MCRmlFlow::MCOn on)
 
     SDL_Log("Menus: the dialog says: %s", (say.Text.empty() ? say.Heading : say.Text).c_str());
     dialog->Say(std::move(say));
-    return true;
 }
 
 void MCRmlDialogs::SetPlace(std::string place)
@@ -381,14 +376,8 @@ bool MCRmlDialogs::Shown()
 
 void MCRmlDialogs::NoteOldBox(std::string_view text)
 {
-    const bool menusRun = MCRmlFlow::Menus().has_value();
-    SDL_Log("Dialogs: a 1998 box shows%s: %.*s", menusRun ? " while the menus run" : "", static_cast<int>(text.size()),
-            text.data());
-
-    if (menusRun)
-    {
-        ++OldBoxCount();
-    }
+    SDL_Log("Dialogs: a 1998 box shows: %.*s", static_cast<int>(text.size()), text.data());
+    ++OldBoxCount();
 }
 
 size_t MCRmlDialogs::OldBoxes()
@@ -428,20 +417,7 @@ void MCRmlDialogs::Tend()
         return;
     }
 
-    MCRmlDialog::MCSay say = *std::exchange(Displaced(), std::nullopt);
-    const std::function<void()> lost = say.OnLost;
-
-    if (Show(std::move(say), DisplacedOn()))
-    {
-        return;
-    }
-
-    SDL_Log("Menus: a dialog's say stood through a change to a 1998 screen: its old dialog shows it");
-
-    if (lost != nullptr)
-    {
-        lost();
-    }
+    Show(*std::exchange(Displaced(), std::nullopt), DisplacedOn());
 }
 
 std::string MCRmlDialogs::SentenceCase(std::string_view text)
@@ -475,18 +451,18 @@ std::string MCRmlDialogs::AsSentence(std::string_view text)
     return capitals ? SentenceCase(text) : std::string(text);
 }
 
-bool MCRmlDialogs::Message(std::string_view text, std::function<void()> then)
+void MCRmlDialogs::Message(std::string_view text, std::function<void()> then)
 {
-    return Show(MCRmlDialog::MCSay{.Text = AsSentence(text), .OnMain = std::move(then)});
+    Show(MCRmlDialog::MCSay{.Text = AsSentence(text), .OnMain = std::move(then)});
 }
 
-bool MCRmlDialogs::AskKey(std::string_view text, std::function<std::optional<std::string>(uint32_t key)> take,
+void MCRmlDialogs::AskKey(std::string_view text, std::function<std::optional<std::string>(uint32_t key)> take,
                           std::function<void()> then)
 {
-    return Show(MCRmlDialog::MCSay{.Text = AsSentence(text), .OnMain = std::move(then), .TakesKey = std::move(take)});
+    Show(MCRmlDialog::MCSay{.Text = AsSentence(text), .OnMain = std::move(then), .TakesKey = std::move(take)});
 }
 
-bool MCRmlDialogs::Waiting(std::string_view text)
+void MCRmlDialogs::Waiting(std::string_view text)
 {
-    return Show(MCRmlDialog::MCSay{.Text = AsSentence(text), .Main = {}, .Wait = true});
+    Show(MCRmlDialog::MCSay{.Text = AsSentence(text), .Main = {}, .Wait = true});
 }

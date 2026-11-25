@@ -830,8 +830,8 @@ public:
     /// <summary>The refit list (the 1998 'MECH BAY's).</summary>
     std::shared_ptr<MCMenuDialog> Refit;
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 9, step 2): the 1998 boxes that show <see cref="Message"/>,
-    /// <see cref="Question"/> and <see cref="Refit"/> where the menus can't start.
+    /// Port-only (SPEC-menus.md's stage 9, step 2): the 1998 boxes of <see cref="Message"/>, <see cref="Question"/> and
+    /// <see cref="Refit"/>, still made but never shown (the remade dialog says each).
     /// </summary>
     MCGuiHandle<MCReusableDialog> MessageDialog;
     MCGuiHandle<MCReusableDialog> QuestionDialog;
@@ -880,15 +880,6 @@ private:
         std::string_view Part;
         int32_t (MCLogistics::*Read)(MCCampaignReading& reading);
     };
-
-    /// <summary>
-    /// The 1998 briefing's own pictures (its deploy pane's blocks and slots, its unit box, its panes, its tonnage bar,
-    /// its screen buttons), made only where it shows.
-    /// </summary>
-    void SetUpBriefingPictures();
-
-    /// <summary>The 1998 briefing shown with its pictures, where the remade one can't show.</summary>
-    void ShowOldBriefing();
 
     /// <summary>The steps of <see cref="LoadCampaign"/>'s reading, in order.</summary>
     static std::span<const MCCampaignStep> CampaignSteps();

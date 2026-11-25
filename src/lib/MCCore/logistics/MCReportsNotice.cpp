@@ -167,24 +167,17 @@ namespace
     }
 
     /// <summary>
-    /// <paramref name="prompt"/> shown as the remade dialog; false when the menus' RmlUi can't start or its document
-    /// can't be read.
+    /// <paramref name="prompt"/> shown as the remade reports dialog; false when its document can't be read (the menus'
+    /// plain dialog says it then, MCMenuDialog).
     /// </summary>
     bool ShowRemade(MCPrompt prompt)
     {
-        const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-
-        if (!menus.has_value())
-        {
-            return false;
-        }
-
-        const MCGuiHandle<MCReportsDialog> dialog = menus->get().Menus().CreateChild<MCReportsDialog>(
+        const MCGuiHandle<MCReportsDialog> dialog = MCRmlFlow::Menus().Menus().CreateChild<MCReportsDialog>(
             [](MCReportsDialog& made) { made.Back = [&made] { made.Dismissed(); }; }, prompt);
 
         if (const std::expected<void, std::string> opened = dialog->Open(); !opened)
         {
-            SDL_Log("Reports: the %s can't be shown as %s (%s); shown as the original's dialog",
+            SDL_Log("Reports: the %s can't be shown as %s (%s); said in the plain dialog",
                     prompt == MCPrompt::Ask ? "question" : "notice", ReportsDocument, opened.error().c_str());
             dialog->Close();
             return false;

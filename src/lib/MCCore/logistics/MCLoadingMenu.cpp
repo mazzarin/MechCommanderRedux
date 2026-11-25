@@ -202,21 +202,12 @@ void MCLoadingScreen::SetProgress(int percent)
 
 // MCLoadingMenu
 
-bool MCLoadingMenu::Show()
+void MCLoadingMenu::Show()
 {
-    const MCOptionalRef<MCLoadingScreen> made =
-        MCCampaignMenu::Wanted() ? MCRmlFlow::MadeNow(TheScreen(), "the loading screen") : std::nullopt;
-
-    if (!made.has_value())
-    {
-        return false;
-    }
-
-    MCLoadingScreen& screen = made->get();
+    MCLoadingScreen& screen = MCRmlFlow::Needed(TheScreen(), "the loading screen");
     screen.SetUp();
     screen.Layer().Context().Update();
     screen.Show();
-    return true;
 }
 
 void MCLoadingMenu::Loaded()

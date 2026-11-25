@@ -175,10 +175,10 @@ private:
 };
 
 /// <summary>
-/// The remade room shown in the 1998 room's place (its session screen hidden); false when it can't show (the menus
-/// can't start, or its document can't be read), and the 1998 room shows.
+/// The remade room shown in the 1998 room's place (its session screen hidden). Port-only (stage 9): where it can't be
+/// read, the game stops (MCRmlFlow::Needed).
 /// </summary>
-bool ShowRoomScreen();
+void ShowRoomScreen();
 
 /// <summary>The remade room hidden (the 1998 room hidden, or another screen come up).</summary>
 void HideRoomScreen();
@@ -225,10 +225,10 @@ private:
 };
 
 /// <summary>
-/// The launcher's join shown in the 1998 ready room's place (logistics' ConnectScreen, hidden); false when it can't
-/// show (the menus can't start), and the 1998 screen shows.
+/// The launcher's join shown in the 1998 ready room's place (logistics' ConnectScreen, hidden). Port-only (stage 9):
+/// where it can't be read, the game stops (MCRmlFlow::Needed).
 /// </summary>
-bool ShowLauncherScreen();
+void ShowLauncherScreen();
 
 /// <summary>Whether the launcher's join shows.</summary>
 bool LauncherScreenShown();

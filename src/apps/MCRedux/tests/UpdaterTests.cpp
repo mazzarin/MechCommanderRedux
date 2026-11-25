@@ -1,18 +1,7 @@
 #include "stdafx.h"
 #include "MCFakeUpdaterBackend.h"
 #include "MCTest.h"
-#include "ScreenInput.h"
-#include "TestGame.h"
-#include "gui/MCGuiPort.h"
-#include "gui/MCGuiSystem.h"
-#include "logistics/MCGenericScreen.h"
-#include "logistics/MCLogButton.h"
-#include "logistics/MCLogPort.h"
-#include "logistics/MCLogTextButton.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateModel.h"
-#include "logistics/MCUpdatePage.h"
-#include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
 #include "MCVersion.h"
 
@@ -21,10 +10,8 @@
 #include <string>
 
 // The updater (main/MCUpdater.h), with a stand-in for the Mac app's Sparkle: the check made once a start, each step
-// reported in turn, the player's answers passed on, the feed's text kept to what the fonts write; and the main menu's
-// UPDATE button in ORIGINAL CINEMA's place (logistics/MCUpdatePage.h), grayed with nothing new and amber with a line
-// under QUIT while an update waits, its page installing, skipping and restarting; and the version running named under
-// the menu's window.
+// reported in turn, the player's answers passed on, the feed's text kept to what the fonts write; the version line's
+// words, and a download's size, speed and time left (the remade main menu's UPDATE and its page: UpdateScreenTests.cpp).
 
 namespace
 {
@@ -34,87 +21,6 @@ namespace
 
     constexpr std::string_view NewVersion = "0.2.2 (480)";
     constexpr std::string_view Notes = "Night missions: dusk and night lighting.\n\nThe main menu updates the game.";
-
-    /// <summary>Runs a few frames, as a player's screen would between inputs.</summary>
-    void Frames()
-    {
-        constexpr int32_t frames = 3;
-
-        for (int32_t frame = 0; frame < frames; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    }
-
-    /// <summary>Clicks the middle of <paramref name="object"/> as a player does.</summary>
-    void RealClickOn(MCGuiObject& object)
-    {
-        MCScreenInput::RealClick(object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2);
-        Frames();
-    }
-
-    /// <summary>
-    /// The original's UPDATE page over the main menu (a lobby's room still shows it; the main menu's UPDATE opens the
-    /// remade one: UpdateScreenTests.cpp).
-    /// </summary>
-    void OpenOldPage()
-    {
-        ShowUpdatePage();
-        Frames();
-    }
-
-    /// <summary>
-    /// The main menu's window (mainscreen.fit's element 9, MM_WN00), the first row of its background's copyright lines
-    /// and their colour (MM_BKGD's entry 58).
-    /// </summary>
-    constexpr int32_t MenuWindowElement = 9;
-    constexpr int32_t CopyrightTop = 444;
-    constexpr uint8_t CopyrightOrange = 58;
-
-    /// <summary>Where pixels of one colour lie, and how many there are.</summary>
-    struct MCInk
-    {
-        int32_t Count = 0;
-        int32_t Left = INT32_MAX;
-        int32_t Top = INT32_MAX;
-        int32_t Right = -1;
-        int32_t Bottom = -1;
-    };
-
-    /// <summary>
-    /// The pixels in the copyright lines' colour between the main menu's window and the copyright lines, on the screen
-    /// as shown.
-    /// </summary>
-    MCInk VersionInk(MCGuiObject& window)
-    {
-        const std::vector<uint8_t> shown = MCScreenInput::ShownScreen();
-        const int32_t width = ScreenPort()->Bitmap().XMax + 1;
-        MCInk ink;
-
-        for (int32_t y = window.GlobalY() + window.Height(); y < CopyrightTop; y++)
-        {
-            for (int32_t x = window.GlobalX(); x < window.GlobalX() + window.Width(); x++)
-            {
-                if (shown[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] ==
-                    CopyrightOrange)
-                {
-                    ink.Count++;
-                    ink.Left = std::min(ink.Left, x);
-                    ink.Top = std::min(ink.Top, y);
-                    ink.Right = std::max(ink.Right, x);
-                    ink.Bottom = std::max(ink.Bottom, y);
-                }
-            }
-        }
-
-        return ink;
-    }
-
-    /// <summary>Whether <paramref name="a"/> and <paramref name="b"/> hold the same pixels.</summary>
-    bool SamePixels(const MCLogPort& a, const MCLogPort& b)
-    {
-        return a.Width() == b.Width() && a.Height() == b.Height() && std::ranges::equal(a.Pixels(), b.Pixels());
-    }
 }
 
 TEST_CASE("updater: the check is made once a start, and an update waits through each step for the player's answer")
@@ -225,200 +131,11 @@ TEST_CASE("updater: the feed's version and notes keep only what the fonts write,
     CHECK(MCUpdater::Status().Notes.empty());
 }
 
-TEST_CASE_ISOLATED("game: without an updater the main menu keeps ORIGINAL CINEMA")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    const MCTestGame::OldMainMenu oldMenu;
-    REQUIRE(MCTestGame::StartLogistics());
-    Frames();
-    const std::shared_ptr<MCLogButton> cinema = GlobalLog()->MainScreen->CinemaButton.Lock();
-    REQUIRE(cinema != nullptr);
-    CHECK(SamePixels(*cinema->GetUpPicture(), *LogArt("mm_xbh08.tga")));
-    CHECK(!cinema->Disabled);
-    CHECK(!UpdatePageShown());
-}
-
 TEST_CASE("updater: the main menu's version line names Redux HD and the release running, without its build")
 {
     CHECK_EQ(VersionLineText("0.6.3 (899)"), std::string("Redux HD 0.6.3"));
     CHECK_EQ(VersionLineText("0.6.3"), std::string("Redux HD 0.6.3"));
     CHECK(VersionLineText("").empty());
-}
-
-TEST_CASE_ISOLATED("game: the main menu names the version running under its window's right corner, in the copyright "
-                   "lines' orange")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    const MCTestGame::OldMainMenu oldMenu;
-    REQUIRE(MCTestGame::StartLogistics());
-    Frames();
-    const std::shared_ptr<MCGuiObject> window = GlobalLog()->MainScreen->Element<MCGuiObject>(MenuWindowElement);
-    REQUIRE(window != nullptr);
-
-    // Without an updater there is no version to name.
-    CHECK_EQ(VersionInk(*window).Count, 0);
-
-    // With one: its letters right-aligned at the window's edge (the font's glyphs end in a blank column, the window's
-    // picture in its frame's shadow), halfway between the window and the copyright lines.
-    const MCFakeUpdater updater;
-    Frames();
-    MCScreenInput::SaveShot("version line", MCScreenInput::ScreenHash());
-    const MCInk ink = VersionInk(*window);
-    const int32_t windowRight = window->GlobalX() + window->Width();
-    const int32_t windowBottom = window->GlobalY() + window->Height();
-    CHECK(ink.Count > 0);
-    CHECK_EQ(ink.Right, windowRight - 2);
-    CHECK(ink.Left > window->GlobalX() + window->Width() / 2);
-    CHECK_EQ(ink.Top - windowBottom, CopyrightTop - 1 - ink.Bottom);
-}
-
-TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an update waits, and the original's page "
-                   "installs it")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    MCFakeUpdater updater;
-    const MCTestGame::OldMainMenu oldMenu;
-    REQUIRE(MCTestGame::StartLogistics());
-    Frames();
-    CHECK_EQ(updater.Log->Checks.size(), size_t{1});
-    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    const std::shared_ptr<MCLogButton> cinema = logistics->MainScreen->CinemaButton.Lock();
-    REQUIRE(cinema != nullptr);
-
-    // Nothing new: UPDATE, grayed, in the menu's own lettering.
-    CHECK(cinema->Disabled);
-    CHECK(!SamePixels(*cinema->GetGrayPicture(), *LogArt("mm_xbn08.tga")));
-    MCScreenInput::SaveShot("update none", MCScreenInput::ScreenHash());
-    RealClickOn(*cinema);
-    CHECK(!UpdatePageShown());
-
-    // An update waits: amber, the line under QUIT saying which.
-    CHECK(!SamePixels(*cinema->GetUpPicture(), *LogArt("mm_xbh08.tga")));
-    MCUpdater::Found(std::string(NewVersion), std::string(Notes));
-    Frames();
-    CHECK(!cinema->Disabled);
-    MCScreenInput::SaveShot("update waiting", MCScreenInput::ScreenHash());
-
-    // The page: the versions, the notes, INSTALL and SKIP.
-    OpenOldPage();
-    REQUIRE(UpdatePageShown());
-    CHECK_EQ(UpdatePageStatus(), std::string("A NEWER VERSION IS OUT."));
-    const std::vector<std::string> lines = UpdatePageLines();
-    REQUIRE_EQ(lines.size(), size_t{3});
-    CHECK_EQ(lines[0], std::string("NIGHT MISSIONS: DUSK AND NIGHT LIGHTING."));
-    CHECK(lines[1].empty());
-    const std::shared_ptr<MCLogTextButton> install = MCScreenInput::FindTextButton(*logistics->MainScreen, "INSTALL");
-    const std::shared_ptr<MCLogTextButton> skip = MCScreenInput::FindTextButton(*logistics->MainScreen, "SKIP");
-    const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(*logistics->MainScreen, "RESTART");
-    const std::shared_ptr<MCLogTextButton> done = MCScreenInput::FindTextButton(*logistics->MainScreen, "DONE");
-    REQUIRE(install != nullptr);
-    REQUIRE(skip != nullptr);
-    REQUIRE(restart != nullptr);
-    REQUIRE(done != nullptr);
-    CHECK(install->IsShowing());
-    CHECK(skip->IsShowing());
-    CHECK(!restart->IsShowing());
-    MCScreenInput::SaveShot("update page", MCScreenInput::ScreenHash());
-
-    // A click where QUIT is under the page reaches the page, not QUIT.
-    MCScreenInput::RealClick(cinema->GlobalX() + cinema->Width() / 2, cinema->GlobalY() + cinema->Height() * 3 / 2);
-    Frames();
-    CHECK(UpdatePageShown());
-    CHECK(updater.Log->Answers.empty());
-
-    // INSTALL: the download's progress, then RESTART in INSTALL's place.
-    RealClickOn(*install);
-    REQUIRE_EQ(updater.Log->Answers.size(), size_t{1});
-    CHECK(updater.Log->Answers[0] == MCAnswer::Install);
-    CHECK(!install->IsShowing());
-    constexpr uint64_t megabyte = 1'000'000;
-    MCUpdater::Downloading(megabyte * 3 / 2, megabyte * 5);
-    Frames();
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADING: 1.5 OF 5.0 MB."));
-    MCScreenInput::SaveShot("update downloading", MCScreenInput::ScreenHash());
-    MCUpdater::Ready();
-    Frames();
-    CHECK(restart->IsShowing());
-    CHECK(!install->IsShowing());
-    CHECK_EQ(restart->GlobalX(), install->GlobalX());
-    CHECK_EQ(UpdatePageStatus(), std::format("VERSION {} INSTALLS AS YOU QUIT.", NewVersion));
-    MCScreenInput::SaveShot("update ready", MCScreenInput::ScreenHash());
-
-    // Windows' program put in place already (the swap): it plays from the next start, RESTART only where what the
-    // game starts outlives it; a setup a lobby's job would end waits for a start the player makes, with no RESTART.
-    const auto readyAs = [&](MCUpdater::MCGoesIn goesIn, bool canStart)
-    {
-        updater.Log->GoesIn = goesIn;
-        MCUpdater::SetCanStartAgain(canStart);
-        MCUpdater::Ready();
-        Frames();
-        return UpdatePageStatus();
-    };
-
-    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::NextStart, true),
-             std::format("VERSION {} IS IN. RESTART TO PLAY IT.", NewVersion));
-    CHECK(restart->IsShowing());
-    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::NextStart, false),
-             std::format("VERSION {} IS IN. IT PLAYS WHEN THE GAME STARTS AGAIN.", NewVersion));
-    CHECK(!restart->IsShowing());
-    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::PlayersStart, false),
-             std::format("VERSION {} INSTALLS WHEN YOU START REDUX HD YOURSELF.", NewVersion));
-    CHECK(!restart->IsShowing());
-    CHECK_EQ(readyAs(MCUpdater::MCGoesIn::AsItQuits, true),
-             std::format("VERSION {} INSTALLS AS YOU QUIT.", NewVersion));
-    CHECK(restart->IsShowing());
-
-    // DONE leaves it waiting (quitting installs it); RESTART installs it now.
-    RealClickOn(*done);
-    CHECK(!UpdatePageShown());
-    CHECK(!cinema->Disabled);
-    MCScreenInput::SaveShot("update ready menu", MCScreenInput::ScreenHash());
-    OpenOldPage();
-    RealClickOn(*restart);
-    REQUIRE_EQ(updater.Log->Answers.size(), size_t{2});
-    CHECK(updater.Log->Answers[1] == MCAnswer::Install);
-    CHECK(MCUpdater::Status().Stage == MCStage::Installing);
-    HideUpdatePage();
-
-    // SKIP: this version isn't offered again, and UPDATE grays.
-    MCUpdater::Found("0.2.3 (490)", "More.");
-    Frames();
-    OpenOldPage();
-    REQUIRE(UpdatePageShown());
-    RealClickOn(*skip);
-    REQUIRE_EQ(updater.Log->Answers.size(), size_t{3});
-    CHECK(updater.Log->Answers[2] == MCAnswer::Skip);
-    CHECK(!UpdatePageShown());
-    CHECK(cinema->Disabled);
-
-    // A failed download: INSTALL is offered again, and tries again.
-    MCUpdater::Found("0.2.4 (500)", "Even more.");
-    MCUpdater::Answer(MCAnswer::Install);
-    MCUpdater::Failed("the download was cut off");
-    Frames();
-    OpenOldPage();
-    REQUIRE(UpdatePageShown());
-    CHECK_EQ(UpdatePageStatus(), std::string("THE UPDATE FAILED: THE DOWNLOAD WAS CUT OFF"));
-    CHECK(install->IsShowing());
-    CHECK(!skip->IsShowing());
-    MCScreenInput::SaveShot("update failed", MCScreenInput::ScreenHash());
-    const size_t checks = updater.Log->Checks.size();
-    RealClickOn(*install);
-    CHECK_EQ(updater.Log->Checks.size(), checks + 1);
-    CHECK(!install->IsShowing());
-    CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
 }
 
 TEST_CASE("updater: a size is shown as the setup gives it: decimal GB to a tenth from 1 GB, MB below")

@@ -3,9 +3,9 @@
 // Port-only (SPEC-menus.md's stage 9, step 2, "Models and views"): the logistics screens' message dialog, question dialog
 // and refit list as models, pulled out of the 1998 box (logistics/MCReusableDialog): what one says, its buttons and what
 // they run, the callback its answer goes to, its timeout. Logistics owns them (MCLogistics::Message, Question, Refit), so
-// they live as long as the boxes did. Shown, one says itself on the remade dialog (MCRmlDialogs) whenever the menus run;
-// where they can't start, and in the 1998 box's own tests (MCReusableDialog::OldBoxOnly), its view, the 1998 box, shows
-// it. What it says, its answers and its timeout are the box's, unchanged.
+// they live as long as the boxes did. Shown, one says itself on the remade dialog (MCRmlDialogs), over a remade screen or
+// none; its view, the 1998 box, never shows it (the game stops where the menus can't start: MCRmlFlow::Broken). What it
+// says, its answers and its timeout are the box's, unchanged.
 
 #include "gui/MCGuiRef.h"
 
@@ -47,12 +47,9 @@ public:
     MCMenuDialog(const MCMenuDialog&) = delete;
     MCMenuDialog& operator=(const MCMenuDialog&) = delete;
 
-    /// <summary>
-    /// Its view where the menus can't start: the 1998 box <paramref name="view"/>, which draws what this says and passes
-    /// its keys and clicks here.
-    /// </summary>
+    /// <summary>Its view: the 1998 box <paramref name="view"/>, which passes its keys and clicks here.</summary>
     void SetView(MCGuiHandle<MCReusableDialog> view);
-    /// <summary>The 1998 box that shows it where the menus can't start (none once logistics closes it).</summary>
+    /// <summary>The 1998 box (none once logistics closes it).</summary>
     const MCGuiHandle<MCReusableDialog>& View() const { return _View; }
 
     /// <summary>Sets the text (up to its first NUL). Port: a newline starts a line. Its OK shows again (<see cref="SetTwoButton"/>).</summary>
@@ -61,8 +58,8 @@ public:
     void SetTwoButton(bool two);
 
     /// <summary>
-    /// Shows it and starts its timeout, if any: said on the remade dialog whenever the menus run (its buttons running
-    /// these as Enter and Escape do), else shown by its view.
+    /// Shows it and starts its timeout, if any: said on the remade dialog (its buttons running these as Enter and Escape
+    /// do).
     /// </summary>
     void Activate();
     /// <summary>
@@ -116,8 +113,8 @@ public:
     std::function<bool(uint32_t key)> KeyTaker;
 
 private:
-    /// <summary>Says it on the remade dialog (<see cref="Activate"/>); false when the 1998 box is to show it.</summary>
-    bool SayOverRemade();
+    /// <summary>Says it on the remade dialog (<see cref="Activate"/>).</summary>
+    void SayOverRemade();
     /// <summary>
     /// The remade dialog's button pressed: as Enter (OK, -1 for a question) or Escape on a question (CANCEL), its say
     /// over first.
@@ -125,8 +122,6 @@ private:
     void AnswerRemade(bool ok);
     /// <summary>Whether the remade dialog still says what <see cref="SayOverRemade"/> said (or will again).</summary>
     bool StillSaid() const;
-    /// <summary>Shown the old way, by its view.</summary>
-    void ShowOld();
     /// <summary>Its timeout started, if it has one.</summary>
     void StartTimeout();
 

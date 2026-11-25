@@ -14,10 +14,11 @@
 namespace MCRmlFlow
 {
     /// <summary>
-    /// The game's menus' RmlUi, started over the display at its window's size with HD art as PREFS' HD ART has it; none
-    /// when it can't start (the log says why, once).
+    /// The game's menus' RmlUi, started over the display at its window's size with HD art as PREFS' HD ART has it.
+    /// Port-only (SPEC-menus.md's stage 9): the game has no other screens to play from, so where it can't start (the
+    /// start's check passed: <see cref="FilesLoad"/>) the game stops as that check stops it (<see cref="Broken"/>).
     /// </summary>
-    MCOptionalRef<MCRmlMenus> Menus();
+    MCRmlMenus& Menus();
 
     /// <summary>Stops the game's menus (the game's end): its screens destroyed, RmlUi shut down.</summary>
     void Stop();
@@ -32,6 +33,14 @@ namespace MCRmlFlow
     /// doesn't start: no menus' RmlUi is left started, and no screen is shown. There are no other screens to play from.
     /// </summary>
     bool FilesLoad(const std::filesystem::path& folder, const std::function<void(std::string_view)>& tell);
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9, the user's answer): the menus failing once the game is going (their RmlUi
+    /// can't start for real, or a screen the game can't go on without can't be read): the log says
+    /// <paramref name="why"/>, and the game stops with the start check's words, <see cref="FilesMissing"/> and how to
+    /// repair the copy (MCFatalRepair): never a 1998 screen in its place.
+    /// </summary>
+    [[noreturn]] void Broken(std::string_view why);
 
     /// <summary>Makes a remade screen on the menus' layer (its document, its keys, its Back).</summary>
     using MCMake = std::function<MCGuiHandle<MCRmlScreen>(MCRmlLayer& layer)>;
@@ -75,22 +84,17 @@ namespace MCRmlFlow
 
     /// <summary>
     /// The screen <paramref name="handle"/> holds, made on the layer <paramref name="on"/> names if it isn't (or was
-    /// closed), its document not read by this; none when the menus can't start or it can't be made (the log says why,
-    /// naming it <paramref name="what"/>).
+    /// closed), its document not read by this; none when it can't be made (the log says why, naming it
+    /// <paramref name="what"/>).
     /// </summary>
     template <class T>
     std::shared_ptr<T> MadeOnLayer(MCGuiHandle<T>& handle, std::string_view what, MCOn on = MCOn::Menus)
     {
-        const MCOptionalRef<MCRmlMenus> menus = Menus();
-
-        if (!menus.has_value())
-        {
-            return nullptr;
-        }
+        MCRmlMenus& menus = Menus();
 
         if (handle.Lock() == nullptr)
         {
-            MCRmlLayer& layer = on == MCOn::Mission ? menus->get().Mission() : menus->get().Menus();
+            MCRmlLayer& layer = on == MCOn::Mission ? menus.Mission() : menus.Menus();
             handle = layer.template CreateChild<T>([](T&) {});
         }
 
@@ -108,8 +112,8 @@ namespace MCRmlFlow
     /// Port-only (SPEC-menus.md's stage 8): the screen <paramref name="handle"/> holds, made on the layer
     /// <paramref name="on"/> names if it isn't (or was closed) and its document read and laid out at once if a change's
     /// job hasn't (<see cref="ReadAhead"/>), for a screen the game shows itself rather than through a change (the
-    /// briefing over the 1998 one, the loading screen, the results); none when the menus can't start or its document
-    /// can't be read (the log says why, naming it <paramref name="what"/>).
+    /// briefing over the 1998 one, the loading screen, the results); none when it can't be made or its document can't be
+    /// read (the log says why, naming it <paramref name="what"/>).
     /// </summary>
     template <class T> MCOptionalRef<T> MadeNow(MCGuiHandle<T>& handle, std::string_view what, MCOn on = MCOn::Menus)
     {
@@ -135,6 +139,23 @@ namespace MCRmlFlow
         }
 
         return *screen;
+    }
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): the screen <see cref="MadeNow"/> makes, for one the game has no other to show
+    /// in its place: where it can't be made or read, the game stops (<see cref="Broken"/>, naming it
+    /// <paramref name="what"/>).
+    /// </summary>
+    template <class T> T& Needed(MCGuiHandle<T>& handle, std::string_view what, MCOn on = MCOn::Menus)
+    {
+        const MCOptionalRef<T> screen = MadeNow(handle, what, on);
+
+        if (!screen.has_value())
+        {
+            Broken(std::format("{} can't show", what));
+        }
+
+        return screen->get();
     }
 
     /// <summary>

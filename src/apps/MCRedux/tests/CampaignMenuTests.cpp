@@ -185,7 +185,6 @@ namespace
     /// <summary>A new campaign's first briefing with the remade screens, logistics up.</summary>
     void StartFirstBriefing()
     {
-        MCCampaignMenu::Remade() = true;
         REQUIRE(MCTestGame::StartLogistics());
         RunWhileChanging();
         NewCampaign();
@@ -860,7 +859,8 @@ TEST_CASE_ISOLATED("game: the loading screen draws the same on every machine and
     REQUIRE(display != nullptr);
     REQUIRE(display->RendererKind() == MCRendererKind::Software);
     MCCampaignMenu::Hide();
-    REQUIRE(MCLoadingMenu::Show());
+    MCLoadingMenu::Show();
+    REQUIRE(MCLoadingMenu::Shown());
     MCLoadingMenu::Progress(ShownPercent);
     CHECK_EQ(MCLoadingMenu::Screen()->get().Percent(), ShownPercent);
     constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xeeb50e22, 0xd2457be9, 0xb00d4e12};
@@ -1250,7 +1250,6 @@ TEST_CASE_ISOLATED("game: RETURN TO GAME, SAVE GAME and LOAD GAME go back to the
         return;
     }
 
-    MCCampaignMenu::Remade() = true;
     std::optional<MCTestGame::PinnedSaves> pinned;
     REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     RunWhileChanging();
@@ -1365,7 +1364,6 @@ TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its f
         return;
     }
 
-    MCCampaignMenu::Remade() = true;
     std::optional<MCTestGame::PinnedSaves> pinned;
     REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     RunWhileChanging();
@@ -1451,7 +1449,6 @@ namespace
     /// </summary>
     MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann, std::string_view port, int32_t myTeam = InnerSphereTeam)
     {
-        MCCampaignMenu::Remade() = true;
         REQUIRE(MCTestGame::StartLogistics());
         MCTestGuest::OpenLan();
         const std::string address = std::format("127.0.0.1:{}", port);
@@ -1980,7 +1977,7 @@ TEST_CASE_ISOLATED("game: a match's loading screen on a guest lights only its ow
     PlanMatch(ann, GuestLoadingPort);
     // This game as a guest's: no game's load is told to it (MCMultiPlayer::SendPlayerCheckIn goes to the host).
     MultiPlayer()->IsServer = false;
-    REQUIRE(MCLoadingMenu::Show());
+    MCLoadingMenu::Show();
     REQUIRE(MCLoadingMenu::Screen().has_value());
     const MCLoadingScreen& loading = MCLoadingMenu::Screen()->get();
     CHECK_EQ(loading.Eyebrow(), std::string("LAN · COMMANDER'S GAME"));

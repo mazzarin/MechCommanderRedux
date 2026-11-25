@@ -1182,13 +1182,21 @@ auto MCLogistics::ShowLogScreen(bool show, bool redraw) const -> void
     }
 
     // Port-only (SPEC-menus.md's stage 7): the main menu remade shows in the 1998 one's place, which stays logistics'
-    // screen, hidden (logistics/MCMainMenuScreen.h); the 1998 one when RmlUi can't start. Port-only (stage 4): a
-    // launcher's join shows on the painting (logistics/MCRoomScreen), the 1998 ready room hidden in its place.
-    const bool remade = show && ((MainScreen.Is(*CurrentScreen()) && MCMainMenuScreens::ShowMain()) ||
-                                 (ConnectScreen && ConnectScreen.Is(*CurrentScreen()) && ShowLauncherScreen()));
+    // screen, hidden (logistics/MCMainMenuScreen.h). Port-only (stage 4): a launcher's join shows on the painting
+    // (logistics/MCRoomScreen), the 1998 ready room hidden in its place.
+    const bool onMain = MainScreen.Is(*CurrentScreen());
 
-    if (remade)
+    if (show && (onMain || (ConnectScreen && ConnectScreen.Is(*CurrentScreen()))))
     {
+        if (onMain)
+        {
+            MCMainMenuScreens::ShowMain();
+        }
+        else
+        {
+            ShowLauncherScreen();
+        }
+
         CurrentScreen()->ShowGuiWindow(false);
         return;
     }
@@ -1721,9 +1729,7 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
     // Port-only (SPEC-menus.md's stage 8): the remade BRIEFING and DEPLOY (logistics/MCCampaignMenu) over the 1998
     // briefing, which is set up as ever and hidden under them. The 1998 PURCHASING's and 'MECH BAY's BRIEFING button
     // comes back to the tab left on, through a change of screen in place of the slide.
-    const bool remade = MCCampaignMenu::Wanted();
-
-    if (remade && animate)
+    if (animate)
     {
         MCCampaignMenu::ComeBack();
 
@@ -1775,86 +1781,33 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
         briefing.SetUpOperation();
     }
 
-    if (remade)
+    briefing.ShowGuiWindow(false);
+
+    // Port-only: in a change's piece, the remade screen set up, laid out and shown in pieces of their own, after this
+    // one.
+    if (MCScreenChange::InPiece() && !animate)
     {
-        briefing.ShowGuiWindow(false);
+        std::vector<MCScreenChange::MCPiece> pieces = MCCampaignMenu::ShowPieces();
 
-        // Port-only: in a change's piece, the remade screen set up, laid out and shown in pieces of their own, after
-        // this one.
-        if (MCScreenChange::InPiece() && !animate)
+        // The 1998 briefing hidden again once the remade one shows: the way back from a mission shows logistics' screen
+        // (ShowLogScreen) as this returns, before the remade screen's pieces have run.
+        pieces.back().Run = [show = std::move(pieces.back().Run), logistics = weak_from_this()]
         {
-            std::vector<MCScreenChange::MCPiece> pieces = MCCampaignMenu::ShowPieces(
-                [logistics = weak_from_this()]
-                {
-                    if (const std::shared_ptr<MCLogistics> shown = logistics.lock(); shown != nullptr)
-                    {
-                        shown->ShowOldBriefing();
-                    }
-                });
+            show();
 
-            // The 1998 briefing hidden again once the remade one shows: the way back from a mission shows logistics'
-            // screen (ShowLogScreen) as this returns, before the remade screen's pieces have run.
-            pieces.back().Run = [show = std::move(pieces.back().Run), logistics = weak_from_this()]
+            if (const std::shared_ptr<MCLogistics> shown = logistics.lock();
+                shown != nullptr && shown->BriefingScreen && MCCampaignMenu::Shown())
             {
-                show();
+                shown->BriefingScreen->ShowGuiWindow(false);
+            }
+        };
 
-                if (const std::shared_ptr<MCLogistics> shown = logistics.lock();
-                    shown != nullptr && shown->BriefingScreen && MCCampaignMenu::Shown())
-                {
-                    shown->BriefingScreen->ShowGuiWindow(false);
-                }
-            };
-
-            MCScreenChange::RunNext(std::move(pieces));
-            return 0;
-        }
-
-        if (MCCampaignMenu::Show())
-        {
-            return 0;
-        }
-
-        // The remade screen can't show (the log says why): the 1998 briefing's.
-        briefing.ShowGuiWindow(true);
+        MCScreenChange::RunNext(std::move(pieces));
+        return 0;
     }
 
-    SetUpBriefingPictures();
-
-    if (animate)
-    {
-        const std::shared_ptr<MCScrollPane> pane =
-            (previous == RepairScreen ? RepairScreen->UnitPane : PurchaseScreen->UnitPane).Lock();
-        Transition(PaneSlide(*pane, 1), BriefingSlide(briefing), 1);
-    }
-
+    MCCampaignMenu::Show();
     return 0;
-}
-
-auto MCLogistics::SetUpBriefingPictures() -> void
-{
-    MCBriefingScreen& briefing = *BriefingScreen;
-    briefing.SetUpDeploy();
-    briefing.MissionPane->SetScrollPos(0.0f);
-    briefing.DeployPane->SetScrollPos(0.0f);
-    briefing.DrawTonnageBar();
-    DrawScreenButtons();
-
-    // Show the briefing box of the first unit in the deploy pane (none: the box area is blank).
-    if (!briefing.DeployUnits.empty())
-    {
-        briefing.ShowBriefing(briefing.DeployUnits.front());
-    }
-    else
-    {
-        briefing.HideBriefing();
-    }
-}
-
-auto MCLogistics::ShowOldBriefing() -> void
-{
-    // The remade screen can't show (the log says why): the 1998 briefing's.
-    BriefingScreen->ShowGuiWindow(true);
-    SetUpBriefingPictures();
 }
 
 auto MCLogistics::SetUpSessionScreen() -> int32_t

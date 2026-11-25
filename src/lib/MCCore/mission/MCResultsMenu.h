@@ -8,7 +8,7 @@
 // player's team, the commanders by kills, the best pilot, every pilot by kills; REMATCH (the host's, when a guest can
 // have it) and DONE. What it shows is worked out once (mission/MCMissionEnd, as the 1998 screen's), what it reads of the
 // battle's interface through mission/MCResultsReads; its presses go the 1998 screen's ways (MCMission::LeaveResults,
-// MCRoomEnd::Rematch). The 1998 screen (mission/MCMissionResultsScreen) is made only where this one can't show.
+// MCRoomEnd::Rematch). The 1998 screen (mission/MCMissionResultsScreen) is no longer made.
 
 #include "mission/MCMissionEnd.h"
 #include "ui/MCRmlScreen.h"
@@ -188,25 +188,16 @@ private:
 namespace MCResultsMenu
 {
     /// <summary>
-    /// Port-only, for the tests: whether the results are the remade ones (on in the game; the tests that click the 1998
-    /// results turn it off until step 2 records them again).
-    /// </summary>
-    bool& Remade();
-
-    /// <summary>Whether the remade results will show at the mission's end (on, and the menus' RmlUi can start).</summary>
-    bool Wanted();
-
-    /// <summary>
     /// The mission's names the results show, read as its load starts while logistics is there (its briefing, a match's
     /// room): the eyebrow over the title. None for a mission started without logistics (a game segment).
     /// </summary>
     void BeforeMission();
 
     /// <summary>
-    /// The results shown at the scenario's end (<see cref="MCResultsScreen::SetUp"/>); false, with nothing of the end done,
-    /// when they can't (the 1998 screen shows then).
+    /// The results shown at the scenario's end (<see cref="MCResultsScreen::SetUp"/>). Port-only (stage 9): where they
+    /// can't be read, the game stops (MCRmlFlow::Broken): there is no other screen to end the mission on.
     /// </summary>
-    bool Show();
+    void Show();
 
     /// <summary>Whether the remade results are up, and whether their count is done.</summary>
     bool Up();

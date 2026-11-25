@@ -205,25 +205,10 @@ MCUpdateScreen::MCUpdateScreen()
     Keys = {{"Esc", "Back"}};
 }
 
-void MCUpdateScreen::OpenFromMenus()
+void MCUpdateScreen::Open()
 {
-    // Logged as it failed: the old page, over the main menu.
-    if (!Open())
-    {
-        ShowUpdatePage();
-    }
-}
-
-bool MCUpdateScreen::Open()
-{
-    if (!MCRmlFlow::Menus().has_value())
-    {
-        return false;
-    }
-
     // Refused while another change runs: the press goes no further.
     MCScreenFlow::Open(MCMenuScreens::Update());
-    return true;
 }
 
 std::string_view MCUpdateScreen::Word(MCAct act)

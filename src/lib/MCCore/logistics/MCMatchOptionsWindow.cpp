@@ -491,14 +491,7 @@ bool ShowMatchOptionsWindow()
 {
     if (!Made())
     {
-        const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-
-        if (!menus.has_value())
-        {
-            return false;
-        }
-
-        Made() = menus->get().Menus().CreateChild<MCMatchOptionsWindow>([](MCMatchOptionsWindow&) {});
+        Made() = MCRmlFlow::Menus().Menus().CreateChild<MCMatchOptionsWindow>([](MCMatchOptionsWindow&) {});
     }
 
     Made()->OpenOver();

@@ -5,7 +5,6 @@
 #include "gui/MCGuiSystem.h"
 #include "logistics/MCReusableDialog.h"
 #include "ui/MCRmlDialog.h"
-#include "ui/MCRmlFlow.h"
 
 /// <summary>The GUI object a dialog's timeouts' timers go to: its timer closes the dialog with its timeout's result.</summary>
 class MCMenuDialogTimer final : public MCGuiObject
@@ -110,8 +109,7 @@ void MCMenuDialog::SetTwoButton(bool two)
 
 bool MCMenuDialog::IsShowing() const
 {
-    const std::shared_ptr<MCReusableDialog> view = _View.Lock();
-    return (view != nullptr && view->ShownOld()) || StillSaid();
+    return StillSaid();
 }
 
 bool MCMenuDialog::StillSaid() const
@@ -141,15 +139,8 @@ void MCMenuDialog::AnswerRemade(bool ok)
     Deactivate(ok && two ? QuestionOkResult : 0);
 }
 
-bool MCMenuDialog::SayOverRemade()
+void MCMenuDialog::SayOverRemade()
 {
-    // Port-only (SPEC-menus.md's stage 9): whenever the menus run, over a remade screen or not; the 1998 box only where
-    // they can't start.
-    if (MCReusableDialog::OldBoxOnly() || !MCRmlFlow::Menus().has_value())
-    {
-        return false;
-    }
-
     const std::weak_ptr<MCMenuDialog> self = weak_from_this();
     const auto answer = [self](bool ok)
     {
@@ -164,23 +155,11 @@ bool MCMenuDialog::SayOverRemade()
                            .Main = Ok.Disabled ? std::string() : Ok.Word(),
                            .Other = TwoButton ? Cancel.Word() : std::string(),
                            .OnMain = [answer] { answer(true); },
-                           .OnOther = [answer] { answer(false); }};
+                           .OnOther = [answer] { answer(false); },
+                           // Through a change of screens it stands, as the original's box stayed up.
+                           .UntilAnswered = true};
 
-    // Through a change to a 1998 screen with no remade one after it, it shows the old way, as the original's stayed up.
-    say.OnLost = [self]
-    {
-        if (const std::shared_ptr<MCMenuDialog> dialog = self.lock();
-            dialog != nullptr && std::exchange(dialog->_SaidOverRemade, false))
-        {
-            dialog->ShowOld();
-        }
-    };
-
-    if (!MCRmlDialogs::Show(std::move(say)))
-    {
-        return false;
-    }
-
+    MCRmlDialogs::Show(std::move(say));
     _SaidOverRemade = true;
 
     if (const std::shared_ptr<MCReusableDialog> view = _View.Lock(); view != nullptr)
@@ -189,33 +168,12 @@ bool MCMenuDialog::SayOverRemade()
     }
 
     StartTimeout();
-    return true;
 }
 
 void MCMenuDialog::Activate()
 {
-    // Port-only (SPEC-menus.md's stage 4): the remade dialog says it whenever the menus run.
-    if (SayOverRemade())
-    {
-        return;
-    }
-
-    _SaidOverRemade = false;
-    ShowOld();
-    StartTimeout();
-}
-
-void MCMenuDialog::ShowOld()
-{
-    const std::shared_ptr<MCReusableDialog> view = _View.Lock();
-
-    if (view == nullptr)
-    {
-        SDL_Log("MCMenuDialog: no 1998 box to show \"%s\" in (the menus can't start)", Text.c_str());
-        return;
-    }
-
-    view->ShowOld();
+    // Port-only (SPEC-menus.md's stage 9): the remade dialog says it, over a remade screen or none (the 1998 box went).
+    SayOverRemade();
 }
 
 void MCMenuDialog::StartTimeout()

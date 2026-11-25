@@ -72,9 +72,6 @@ namespace
     constexpr std::string_view QuitWord = "Quit";
     constexpr std::string_view MainMenuPlace = "Main menu";
 
-    /// <summary>The tests of 1998's main menu (<see cref="MCMainMenuScreens::SetOldForTests"/>).</summary>
-    bool OldForTests = false;
-
     /// <summary>The panel's screen while made, as it was made.</summary>
     std::shared_ptr<MCMainMenuScreen> MadeScreen(MCMainPanel panel)
     {
@@ -115,7 +112,10 @@ namespace
         return prepare();
     }
 
-    /// <summary>The panel made and read now if it isn't; none when the menus can't start or it can't be read.</summary>
+    /// <summary>
+    /// The panel made and read now if it isn't. Port-only (stage 9): where it can't be made or read, the game stops
+    /// (MCRmlFlow::Broken): there is no other main menu to show.
+    /// </summary>
     std::shared_ptr<MCMainMenuScreen> ReadyScreen(MCMainPanel panel)
     {
         if (std::shared_ptr<MCMainMenuScreen> made = MadeScreen(panel); made != nullptr && made->Ready())
@@ -128,9 +128,8 @@ namespace
 
         if (made == nullptr || !made->Error().empty())
         {
-            SDL_Log("Menus: the main menu's %.*s can't show: %s", static_cast<int>(InfoOf(panel).Kind.size()),
-                    InfoOf(panel).Kind.data(), made != nullptr ? made->Error().c_str() : "the menus can't start");
-            return nullptr;
+            MCRmlFlow::Broken(std::format("the main menu's {} can't show: {}", InfoOf(panel).Kind,
+                                          made != nullptr ? made->Error() : std::string("it couldn't be made")));
         }
 
         return made;
@@ -225,7 +224,7 @@ void MCMainMenuScreen::OnLoaded(Rml::ElementDocument& /*document*/)
         }
     };
 
-    OnClick(UpdateId, [] { MCUpdateScreen::OpenFromMenus(); });
+    OnClick(UpdateId, [] { MCUpdateScreen::Open(); });
     OnClick(RestartId, [] { MCMainMenuModel::RestartForArt(); });
 
     if (_Panel != MCMainPanel::Main)
@@ -671,20 +670,15 @@ bool MCMainMenuScreens::Ready(MCMainPanel panel)
     return made == nullptr || made->Ready() || !made->Error().empty();
 }
 
-bool MCMainMenuScreens::ShowNow(MCMainPanel panel)
+void MCMainMenuScreens::ShowNow(MCMainPanel panel)
 {
     const std::shared_ptr<MCMainMenuScreen> screen = ReadyScreen(panel);
-
-    if (screen == nullptr)
-    {
-        return false;
-    }
 
     // Shown already on top: as it is.
     if (const MCOptionalRef<MCRmlScreen> top = screen->Layer().Top();
         screen->Shown() && top.has_value() && &top->get() == screen.get())
     {
-        return true;
+        return;
     }
 
     // As an old screen coming up does (MCRmlFlow::OldScreenShown), the remade screens over the main menu go.
@@ -692,12 +686,11 @@ bool MCMainMenuScreens::ShowNow(MCMainPanel panel)
     screen->Layer().HideAll();
     screen->Show();
     MCScreenFlow::Noted();
-    return true;
 }
 
-bool MCMainMenuScreens::ShowMain()
+void MCMainMenuScreens::ShowMain()
 {
-    return !OldForTests && ShowNow(MCMainPanel::Main);
+    ShowNow(MCMainPanel::Main);
 }
 
 void MCMainMenuScreens::SwapTo(MCMainPanel panel)
@@ -709,12 +702,6 @@ void MCMainMenuScreens::SwapTo(MCMainPanel panel)
     }
 
     const std::shared_ptr<MCMainMenuScreen> screen = ReadyScreen(panel);
-
-    if (screen == nullptr)
-    {
-        return;
-    }
-
     // Opened from the main menu: on the list's first pick (the latest save's campaign, the first mission).
     screen->Pick(-1);
     screen->Show();
@@ -788,9 +775,4 @@ void MCMainMenuScreens::Release()
     {
         screen->ReleaseCount();
     }
-}
-
-void MCMainMenuScreens::SetOldForTests(bool old)
-{
-    OldForTests = old;
 }

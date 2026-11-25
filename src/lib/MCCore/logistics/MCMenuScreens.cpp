@@ -178,7 +178,7 @@ auto MCMenuScreens::Register() -> void
     Registered = true;
     // Port-only (SPEC-menus.md, stage 7): the main menu remade (logistics/MCMainMenuScreen.h), read live from the press
     // and shown over logistics' 1998 main screen, which stays its screen, hidden (MCLogistics::ShowLogScreen): shown
-    // as 1998's CANCEL showed the main menu, the multiplayer game let go; the old screen where RmlUi can't start.
+    // as 1998's CANCEL showed the main menu, the multiplayer game let go.
     MCScreenKind main = MCMainMenuScreens::Kind(MCMainPanel::Main);
     main.Show = ShowMainMenu;
     main.Hide = []
@@ -385,12 +385,8 @@ auto MCMenuScreens::ShowBack(MCScreenId id, MCBackWay way) -> void
 
     if (id == Solo())
     {
-        // Port-only (stage 7): the remade SOLO MISSIONS, in the main menu's panel; the main menu where it can't show.
-        if (!MCMainMenuScreens::ShowNow(MCMainPanel::Solo))
-        {
-            logistics.SetUpMainScreen(true);
-        }
-
+        // Port-only (stage 7): the remade SOLO MISSIONS, in the main menu's panel.
+        MCMainMenuScreens::ShowNow(MCMainPanel::Solo);
         return;
     }
 
@@ -449,13 +445,13 @@ auto MCMenuScreens::AskLeaveGame() -> void
     constexpr std::string_view CancelWord = "Cancel";
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
-    if (RoomScreenShown() && logistics != nullptr &&
+    if (RoomScreenShown() && logistics != nullptr)
+    {
         MCRmlDialogs::Show(MCRmlDialog::MCSay{.Eyebrow = logistics->Room.Name(),
                                               .Heading = std::string(LeaveGameQuestion),
                                               .Main = std::string(LeaveWord),
                                               .Other = std::string(CancelWord),
-                                              .OnMain = [] { MCRoomEnd::LeaveLauncherGame(); }}))
-    {
+                                              .OnMain = [] { MCRoomEnd::LeaveLauncherGame(); }});
         return;
     }
 
@@ -482,10 +478,8 @@ auto MCMenuScreens::LeaveCampaign() -> void
                 .OnMain = launcher ? std::function<void()>([] { KillTheGame(); }) : std::function<void()>(ExitToGames),
                 .Leaves = true};
 
-            if (MCRmlDialogs::Show(std::move(say)))
-            {
-                return;
-            }
+            MCRmlDialogs::Show(std::move(say));
+            return;
         }
 
         CheckExit();

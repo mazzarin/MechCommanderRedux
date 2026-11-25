@@ -1287,35 +1287,17 @@ namespace MCTestGuest
         Step();
     }
 
-    /// <summary>
-    /// The sentence the dialog shows: the remade one's over a remade screen, else the 1998 one's; empty with none.
-    /// </summary>
+    /// <summary>The sentence the remade dialog shows; empty with none.</summary>
     inline std::string DialogText()
     {
-        if (MCRmlDialogs::Shown())
-        {
-            return MCRmlDialogs::Dialog()->Said().Text;
-        }
-
-        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-        return logistics != nullptr && logistics->MessageDialog != nullptr && logistics->MessageDialog->ShowWindow
-                   ? logistics->Message->Text
-                   : std::string();
+        return MCRmlDialogs::Shown() ? MCRmlDialogs::Dialog()->Said().Text : std::string();
     }
 
-    /// <summary>The dialog's answer (OK) pressed, the remade one's or the 1998 one's, and the game settled.</summary>
+    /// <summary>The remade dialog's answer (OK) pressed, and the game settled.</summary>
     inline void PressDialogOk()
     {
-        if (MCRmlDialogs::Shown())
-        {
-            MCRmlDialogs::Dialog()->PressMain();
-        }
-        else
-        {
-            MCGuiObject& ok = *GlobalLog()->MessageDialog->OkButton;
-            MCScreenInput::Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
-        }
-
+        REQUIRE(MCRmlDialogs::Shown());
+        MCRmlDialogs::Dialog()->PressMain();
         Settle();
     }
 

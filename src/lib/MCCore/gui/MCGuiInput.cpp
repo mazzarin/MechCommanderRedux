@@ -181,19 +181,12 @@ namespace
             }
             case VK_ESCAPE:
             {
-                // Port-only (SPEC-menus.md, "A pause menu"): Escape opens the pause over the battlefield; 1998's
-                // pause (and its "EXIT MULTIPLAYER?" box) when the menus' RmlUi can't start.
+                // Port-only (SPEC-menus.md, "A pause menu"): Escape opens the pause over the battlefield (1998's
+                // pause and its "EXIT MULTIPLAYER?" box went).
                 if (Scenario() != nullptr && EventsToMissionResultsScreen == 0 && Scenario()->StartingUp == 0 &&
-                    Scenario()->StartUpTurns < Turn && !MCPauseScreen::OpenOverMission())
+                    Scenario()->StartUpTurns < Turn)
                 {
-                    if (MultiPlayer() == nullptr)
-                    {
-                        GamePaused = !GamePaused;
-                    }
-                    else
-                    {
-                        GameAsked = !GameAsked;
-                    }
+                    MCPauseScreen::OpenOverMission();
                 }
                 break;
             }
@@ -267,17 +260,9 @@ namespace
                     const std::string release = LoadGameString(0x282, 0xfe);
 
                     // Port-only (SPEC-menus.md's stage 9): the remade dialog says it, over the battlefield in a
-                    // mission, at its interface size; the 1998 box where the menus can't start.
-                    if (MCRmlDialogs::Show({.Eyebrow = AppName, .Text = std::format(ReleaseVersionFormat, release)},
-                                           Scenario() != nullptr ? MCRmlFlow::MCOn::Mission : MCRmlFlow::MCOn::Menus))
-                    {
-                        break;
-                    }
-
-                    DestroyVersion();
-                    gui.VersionDialog = ScreenWindow()->CreateChild<MCGuiMessageBox>(
-                        [&](MCGuiMessageBox& made) { made.Init(std::format("Release Version: {}", release)); });
-                    gui.Grab(gui.VersionDialog);
+                    // mission, at its interface size (the 1998 box went).
+                    MCRmlDialogs::Show({.Eyebrow = AppName, .Text = std::format(ReleaseVersionFormat, release)},
+                                       Scenario() != nullptr ? MCRmlFlow::MCOn::Mission : MCRmlFlow::MCOn::Menus);
                 }
                 break;
             }

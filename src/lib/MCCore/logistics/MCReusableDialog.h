@@ -7,7 +7,7 @@ class MCMenuDialog;
 /// <summary>
 /// The general logistics message dialog: word-wrapped text in a frame that grows with it, OK and optionally Cancel
 /// buttons. Port-only (SPEC-menus.md's stage 9, step 2): the view of a dialog's model (<see cref="MCMenuDialog"/>, which
-/// holds what it says, its answers and its timeout), shown only where the menus can't start.
+/// holds what it says, its answers and its timeout), which says itself on the remade dialog: this no longer shows.
 /// </summary>
 /// <remarks>
 /// Original source: <c>logistics\logdlg.cpp</c> (<c>ReusableDialog</c>). The logistics screen keeps one and reuses
@@ -62,12 +62,6 @@ public:
     std::shared_ptr<MCLogPort> TopPiece;
     std::shared_ptr<MCLogPort> MiddlePiece;
     std::shared_ptr<MCLogPort> BottomPiece;
-
-    /// <summary>
-    /// Port-only (SPEC-menus.md's stage 9), for the tests of the 1998 box itself: it shows as where the menus' RmlUi
-    /// can't start (off: the remade dialog says it whenever the menus run).
-    /// </summary>
-    static bool& OldBoxOnly();
 
 protected:
     /// <summary>Draws the frame: the top, <see cref="NumMiddlePieces"/> middle pieces and the bottom.</summary>

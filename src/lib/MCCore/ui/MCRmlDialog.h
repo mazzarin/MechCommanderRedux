@@ -42,18 +42,18 @@ public:
         std::function<std::optional<std::string>(uint32_t key)> TakesKey;
         /// <summary>
         /// Port-only (SPEC-menus.md's stage 4): a wait (MCRmlDialogs::Waiting), which MCRmlDialogs::EndWait ends, even
-        /// with a way out (a launcher's CANCEL). It stands: see <see cref="OnLost"/>.
+        /// with a way out (a launcher's CANCEL). It stands: see <see cref="UntilAnswered"/>.
         /// </summary>
         bool Wait = false;
         /// <summary>
         /// Port-only (SPEC-menus.md's stage 4): an old dialog's say (MCMenuDialog), which stands as a wait does until
         /// answered or ended: a change of screens hides it, and it says itself again over the next remade screen
-        /// (MCRmlDialogs::Tend); with none to say itself over, this shows it the old way instead.
+        /// (MCRmlDialogs::Tend).
         /// </summary>
-        std::function<void()> OnLost;
+        bool UntilAnswered = false;
 
         /// <summary>Whether a change of screens leaves it standing (a wait, or an old dialog's say).</summary>
-        bool Stands() const { return Wait || OnLost != nullptr; }
+        bool Stands() const { return Wait || UntilAnswered; }
     };
 
     MCRmlDialog();
@@ -100,16 +100,15 @@ namespace MCRmlDialogs
 {
     /// <summary>
     /// The dialog on the layer <paramref name="on"/> names (the menus', or Port-only (stage 9) the mission's over the
-    /// battlefield at its INTERFACE SIZE), made once there; none when RmlUi can't start.
+    /// battlefield at its INTERFACE SIZE), made once there; none when it can't be made.
     /// </summary>
     MCGuiHandle<MCRmlDialog> Dialog(MCRmlFlow::MCOn on = MCRmlFlow::MCOn::Menus);
 
     /// <summary>
     /// Says <paramref name="say"/> on the layer <paramref name="on"/> names, over whatever shows there (Port-only,
-    /// stage 9: a remade screen under it or none, as the 1998 box went over any screen); false only when the menus'
-    /// RmlUi can't start (the 1998 box's turn).
+    /// stage 9: a remade screen under it or none, as the 1998 box went over any screen).
     /// </summary>
-    bool Show(MCRmlDialog::MCSay say, MCRmlFlow::MCOn on = MCRmlFlow::MCOn::Menus);
+    void Show(MCRmlDialog::MCSay say, MCRmlFlow::MCOn on = MCRmlFlow::MCOn::Menus);
 
     /// <summary>
     /// What the dialogs belong to when they don't say (the remade screen shown: "Internet", "LAN"), above their sentence.
@@ -132,8 +131,8 @@ namespace MCRmlDialogs
 
     /// <summary>
     /// Port-only (SPEC-menus.md's stage 9): a 1998 dialog box shown (MCReusableDialog's, MCPurchaseDlg's, the version
-    /// box) with the words <paramref name="text"/>: logged, and counted while the menus' RmlUi runs, where none should
-    /// show (the tests read <see cref="OldBoxes"/>).
+    /// box) with the words <paramref name="text"/>: logged and counted, as none should show (the tests read
+    /// <see cref="OldBoxes"/>).
     /// </summary>
     void NoteOldBox(std::string_view text);
     size_t OldBoxes();
@@ -149,26 +148,25 @@ namespace MCRmlDialogs
 
     /// <summary>
     /// Each frame, after the screens': a say a change of screens hid says itself again once the change is done (over the
-    /// screen it shows), or, where the menus can't start, its old dialog shows it (MCRmlDialog::MCSay::OnLost).
+    /// screen it shows).
     /// </summary>
     void Tend();
 
     /// <summary>
     /// An old message (ShowMenuMessage, in the 1998 dialog's capitals) said over the screens, in sentence case; OK runs
-    /// <paramref name="then"/>. False when the menus can't start.
+    /// <paramref name="then"/>.
     /// </summary>
-    bool Message(std::string_view text, std::function<void()> then = {});
+    void Message(std::string_view text, std::function<void()> then = {});
 
     /// <summary>
     /// An old message that asks for a key (the LIGHTS key's) said over the remade screen shown: <paramref name="take"/>
-    /// offered each key (MCRmlDialog::MCSay::TakesKey); OK, Escape or a key taken runs <paramref name="then"/>. False
-    /// when the menus can't start.
+    /// offered each key (MCRmlDialog::MCSay::TakesKey); OK, Escape or a key taken runs <paramref name="then"/>.
     /// </summary>
-    bool AskKey(std::string_view text, std::function<std::optional<std::string>(uint32_t key)> take,
+    void AskKey(std::string_view text, std::function<std::optional<std::string>(uint32_t key)> take,
                 std::function<void()> then);
 
     /// <summary>A wait with no way out (ShowWaitingDialog: "Opening your room again...") over the screens.</summary>
-    bool Waiting(std::string_view text);
+    void Waiting(std::string_view text);
 
     /// <summary>The 1998 dialog's capitals in sentence case: "BOB CLOSED THE GAME." to "Bob closed the game.".</summary>
     std::string SentenceCase(std::string_view text);

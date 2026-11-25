@@ -1108,15 +1108,11 @@ auto MCMission::LoadScenario(std::string_view name) -> void
 
     SoundSystem()->PlayBettySample(0x13);
     EndScenarioRequested = 0;
-    // Port-only (SPEC-menus.md's stage 9): the remade results' names for the mission, read while logistics is here;
-    // the 1998 results screen made only where the remade ones can't show.
+    // Port-only (SPEC-menus.md's stage 9): the remade results' names for the mission, read while logistics is here,
+    // and the menus' RmlUi started if it isn't (a game segment's), so the results find it at the end.
     MCResultsMenu::BeforeMission();
     ResultsScreen.reset();
-
-    if (!MCResultsMenu::Wanted())
-    {
-        MakeOldResults();
-    }
+    MCRmlFlow::Menus();
 
     if (GlobalGameSegment == 0)
     {
@@ -1409,31 +1405,7 @@ auto MCMission::ResultsFinished() const -> bool
 
 auto MCMission::ShowResults() -> void
 {
-    if (ResultsScreen == nullptr && MCResultsMenu::Show())
-    {
-        return;
-    }
-
-    // The 1998 screen where the remade results can't show (the menus' RmlUi or the document didn't start).
-    if (ResultsScreen == nullptr)
-    {
-        SDL_Log("Mission: the remade results can't show; the 1998 results screen shows");
-        MakeOldResults();
-    }
-
-    ResultsScreen->Activate();
-}
-
-auto MCMission::MakeOldResults() -> void
-{
-    // A child of the screen window, hidden until the scenario ends (Activate shows it).
-    ResultsScreen = ScreenWindow()->CreateChild<MCMissionResultsScreen>(
-        [this](MCMissionResultsScreen& screen)
-        {
-            ResultsScreen = screen.WeakAs<MCMissionResultsScreen>();
-            screen.Init();
-            screen.ShowGuiWindow(false);
-        });
+    MCResultsMenu::Show();
 }
 
 auto MCMission::TakeDownResults() -> void

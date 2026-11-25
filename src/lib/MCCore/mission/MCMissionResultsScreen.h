@@ -48,8 +48,8 @@ MCGuiHandle<MCGuiButton> AddRematchButton(MCGuiObject& parent, int32_t xPos, int
 /// The mission results screen: resource points, kill statistics, objectives and pilots, each shown a step at a time
 /// (<see cref="MCResultsCount"/>; Escape skips the animation), then the "move on" button. What it shows is worked out
 /// once by <see cref="Activate"/> (<see cref="MCMissionResults"/>, through mission/MCMissionEnd as the remade results);
-/// <see cref="Draw"/> draws it each frame. Port-only (SPEC-menus.md's stage 9): made only where the remade results
-/// (mission/MCResultsMenu) can't show.
+/// <see cref="Draw"/> draws it each frame. Port-only (SPEC-menus.md's stage 9): no longer made (the remade results,
+/// mission/MCResultsMenu, show in its place).
 /// </summary>
 class MCMissionResultsScreen : public MCGuiObject
 {

@@ -91,9 +91,10 @@ private:
 
 /// <summary>
 /// CHOOSE MAP's window opened over the remade room, the room's map (<paramref name="roomsMap"/>, its file; none: empty)
-/// picked, CHOOSE doing <paramref name="choosing"/>; false when it can't (the menus can't start).
+/// picked, CHOOSE doing <paramref name="choosing"/>. Port-only (stage 9): where it can't be read, the game stops
+/// (MCRmlFlow::Broken).
 /// </summary>
-bool ShowChooseMapWindow(std::string_view roomsMap, std::function<void(const std::string& file)> choosing);
+void ShowChooseMapWindow(std::string_view roomsMap, std::function<void(const std::string& file)> choosing);
 
 /// <summary>CHOOSE MAP's window (none before it first opened).</summary>
 MCGuiHandle<MCChooseMapWindow> ChooseMapWindow();

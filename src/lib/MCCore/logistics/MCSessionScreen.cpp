@@ -335,14 +335,6 @@ auto MCSessionScreen::OnDestroy() -> void
 
 auto MCSessionScreen::Draw() -> void
 {
-    // Port-only (SPEC-menus.md's stage 4): the UPDATE page closed, the remade room again in the 1998 room's place.
-    if (UpdateOver && !UpdatePageShown() && ShowWindow)
-    {
-        UpdateOver = false;
-        ShowGuiWindow(true);
-        return;
-    }
-
     if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager->CurrentSession() == nullptr)
     {
         return;
@@ -515,18 +507,16 @@ auto MCSessionScreen::ShowTab(MCSessionTab tab) -> void
 auto MCSessionScreen::ShowGuiWindow(bool show) -> void
 {
     // Port-only (SPEC-menus.md's stage 4): the remade room in its place.
-    if (!show)
+    if (show)
     {
-        UpdateOver = false;
-        HideRoomScreen();
-    }
-    else if (!UpdateOver && ShowRoomScreen())
-    {
+        ShowRoomScreen();
         MCLogObject::ShowGuiWindow(false);
         return;
     }
 
-    if (!show && FrontTab == MCSessionTab::Options)
+    HideRoomScreen();
+
+    if (FrontTab == MCSessionTab::Options)
     {
         FrontTab = MCSessionTab::Chat;
         MatchOptionsList->ShowGuiWindow(false);
@@ -537,15 +527,7 @@ auto MCSessionScreen::ShowGuiWindow(bool show) -> void
         }
     }
 
-    MCLogObject::ShowGuiWindow(show);
-}
-
-auto MCSessionScreen::ShowUpdateOver() -> void
-{
-    UpdateOver = true;
-    HideRoomScreen();
-    MCLogObject::ShowGuiWindow(true);
-    ShowUpdatePageOver(*this);
+    MCLogObject::ShowGuiWindow(false);
 }
 
 auto MCSessionScreen::Opening() -> void

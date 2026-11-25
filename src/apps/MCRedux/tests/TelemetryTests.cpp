@@ -20,7 +20,6 @@
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCReusableDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"
@@ -241,40 +240,6 @@ namespace
 
         const size_t start = at + key.size();
         return std::string(report.substr(start, report.find('"', start) - start));
-    }
-
-    /// <summary>A dialog's inner panel: its edges' columns, in from the dialog's sides, and the blank inside each.</summary>
-    constexpr int32_t PanelLeftEdge = 9;
-    constexpr int32_t PanelRightEdge = 10;
-    constexpr int32_t PanelBlank = 3;
-
-    /// <summary>
-    /// Whether <paramref name="dialog"/>'s text keeps as far from its panel's right edge as from its left: on every
-    /// row of the text, the blank columns inside both edges are alike, on the screen as shown.
-    /// </summary>
-    bool TextInsidePanel(MCReusableDialog& dialog)
-    {
-        const std::vector<uint8_t> shown = MCScreenInput::ShownScreen();
-        const auto width = static_cast<size_t>(ScreenPort()->Bitmap().XMax + 1);
-        const auto pixel = [&](int32_t x, int32_t y)
-        { return shown[static_cast<size_t>(y) * width + static_cast<size_t>(x)]; };
-        const int32_t left = dialog.GlobalX() + PanelLeftEdge + 1;
-        const int32_t right = dialog.GlobalX() + dialog.Width() - PanelRightEdge - PanelBlank;
-        const int32_t bottom = dialog.GlobalY() + dialog.Height() - dialog.BottomPiece->Height();
-
-        for (int32_t y = dialog.GlobalY() + dialog.TopPiece->Height(); y < bottom; y++)
-        {
-            for (int32_t column = 0; column < PanelBlank; column++)
-            {
-                if (pixel(left + column, y) != pixel(right + column, y))
-                {
-                    SDL_Log("The dialog's text reaches its panel's edge at (%d, %d)", right + column, y);
-                    return false;
-                }
-            }
-        }
-
-        return true;
     }
 }
 
@@ -1150,44 +1115,6 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
     CHECK(MCTelemetry::Reporting());
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(MCMainMenuScreens::MainOnTop());
-}
-
-/// <summary>
-/// The reports' notice as 1998's message box, as it shows where the menus' RmlUi can't start (over 1998's main menu,
-/// nothing remade showing): its text inside its panel.
-/// </summary>
-TEST_CASE_ISOLATED("game: the reports' notice in 1998's message box keeps its text inside its panel")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
-    const MCTestGame::KeepPrefs prefs;
-    MCFakeReports reports;
-    const MCTestGame::OldMainMenu oldMenu;
-    REQUIRE(MCTestGame::StartLogistics());
-    MCTestGame::RunFrame(1.0f / 15.0f);
-    REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
-    reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
-    MCTestGame::RunFrame(1.0f / 15.0f);
-    const std::shared_ptr<MCRmlScreen> notice = RemadeNotice();
-    REQUIRE(notice != nullptr);
-    REQUIRE(MCRemadeTest::Press(*notice, "yes"));
-    MCTestGame::RunFrame(1.0f / 15.0f);
-    REQUIRE(MCRemadeTest::OnTop<MCRmlScreen>() == nullptr);
-    MCMenuDialog& dialog = *GlobalLog()->Message;
-    ShowMenuMessage(ReportsText(MCPrompt::Notice));
-    MCTestGame::RunFrame(1.0f / 15.0f);
-    REQUIRE(dialog.IsShowing());
-    CHECK(TextInsidePanel(*dialog.View()));
-    MCScreenInput::RealClick(dialog.View()->OkButton->GlobalX() + dialog.View()->OkButton->Width() / 2,
-                             dialog.View()->OkButton->GlobalY() + dialog.View()->OkButton->Height() / 2);
-    MCTestGame::RunFrame(1.0f / 15.0f);
-    CHECK(!dialog.IsShowing());
 }
 
 /// <summary>

@@ -715,21 +715,15 @@ void MCRoomScreen::PressChooseMap()
         return;
     }
 
-    // CHOOSE MAP's window, the room's map picked; its CHOOSE loads the map into the room (1998's LOAD MAP). Without the
-    // window, the 1998 mission list (the flow's "mission pick").
-    const bool shown = ShowChooseMapWindow(Room().LoadedMission,
-                                           [](const std::string& file)
-                                           {
-                                               if (GlobalLog() != nullptr)
-                                               {
-                                                   GlobalLog()->Room.ChooseMission(file);
-                                               }
-                                           });
-
-    if (!shown)
-    {
-        MCScreenFlow::Open(MCMenuScreens::MissionPick());
-    }
+    // CHOOSE MAP's window, the room's map picked; its CHOOSE loads the map into the room (1998's LOAD MAP).
+    ShowChooseMapWindow(Room().LoadedMission,
+                        [](const std::string& file)
+                        {
+                            if (GlobalLog() != nullptr)
+                            {
+                                GlobalLog()->Room.ChooseMission(file);
+                            }
+                        });
 }
 
 void MCRoomScreen::PressOptions()
@@ -739,17 +733,8 @@ void MCRoomScreen::PressOptions()
 
 void MCRoomScreen::PressUpdate()
 {
-    // Stage 6's UPDATE through the screens' flow over the room (BACK brings the room back as it stands); the 1998 page
-    // over the 1998 room when the menus' RmlUi can't start.
-    if (MCUpdateScreen::Open())
-    {
-        return;
-    }
-
-    if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr && logistics->SessionScreen)
-    {
-        logistics->SessionScreen->ShowUpdateOver();
-    }
+    // Stage 6's UPDATE through the screens' flow over the room (BACK brings the room back as it stands).
+    MCUpdateScreen::Open();
 }
 
 // ---- in the 1998 room's place ----
@@ -763,38 +748,9 @@ namespace
     }
 }
 
-bool ShowRoomScreen()
+void ShowRoomScreen()
 {
-    if (!Made())
-    {
-        const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-
-        if (!menus.has_value())
-        {
-            return false;
-        }
-
-        Made() = menus->get().Menus().CreateChild<MCRoomScreen>([](MCRoomScreen&) {});
-    }
-
-    MCRoomScreen& room = *Made();
-
-    if (!room.Document().has_value())
-    {
-        for (const MCScreenChange::MCPiece& piece : room.Prepare())
-        {
-            piece.Run();
-        }
-    }
-
-    if (!room.Error().empty())
-    {
-        SDL_Log("Room: the remade room can't show: %s", room.Error().c_str());
-        return false;
-    }
-
-    room.Show();
-    return true;
+    MCRmlFlow::Needed(Made(), "the room").Show();
 }
 
 void HideRoomScreen()
@@ -966,38 +922,9 @@ void MCLauncherScreen::Say()
                                           .OnOther = [] { EndTheGame(); }});
 }
 
-bool ShowLauncherScreen()
+void ShowLauncherScreen()
 {
-    if (!Launcher())
-    {
-        const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-
-        if (!menus.has_value())
-        {
-            return false;
-        }
-
-        Launcher() = menus->get().Menus().CreateChild<MCLauncherScreen>([](MCLauncherScreen&) {});
-    }
-
-    MCLauncherScreen& launcher = *Launcher();
-
-    if (!launcher.Document().has_value())
-    {
-        for (const MCScreenChange::MCPiece& piece : launcher.Prepare())
-        {
-            piece.Run();
-        }
-    }
-
-    if (!launcher.Error().empty())
-    {
-        SDL_Log("Launcher: the join can't show on the painting: %s", launcher.Error().c_str());
-        return false;
-    }
-
-    launcher.Show();
-    return true;
+    MCRmlFlow::Needed(Launcher(), "the launcher's join").Show();
 }
 
 bool LauncherScreenShown()

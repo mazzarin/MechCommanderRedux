@@ -427,32 +427,23 @@ namespace MCCampaignMenu
     std::vector<MCMatchPlayer> MatchPlayers();
 
     /// <summary>
-    /// Port-only, for the tests: whether the campaign's screens are the remade ones (on in the game; the tests that
-    /// click the 1998 briefing turn it off until step 2 records them again).
-    /// </summary>
-    bool& Remade();
-
-    /// <summary>Whether the remade screen will show the next briefing (on, and the menus' RmlUi can start).</summary>
-    bool Wanted();
-
-    /// <summary>
     /// For the job of a change into the campaign's screens, from its press: the screen's document read and laid out
-    /// (MCRmlFlow::ReadAhead), so <see cref="Show"/> once the screen is dark finds it ready; none when it isn't wanted or
-    /// is read already.
+    /// (MCRmlFlow::ReadAhead), so <see cref="Show"/> once the screen is dark finds it ready; none when it is read already.
     /// </summary>
     std::vector<MCScreenChange::MCPiece> Ahead();
 
     /// <summary>
     /// The screen shown over the 1998 briefing, set up for the mission now: on BRIEFING, or the tab it was left on when
-    /// the 1998 PURCHASING or 'MECH BAY's BRIEFING button comes back (<see cref="ComeBack"/>); false when it can't show.
+    /// the 1998 PURCHASING or 'MECH BAY's BRIEFING button comes back (<see cref="ComeBack"/>). Port-only (stage 9): where
+    /// it can't be read, the game stops (MCRmlFlow::Broken).
     /// </summary>
-    bool Show();
+    void Show();
 
     /// <summary>
     /// Port-only, for a change's dark: <see cref="Show"/> as pieces (the screen set up, laid out, shown), each a frame of
-    /// its own; <paramref name="otherwise"/> when it can't show.
+    /// its own.
     /// </summary>
-    std::vector<MCScreenChange::MCPiece> ShowPieces(std::function<void()> otherwise);
+    std::vector<MCScreenChange::MCPiece> ShowPieces();
 
     /// <summary>
     /// The next <see cref="Show"/> is the way back to the screen (from the 1998 PURCHASING or 'MECH BAY, the main menu's

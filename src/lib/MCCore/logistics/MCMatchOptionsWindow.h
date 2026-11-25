@@ -107,7 +107,7 @@ private:
     std::vector<MCRowNow> _Built;
 };
 
-/// <summary>MATCH OPTIONS' window opened over the remade room; false when it can't (the menus can't start).</summary>
+/// <summary>MATCH OPTIONS' window opened over the remade room; false when it can't be read (the log says why).</summary>
 bool ShowMatchOptionsWindow();
 
 /// <summary>MATCH OPTIONS' window (none before it first opened).</summary>

@@ -17,17 +17,11 @@ public:
     MCUpdateScreen();
 
     /// <summary>
-    /// The main menu's UPDATE pressed: the remade screen opened through the screens' flow over the screen shown; the old
-    /// page when the menus' RmlUi can't start.
+    /// UPDATE opened through the screens' flow over the screen shown (the main menu's and the room's UPDATE).
+    /// INTERNET's and LAN's newer games open the flow's "update" themselves (MCGamesScreen), setting the game to join once
+    /// it's in (network/MCLobbyUpdate.h).
     /// </summary>
-    static void OpenFromMenus();
-
-    /// <summary>
-    /// UPDATE opened through the screens' flow over the screen shown; false when the menus' RmlUi can't start (the caller
-    /// shows the old page). INTERNET's and LAN's newer games open the flow's "update" themselves (MCGamesScreen), setting
-    /// the game to join once it's in (network/MCLobbyUpdate.h).
-    /// </summary>
-    static bool Open();
+    static void Open();
 
     /// <summary>Whether the remade UPDATE shows (the reports' and the due art's notices wait for it).</summary>
     static bool Shows();

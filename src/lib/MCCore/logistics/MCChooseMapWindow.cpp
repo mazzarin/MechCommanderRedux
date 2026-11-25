@@ -269,30 +269,21 @@ void MCChooseMapWindow::PressCancel()
     }
 }
 
-bool ShowChooseMapWindow(std::string_view roomsMap, std::function<void(const std::string& file)> choosing)
+void ShowChooseMapWindow(std::string_view roomsMap, std::function<void(const std::string& file)> choosing)
 {
     if (!Made())
     {
-        const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-
-        if (!menus.has_value())
-        {
-            return false;
-        }
-
-        Made() = menus->get().Menus().CreateChild<MCChooseMapWindow>([](MCChooseMapWindow&) {});
+        Made() = MCRmlFlow::Menus().Menus().CreateChild<MCChooseMapWindow>([](MCChooseMapWindow&) {});
     }
 
     Made()->Choosing = std::move(choosing);
     Made()->OpenOver(roomsMap);
 
+    // Port-only (stage 9): no 1998 mission list in its place.
     if (!Made()->Error().empty())
     {
-        SDL_Log("CHOOSE MAP: the window can't show: %s", Made()->Error().c_str());
-        return false;
+        MCRmlFlow::Broken(std::format("CHOOSE MAP's window can't show: {}", Made()->Error()));
     }
-
-    return true;
 }
 
 MCGuiHandle<MCChooseMapWindow> ChooseMapWindow()

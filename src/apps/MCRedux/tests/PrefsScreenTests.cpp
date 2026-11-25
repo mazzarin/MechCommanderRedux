@@ -669,9 +669,7 @@ TEST_CASE_ISOLATED("game: a match's pause: the battle goes on, and LEAVE MATCH a
     const MCTestGame::KeepPrefs keptPrefs;
     const MCTestGame::SaveGameCleanup saves;
     StartBattle();
-    const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-    REQUIRE(menus.has_value());
-    const MCGuiHandle<MCPauseScreen> pause = menus->get().Mission().CreateChild<MCPauseScreen>(
+    const MCGuiHandle<MCPauseScreen> pause = MCRmlFlow::Menus().Mission().CreateChild<MCPauseScreen>(
         [](MCPauseScreen& made) { made.Back = [&made] { made.Resume(); }; }, true);
     REQUIRE(pause->Open().has_value());
     const std::shared_ptr<MCPauseScreen> shown = pause.Lock();
@@ -730,11 +728,10 @@ TEST_CASE_ISOLATED("game: a match that ends under its pause keeps the pause's ch
     const MCTestGame::KeepPrefs keptPrefs;
     const MCTestGame::SaveGameCleanup saves;
     StartBattle();
-    const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
-    REQUIRE(menus.has_value());
+    MCRmlMenus& menus = MCRmlFlow::Menus();
     const auto openMatchPause = [&menus]
     {
-        const MCGuiHandle<MCPauseScreen> made = menus->get().Mission().CreateChild<MCPauseScreen>(
+        const MCGuiHandle<MCPauseScreen> made = menus.Mission().CreateChild<MCPauseScreen>(
             [](MCPauseScreen& pause) { pause.Back = [&pause] { pause.Resume(); }; }, true);
         REQUIRE(made->Open().has_value());
         RunFrames(SettleFrames);

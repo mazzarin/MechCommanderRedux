@@ -153,8 +153,7 @@ public:
     void CloseResultsScreen();
 
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 9): whether the results are up, the remade ones (mission/MCResultsMenu) or the
-    /// 1998 screen where they can't show.
+    /// Port-only (SPEC-menus.md's stage 9): whether the results are up (the remade ones, mission/MCResultsMenu).
     /// </summary>
     bool ResultsUp() const;
     /// <summary>Port-only (stage 9): whether the results' count has shown everything (either screen's).</summary>
@@ -188,8 +187,8 @@ public:
     /// <summary>The state to go to after the current one (<c>NextGameState</c> in the mission FIT).</summary>
     MCMissionState NextState = MCMissionState::Start;
     /// <summary>
-    /// The 1998 results screen shown after a scenario (created in <see cref="StartScenario"/>). Port-only (stage 9): only
-    /// where the remade results (mission/MCResultsMenu) can't show; none otherwise.
+    /// The 1998 results screen shown after a scenario (created in <see cref="StartScenario"/>). Port-only (stage 9): none,
+    /// the remade results (mission/MCResultsMenu) showing in its place.
     /// </summary>
     MCGuiHandle<MCMissionResultsScreen> ResultsScreen;
     /// <summary>Index into <see cref="Movies"/> of the movie to play next (<c>SmackerMovieId</c>); -1 = none.</summary>
@@ -292,15 +291,10 @@ private:
     /// back (the scenario ended, the menus made again), then what a fade into the screen it shows does (IntoScreenPieces).
     /// </summary>
     std::vector<MCScreenChange::MCPiece> ResultsClosing();
-    /// <summary>
-    /// Port-only (stage 9): the scenario's end shown: the remade results, or where they can't show the 1998 screen
-    /// (made then if it wasn't at the load), activated.
-    /// </summary>
+    /// <summary>Port-only (stage 9): the scenario's end shown: the remade results (MCResultsMenu::Show).</summary>
     void ShowResults();
     /// <summary>Port-only (stage 9): whichever results are up taken down, the game's cursor back.</summary>
     void TakeDownResults();
-    /// <summary>The 1998 results screen made, hidden until the scenario ends (MCMissionResultsScreen::Activate).</summary>
-    void MakeOldResults();
 
     /// <summary>
     /// What the results lead to once the scenario has ended: logistics, or the campaign's ending movies (the original's

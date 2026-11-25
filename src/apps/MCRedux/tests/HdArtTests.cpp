@@ -8047,8 +8047,8 @@ TEST_CASE_ISOLATED("game: an HD frame's coverage is marked in its index picture 
 
     const StairShape stairs = MakeStairShape("mc_tests_hd_coverage_marks", StairRows, rows);
     constexpr int32_t Scale = 3;
-    constexpr uint8_t Spread = 253;
-    constexpr uint8_t CoveredNoIndex = 249;
+    constexpr uint8_t Spread = MCHdArt::Spread;
+    constexpr auto CoveredNoIndex = static_cast<uint8_t>(MCGpuChannels::CoveredNoIndex);
     const auto coveredAt = [](int32_t x, int32_t y) { return x <= y || (x == y + 1 && y % 2 == 0); };
     const auto indexedAt = [](int32_t x, int32_t y) { return x <= y + 2 && !(x == y + 1 && y % 2 == 0); };
     std::vector<uint8_t> picture(static_cast<size_t>(StairRows * Scale) * StairRows * Scale * BytesPerPixel);
@@ -8201,6 +8201,153 @@ TEST_CASE_ISOLATED("game: HD art draws a translucent sprite's shadow with smooth
     CHECK(LargestStep(original) > smooth.Scale * 0.75);
     CHECK(LargestStep(smooth) < smooth.Scale * 0.6);
     std::filesystem::remove_all(stairs.Scratch);
+}
+
+namespace
+{
+    /// <summary>A translucent shape's draw as shown: its shown pixels in its solid colour, and those of its blended
+    /// part (changed from the plain screen, in another colour).</summary>
+    struct TranslucentShown
+    {
+        int32_t Solid = 0;
+        int32_t Blended = 0;
+    };
+
+    /// <summary>The share of a part's shown pixels with HD art off that it shows with HD art on, at least: the rest
+    /// at its edges, which HD art smooths.</summary>
+    constexpr double MostlyShown = 0.8;
+
+    /// <summary><paramref name="drawn"/>'s pixels that differ from <paramref name="none"/>'s (the plain screen), as
+    /// <paramref name="solid"/> and not.</summary>
+    TranslucentShown TallyTranslucent(const Shown& drawn, const Shown& none, const SDL_Color& solid)
+    {
+        REQUIRE_EQ(drawn.Pixels.size(), none.Pixels.size());
+        const std::array<uint8_t, 3> solidColour = {solid.r, solid.g, solid.b};
+        TranslucentShown tally;
+
+        for (size_t at = 0; at < drawn.Pixels.size(); at += BytesPerPixel)
+        {
+            if (ColourDistance(&drawn.Pixels[at], &none.Pixels[at]) <= SeenColourChange)
+            {
+                continue;
+            }
+
+            ++(ColourDistance(&drawn.Pixels[at], solidColour.data()) <= SeenColourChange ? tally.Solid : tally.Blended);
+        }
+
+        return tally;
+    }
+}
+
+/// <summary>
+/// A version 2 pack's translucent frame marks every pixel its shape draws through AlphaPal.ini DrawnBlended (251), its
+/// index saying whether AlphaPal.ini blends it (SPEC-pack-v2.md's "A frame"), and its HD frame draws the solid ones
+/// (draw.pshader's InHdMask): a translucent shape's solid block, beside a block of AlphaPal.ini's halving colour, its
+/// frame marked as the pack's builder marks one, shows its solid colour in about as many shown pixels with HD art on as
+/// off, and its blended block is still drawn.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a version 2 translucent frame's solid pixels and its blended ones")
+{
+    if (!MCTestGame::Available() || StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+    const uint8_t plain = ContrastingIndex(colors, opaque);
+    constexpr uint8_t Mark = 0;
+    constexpr uint8_t Halves = 254;
+    constexpr int32_t Solid = 8;
+    constexpr int32_t Blended = 8;
+    constexpr int32_t Width = 1 + Solid + Blended;
+    REQUIRE(SpecialColor[Halves] != 0);
+    std::vector<uint8_t> rows;
+
+    // Each row: the translucent shape's mark (a pixel of colour 0), the solid block, then the blended one.
+    for (int32_t row = 0; row < StairRows; ++row)
+    {
+        rows.insert(rows.end(), {RunOf(1), Mark, RunOf(Solid + Blended)});
+        rows.insert(rows.end(), static_cast<size_t>(Solid), opaque);
+        rows.insert(rows.end(), static_cast<size_t>(Blended), Halves);
+        rows.push_back(RowEnd);
+    }
+
+    const StairShape shape = MakeStairShape("mc_tests_hd_translucent_solid", Width, rows);
+    REQUIRE(MCAgShapeIsAlpha(shape.Shape->FrameList(), 0));
+
+    // Every pixel the shape draws through AlphaPal.ini (all but the mark) DrawnBlended at the original's index; HD
+    // colours only in the solid block, the blended pixels left to the original's draw (the frame not Blended).
+    const auto solidAt = [](int32_t x) { return x >= 1 && x <= Solid; };
+    const SDL_Color& solid = colors[opaque];
+    MCHdArt::Frame frame;
+    frame.Scale = TestPackScale;
+    frame.Width = Width * frame.Scale;
+    frame.Height = StairRows * frame.Scale;
+    frame.Marked = true;
+    frame.Colors.assign(static_cast<size_t>(frame.Width) * frame.Height * BytesPerPixel, 0);
+    frame.Indices.assign(static_cast<size_t>(Width) * StairRows * MCHdArt::IndexBytes, 0);
+
+    for (int32_t y = 0; y < frame.Height; ++y)
+    {
+        for (int32_t x = 0; x < frame.Width; ++x)
+        {
+            if (solidAt(x / frame.Scale))
+            {
+                std::ranges::copy(std::array{solid.r, solid.g, solid.b, HasIndex},
+                                  frame.Colors.begin() + (static_cast<ptrdiff_t>(y) * frame.Width + x) * BytesPerPixel);
+            }
+        }
+    }
+
+    for (int32_t y = 0; y < StairRows; ++y)
+    {
+        for (int32_t x = 1; x < Width; ++x)
+        {
+            const size_t at = (static_cast<size_t>(y) * Width + x) * MCHdArt::IndexBytes;
+            frame.Indices[at] = solidAt(x) ? opaque : Halves;
+            frame.Indices[at + 1] = MCHdArt::DrawnBlended;
+        }
+    }
+
+    MCTestArchive::WriteBytes(shape.Pack / MCHdArt::FolderOf(shape.Key) / "0.hdf", MCHdArt::EncodeHdf(frame));
+    WritePaletteRgb(shape.Pack, colors);
+
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const auto draw = [&]
+    {
+        MCHdArt::Attach(shape.Shape, shape.Key);
+        AGShapeDraw(pane, shape.Shape->FrameList(), 0, x, y);
+    };
+
+    GamePaused = true;
+    const Shown none = ShownAfter(plain, [] {}, shape.Scratch);
+    const TranslucentShown off = TallyTranslucent(ShownAfter(plain, draw, shape.Scratch), none, solid);
+    TranslucentShown on;
+
+    {
+        const MCHdArtOn hdArt(shape.Pack);
+        // Drawn once first, so the draw counted finds its HD picture up.
+        ShownAfter(plain, draw, shape.Scratch);
+        on = TallyTranslucent(ShownAfter(plain, draw, shape.Scratch), none, solid);
+        // The HD frame drawn is this one: else the original's draw alone would pass.
+        const std::shared_ptr<const MCHdArt::Frame> found =
+            MCHdArt::Find(shape.Shape->FrameList(), 0, Width, StairRows);
+        REQUIRE(found != nullptr);
+        REQUIRE(found->Marked);
+    }
+
+    GamePaused = false;
+    std::cout << std::format("  shown pixels in the solid colour: {} with HD art off, {} on; blended: {} off, {} on\n",
+                             off.Solid, on.Solid, off.Blended, on.Blended);
+    REQUIRE(off.Solid > 0);
+    REQUIRE(off.Blended > 0);
+    CHECK(on.Solid >= off.Solid * MostlyShown);
+    CHECK(on.Blended >= off.Blended * MostlyShown);
+    std::filesystem::remove_all(shape.Scratch);
 }
 
 namespace

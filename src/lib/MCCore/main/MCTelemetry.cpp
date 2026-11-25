@@ -8,6 +8,7 @@
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCMemoryRoom.h"
+#include "platform/MCNeverDestroyed.h"
 #include "sprite/MCHdArt.h"
 #include "update/MCInstalled.h"
 
@@ -250,8 +251,8 @@ namespace
     /// </summary>
     MCInbox& Inbox()
     {
-        static MCInbox& inbox = *new MCInbox;
-        return inbox;
+        static MCNeverDestroyed<MCInbox> inbox;
+        return *inbox;
     }
 
     std::unique_ptr<MCBackend> Backend;

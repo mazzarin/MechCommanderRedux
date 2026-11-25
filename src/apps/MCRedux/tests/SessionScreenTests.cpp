@@ -1467,8 +1467,8 @@ namespace
     constexpr std::string_view RoomHostAddress = "127.0.0.1:28923";
     /// <summary>The room's joiners' test's.</summary>
     constexpr std::string_view JoinHostAddress = "127.0.0.1:28925";
-    /// <summary>The room's messages' test's.</summary>
-    constexpr std::string_view MessagesHostAddress = "127.0.0.1:28929";
+    /// <summary>The room's messages' test's (28929 is LobbyUpdateTests' refused guest's).</summary>
+    constexpr std::string_view MessagesHostAddress = "127.0.0.1:29009";
 
 }
 
@@ -1684,6 +1684,8 @@ TEST_CASE_ISOLATED("game: a LAN room's host sends its guests the same messages i
     MCMultiPlayer& game = *MultiPlayer();
     MCSessionManager& manager = *game.SessionManager;
     manager.ConnectTcp(MessagesHostAddress);
+    // The session's ids where no message's other bytes look like one (as CheckRecorded reads them).
+    MCDirectPlay::SetIdsHighWordForTests(MCTestGuest::RecordedIdsHighWord);
     MCTestGuest::HostOnLan("Commander", "Messages' game", 6);
     Settle();
     REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Room());
@@ -1983,6 +1985,8 @@ namespace
         MCTestGuest::OpenLan();
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
         manager.ConnectTcp(RolloverHostAddress);
+        // The session's ids where no message's other bytes look like one (as the test's CheckRecorded reads them).
+        MCDirectPlay::SetIdsHighWordForTests(MCTestGuest::RecordedIdsHighWord);
         // The LAN games (MULTIPLAYER's LAN).
         MCTestGuest::HostOnLan("BOB", "Rolling room", 6);
         Settle();

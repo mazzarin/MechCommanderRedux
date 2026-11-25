@@ -949,11 +949,20 @@ namespace MCTestGuest
     using MCNamedId = std::pair<uint32_t, std::string_view>;
 
     /// <summary>
+    /// The high word of the ids of a session whose messages a test records (MCDirectPlay::SetIdsHighWordForTests, set
+    /// before it hosts), as <see cref="DescribedMessages"/> takes any 4 bytes ending in it for an id: of the 4096
+    /// DirectPlay picks from at random, 32 misread the LAN room's messages (0x003f its players' rules, 3f7fffff and a 00
+    /// after them, as "{id 32767}"). This one's bytes are in none of them.
+    /// </summary>
+    constexpr uint16_t RecordedIdsHighWord = 0x0cc6;
+
+    /// <summary>
     /// The messages a guest recorded (<see cref="Guest::RecordAll"/>), a line each: its type, then its bytes in hex, as
-    /// the session's ids differ from run to run (platform/MCDirectPlay.cpp: they start at a random high word, the
-    /// session's <paramref name="idBase"/>, the host's id's): each of <paramref name="ids"/> in them (4 bytes, as the wire
-    /// has it) written as its name in braces, and any other of the session's (a group's) as "{id n}", n its low word;
-    /// the session's random <paramref name="instance"/> (DirectPlay's session description) as "{session}".
+    /// the session's ids differ from run to run (platform/MCDirectPlay.cpp: they start at a high word, the session's
+    /// <paramref name="idBase"/>, the host's id's: random, unless the test fixed it at <see cref="RecordedIdsHighWord"/>):
+    /// each of <paramref name="ids"/> in them (4 bytes, as the wire has it) written as its name in braces, and any other
+    /// of the session's (a group's) as "{id n}", n its low word; the session's random <paramref name="instance"/>
+    /// (DirectPlay's session description) as "{session}", never read into as an id.
     /// </summary>
     inline std::vector<std::string> DescribedMessages(const std::vector<std::vector<uint8_t>>& messages,
                                                       std::span<const MCNamedId> ids, uint32_t idBase,
@@ -970,6 +979,12 @@ namespace MCTestGuest
             const size_t countersEnd =
                 (header.Header & FIMSG_GUARANTEED) != 0 ? sizeof(MCFIGuaranteedMessageHeader) : sizeof(header);
 
+            const auto sessionAt = [&](size_t from)
+            {
+                return from + sizeof(instance) <= message.size() &&
+                       std::memcmp(message.data() + from, &instance, sizeof(instance)) == 0;
+            };
+
             for (size_t at = 0; at < message.size();)
             {
                 if (at >= sizeof(header) && at < countersEnd)
@@ -979,8 +994,7 @@ namespace MCTestGuest
                     continue;
                 }
 
-                if (at + sizeof(instance) <= message.size() &&
-                    std::memcmp(message.data() + at, &instance, sizeof(instance)) == 0)
+                if (sessionAt(at))
                 {
                     line += " {session}";
                     at += sizeof(instance);
@@ -989,8 +1003,11 @@ namespace MCTestGuest
 
                 uint32_t value = 0;
 
-                // Nor is an id read across the counters (they'd read as one when they match an id's high word).
-                if (at + sizeof(value) > message.size() || (at < countersEnd && at + sizeof(value) > sizeof(header)))
+                // Nor is an id read across the counters (they'd read as one when they match an id's high word), nor
+                // into the session's random bytes.
+                if (at + sizeof(value) > message.size() || (at < countersEnd && at + sizeof(value) > sizeof(header)) ||
+                    std::ranges::any_of(std::views::iota(size_t{1}, sizeof(value)),
+                                        [&](size_t ahead) { return sessionAt(at + ahead); }))
                 {
                     line += std::format(" {:02x}", message[at]);
                     at++;

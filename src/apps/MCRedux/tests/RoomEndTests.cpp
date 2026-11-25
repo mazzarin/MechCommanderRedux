@@ -584,9 +584,13 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     constexpr std::string_view Mission = "ARENA";
     constexpr int32_t Team1Points = 12000;
     constexpr int32_t Team2Points = 9000;
+    constexpr uint16_t RematchIdsHighWord = MCTestGuest::RecordedIdsHighWord + 1;
     const std::string address = std::format("127.0.0.1:{}", Port);
     REQUIRE(MCTestGame::StartLogistics());
     MCTestGuest::OpenLan();
+    // The sessions' ids where no message's other bytes look like one (as CheckRecorded reads them), the rematch's its
+    // own, as random ones differ.
+    MCDirectPlay::SetIdsHighWordForTests(MCTestGuest::RecordedIdsHighWord);
     HostFromLan(Port);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     // The match's session, kept: the rematch's room is another (a host's session has no instance of its own here).
@@ -617,6 +621,7 @@ TEST_CASE_ISOLATED("game: a LAN host's REMATCH hosts its room again with the mat
     // told, and the host waits for it to leave.
     MCRoomEnd::MatchStarts();
     CHECK(MCRoomEnd::OffersRematch());
+    MCDirectPlay::SetIdsHighWordForTests(RematchIdsHighWord);
     MCRoomEnd::Rematch();
     REQUIRE(SettleUntil([&] { return !ann.RoomEnds().empty(); }));
     CHECK(ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Rematch)});

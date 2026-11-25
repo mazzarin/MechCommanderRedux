@@ -508,6 +508,9 @@ namespace
         std::vector<Entity> Players;
     };
 
+    /// <summary>The tests' high word for hosted sessions' ids (MCDirectPlay::SetIdsHighWordForTests), else none.</summary>
+    std::optional<uint16_t> IdsHighWordForTests;
+
     uint64_t NowMs()
     {
         return SDL_GetTicks();
@@ -2513,6 +2516,18 @@ std::vector<uint8_t> MCDirectPlay::CreateCompoundAddress(std::span<const DPCOMPO
     return address;
 }
 
+void MCDirectPlay::SetIdsHighWordForTests(std::optional<uint16_t> highWord)
+{
+    if (highWord == uint16_t{0})
+    {
+        SDL_Log("MCDirectPlay: the tests' ids can't have high word 0 (it gives out 0 and 1); hosted ids stay random");
+        IdsHighWordForTests.reset();
+        return;
+    }
+
+    IdsHighWordForTests = highWord;
+}
+
 uint32_t MCDirectPlay::EnumConnections(const MCEnumConnectionsCallback& callback, uint32_t)
 {
     if (!callback)
@@ -2708,9 +2723,10 @@ uint32_t MCDirectPlay::Open(const DPSESSIONDESC2& desc, uint32_t flags)
             impl.Session.Desc.dwMaxPlayers = 0xffffffffu;
         }
 
-        // Ids start somewhere unremarkable, as DirectPlay's did; 0 (everyone) and 1 (the server player) are never
-        // given out.
-        impl.NextId = 0x00010000u + (NewGuid().Data1 & 0x0fff0000u);
+        // Ids start somewhere unremarkable, as DirectPlay's did (unless the tests fixed where); 0 (everyone) and 1 (the
+        // server player) are never given out.
+        impl.NextId = IdsHighWordForTests.has_value() ? static_cast<uint32_t>(*IdsHighWordForTests) << 16
+                                                      : 0x00010000u + (NewGuid().Data1 & 0x0fff0000u);
         impl.State = Impl::Mode::Host;
         // Port-only (Redux HD): the host is the session's first machine (the rollover's).
         impl.ListenPort = impl.Port;

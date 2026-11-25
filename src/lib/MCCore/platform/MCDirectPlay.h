@@ -354,6 +354,14 @@ public:
     /// <summary>Hosts (DPOPEN_CREATE) or joins (DPOPEN_JOIN, an enumerated session) the session <paramref name="desc"/>.</summary>
     uint32_t Open(const DPSESSIONDESC2& desc, uint32_t flags);
 
+    /// <summary>
+    /// Port-only (Redux HD), the tests: the high word of the ids each session this process hosts from now on gives out,
+    /// from its low word 0 (none: one at random, as DirectPlay's), set on the thread that hosts. A test that reads ids
+    /// out of messages' bytes fixes it, as a random one can match a message's other bytes. 0 is refused: it would give
+    /// out 0 (everyone) and 1 (the server player).
+    /// </summary>
+    static void SetIdsHighWordForTests(std::optional<uint16_t> highWord);
+
     /// <summary>Leaves the session (a host ends it for everyone).</summary>
     uint32_t Close();
 

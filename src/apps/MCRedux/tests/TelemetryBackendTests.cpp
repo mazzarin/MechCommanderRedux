@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "../MCTelemetryBackend.h"
+#include "MCCommandPipe.h"
 #include "MCTest.h"
 #include "MCVersion.h"
 #include "platform/MCFileSystem.h"
@@ -179,17 +180,17 @@ TEST_CASE("reports' backend: a crash leaves MCCrashTrace's record in the user fo
     const std::wstring command = std::format(L"\"\"{}\" --only \"{}\" --{} \"{}\" 2>&1\"", program,
                                              MCFileSystem::FromUtf8(MCTest::CurrentTestName()).native(),
                                              MCFileSystem::FromUtf8(CrashFolderOption).native(), folder.Path.native());
-    FILE* pipe = _wpopen(command.c_str(), L"r");
+    MCCommandPipe pipe(_wpopen(command.c_str(), L"r"));
     REQUIRE(pipe != nullptr);
     std::string output;
     std::array<char, BoxBytes> chunk{};
 
-    for (size_t read = 0; (read = std::fread(chunk.data(), 1, chunk.size(), pipe)) > 0;)
+    for (size_t read = 0; (read = std::fread(chunk.data(), 1, chunk.size(), pipe.get())) > 0;)
     {
         output.append(chunk.data(), read);
     }
 
-    const int status = _pclose(pipe);
+    const int status = _pclose(pipe.release());
     const MCTest::Scope printed("the crashing run printed:\n" + output);
     CHECK(status != 0);
 

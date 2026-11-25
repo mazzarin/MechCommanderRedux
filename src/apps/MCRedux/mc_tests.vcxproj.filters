@@ -422,6 +422,9 @@
     <ClInclude Include="tests\GuiTree.h">
       <Filter>tests</Filter>
     </ClInclude>
+    <ClInclude Include="tests\MCCommandPipe.h">
+      <Filter>tests</Filter>
+    </ClInclude>
     <ClInclude Include="tests\MCContentFixture.h">
       <Filter>tests</Filter>
     </ClInclude>

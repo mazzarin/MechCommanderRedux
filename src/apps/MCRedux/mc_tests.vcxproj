@@ -225,6 +225,7 @@
     <ClInclude Include="tests\fixtures\MCTerrainGeometryScope.h" />
     <ClInclude Include="tests\fixtures\MCTinyMap.h" />
     <ClInclude Include="tests\GuiTree.h" />
+    <ClInclude Include="tests\MCCommandPipe.h" />
     <ClInclude Include="tests\MCContentFixture.h" />
     <ClInclude Include="tests\MCFakeUpdaterBackend.h" />
     <ClInclude Include="tests\MCFastFileFixture.h" />

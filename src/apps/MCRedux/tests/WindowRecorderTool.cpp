@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCCommandPipe.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -204,23 +205,7 @@ namespace
                 "ffmpeg -v error -y -f rawvideo -pix_fmt rgba -s {}x{} -r {} -i - -c:v libx264 -preset veryfast "
                 "-crf 12 -pix_fmt yuv420p \"{}\"",
                 width, height, VideoRate, path.string());
-#ifdef _WIN32
-            _Pipe = _popen(command.c_str(), "wb");
-#else
-            _Pipe = popen(command.c_str(), "w");
-#endif
-        }
-
-        ~MCVideoPipe()
-        {
-            if (_Pipe != nullptr)
-            {
-#ifdef _WIN32
-                _pclose(_Pipe);
-#else
-                pclose(_Pipe);
-#endif
-            }
+            _Pipe = MCPipeTo(command);
         }
 
         MCVideoPipe(const MCVideoPipe&) = delete;
@@ -230,11 +215,12 @@ namespace
 
         bool Write(std::span<const SDL_Color> pixels)
         {
-            return std::fwrite(pixels.data(), sizeof(SDL_Color), pixels.size(), _Pipe) == pixels.size();
+            return std::fwrite(pixels.data(), sizeof(SDL_Color), pixels.size(), _Pipe.get()) == pixels.size();
         }
 
     private:
-        FILE* _Pipe = nullptr;
+        /// <summary>ffmpeg's input, closed (waiting for the video to be written) as the pipe goes.</summary>
+        MCCommandPipe _Pipe;
     };
 
     /// <summary>

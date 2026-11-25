@@ -54,6 +54,9 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/ElementText.h>
+#include <RmlUi/Core/ElementUtilities.h>
 
 using namespace MCScreenInput;
 using MCTestGuest::Guest;
@@ -1454,4 +1457,255 @@ TEST_CASE_ISOLATED(
     constexpr std::array<uint16_t, 16> CatTypes = {13, 13, 42, 49, 37, 41, 41, 44, 44, 43, 43, 39, 43, 43, 41, 40};
     constexpr uint64_t CatDigest = 0x98f12fc85f8a5d4cull;
     MCTestGuest::CheckRecorded(cat, ids, ann, cat.Instance(), CatTypes, CatDigest);
+}
+
+namespace
+{
+    /// <summary>The room's seats' test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view SeatsHostAddress = "127.0.0.1:28931";
+    /// <summary>The game's frame while a card is carried, as the room's tests step it.</summary>
+    constexpr float CarryFrame = 1.0f / 15.0f;
+    /// <summary>The pointer's moves from a card to where it's put.</summary>
+    constexpr int32_t CarrySteps = 4;
+    constexpr std::string_view LongName = "Commander";
+    constexpr std::string_view ShortName = "Al";
+    constexpr std::string_view LastName = "Bartholomew";
+    /// <summary>An open place, as the room's Seen() reads it.</summary>
+    constexpr std::string_view OpenPlaceName = "Open";
+
+    Rml::Vector2f MiddleOf(Rml::Element& element)
+    {
+        return element.GetAbsoluteOffset(Rml::BoxArea::Border) + element.GetBox().GetSize(Rml::BoxArea::Border) / 2.0f;
+    }
+
+    /// <summary>The shown card of the player <paramref name="name"/>, on a team or on none.</summary>
+    Rml::Element& CardNamed(Rml::ElementDocument& document, std::string_view name)
+    {
+        Rml::ElementList cards;
+        document.QuerySelectorAll(cards, ".person");
+
+        for (Rml::Element* card : cards)
+        {
+            Rml::ElementList names;
+            card->GetElementsByClassName(names, "name");
+
+            if (card->IsVisible(true) && !names.empty() && names.front()->GetInnerRML() == name)
+            {
+                return *card;
+            }
+        }
+
+        FAIL(std::format("no card shows {}", name));
+        return document;
+    }
+
+    /// <summary>Team <paramref name="team"/>'s place <paramref name="slot"/>: its OPEN well, or the card in it.</summary>
+    Rml::Element& PlaceOf(Rml::ElementDocument& document, int8_t team, int8_t slot)
+    {
+        Rml::ElementList teams;
+        document.QuerySelectorAll(teams, ".team");
+        REQUIRE(teams.size() == static_cast<size_t>(MCRoomModel::Team2 - MCRoomModel::Team1 + 1));
+        // A place is its well then its card, one of them shown.
+        Rml::ElementList places;
+        teams[static_cast<size_t>(team - MCRoomModel::Team1)]->QuerySelectorAll(places, ".slot, .person");
+        REQUIRE(places.size() == static_cast<size_t>(MCRoomModel::TeamSlots) * 2);
+        Rml::Element& well = *places[static_cast<size_t>(slot) * 2];
+        return well.IsVisible(true) ? well : *places[static_cast<size_t>(slot) * 2 + 1];
+    }
+
+    /// <summary>How far a box may lie past another and still be clear of it (RmlUi's layout is floats).</summary>
+    constexpr float BoxSlack = 0.5f;
+
+    /// <summary>
+    /// What's wrong with a card's parts (its name, HOST, its buttons): each as wide as its words, and each clear of the
+    /// one before it. (The box checks pass a part with no width: its words spill unseen by them.) Empty: nothing.
+    /// </summary>
+    std::string PartsProblems(Rml::Element& card)
+    {
+        std::string wrong;
+        float before = card.GetAbsoluteOffset(Rml::BoxArea::Content).x;
+
+        for (int i = 0; i < card.GetNumChildren(); ++i)
+        {
+            Rml::Element& part = *card.GetChild(i);
+
+            if (!part.IsVisible())
+            {
+                continue;
+            }
+
+            const float left = part.GetAbsoluteOffset(Rml::BoxArea::Border).x;
+            const float width = part.GetBox().GetSize(Rml::BoxArea::Content).x;
+            float words = 0.0f;
+
+            // Its words' width in its own letters (a part's words are one line: the card's are white-space: nowrap).
+            for (int j = 0; j < part.GetNumChildren(); ++j)
+            {
+                if (const auto* text = dynamic_cast<Rml::ElementText*>(part.GetChild(j)); text != nullptr)
+                {
+                    words += static_cast<float>(Rml::ElementUtilities::GetStringWidth(&part, text->GetText()));
+                }
+            }
+
+            if (width + BoxSlack < words)
+            {
+                wrong += std::format("'{}' is wider than its {}; ", part.GetInnerRML(), part.GetClassNames());
+            }
+
+            if (left + BoxSlack < before)
+            {
+                wrong +=
+                    std::format("'{}' ({}) lies over what's before it; ", part.GetInnerRML(), part.GetClassNames());
+            }
+
+            before = left + part.GetBox().GetSize(Rml::BoxArea::Border).x;
+        }
+
+        return wrong;
+    }
+
+    /// <summary>
+    /// What the layout checks find in the menus as they stand, at the game's window (none laid out again), and in the
+    /// room's shown cards' parts.
+    /// </summary>
+    std::string ProblemsNow(Rml::ElementDocument& room)
+    {
+        std::string problems = MCRmlChecks::BoxProblems(MCMenusPictures::GameMenus().Menus().Context());
+        Rml::ElementList cards;
+        room.QuerySelectorAll(cards, ".person");
+
+        for (Rml::Element* card : cards)
+        {
+            if (card->IsVisible(true))
+            {
+                problems += PartsProblems(*card);
+            }
+        }
+
+        return problems;
+    }
+
+    /// <summary>
+    /// What the layout checks find in <paramref name="card"/> as a drag carries it: RmlUi's copy under the pointer
+    /// (Context::CreateDragClone, out of the tests' reach) made the same way, the card cloned into a document of the
+    /// room's style sheets alone and no size (the context's cursor proxy, which borrows the room's sheets, has no parent
+    /// to take a size from), placed where the card lies, :drag on.
+    /// </summary>
+    std::string CarriedProblems(Rml::Element& card)
+    {
+        Rml::Context& context = MCMenusPictures::GameMenus().Menus().Context();
+        Rml::ElementDocument* room = card.GetOwnerDocument();
+        REQUIRE(room != nullptr);
+        Rml::ElementDocument* carried = context.LoadDocumentFromMemory(
+            R"(<rml><head><link type="text/rcss" href="look.rcss"/><link type="text/rcss" href="room.rcss"/></head>)"
+            "<body></body></rml>",
+            room->GetSourceURL());
+        REQUIRE(carried != nullptr);
+        carried->SetProperty(Rml::PropertyId::Width, Rml::Property(0.0f, Rml::Unit::PX));
+        carried->SetProperty(Rml::PropertyId::Height, Rml::Property(0.0f, Rml::Unit::PX));
+        const Rml::Vector2f at = card.GetAbsoluteOffset(Rml::BoxArea::Border);
+        Rml::Element& copy = *carried->AppendChild(card.Clone());
+        copy.SetProperty(Rml::PropertyId::Position, Rml::Property(Rml::Style::Position::Absolute));
+        copy.SetProperty(Rml::PropertyId::Left, Rml::Property(at.x, Rml::Unit::PX));
+        copy.SetProperty(Rml::PropertyId::Top, Rml::Property(at.y, Rml::Unit::PX));
+        copy.SetProperty(Rml::PropertyId::MarginLeft, Rml::Property(0.0f, Rml::Unit::PX));
+        copy.SetProperty(Rml::PropertyId::MarginTop, Rml::Property(0.0f, Rml::Unit::PX));
+        copy.SetPseudoClass("drag", true);
+        carried->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+        context.Update();
+        std::string problems = MCRmlChecks::BoxProblems(context) + PartsProblems(copy);
+        carried->Close();
+        context.Update();
+        return problems;
+    }
+
+    /// <summary>
+    /// <paramref name="card"/> carried by the mouse to <paramref name="place"/> and put there, as the host drags it:
+    /// what the layout checks find while it's carried, and once it's put down.
+    /// </summary>
+    void Carry(Rml::Element& card, Rml::Element& place)
+    {
+        // The card may go once it's put down (the players on no team one fewer).
+        Rml::ElementDocument* room = card.GetOwnerDocument();
+        REQUIRE(room != nullptr);
+        const Rml::Vector2f start = MiddleOf(card);
+        const Rml::Vector2f end = MiddleOf(place);
+        MCScreenInput::PixelMove(start.x, start.y, CarryFrame);
+        MCScreenInput::PixelButton(SDL_BUTTON_LEFT, true, start.x, start.y, CarryFrame);
+
+        for (int32_t step = 1; step <= CarrySteps; step++)
+        {
+            const Rml::Vector2f at = start + (end - start) * (static_cast<float>(step) / CarrySteps);
+            MCScreenInput::PixelMove(at.x, at.y, CarryFrame);
+        }
+
+        CHECK_EQ(CarriedProblems(card), "");
+        MCScreenInput::PixelButton(SDL_BUTTON_LEFT, false, end.x, end.y, CarryFrame);
+        Settle();
+        CHECK_EQ(ProblemsNow(*room), "");
+    }
+}
+
+/// <summary>
+/// The room's cards lay out their name and HOST apart while the host carries one (RmlUi's copy under the pointer took
+/// no width of its own, and drew HOST over the name) and once it's put down: the host's and a guest's, from the players
+/// on no team to a team and between teams, until none is left on no team, with names long and short, at the frames'
+/// windows (4:3, 16:9, 5:4) as the game's window, laid out as the room goes (not afresh).
+/// </summary>
+TEST_CASE_ISOLATED("game: the room's cards keep their name and HOST apart while carried and once placed")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.ConnectTcp(SeatsHostAddress);
+    MCTestGuest::HostOnLan(LongName, "Seats", 6);
+    Settle();
+    Guest al{std::string(ShortName)};
+    REQUIRE(al.Join(*manager.DirectPlay, SeatsHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(al.Id()); }));
+    Guest bart{std::string(LastName)};
+    REQUIRE(bart.Join(*manager.DirectPlay, SeatsHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(bart.Id()); }));
+    Settle();
+    REQUIRE(RoomScreenShown());
+    MCRoomScreen& room = *RoomScreen();
+    Rml::ElementDocument& document = room.Document()->get();
+    MCDisplay& display = *MCInput::Display();
+    const uint32_t hostId = manager.MyPlayer()->Id;
+
+    for (const MCMenusPictures::MCWindowSize window : MCMenusPictures::FrameWindows)
+    {
+        const MCTest::Scope scope{std::format("{}x{}", window.Width, window.Height)};
+        REQUIRE(MCMenusPictures::SetWindowPixels(display, window.Width, window.Height));
+        Settle();
+        REQUIRE_EQ(room.Seen().Pool.size(), size_t{3});
+        CHECK_EQ(ProblemsNow(document), "");
+
+        // A guest onto team 1, the host from the players on no team onto team 2, then between the teams; the last
+        // player onto team 2, leaving none on no team.
+        Carry(CardNamed(document, ShortName), PlaceOf(document, MCRoomModel::Team1, 0));
+        Carry(CardNamed(document, LongName), PlaceOf(document, MCRoomModel::Team2, 0));
+        CHECK_EQ(room.Seen().Team2.front(), std::format("{} (host)", LongName));
+        Carry(CardNamed(document, LongName), PlaceOf(document, MCRoomModel::Team1, 1));
+        Carry(CardNamed(document, LastName), PlaceOf(document, MCRoomModel::Team2, 0));
+        const MCRoomScreen::MCSeen placed = room.Seen();
+        const std::vector<std::string> team1 = {std::string(ShortName), std::format("{} (host)", LongName),
+                                                std::string(OpenPlaceName)};
+        CHECK(placed.Team1 == team1);
+        CHECK_EQ(placed.Team2.front(), std::string(LastName));
+        CHECK(placed.Pool.empty());
+
+        // All on no team again for the next window.
+        for (const uint32_t id : {hostId, al.Id(), bart.Id()})
+        {
+            room.Drop(id, MCRoomModel::NoTeam, 0);
+        }
+
+        Settle();
+    }
 }

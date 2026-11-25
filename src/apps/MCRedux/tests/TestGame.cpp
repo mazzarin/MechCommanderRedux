@@ -490,6 +490,21 @@ namespace MCTestGame
         return uller;
     }
 
+    void ParkCursor()
+    {
+        constexpr float MiddleX = 320.5f;
+        constexpr float MiddleY = 240.5f;
+
+        if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+        {
+            SDL_Event motion{};
+            motion.type = SDL_EVENT_MOUSE_MOTION;
+            motion.motion.windowID = SDL_GetWindowID(&display->Window());
+            display->LogicalToWindow(MiddleX, MiddleY, motion.motion.x, motion.motion.y);
+            MCInput::HandleEvent(motion);
+        }
+    }
+
     bool StartMission(int32_t segment)
     {
         if (booted != 0)
@@ -504,16 +519,7 @@ namespace MCTestGame
             return false;
         }
 
-        // The hidden window has no mouse, so the cursor stays at (0, 0), where it scrolls the camera off the
-        // player's units into the map's corner. Park it in the middle of the screen, as a player's would be.
-        if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
-        {
-            SDL_Event motion{};
-            motion.type = SDL_EVENT_MOUSE_MOTION;
-            motion.motion.windowID = SDL_GetWindowID(&display->Window());
-            display->LogicalToWindow(320.5f, 240.5f, motion.motion.x, motion.motion.y);
-            MCInput::HandleEvent(motion);
-        }
+        ParkCursor();
 
         // The scenario loads and then counts down its start-up; run until units are moving.
         for (int32_t frame = 0; frame < 3000; frame++)
@@ -648,8 +654,10 @@ namespace MCTestGame
         }
 
         // The remade briefing's BEGIN MISSION (MCDeploy::Begin's request): the loading screen's change hides the
-        // campaign's screens before logistics goes.
+        // campaign's screens before logistics goes. The mouse over the briefing, as a player's is (taken by the remade
+        // screen, the move still moves the game's cursor).
         REQUIRE(MCCampaignMenu::Shown());
+        ParkCursor();
         Mission()->RequestScenario(Mission()->Scenarios[0]);
 
         for (int32_t frame = 0; frame < 3000; frame++)

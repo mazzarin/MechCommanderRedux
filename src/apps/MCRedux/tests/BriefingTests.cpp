@@ -1034,8 +1034,8 @@ TEST_CASE_ISOLATED("game: an art mode the debug console showed ends at the prefe
 
 /// <summary>
 /// A setting changed on Preferences' HD section reaches the mission launched next: HD LIGHTING stepped from OFF to NIGHT
-/// there and accepted is written to PREFS, and the new campaign's first mission shows at night, its world much darker
-/// than with HD LIGHTING off.
+/// there and accepted is written to PREFS, and the new campaign's first mission, begun from the remade briefing, shows
+/// at night, its world much darker than with HD LIGHTING off.
 /// </summary>
 TEST_CASE_ISOLATED("game: HD LIGHTING set to NIGHT on the HD OPTIONS page darkens the mission launched next")
 {
@@ -1067,13 +1067,11 @@ TEST_CASE_ISOLATED("game: HD LIGHTING set to NIGHT on the HD OPTIONS page darken
         CHECK_EQ(prefs.Read<int32_t>("HDLighting"), MCFitResult<int32_t>(HdLightingNight));
     }
 
-    // Launched from the 1998 briefing (kept until stage 9 removes it): a mission begun from the remade DEPLOY draws its
-    // world blank (one palette index), so the night's light couldn't be compared.
-    MCCampaignMenu::Remade() = false;
-    REQUIRE(LaunchFirstMission());
+    // The new campaign's first mission begun from the remade briefing (its BEGIN MISSION's request).
+    REQUIRE(MCTestGame::StartCampaignMission());
     CHECK(MCSceneLights::TimeOfDay() == MCTimeOfDay::Night);
 
-    // Past the scenario's start-up (its static) until units move, as MCTestGame::StartMission waits.
+    // Until units move, as MCTestGame::StartMission waits.
     constexpr int32_t startedTurn = 30;
     constexpr int32_t mostStartFrames = 3000;
 

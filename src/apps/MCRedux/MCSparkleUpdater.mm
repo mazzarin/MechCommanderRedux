@@ -254,8 +254,8 @@ namespace
 /// updater), Sparkle takes its own newest.
 /// </summary>
 @interface MCSparkleDelegate : NSObject <SPUUpdaterDelegate>
-/// <summary>Holds Sparkle to <paramref name="program"/> (null: nothing it finds is taken).</summary>
-- (void)hold:(const MCReleaseFile::MCProgram*)program;
+/// <summary>Holds Sparkle to <paramref name="program"/> (none: nothing it finds is taken).</summary>
+- (void)hold:(std::optional<MCReleaseFile::MCProgram>)program;
 /// <summary>Lets Sparkle take its own newest.</summary>
 - (void)letGo;
 @end
@@ -267,10 +267,10 @@ namespace
     std::optional<MCReleaseFile::MCProgram> _Program;
 }
 
-- (void)hold:(const MCReleaseFile::MCProgram*)program
+- (void)hold:(std::optional<MCReleaseFile::MCProgram>)program
 {
     _Held = true;
-    _Program = program != nullptr ? std::optional(*program) : std::nullopt;
+    _Program = std::move(program);
 }
 
 - (void)letGo
@@ -367,7 +367,7 @@ namespace
             // Held to the build release.json gives this copy, as offered (none offered, or another: nothing is taken).
             if (build)
             {
-                [_Delegate hold:_Offered && _Offered->Build == *build ? &*_Offered : nullptr];
+                [_Delegate hold:_Offered && _Offered->Build == *build ? _Offered : std::nullopt];
             }
             else
             {

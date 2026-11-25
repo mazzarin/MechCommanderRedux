@@ -24,12 +24,13 @@ namespace Rml
 class MCRmlKit
 {
 public:
-    /// <summary>1998's interface sounds (MCSoundSystem::PlayInterfaceSample), as the look's Sound names them.</summary>
+    /// <summary>
+    /// 1998's interface sounds (MCSoundSystem::PlayInterfaceSample), as the look's Sound names them. The button press
+    /// is also a switch's or a stepper's change, either way, as 1998's toggles, spinners and option lists played it
+    /// (MCSessionScreen's tech base buttons and spinners, MCLogOptionList's change).
+    /// </summary>
     static constexpr uint32_t PressSound = 0x0f;
     static constexpr uint32_t TabSound = 0x36;
-    /// <summary>A switch or stepper moved on (to a later choice), and back (to an earlier one).</summary>
-    static constexpr uint32_t OnSound = 0x35;
-    static constexpr uint32_t OffSound = 0x34;
     /// <summary>A click on something off (a disabled button).</summary>
     static constexpr uint32_t OffClickSound = 0x33;
     /// <summary>A refusal (<see cref="Refuse"/>).</summary>

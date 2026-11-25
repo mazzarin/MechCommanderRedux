@@ -841,7 +841,7 @@ TEST_CASE_ISOLATED("menus: the probe screen plays from the keys with the 1998 so
     CHECK_EQ(screen.Volume(), volume);
     probe.Sounds();
 
-    // Tab to the stepper; its Left and Right step through its choices, the 1998 on and off sounds.
+    // Tab to the stepper; its Left and Right step through its choices, 1998's button press either way.
     probe.Key(SDLK_TAB);
     CHECK_EQ(probe.Focused(), "detail");
     CHECK(probe.Ringed());
@@ -849,17 +849,18 @@ TEST_CASE_ISOLATED("menus: the probe screen plays from the keys with the 1998 so
     const int choice = MCRmlKit::Choice(detail);
     probe.Key(SDLK_RIGHT);
     CHECK_EQ(MCRmlKit::Choice(detail), choice + 1);
-    CHECK_EQ(probe.Sounds(), std::vector<uint32_t>{MCRmlKit::OnSound});
+    CHECK_EQ(probe.Sounds(), std::vector<uint32_t>{MCRmlKit::PressSound});
     probe.Key(SDLK_LEFT);
     CHECK_EQ(MCRmlKit::Choice(detail), choice);
-    CHECK_EQ(probe.Sounds(), std::vector<uint32_t>{MCRmlKit::OffSound});
+    CHECK_EQ(probe.Sounds(), std::vector<uint32_t>{MCRmlKit::PressSound});
 
-    // The switch, and back with Shift+Tab.
+    // The switch, its press too, and back with Shift+Tab.
     probe.Key(SDLK_TAB);
     CHECK_EQ(probe.Focused(), "music");
     Rml::Element& music = *probe.Document().GetElementById("music");
     probe.Key(SDLK_RIGHT);
     CHECK_EQ(MCRmlKit::Choice(music), 1);
+    CHECK_EQ(probe.Sounds(), std::vector<uint32_t>{MCRmlKit::PressSound});
     probe.Key(SDLK_TAB, SDL_KMOD_SHIFT);
     CHECK_EQ(probe.Focused(), "detail");
     probe.Key(SDLK_TAB);
@@ -926,6 +927,69 @@ TEST_CASE_ISOLATED("menus: the probe screen plays from the keys with the 1998 so
     CHECK(probe.Ringed());
     probe.MouseTo(1.0f, 1.0f);
     CHECK(!probe.Ringed());
+}
+
+/// <summary>
+/// Every remade switch and stepper plays 1998's button press (0x0f, as its toggles, spinners and option lists did) on
+/// a change, on or back, once, whether clicked or stepped by Left and Right; a click on the choice already picked
+/// plays nothing; a step past the end (a stepper's dim arrow, Left or Right at the end) plays the refusal of something
+/// off (0x33) and changes nothing. A button's press and a tab's sound stay their own.
+/// </summary>
+TEST_CASE_ISOLATED("menus: a switch's and a stepper's change plays 1998's button press, once")
+{
+    MCHeadlessProbe probe(1280, 720);
+    REQUIRE_EQ(probe.Error, "");
+    probe.Frames();
+    probe.Sounds();
+    const std::vector<uint32_t> press = {MCRmlKit::PressSound};
+    const std::vector<uint32_t> refusal = {MCRmlKit::OffClickSound};
+    const std::vector<uint32_t> none;
+
+    // The stepper's arrows, clicked: back, on, then past its last choice.
+    Rml::Element& detail = *probe.Document().GetElementById("detail");
+    Rml::ElementList arrows;
+    detail.GetElementsByClassName(arrows, "arrow");
+    REQUIRE_EQ(arrows.size(), size_t{2});
+    const int choice = MCRmlKit::Choice(detail);
+    arrows.front()->Click();
+    CHECK_EQ(MCRmlKit::Choice(detail), choice - 1);
+    CHECK_EQ(probe.Sounds(), press);
+    arrows.back()->Click();
+    CHECK_EQ(MCRmlKit::Choice(detail), choice);
+    CHECK_EQ(probe.Sounds(), press);
+    constexpr int StepperLast = 4;
+    MCRmlKit::SetChoice(detail, StepperLast);
+    CHECK(probe.Sounds().empty());
+    arrows.back()->Click();
+    CHECK_EQ(MCRmlKit::Choice(detail), StepperLast);
+    CHECK_EQ(probe.Sounds(), refusal);
+
+    // The switch's other choice clicked, then the one already picked, then back.
+    Rml::Element& music = *probe.Document().GetElementById("music");
+    REQUIRE_EQ(MCRmlKit::Choice(music), 0);
+    music.GetChild(1)->Click();
+    CHECK_EQ(MCRmlKit::Choice(music), 1);
+    CHECK_EQ(probe.Sounds(), press);
+    music.GetChild(1)->Click();
+    CHECK_EQ(MCRmlKit::Choice(music), 1);
+    CHECK_EQ(probe.Sounds(), none);
+    music.GetChild(0)->Click();
+    CHECK_EQ(MCRmlKit::Choice(music), 0);
+    CHECK_EQ(probe.Sounds(), press);
+
+    // From the keys: Left at the switch's first choice refused, Right its press.
+    music.Focus(true);
+    probe.Frames(1);
+    probe.Key(SDLK_LEFT);
+    CHECK_EQ(MCRmlKit::Choice(music), 0);
+    CHECK_EQ(probe.Sounds(), refusal);
+    probe.Key(SDLK_RIGHT);
+    CHECK_EQ(MCRmlKit::Choice(music), 1);
+    CHECK_EQ(probe.Sounds(), press);
+
+    // A tab keeps its own sound.
+    probe.Key(SDLK_E);
+    CHECK_EQ(probe.Sounds(), std::vector<uint32_t>{MCRmlKit::TabSound});
 }
 
 /// <summary>

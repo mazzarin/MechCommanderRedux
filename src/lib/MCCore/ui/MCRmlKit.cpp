@@ -330,7 +330,8 @@ bool MCRmlKit::Step(Rml::Element& control, int step)
         return false;
     }
 
-    Play(step > 0 ? OnSound : OffSound);
+    // 1998's button press, on or back.
+    Play(PressSound);
     Choose(control, next, true);
     return true;
 }

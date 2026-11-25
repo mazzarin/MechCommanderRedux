@@ -70,13 +70,13 @@ namespace MCMainMenuModel
 
     /// <summary>
     /// The menus' foot: the version running ("Redux HD 0.6.3"; none without an updater); UPDATE's word while an update
-    /// to a release waits ("Update to 0.7.1"); and, while the HD art a program installed alone came for downloads or
-    /// waits for its restart (MCUpdater::DueArt), its line (logistics/MCUpdateModel.h's DueArtLineText: "HD art: 120 of
-    /// 340 MB", "New HD art is in"). That art alone names no release: a bare "Update" beside its line while it downloads
-    /// (its page has the meter and STOP), RESTART in UPDATE's place once it's in where the game can start again, and the
-    /// bare "Update" alone once it failed (its page says why, RETRY). A release due besides it keeps its UPDATE beside the
-    /// art's line, and RESTART is then UPDATE's page's alone (the foot can't hold the version line, the art's line,
-    /// RESTART and UPDATE).
+    /// to a release waits (UpdateButtonText: "Update to 0.7.1", or "Update" for the release running's content alone);
+    /// and, while the HD art a program installed alone came for downloads or waits for its restart (MCUpdater::DueArt),
+    /// its line (logistics/MCUpdateModel.h's DueArtLineText: "HD art: 120 of 340 MB", "New HD art is in"). That art
+    /// alone names no release: a bare "Update" beside its line while it downloads (its page has the meter and STOP),
+    /// RESTART in UPDATE's place once it's in where the game can start again, and the bare "Update" alone once it failed
+    /// (its page says why, RETRY). A release due besides it keeps its UPDATE beside the art's line, and RESTART is then
+    /// UPDATE's page's alone (the foot can't hold the version line, the art's line, RESTART and UPDATE).
     /// </summary>
     struct MCFoot
     {

@@ -18,6 +18,10 @@ namespace
     /// <summary>Where the running version as shown ("0.6.3 (899)") gives its build: the release is what comes before.</summary>
     constexpr std::string_view BuildOpening = " (";
 
+    /// <summary>The remade main menu's UPDATE: the release it brings (<c>{}</c>), or none when that's the one running.</summary>
+    constexpr std::string_view UpdateToFormat = "Update to {}";
+    constexpr std::string_view BareUpdate = "Update";
+
     /// <summary>
     /// Whether RESTART is offered at the update's <paramref name="stage"/> (<see cref="UpdateRestartOffered"/>; the
     /// line under QUIT asks it too).
@@ -153,6 +157,12 @@ std::string VersionLineText(std::string_view running)
 std::string_view ReleaseOf(std::string_view shown)
 {
     return shown.substr(0, shown.find(BuildOpening));
+}
+
+std::string UpdateButtonText(std::string_view running, std::string_view update)
+{
+    const std::string_view release = ReleaseOf(update);
+    return release == ReleaseOf(running) ? std::string(BareUpdate) : std::format(UpdateToFormat, release);
 }
 
 bool UpdateRestartOffered()

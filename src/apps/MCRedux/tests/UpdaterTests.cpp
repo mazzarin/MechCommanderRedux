@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCFakeUpdaterBackend.h"
 #include "MCTest.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCUpdateModel.h"
 #include "main/MCUpdater.h"
 #include "MCVersion.h"
@@ -136,6 +137,43 @@ TEST_CASE("updater: the main menu's version line names Redux HD and the release 
     CHECK_EQ(VersionLineText("0.6.3 (899)"), std::string("Redux HD 0.6.3"));
     CHECK_EQ(VersionLineText("0.6.3"), std::string("Redux HD 0.6.3"));
     CHECK(VersionLineText("").empty());
+}
+
+/// <summary>
+/// The remade main menu's UPDATE names the release an update brings, and none when that's the release running: its
+/// content alone, for a program that came ahead of it (forced alone, installed over an older copy's files; playtest 1's
+/// copy: release 11's program, 0.7.2, on release 9's game folder, offered release 11's content as "Update to 0.7.2"
+/// beside "Redux HD 0.7.2").
+/// </summary>
+TEST_CASE("updater: the main menu's UPDATE names the release it brings, none when it's the one running")
+{
+    // Releases 10 and 11 as shown, a content release of its own on release 11's program, and the playtest's build.
+    constexpr std::string_view Release10 = "0.7.1 (1316)";
+    constexpr std::string_view Release11 = "0.7.2 (1318)";
+    constexpr std::string_view ContentRelease = "0.7.3 (1318)";
+    constexpr std::string_view PlaytestBuild = "0.7.2 (1500)";
+    CHECK_EQ(UpdateButtonText(Release10, Release11), std::string("Update to 0.7.2"));
+    CHECK_EQ(UpdateButtonText(Release11, ContentRelease), std::string("Update to 0.7.3"));
+    CHECK_EQ(UpdateButtonText(Release11, Release11), std::string("Update"));
+    CHECK_EQ(UpdateButtonText(PlaytestBuild, PlaytestBuild), std::string("Update"));
+
+    // The foot as the main menu reads it: release 11's content for its program, running.
+    {
+        const MCFakeUpdater updater(Release11);
+        MCUpdater::Found(std::string(Release11), std::string(Notes));
+        REQUIRE(MCUpdater::Waiting());
+        const MCMainMenuModel::MCFoot foot = MCMainMenuModel::Foot();
+        CHECK_EQ(foot.Version, std::string("Redux HD 0.7.2"));
+        CHECK_EQ(foot.Update, std::string("Update"));
+        MCUpdater::Answer(MCAnswer::Skip);
+    }
+
+    // Release 11 for release 10's program.
+    const MCFakeUpdater updater(Release10);
+    MCUpdater::Found(std::string(Release11), std::string(Notes));
+    REQUIRE(MCUpdater::Waiting());
+    CHECK_EQ(MCMainMenuModel::Foot().Update, std::string("Update to 0.7.2"));
+    MCUpdater::Answer(MCAnswer::Skip);
 }
 
 TEST_CASE("updater: a size is shown as the setup gives it: decimal GB to a tenth from 1 GB, MB below")

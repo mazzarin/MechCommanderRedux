@@ -35,7 +35,6 @@ namespace
 
     constexpr std::string_view StandsFormat = "Operation {}, mission {}";
     constexpr std::string_view LineFormat = "{} · {}";
-    constexpr std::string_view UpdateFormat = "Update to {}";
     /// <summary>UPDATE for the HD art a program installed alone came for, which names no release to update to.</summary>
     constexpr std::string_view BareUpdate = "Update";
     constexpr std::string_view SoloFormat = "Buy {} tons with {} RP";
@@ -149,7 +148,8 @@ auto MCMainMenuModel::SoloMissions() -> MCSoloList
 
 auto MCMainMenuModel::Foot() -> MCFoot
 {
-    MCFoot foot{.Version = VersionLineText(MCUpdater::RunningVersion())};
+    const std::string running = MCUpdater::RunningVersion();
+    MCFoot foot{.Version = VersionLineText(running)};
 
     if (!MCUpdater::Available() || !MCUpdater::Waiting())
     {
@@ -176,8 +176,9 @@ auto MCMainMenuModel::Foot() -> MCFoot
     }
 
     // A release due besides the art keeps its UPDATE beside the art's line; the foot has no room for RESTART too, so
-    // UPDATE's page has it, putting the release and the art in together.
-    foot.Update = std::format(UpdateFormat, ReleaseOf(status.Version));
+    // UPDATE's page has it, putting the release and the art in together. UPDATE names the release it brings, or none for
+    // the release running's content alone.
+    foot.Update = UpdateButtonText(running, status.Version);
     return foot;
 }
 

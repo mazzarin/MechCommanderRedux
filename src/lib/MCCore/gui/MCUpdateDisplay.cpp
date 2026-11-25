@@ -204,6 +204,11 @@ namespace
     /// <summary>Draws the software cursor into the screen buffer, or moves the system's.</summary>
     void DrawCursorInBuffer()
     {
+        const bool drawn = GSoftwareCursor != 0 && GuiSystem().CursorShape != -1;
+        // Port-only (SPEC-menus.md): over the remade screens, drawn over this frame, the system's arrow stands in for
+        // the cursor drawn here, and none is drawn (round a screen floating over the battle it would show beside it).
+        MCInput::SetDrawnCursor(drawn);
+
         // Port fix: the cursor is the system's, which follows the mouse between frames; the original drew it here.
         if (GSoftwareCursor == 0)
         {
@@ -212,7 +217,7 @@ namespace
             return;
         }
 
-        if (GuiSystem().CursorShape == -1)
+        if (!drawn || MCInput::LayerHasMouse())
         {
             return;
         }

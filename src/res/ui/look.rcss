@@ -210,7 +210,8 @@ span, em, strong { display: inline; }
 .switch > div:last-child { margin-right: 0; }
 .switch.small > div { height: 16dp; line-height: 14dp; padding: 0 8dp; }
 /* The chat (multiplayer): the newest line at its foot, as many above it as its room holds. A sender's name in their player's
-   colour; a line only the team saw marked TEAM; the game's own lines in grey. Under them the line being typed, after
+   colour; a line only the team saw in 1998's team colour (its chat's blue.fnt, ink 0xe3: the look's cyan) where a line
+   to all is white (white.fnt), and marked TEAM; the game's own lines in grey. Under them the line being typed, after
    the switch for who hears it: TEAM (the team only) or ALL. */
 .chat { display: flex; flex-direction: column; }
 .chat > * { flex: 0 0 auto; }
@@ -220,6 +221,7 @@ span, em, strong { display: inline; }
 .chat-line .name { font-weight: 600; }
 .chat-line .to { font-size: 8.75dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
 .chat-line.game { color: #a4b0bc; }
+.chat-line.team { color: #7cd4ec; }
 .chat-say { display: flex; flex-direction: row; gap: 6dp; margin-top: 6dp; }
 .chat-say > .switch { flex: 0 0 auto; }
 .chat-say > .field { flex: 1 1 0; }

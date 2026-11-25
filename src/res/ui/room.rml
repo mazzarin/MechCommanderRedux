@@ -93,7 +93,7 @@
                 </div>
                 <div id="talk" class="chat">
                     <div class="chat-lines">
-                        <div class="chat-line" data-for="line : chat" data-class-game="line.game"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> Team</span><span data-if="!line.game">: </span>{{line.text}}</div>
+                        <div class="chat-line" data-for="line : chat" data-class-game="line.game" data-class-team="line.team"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> Team</span><span data-if="!line.game">: </span>{{line.text}}</div>
                     </div>
                     <div class="chat-say">
                         <div class="switch small" id="to" data-hint="Who reads it"><div data-class-off="!can_team_chat">Team</div><div>All</div></div>

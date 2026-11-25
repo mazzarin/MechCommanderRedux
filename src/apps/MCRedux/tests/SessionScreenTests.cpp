@@ -52,6 +52,7 @@
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -1707,5 +1708,93 @@ TEST_CASE_ISOLATED("game: the room's cards keep their name and HOST apart while 
         }
 
         Settle();
+    }
+}
+
+namespace
+{
+    /// <summary>The room's team chat test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view TeamChatHostAddress = "127.0.0.1:28933";
+    /// <summary>
+    /// 1998's chat text to a team (MCLogChatInput's colour 4: blue.fnt, its ink palette 0xe3), the look's cyan, as
+    /// 0xRRGGBB.
+    /// </summary>
+    constexpr uint32_t TeamLineInk = 0x7cd4ec;
+    /// <summary>1998's chat text to all (colour 6: white.fnt, its ink 0x1f), the look's white.</summary>
+    constexpr uint32_t AllLineInk = 0xfcfcfc;
+    /// <summary>The 1998 chat's text colour codes (MCLogChatInput): to the team, and to all.</summary>
+    constexpr int32_t TeamTextCode = 4;
+    constexpr int32_t AllTextCode = 6;
+
+    /// <summary>The colour <paramref name="element"/>'s letters are drawn in, as 0xRRGGBB.</summary>
+    uint32_t InkOf(Rml::Element& element)
+    {
+        constexpr int RedShift = 16;
+        constexpr int GreenShift = 8;
+        const Rml::Colourb ink = element.GetComputedValues().color();
+        return static_cast<uint32_t>(ink.red) << RedShift | static_cast<uint32_t>(ink.green) << GreenShift |
+               static_cast<uint32_t>(ink.blue);
+    }
+}
+
+/// <summary>
+/// A line to the team reads apart from a line to all, as 1998's did (MCLogChatInput, MCLogChat::ProcessChatString):
+/// the sayer's name in their colour on both, the team's text in 1998's team colour (blue.fnt's, the look's cyan) and
+/// all's white, the team's marked TEAM; the player's own lines and a guest's alike.
+/// </summary>
+TEST_CASE_ISOLATED("game: the room's chat shows a line to the team in 1998's team colour, apart from a line to all")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(TeamChatHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Team chat", 6);
+    REQUIRE(SettleUntil([] { return RoomScreenShown(); }));
+    MCRoomScreen& room = *RoomScreen();
+    const std::shared_ptr<MCFidpPlayer> host = MultiPlayer()->SessionManager->MyPlayer();
+    REQUIRE(host != nullptr);
+    room.PressJoin(host->Id, MCRoomModel::Team1);
+    Settle();
+
+    // The host's own, to the team then to all; a guest's (as the chat holds a received line), to the team then to all.
+    room.Say("Flank left.", true);
+    room.Say("Good luck.", false);
+    constexpr int32_t AnnNumber = 1;
+    const int32_t annColour = GlobalLog()->PlayerColors[static_cast<size_t>(AnnNumber)];
+    GlobalLog()->Chat->AddLine(std::format("%fc{}Ann: %fc{}On it.", annColour, TeamTextCode));
+    GlobalLog()->Chat->AddLine(std::format("%fc{}Ann: %fc{}You too.", annColour, AllTextCode));
+    Settle();
+
+    // The lines shown: RmlUi keeps the list's hidden template after them.
+    Rml::ElementList lines;
+    room.Document()->get().QuerySelectorAll(lines, "#talk .chat-line");
+    std::erase_if(lines, [](const Rml::Element* line) { return !line->IsVisible(); });
+    constexpr size_t Said = 4;
+    REQUIRE(lines.size() >= Said);
+    const std::span<Rml::Element*> last(lines.end() - static_cast<std::ptrdiff_t>(Said), lines.end());
+    const std::array<bool, Said> toTeam = {true, false, true, false};
+
+    for (size_t at = 0; at < Said; ++at)
+    {
+        Rml::Element& line = *last[at];
+        const MCTest::Scope scope{line.GetInnerRML()};
+        Rml::ElementList names;
+        line.GetElementsByClassName(names, "name");
+        REQUIRE(names.size() == 1);
+        Rml::ElementList marks;
+        line.GetElementsByClassName(marks, "to");
+        REQUIRE(marks.size() == 1);
+        CHECK_EQ(line.IsClassSet("team"), toTeam[at]);
+        CHECK_EQ(InkOf(line), toTeam[at] ? TeamLineInk : AllLineInk);
+        CHECK_EQ(marks.front()->IsVisible(), toTeam[at]);
+        // The name in the sayer's colour either way: the host's first, then Ann's.
+        constexpr size_t HostLines = 2;
+        CHECK(names.front()->IsClassSet(MCChatView::ColourOf(at < HostLines ? host->PlayerNumber : AnnNumber)));
+        CHECK(InkOf(*names.front()) != TeamLineInk);
     }
 }

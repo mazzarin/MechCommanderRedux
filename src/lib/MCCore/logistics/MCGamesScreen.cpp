@@ -982,11 +982,9 @@ void MCGamesScreen::Ended(MCGameJoin::MCEnd end)
 void MCGamesScreen::SayRefusal()
 {
     const std::weak_ptr<MCRmlScreen> self = weak_from_this();
-    const auto me = [self]() -> MCGamesScreen*
-    {
-        const std::shared_ptr<MCRmlScreen> screen = self.lock();
-        return screen != nullptr ? &static_cast<MCGamesScreen&>(*screen) : nullptr;
-    };
+    // A pin on this screen (null once it is gone), held by the caller for the length of its call (gui/MCGuiRef.h).
+    const auto me = [self]() -> std::shared_ptr<MCGamesScreen>
+    { return std::static_pointer_cast<MCGamesScreen>(self.lock()); };
 
     MCRmlDialog::MCSay say{.Eyebrow = Place(), .Text = _Join.Refusal(), .Main = std::string(OkWord)};
 
@@ -996,7 +994,7 @@ void MCGamesScreen::SayRefusal()
         say.Other = CancelWord;
         say.OnMain = [me, asked = *_Join.Asked()]
         {
-            if (MCGamesScreen* screen = me(); screen != nullptr)
+            if (const std::shared_ptr<MCGamesScreen> screen = me(); screen != nullptr)
             {
                 screen->Begin(asked);
             }
@@ -1008,7 +1006,7 @@ void MCGamesScreen::SayRefusal()
         say.Other = CancelWord;
         say.OnMain = [me]
         {
-            if (MCGamesScreen* screen = me(); screen != nullptr)
+            if (const std::shared_ptr<MCGamesScreen> screen = me(); screen != nullptr)
             {
                 screen->OpenUpdate(std::nullopt);
             }

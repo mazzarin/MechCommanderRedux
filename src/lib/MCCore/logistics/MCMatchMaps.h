@@ -44,5 +44,37 @@ std::vector<MCMatchMap> MCMatchMaps();
 /// <summary>Points as the menus write them, grouped by thousands: "300,000".</summary>
 std::string MCGroupedPoints(int32_t points);
 
-/// <summary>A description's lines (<see cref="MCMatchMap::Description"/>) put back into paragraphs.</summary>
-std::vector<std::string> MCParagraphs(const std::vector<std::string>& lines);
+/// <summary>
+/// How a row of a description shows in the room and CHOOSE MAP (SPEC-menus.md, the room): its words wrapped, or one of
+/// 1998's asterisk banners as the menus' own. A banner's row starts or ends with an asterisk.
+/// </summary>
+enum class MCDescriptionKind
+{
+    /// <summary>Words wrapped to the box (a paragraph).</summary>
+    Text,
+    /// <summary>A row of words between asterisks ("*** LOCKED MISSION ***"): its words, a label between two thin rules.</summary>
+    Label,
+    /// <summary>A row of asterisks alone: a thin rule.</summary>
+    Rule,
+    /// <summary>Any other banner's row ("**NOTE** read this"): one line, cut at the box's edge.</summary>
+    Cut,
+};
+
+/// <summary>A row of a description as it shows: its kind and its words (a label's without its asterisks; a rule none).</summary>
+struct MCDescriptionRow
+{
+    MCDescriptionKind Kind = MCDescriptionKind::Text;
+    std::string Text;
+
+    bool operator==(const MCDescriptionRow&) const = default;
+};
+
+/// <summary>The row <paramref name="line"/> of a description makes alone: a banner's, or its words.</summary>
+MCDescriptionRow MCDescriptionRowOf(std::string_view line);
+
+/// <summary>
+/// A description's lines (<see cref="MCMatchMap::Description"/>) as they show: its paragraphs (an empty line between
+/// two, a paragraph's lines joined by a space), each banner a row of its own between them; with
+/// <paramref name="joined"/>, the paragraphs between two banners one (the room's).
+/// </summary>
+std::vector<MCDescriptionRow> MCDescriptionRows(const std::vector<std::string>& lines, bool joined);

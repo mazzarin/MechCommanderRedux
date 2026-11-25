@@ -86,7 +86,17 @@
                                 <div class="map-change" data-if="can_teams"><div class="button small" id="change-map" data-hint="Choose map">Change</div></div>
                             </div>
                         </div>
-                        <div class="map-text"><div class="para" data-for="line : map_lines">{{line.text}}</div></div>
+                        <div class="map-text scroll-box">
+                            <div class="scroller reading" id="map-words">
+                                <div data-for="line : map_lines">
+                                    <div class="para" data-if="line.kind == 'text'">{{line.text}}</div>
+                                    <div class="banner" data-if="line.kind == 'label'"><div class="banner-rule"></div><div class="banner-label cut">{{line.text}}</div><div class="banner-rule"></div></div>
+                                    <div class="banner" data-if="line.kind == 'rule'"><div class="banner-rule"></div></div>
+                                    <div class="para cut" data-if="line.kind == 'cut'">{{line.text}}</div>
+                                </div>
+                            </div>
+                            <div class="fade"></div>
+                        </div>
                     </div>
                     <div class="pool-head options-head"><div class="pool-name">Match options</div><div class="grow"></div><div class="button small" id="view-options" data-hint="Match options">{{options_word}}</div></div>
                     <div class="opt" data-for="opt : opts"><div class="opt-name">{{opt.name}}</div><div class="grow"></div><div class="opt-value" data-class-grey="opt.off">{{opt.value}}</div></div>

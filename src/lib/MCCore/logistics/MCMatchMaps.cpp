@@ -20,6 +20,9 @@ namespace
     constexpr size_t DigitsGrouped = 3;
     /// <summary>What a description's line may have round its words.</summary>
     constexpr std::string_view Blanks = " \t";
+    /// <summary>1998's banners' mark, and what lies round a banner's words (the marks and blanks).</summary>
+    constexpr char Asterisk = '*';
+    constexpr std::string_view BannerMarks = " \t*";
 
     /// <summary>Whether <paramref name="line"/> is <see cref="NoArtilleryLine"/>, whatever its capitals and blanks.</summary>
     bool SaysNoArtillery(std::string_view line)
@@ -133,31 +136,82 @@ std::vector<MCMatchMap> MCMatchMaps()
     return maps;
 }
 
-std::vector<std::string> MCParagraphs(const std::vector<std::string>& lines)
+MCDescriptionRow MCDescriptionRowOf(std::string_view line)
 {
-    // An empty line between two paragraphs; a paragraph's lines joined by a space.
-    std::vector<std::string> paragraphs;
+    const size_t first = line.find_first_not_of(Blanks);
+
+    if (first == std::string_view::npos)
+    {
+        return MCDescriptionRow{.Text = std::string(line)};
+    }
+
+    const std::string_view row = line.substr(first, line.find_last_not_of(Blanks) - first + 1);
+
+    if (row.front() != Asterisk && row.back() != Asterisk)
+    {
+        return MCDescriptionRow{.Text = std::string(line)};
+    }
+
+    const size_t from = row.find_first_not_of(BannerMarks);
+
+    if (from == std::string_view::npos)
+    {
+        return MCDescriptionRow{.Kind = MCDescriptionKind::Rule};
+    }
+
+    // Words between asterisks, none among them: the label; anything else a banner's row whole.
+    const std::string_view words = row.substr(from, row.find_last_not_of(BannerMarks) - from + 1);
+
+    if (row.front() == Asterisk && row.back() == Asterisk && words.find(Asterisk) == std::string_view::npos)
+    {
+        return MCDescriptionRow{.Kind = MCDescriptionKind::Label, .Text = std::string(words)};
+    }
+
+    return MCDescriptionRow{.Kind = MCDescriptionKind::Cut, .Text = std::string(row)};
+}
+
+std::vector<MCDescriptionRow> MCDescriptionRows(const std::vector<std::string>& lines, bool joined)
+{
+    std::vector<MCDescriptionRow> rows;
     std::string paragraph;
+
+    // A paragraph ends at an empty line and at a banner; joined, it carries on the words since the last banner.
+    const auto endParagraph = [&rows, &paragraph, joined]
+    {
+        if (paragraph.empty())
+        {
+            return;
+        }
+
+        if (joined && !rows.empty() && rows.back().Kind == MCDescriptionKind::Text)
+        {
+            rows.back().Text += " " + std::exchange(paragraph, {});
+            return;
+        }
+
+        rows.push_back(MCDescriptionRow{.Text = std::exchange(paragraph, {})});
+    };
 
     for (const std::string& line : lines)
     {
         if (line.empty())
         {
-            if (!paragraph.empty())
-            {
-                paragraphs.push_back(std::exchange(paragraph, {}));
-            }
-
+            endParagraph();
             continue;
         }
 
-        paragraph += paragraph.empty() ? line : " " + line;
+        MCDescriptionRow row = MCDescriptionRowOf(line);
+
+        if (row.Kind == MCDescriptionKind::Text)
+        {
+            paragraph += paragraph.empty() ? line : " " + line;
+            continue;
+        }
+
+        endParagraph();
+        rows.push_back(std::move(row));
     }
 
-    if (!paragraph.empty())
-    {
-        paragraphs.push_back(std::move(paragraph));
-    }
-
-    return paragraphs;
+    endParagraph();
+    return rows;
 }

@@ -16,6 +16,27 @@
 
 class MCRmlModel;
 
+/// <summary>
+/// A map's description as CHOOSE MAP and the room bind it (<c>ui/choose_map.rml</c>, <c>ui/room.rml</c>): a row's words
+/// and its kind ("text", "label", "rule" or "cut": MCDescriptionKind), which its markup shows it by.
+/// </summary>
+struct MCDescriptionLine
+{
+    std::string Text;
+    std::string Kind;
+
+    bool operator==(const MCDescriptionLine&) const = default;
+};
+
+/// <summary>A description's rows (MCDescriptionRows) as CHOOSE MAP and the room bind them.</summary>
+std::vector<MCDescriptionLine> MCDescriptionLines(const std::vector<MCDescriptionRow>& rows);
+
+/// <summary>A description's lines bound in <paramref name="model"/> as <paramref name="name"/>.</summary>
+void MCBindDescription(MCRmlModel& model, const std::string& name, std::vector<MCDescriptionLine>& lines);
+
+/// <summary>A description's scroller (its id <paramref name="id"/>) back at its top: a new map's.</summary>
+void MCDescriptionToTop(MCOptionalRef<Rml::ElementDocument> document, const char* id);
+
 /// <summary>CHOOSE MAP's window (<c>ui/choose_map.rml</c>).</summary>
 class MCChooseMapWindow final : public MCRmlScreen
 {
@@ -32,6 +53,8 @@ public:
     /// <summary>The maps listed, and which is picked (-1: none).</summary>
     const std::vector<MCMatchMap>& Maps() const { return _Maps; }
     int Picked() const { return _Picked; }
+    /// <summary>The picked map's description as it shows (its paragraphs and banners).</summary>
+    const std::vector<MCDescriptionLine>& PickLines() const { return _PickLines; }
 
     /// <summary>What a player's presses do (and the tests'): a map picked, CHOOSE, CANCEL.</summary>
     void Pick(int at);
@@ -61,13 +84,6 @@ private:
         bool operator==(const MCRow&) const = default;
     };
 
-    struct MCLine
-    {
-        std::string Text;
-
-        bool operator==(const MCLine&) const = default;
-    };
-
     /// <summary>The list and the picked map's side put in the model.</summary>
     void ShowMaps();
     void ShowPick();
@@ -87,7 +103,7 @@ private:
     std::string _PickName;
     std::string _PickPic;
     std::string _PickFacts;
-    std::vector<MCLine> _PickLines;
+    std::vector<MCDescriptionLine> _PickLines;
 };
 
 /// <summary>

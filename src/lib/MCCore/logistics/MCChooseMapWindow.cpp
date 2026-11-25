@@ -26,6 +26,11 @@ namespace
     constexpr std::string_view NoTimeLimit = "No time limit.";
     constexpr std::string_view TimeFormat = "{}:{:02}";
     constexpr uint32_t SecondsAMinute = 60;
+    /// <summary>The picked map's description's scroller (choose_map.rml's).</summary>
+    constexpr const char* WordsId = "pick-words";
+    /// <summary>A description's row's kinds as its markup names them (MCDescriptionKind's order).</summary>
+    constexpr std::array<std::string_view, 4> DescriptionKinds = {"text", "label", "rule", "cut"};
+    static_assert(DescriptionKinds.size() == static_cast<size_t>(MCDescriptionKind::Cut) + 1);
 
     MCGuiHandle<MCChooseMapWindow>& Made()
     {
@@ -47,6 +52,32 @@ namespace
         return map.Team1Points == map.Team2Points
                    ? MCGroupedPoints(map.Team1Points)
                    : std::format(BothTeamsFormat, MCGroupedPoints(map.Team1Points), MCGroupedPoints(map.Team2Points));
+    }
+}
+
+std::vector<MCDescriptionLine> MCDescriptionLines(const std::vector<MCDescriptionRow>& rows)
+{
+    std::vector<MCDescriptionLine> lines;
+
+    for (const MCDescriptionRow& row : rows)
+    {
+        lines.push_back(MCDescriptionLine{.Text = row.Text,
+                                          .Kind = std::string(DescriptionKinds.at(static_cast<size_t>(row.Kind)))});
+    }
+
+    return lines;
+}
+
+void MCBindDescription(MCRmlModel& model, const std::string& name, std::vector<MCDescriptionLine>& lines)
+{
+    model.List(name, lines, std::pair{"text", &MCDescriptionLine::Text}, std::pair{"kind", &MCDescriptionLine::Kind});
+}
+
+void MCDescriptionToTop(MCOptionalRef<Rml::ElementDocument> document, const char* id)
+{
+    if (Rml::Element* words = document.has_value() ? document->get().GetElementById(id) : nullptr; words != nullptr)
+    {
+        words->SetScrollTop(0.0f);
     }
 }
 
@@ -85,7 +116,7 @@ void MCChooseMapWindow::MakeModels(Rml::Context& context)
     model.Value("pick_name", _PickName);
     model.Value("pick_pic", _PickPic);
     model.Value("pick_facts", _PickFacts);
-    model.List("pick_lines", _PickLines, std::pair{"text", &MCLine::Text});
+    MCBindDescription(model, "pick_lines", _PickLines);
     const auto at = [](const Rml::VariantList& arguments) { return arguments.empty() ? -1 : arguments[0].Get<int>(); };
     model.Event("pick", [this, at](const Rml::VariantList& arguments) { Pick(at(arguments)); });
     model.Event("choose",
@@ -222,11 +253,11 @@ void MCChooseMapWindow::ShowPick()
         _PickPic = std::format("{}{}", MCRmlArt::TerrainScheme, map.MapFile);
         _PickFacts = FactsOf(map);
 
-        for (std::string& paragraph : MCParagraphs(map.Description))
-        {
-            _PickLines.push_back(MCLine{std::move(paragraph)});
-        }
+        _PickLines = MCDescriptionLines(MCDescriptionRows(map.Description, false));
     }
+
+    // A new map's description from its top.
+    MCDescriptionToTop(Document(), WordsId);
 
     if (_Model != nullptr)
     {

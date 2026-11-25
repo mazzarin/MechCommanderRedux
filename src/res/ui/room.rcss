@@ -85,9 +85,21 @@
 .map-change { margin-top: 10dp; }
 .map-text { font-size: 9.51dp; line-height: 12dp; color: #dce4e4; margin-top: 8dp; }
 /* The map's own words, 1998's (its name and description): RmlUi wraps a line to its box's width rounded up to a whole
-   pixel, so they wrap a pixel short of their box and none runs past it; a word longer than a line (BLOODGRW's name,
-   POWRLOCK's row of asterisks) breaks at the box's edge, as a save's name does. */
+   pixel, so they wrap a pixel short of their box and none runs past it; a word longer than a line (BLOODGRW's name)
+   breaks at the box's edge, as a save's name does. */
 .map-title, .map-text .para { padding-right: 1px; word-break: break-word; }
+/* The description takes the room under the map's names; longer, it scrolls in it, its last line fading into the
+   night and a rail at its right, as the briefing's orders do (the kit's reading scroller, which the keys reach). */
+.map-chosen > .map-text { flex: 1 1 0; }
+.night .map-text > .fade { decorator: vertical-gradient(#0b111600 #0b1116ff); }
+/* 1998's asterisk banners as the menus' own: a row of words between asterisks (LOCKED MISSION) a label between two
+   thin rules, a row of asterisks alone a thin rule, a line's height each; any other banner's row on one line, cut at
+   the box's edge. */
+.banner { display: flex; flex-direction: row; align-items: center; gap: 6dp; height: 12dp; margin: 4dp 0; padding-right: 1px; }
+.banner > * { flex: 0 0 auto; }
+.banner > .banner-rule { flex: 1 1 0; min-width: 8dp; height: 1dp; background-color: #2a3742; }
+.banner-label { flex: 0 1 auto; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; }
+.map-text .cut { white-space: nowrap; overflow: hidden; }
 
 /* The match options as played, a row each in MATCH OPTIONS' order, the tonnage limit first: the mission's, one value,
    or the host's for each team, a value under each team's name (right-aligned with the other values); WEAPONS as how
@@ -160,8 +172,13 @@
 .c-time { flex: 0 0 44dp; text-align: right; }
 #map-pick { width: 208dp; padding-left: 16dp; border-left: 1dp #2a3742; }
 #map-pick > * { flex: 0 0 auto; }
+/* The picked map's side: its description the room under its facts (it scrolls in it, as the room's). */
+#map-pick > .pick-side { flex: 1 1 0; display: flex; flex-direction: column; }
+.pick-side > * { flex: 0 0 auto; }
+.pick-side > .map-text { flex: 1 1 0; }
 .map-pic.big { width: 208dp; height: 140dp; margin-bottom: 8dp; }
 #map-pick .map-text .para { margin-bottom: 6dp; }
+#map-pick .map-text .banner { margin: 0 0 6dp 0; }
 
 /* ---- Live (the game's own) ---- */
 

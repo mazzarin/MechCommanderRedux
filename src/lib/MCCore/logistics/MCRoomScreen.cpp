@@ -62,6 +62,8 @@ namespace
     constexpr std::array<const char*, 2> TechIds = {"tech1", "tech2"};
     constexpr std::array<const char*, 2> PointsIds = {"points1", "points2"};
     constexpr const char* SayId = "say";
+    /// <summary>The map's description's scroller (room.rml's).</summary>
+    constexpr const char* MapWordsId = "map-words";
     constexpr const char* ToId = "to";
     constexpr const char* ValueAttribute = "value";
 
@@ -169,7 +171,7 @@ void MCRoomScreen::MakeModels(Rml::Context& context)
     model.Value("map_title", _MapTitle);
     model.Value("map_pic", _MapPic);
     model.Value("map_time", _MapTime);
-    model.List("map_lines", _MapLines, std::pair{"text", &MCMapLine::Text});
+    MCBindDescription(model, "map_lines", _MapLines);
     model.Value("options_word", _OptionsWord);
     model.List("opts", _Opts, std::pair{"name", &MCOption::Name}, std::pair{"value", &MCOption::Value},
                std::pair{"off", &MCOption::Off});
@@ -425,18 +427,14 @@ void MCRoomScreen::ShowMatch()
              ? std::format(TimeLimitFormat, room.MissionTime)
              : std::string());
 
-    // The mission's description as one paragraph, as the room's frames have it (CHOOSE MAP shows its paragraphs).
-    std::vector<MCMapLine> lines;
-    std::string text;
+    // The mission's description as one paragraph between 1998's banners, as the room's frames have it (CHOOSE MAP
+    // shows its paragraphs); a new one from its top.
+    std::vector<MCDescriptionLine> lines =
+        MCDescriptionLines(hasMap ? MCDescriptionRows(room.Description, true) : std::vector<MCDescriptionRow>{});
 
-    for (const std::string& paragraph : hasMap ? MCParagraphs(room.Description) : std::vector<std::string>{})
+    if (lines != _MapLines)
     {
-        text += text.empty() ? paragraph : " " + paragraph;
-    }
-
-    if (!text.empty())
-    {
-        lines.push_back(MCMapLine{std::move(text)});
+        MCDescriptionToTop(Document(), MapWordsId);
     }
 
     Keep("map_lines", _MapLines, std::move(lines));
@@ -636,10 +634,7 @@ MCRoomScreen::MCSeen MCRoomScreen::Seen() const
         seen.Pool.push_back(card.Name);
     }
 
-    for (const MCMapLine& line : _MapLines)
-    {
-        seen.MapText.push_back(line.Text);
-    }
+    seen.MapText = _MapLines;
 
     for (const MCOption& option : _Opts)
     {

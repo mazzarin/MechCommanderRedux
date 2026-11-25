@@ -49,6 +49,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/ElementScroll.h>
 #include <RmlUi/Core/ElementText.h>
 #include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/StringUtilities.h>
@@ -106,10 +107,10 @@ namespace
 
 /// <summary>
 /// SPEC-menus.md's "Testing" for stage 4's screens: the room (the host's alone with a guest on no team, then the teams
-/// picked, points and tech bases set and a chat; with a map), CHOOSE MAP's window (from the keys too) and MATCH OPTIONS'
-/// (FORCES, PLAY and WEAPONS), the host's (a guest's are a real guest's: the guest's room test), each drawn on the
-/// software path at 640x480, 1280x720 and 1280x1024 (--shots saves them), and laid out and read at every window the
-/// players' reports name. CHOOSE MAP lists the game's room packets by name, each with its file, points and time limit,
+/// picked, points and tech bases set and a chat; with a map), CHOOSE MAP's window (from the keys too; a LOCKED map's
+/// description scrolling, its banners the menus' own) and MATCH OPTIONS' (FORCES, PLAY and WEAPONS), the host's (a
+/// guest's are a real guest's: the guest's room test), each drawn on the software path at 640x480, 1280x720 and
+/// 1280x1024 (--shots saves them), and laid out and read at every window the players' reports name. CHOOSE MAP lists the game's room packets by name, each with its file, points and time limit,
 /// and CHOOSE loads the one picked into the room as 1998's LOAD MAP did.
 /// </summary>
 TEST_CASE_ISOLATED(
@@ -194,6 +195,14 @@ TEST_CASE_ISOLATED(
     Settle();
     CHECK_EQ(choose.Picked(), 1);
     CheckMenusFrames("room choose map keys", {0xe40e0ba7, 0x000b1d7a, 0x99af7468});
+
+    // Capture Base LOCKED: its description longer than its place, scrolling with its rail and fade, its banners the
+    // menus' own.
+    const auto locked = std::ranges::find(choose.Maps(), std::string("CPTRLOCK"), &MCMatchMap::File);
+    REQUIRE(locked != choose.Maps().end());
+    choose.Pick(static_cast<int>(locked - choose.Maps().begin()));
+    Settle();
+    CheckMenusFrames("room choose map locked", {0x9d9ee7e4, 0xff88d356, 0x311edf70});
 
     // Capture Base: its points and no time limit, CHOOSE loads it (the guest has the same file).
     const auto capture = std::ranges::find(choose.Maps(), std::string("CPTRBASE"), &MCMatchMap::File);
@@ -536,20 +545,59 @@ namespace
 {
     /// <summary>The description survey's address, its own so it can run beside the others (--jobs).</summary>
     constexpr std::string_view SurveyHostAddress = "127.0.0.1:29005";
+    /// <summary>The descriptions' scrollers: CHOOSE MAP's picked map's, the room's (choose_map.rml's, room.rml's).</summary>
+    constexpr const char* PickWordsId = "pick-words";
+    constexpr const char* MapWordsId = "map-words";
+    /// <summary>How far a scrolled text may be from its foot and still be at it (RmlUi's layout is floats).</summary>
+    constexpr float ScrollSlack = 0.5f;
+
+    /// <summary>How a description's text shows its length: whether it's longer than its room, its rail and its fade.</summary>
+    struct MCLengthShown
+    {
+        bool Longer = false;
+        bool Rail = false;
+        bool Fade = false;
+        /// <summary>The keys reach it (the kit's .long).</summary>
+        bool Reached = false;
+    };
+
+    /// <summary>How <paramref name="screen"/>'s description's text <paramref name="id"/> shows its length now.</summary>
+    MCLengthShown LengthShown(const MCRmlScreen& screen, const char* id)
+    {
+        Rml::Element* words = MCTestGuest::ElementOf(screen, id);
+        REQUIRE(words != nullptr);
+        Rml::Element* fade = words->GetNextSibling();
+        return MCLengthShown{
+            .Longer = words->GetScrollHeight() > words->GetClientHeight() + ScrollSlack,
+            .Rail = words->GetElementScroll()->GetScrollbarSize(Rml::ElementScroll::VERTICAL) > 0.0f,
+            .Fade = fade != nullptr && fade->IsClassSet("fade") && fade->IsVisible(),
+            .Reached = words->IsClassSet("long"),
+        };
+    }
+
     /// <summary>
-    /// What the checks say of a description longer than its room: past the room's map column (over MATCH OPTIONS) and
-    /// past CHOOSE MAP's picked map's column (its foot). How such a description shows waits on a choice SPEC-menus.md
-    /// doesn't make yet, so the survey leaves these out; every other problem counts.
+    /// What's wrong with how <paramref name="screen"/>'s description's text <paramref name="id"/>, at its top, shows its
+    /// length: one longer than its room has its rail, its fade and the keys' reach, one that fits none of them.
     /// </summary>
-    constexpr std::array LongerThanItsRoom = {std::string_view("div.map-text spills from div.map-chosen; "),
-                                              std::string_view("div spills from div.column#map-pick; ")};
+    std::string LengthProblems(const MCRmlScreen& screen, const char* id)
+    {
+        const MCLengthShown shown = LengthShown(screen, id);
+
+        if (shown.Rail == shown.Longer && shown.Fade == shown.Longer && shown.Reached == shown.Longer)
+        {
+            return {};
+        }
+
+        return std::format("{} {}: rail {}, fade {}, keys {}; ", id, shown.Longer ? "longer than its room" : "fits",
+                           shown.Rail, shown.Fade, shown.Reached);
+    }
 
     /// <summary>
     /// What the layout and legibility checks find in the menus shown now, <paramref name="what"/>, at every window the
-    /// players' reports name and the frames' windows, but a description longer than its room (LongerThanItsRoom): a
-    /// line each, headed by both (nothing: none).
+    /// players' reports name and the frames' windows, and how <paramref name="screen"/>'s description's text
+    /// <paramref name="id"/> shows its length there (LengthProblems): a line each, headed by both (nothing: none).
     /// </summary>
-    std::string ProblemsAtEveryWindow(std::string_view what)
+    std::string ProblemsAtEveryWindow(std::string_view what, const MCRmlScreen& screen, const char* id)
     {
         using MCMenusPictures::MCWindowSize;
         std::vector<MCWindowSize> windows(MCMenusPictures::PlayersWindows.begin(),
@@ -570,16 +618,10 @@ namespace
         {
             MCMenusPictures::MenusAt(window);
             Rml::Context& context = MCMenusPictures::GameMenus().Menus().Context();
-            std::string found = MCRmlChecks::BoxProblems(context) +
-                                MCRmlChecks::Illegible(context, MCRmlMenus::MenusUnit(window.Width, window.Height));
-
-            for (const std::string_view longer : LongerThanItsRoom)
-            {
-                for (size_t at = found.find(longer); at != std::string::npos; at = found.find(longer, at))
-                {
-                    found.erase(at, longer.size());
-                }
-            }
+            const std::string found =
+                MCRmlChecks::BoxProblems(context) +
+                MCRmlChecks::Illegible(context, MCRmlMenus::MenusUnit(window.Width, window.Height)) +
+                LengthProblems(screen, id);
 
             if (!found.empty())
             {
@@ -605,27 +647,24 @@ namespace
         return titles.empty() ? std::string() : Rml::StringUtilities::DecodeRml(titles.front()->GetInnerRML());
     }
 
-    /// <summary>A room packet's description as the room shows it: its paragraphs as one (MCRoomScreen::ShowMatch).</summary>
-    std::string RoomText(const MCMatchMap& map)
+    /// <summary>
+    /// A room packet's description as the room shows it: its paragraphs as one between 1998's banners
+    /// (MCRoomScreen::ShowMatch).
+    /// </summary>
+    std::vector<MCDescriptionLine> RoomText(const MCMatchMap& map)
     {
-        std::string text;
-
-        for (const std::string& paragraph : MCParagraphs(map.Description))
-        {
-            text += text.empty() ? paragraph : " " + paragraph;
-        }
-
-        return text;
+        return MCDescriptionLines(MCDescriptionRows(map.Description, true));
     }
 }
 
 /// <summary>
 /// Every room map's description and name, the room packet's own words, lie inside their boxes (no line past a side)
 /// and read, at every window the players' reports name and the frames' windows: in CHOOSE MAP with the map picked, and
-/// in the room once chosen, the host's and a guest's (MCRmlChecks::BoxProblems, MCRmlChecks::Illegible), a description
-/// longer than its room aside (LongerThanItsRoom). King of the Hill's ran a line 0.6 pixels past its box in the room at
-/// 1366x768 (RmlUi's wrap rounds a line's room up to a whole pixel), POWRLOCK's row of asterisks and BLOODGRW's name
-/// (one word each) past theirs at most windows.
+/// in the room once chosen, the host's and a guest's (MCRmlChecks::BoxProblems, MCRmlChecks::Illegible); a description
+/// longer than its room scrolls in it, with its rail and fade, one that fits has neither (LengthProblems). King of the
+/// Hill's ran a line 0.6 pixels past its box in the room at 1366x768 (RmlUi's wrap rounds a line's room up to a whole
+/// pixel), BLOODGRW's name (one word) past its own at most windows, and 18 maps' descriptions past their room (CPTRLOCK's
+/// three lines over MATCH OPTIONS at 1920x1200).
 /// </summary>
 TEST_CASE_ISOLATED("game: every room map's description lies inside its box in CHOOSE MAP and the room, host and guest")
 {
@@ -663,19 +702,17 @@ TEST_CASE_ISOLATED("game: every room map's description lies inside its box in CH
         REQUIRE(listed != choose.Maps().end());
         choose.Pick(static_cast<int>(listed - choose.Maps().begin()));
         REQUIRE(SettleUntil([&] { return PickedName(choose) == map.Name; }));
-        problems += ProblemsAtEveryWindow(std::format("{} in CHOOSE MAP", map.File));
+        problems += ProblemsAtEveryWindow(std::format("{} in CHOOSE MAP", map.File), choose, PickWordsId);
 
         // Chosen: the room shows it, the host's, then a guest's.
         choose.PressChoose();
-        const std::string text = RoomText(map);
         REQUIRE(SettleUntil([&] { return !ChooseMapWindowShown() && room.Seen().Map == map.Name; }));
         Settle();
-        const MCRoomScreen::MCSeen seen = room.Seen();
-        CHECK_EQ(seen.MapText.empty() ? std::string() : seen.MapText.front(), text);
-        problems += ProblemsAtEveryWindow(std::format("{} in the host's room", map.File));
+        CHECK(room.Seen().MapText == RoomText(map));
+        problems += ProblemsAtEveryWindow(std::format("{} in the host's room", map.File), room, MapWordsId);
         MultiPlayer()->IsHost = false;
         Settle();
-        problems += ProblemsAtEveryWindow(std::format("{} in a guest's room", map.File));
+        problems += ProblemsAtEveryWindow(std::format("{} in a guest's room", map.File), room, MapWordsId);
         MultiPlayer()->IsHost = true;
         Settle();
         surveyed++;
@@ -683,6 +720,240 @@ TEST_CASE_ISOLATED("game: every room map's description lies inside its box in CH
 
     CHECK(surveyed > 0);
     CHECK_EQ(problems, "");
+}
+
+/// <summary>
+/// SPEC-menus.md's room: 1998's asterisk banners in a map's description show as the menus' own. A row of words between
+/// asterisks (the LOCKED maps' "LOCKED MISSION", the NA maps' "NO FUNCTIONING ARTILLERY CRATES") is its words, a label
+/// between two thin rules; a row of asterisks alone a thin rule; any other banner's row (asterisks at an end) one line,
+/// cut at the box's edge; any other row words. A banner ends the paragraph before it, with or without an empty line.
+/// </summary>
+TEST_CASE("session screen: a map's description shows 1998's asterisk banners as labels and rules")
+{
+    using enum MCDescriptionKind;
+    const auto row = [](MCDescriptionKind kind, std::string_view text)
+    { return MCDescriptionRow{.Kind = kind, .Text = std::string(text)}; };
+
+    // The LOCKED maps' banner, whole (CPTRLOCK, KINGLOCK, MANYLOCK, POWRLOCK), and the NA maps' line.
+    CHECK(MCDescriptionRowOf("***************** LOCKED MISSION *********************") == row(Label, "LOCKED MISSION"));
+    CHECK(MCDescriptionRowOf(" The host cannot change tech base or resource points.") ==
+          row(Text, " The host cannot change tech base or resource points."));
+    CHECK(MCDescriptionRowOf("******************************************************") == row(Rule, ""));
+    CHECK(MCDescriptionRowOf("**NO FUNCTIONING ARTILLERY CRATES**") == row(Label, "NO FUNCTIONING ARTILLERY CRATES"));
+
+    // Blanks round the row and among the marks; a single mark.
+    CHECK(MCDescriptionRowOf("  * * LOCKED * *  ") == row(Label, "LOCKED"));
+    CHECK(MCDescriptionRowOf("\t* * *") == row(Rule, ""));
+    CHECK(MCDescriptionRowOf("*") == row(Rule, ""));
+
+    // Any other banner's row: one line, its words as they are (cut at the box's edge).
+    CHECK(MCDescriptionRowOf("**NOTE** Read this first.") == row(Cut, "**NOTE** Read this first."));
+    CHECK(MCDescriptionRowOf("Read this *now*") == row(Cut, "Read this *now*"));
+    CHECK(MCDescriptionRowOf(" ** A ** B ** ") == row(Cut, "** A ** B **"));
+
+    // Words: marks inside a row, none, or a blank row.
+    CHECK(MCDescriptionRowOf("Destroy all *enemy* forces.") == row(Text, "Destroy all *enemy* forces."));
+    CHECK(MCDescriptionRowOf("JUMP VARIANTS HIGHLY RECOMMENDED") == row(Text, "JUMP VARIANTS HIGHLY RECOMMENDED"));
+    CHECK(MCDescriptionRowOf("   ") == row(Text, "   "));
+
+    // A description's paragraphs and banners (KINGLOCK's), each paragraph its own (CHOOSE MAP's) or those between two
+    // banners one (the room's).
+    const std::vector<std::string> locked = {"This combat environment is perfectly suited to test",
+                                             "our bravery.",
+                                             "",
+                                             "The objective is to capture the HQ at the top of the",
+                                             "hill and hold it until the enemy is dead or the",
+                                             "mission clock expires.",
+                                             "",
+                                             "***************** LOCKED MISSION *********************",
+                                             " The host cannot change tech base or resource points.",
+                                             "******************************************************",
+                                             ""};
+    const std::string first = "This combat environment is perfectly suited to test our bravery.";
+    const std::string second = "The objective is to capture the HQ at the top of the hill and hold it until the enemy "
+                               "is dead or the mission clock expires.";
+    const std::string host = " The host cannot change tech base or resource points.";
+    using MCRows = std::vector<MCDescriptionRow>;
+    const MCRows apart = {row(Text, first), row(Text, second), row(Label, "LOCKED MISSION"), row(Text, host),
+                          row(Rule, "")};
+    const MCRows joined = {row(Text, first + " " + second), row(Label, "LOCKED MISSION"), row(Text, host),
+                           row(Rule, "")};
+    CHECK(MCDescriptionRows(locked, false) == apart);
+    CHECK(MCDescriptionRows(locked, true) == joined);
+
+    // A banner straight after a paragraph's last line ends it (FORTNA's).
+    const std::vector<std::string> fortress = {"the base defenses to our side. However, the enemy had ",
+                                               "some codes as well...", "**NO FUNCTIONING ARTILLERY CRATES**"};
+    const MCRows fortressRows = {
+        row(Text, "the base defenses to our side. However, the enemy had  some codes as well..."),
+        row(Label, "NO FUNCTIONING ARTILLERY CRATES")};
+    CHECK(MCDescriptionRows(fortress, true) == fortressRows);
+
+    // As the documents bind them: the kinds by name.
+    const std::vector<MCDescriptionLine> bound = {{.Text = "a", .Kind = "text"},
+                                                  {.Text = "b", .Kind = "label"},
+                                                  {.Text = "", .Kind = "rule"},
+                                                  {.Text = "*c", .Kind = "cut"}};
+    const MCRows kinds = {row(Text, "a"), row(Label, "b"), row(Rule, ""), row(Cut, "*c")};
+    CHECK(MCDescriptionLines(kinds) == bound);
+}
+
+namespace
+{
+    /// <summary>The long description test's address, its own so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view LongHostAddress = "127.0.0.1:29007";
+    /// <summary>
+    /// A map whose description is longer than its room in CHOOSE MAP and the room, at every window, with banners
+    /// (Capture Base LOCKED); one that fits at every window (Arena).
+    /// </summary>
+    constexpr std::string_view LongMap = "CPTRLOCK";
+    constexpr std::string_view ShortMap = "ARENA";
+    /// <summary>The narrowest of the frames' windows, where the descriptions take the most lines.</summary>
+    constexpr MCMenusPictures::MCWindowSize NarrowWindow = MCMenusPictures::FrameWindows[0];
+    /// <summary>More pages than the long description has.</summary>
+    constexpr int32_t MostPages = 8;
+
+    /// <summary>The scroller with the keys' focus: its id; empty with none.</summary>
+    std::string FocusId()
+    {
+        const Rml::Element* focus = MCMenusPictures::GameMenus().Menus().Context().GetFocusElement();
+        return focus != nullptr ? focus->GetId() : std::string();
+    }
+}
+
+/// <summary>
+/// SPEC-menus.md's room and CHOOSE MAP: a map's description longer than its place scrolls in it, its last line fading
+/// and a rail at its right, as the briefing's orders do; one that fits shows neither. The keys reach a long one (the
+/// arrow from CHOOSE MAP's picked map onto it), Down and Up scroll it a line, Page Down a page, its fade gone at its
+/// foot, where Down moves the focus on; a new map's description shows from its top.
+/// </summary>
+TEST_CASE_ISOLATED("game: a map's description longer than its place scrolls with a rail and a fade, by the keys too")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(LongHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Steel Rain", 6);
+    Settle();
+    REQUIRE(RoomScreenShown());
+    const MCRoomScreen& room = *RoomScreen();
+    MCTestGuest::PressInRoom("choose-map");
+    REQUIRE(ChooseMapWindowShown());
+    MCChooseMapWindow& choose = *ChooseMapWindow();
+    const auto indexOf = [&choose](std::string_view file)
+    {
+        const auto found = std::ranges::find(choose.Maps(), file, &MCMatchMap::File);
+        REQUIRE(found != choose.Maps().end());
+        return static_cast<int>(found - choose.Maps().begin());
+    };
+
+    // The short map: no rail, no fade, and the keys pass it by.
+    choose.Pick(indexOf(ShortMap));
+    Settle();
+    MCMenusPictures::MenusAt(NarrowWindow);
+    MCLengthShown shown = LengthShown(choose, PickWordsId);
+    CHECK(!shown.Longer);
+    CHECK(!shown.Rail);
+    CHECK(!shown.Fade);
+    CHECK(!shown.Reached);
+
+    // The long one, its banners as the menus' own: the rail and the fade.
+    choose.Pick(indexOf(LongMap));
+    Settle();
+    const auto kinds = choose.PickLines() | std::views::transform(&MCDescriptionLine::Kind);
+    CHECK(std::ranges::count(kinds, "label") == 1);
+    CHECK(std::ranges::count(kinds, "rule") == 1);
+    MCMenusPictures::MenusAt(NarrowWindow);
+    shown = LengthShown(choose, PickWordsId);
+    CHECK(shown.Longer);
+    CHECK(shown.Rail);
+    CHECK(shown.Fade);
+    CHECK(shown.Reached);
+
+    // From the keys: the picked map's row, then Right onto its description (Left back).
+    Rml::Element& words = *MCTestGuest::ElementOf(choose, PickWordsId);
+    Rml::ElementList rows;
+    MCTestGuest::ElementOf(choose, "list")->GetElementsByClassName(rows, "list-row");
+    std::erase_if(rows, [](Rml::Element* listed) { return !listed->IsVisible(); });
+    REQUIRE(rows.size() == choose.Maps().size());
+    Rml::Element* picked = rows[static_cast<size_t>(choose.Picked())];
+    picked->Focus(true);
+    MCScreenInput::RealKey(SDL_SCANCODE_RIGHT);
+    Settle();
+    REQUIRE_EQ(FocusId(), std::string(PickWordsId));
+    MCScreenInput::RealKey(SDL_SCANCODE_LEFT);
+    Settle();
+    CHECK(MCMenusPictures::GameMenus().Menus().Context().GetFocusElement() == picked);
+    CHECK_EQ(choose.Picked(), indexOf(LongMap));
+    MCScreenInput::RealKey(SDL_SCANCODE_RIGHT);
+    Settle();
+    REQUIRE_EQ(FocusId(), std::string(PickWordsId));
+    const float line = words.GetComputedValues().line_height().value;
+    CHECK(words.GetScrollTop() == 0.0f);
+    MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
+    Settle();
+    CHECK(std::abs(words.GetScrollTop() - line) <= ScrollSlack);
+    MCScreenInput::RealKey(SDL_SCANCODE_UP);
+    Settle();
+    CHECK(words.GetScrollTop() == 0.0f);
+    CHECK_EQ(FocusId(), std::string(PickWordsId));
+    // Page Down a page (the window's height less a line), or to its foot.
+    const float page = std::max(words.GetClientHeight() - line, line);
+    const float most = words.GetScrollHeight() - words.GetClientHeight();
+    MCScreenInput::RealKey(SDL_SCANCODE_PAGEDOWN);
+    Settle();
+    CHECK(std::abs(words.GetScrollTop() - std::min(page, most)) <= ScrollSlack);
+
+    // At its foot, the fade gone; Down there moves the focus on.
+    const auto atFoot = [&words]
+    { return words.GetScrollTop() + words.GetClientHeight() >= words.GetScrollHeight() - ScrollSlack; };
+
+    for (int32_t pressed = 0; pressed < MostPages && !atFoot(); ++pressed)
+    {
+        MCScreenInput::RealKey(SDL_SCANCODE_PAGEDOWN);
+        Settle();
+    }
+
+    CHECK(atFoot());
+    CHECK(!LengthShown(choose, PickWordsId).Fade);
+    MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
+    Settle();
+    CHECK(FocusId() != PickWordsId);
+
+    // Another map's description from its top.
+    choose.Pick(indexOf(ShortMap));
+    Settle();
+    choose.Pick(indexOf(LongMap));
+    Settle();
+    CHECK(words.GetScrollTop() == 0.0f);
+
+    // Chosen: the room's, the same.
+    choose.PressChoose();
+    REQUIRE(SettleUntil([&] { return !ChooseMapWindowShown() && !room.Seen().Map.empty(); }));
+    Settle();
+    MCMenusPictures::MenusAt(NarrowWindow);
+    shown = LengthShown(room, MapWordsId);
+    CHECK(shown.Longer);
+    CHECK(shown.Rail);
+    CHECK(shown.Fade);
+    CHECK(shown.Reached);
+    MCTestGuest::PressInRoom("change-map");
+    REQUIRE(ChooseMapWindowShown());
+    choose.Pick(indexOf(ShortMap));
+    choose.PressChoose();
+    REQUIRE(SettleUntil([&] { return !ChooseMapWindowShown() && room.Seen().Map == "Arena"; }));
+    Settle();
+    MCMenusPictures::MenusAt(NarrowWindow);
+    shown = LengthShown(room, MapWordsId);
+    CHECK(!shown.Longer);
+    CHECK(!shown.Rail);
+    CHECK(!shown.Fade);
+    CHECK(!shown.Reached);
 }
 
 namespace

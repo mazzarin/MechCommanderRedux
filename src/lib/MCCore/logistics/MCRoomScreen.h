@@ -8,6 +8,7 @@
 // screen, hidden, while its logic moves into the model: the flow's "room" kind is the same, what is sent is unchanged.
 
 #include "logistics/MCChatView.h"
+#include "logistics/MCChooseMapWindow.h"
 #include "logistics/MCRoomModel.h"
 #include "ui/MCRmlScreen.h"
 
@@ -41,7 +42,8 @@ public:
         /// <summary>The map's picture (its art's address) and its time limit's line; empty with none.</summary>
         std::string MapPicture;
         std::string MapTime;
-        std::vector<std::string> MapText;
+        /// <summary>The map's description as it shows (its paragraphs as one between 1998's banners).</summary>
+        std::vector<MCDescriptionLine> MapText;
         /// <summary>The match options as played: "Weather | Mission's".</summary>
         std::vector<std::string> Options;
         /// <summary>The chat's lines, as they read: "Bob: hello", "Ann joined.".</summary>
@@ -108,13 +110,6 @@ private:
         bool operator==(const MCCard&) const = default;
     };
 
-    struct MCMapLine
-    {
-        std::string Text;
-
-        bool operator==(const MCMapLine&) const = default;
-    };
-
     struct MCOption
     {
         std::string Name;
@@ -162,7 +157,7 @@ private:
     std::string _MapTitle;
     std::string _MapPic;
     std::string _MapTime;
-    std::vector<MCMapLine> _MapLines;
+    std::vector<MCDescriptionLine> _MapLines;
     std::string _OptionsWord;
     std::vector<MCOption> _Opts;
     /// <summary>The chat's lines as the document binds them (logistics/MCChatView, stage 8's too).</summary>

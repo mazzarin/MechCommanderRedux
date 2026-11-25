@@ -30,11 +30,21 @@
                     </div>
                 </div>
                 <div id="map-pick" class="column">
-                    <div data-if="picked >= 0">
+                    <div class="pick-side" data-if="picked >= 0">
                         <div class="map-pic big"><img data-attr-src="pick_pic"/></div>
                         <div class="map-title">{{pick_name}}</div>
                         <div class="data grey">{{pick_facts}}</div>
-                        <div class="map-text"><div class="para" data-for="line : pick_lines">{{line.text}}</div></div>
+                        <div class="map-text scroll-box">
+                            <div class="scroller reading" id="pick-words">
+                                <div data-for="line : pick_lines">
+                                    <div class="para" data-if="line.kind == 'text'">{{line.text}}</div>
+                                    <div class="banner" data-if="line.kind == 'label'"><div class="banner-rule"></div><div class="banner-label cut">{{line.text}}</div><div class="banner-rule"></div></div>
+                                    <div class="banner" data-if="line.kind == 'rule'"><div class="banner-rule"></div></div>
+                                    <div class="para cut" data-if="line.kind == 'cut'">{{line.text}}</div>
+                                </div>
+                            </div>
+                            <div class="fade"></div>
+                        </div>
                     </div>
                 </div>
             </div>

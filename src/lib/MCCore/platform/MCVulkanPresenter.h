@@ -316,11 +316,11 @@ private:
     /// Port-only (HD lighting): the bloom of underlay <paramref name="index"/>'s GPU world <paramref name="world"/>
     /// (<paramref name="width"/> x <paramref name="height"/>): its bright pass from brightness <paramref name="from"/>
     /// (the lighting's, as the frame was planned) into the underlay's bloom texture (_Blooms), at half its size, and
-    /// that texture's mips, recorded on <paramref name="commands"/> outside any pass. None (null) for a world too small
-    /// for its levels.
+    /// that texture's mips, recorded on <paramref name="commands"/> outside any pass. None for a world too small for
+    /// its levels.
     /// </summary>
-    SDL_GPUTexture* Bloom(SDL_GPUCommandBuffer& commands, size_t index, SDL_GPUTexture& world, uint32_t width,
-                          uint32_t height, float from);
+    MCOptionalRef<SDL_GPUTexture> Bloom(SDL_GPUCommandBuffer& commands, size_t index, SDL_GPUTexture& world,
+                                        uint32_t width, uint32_t height, float from);
     static void Release(Texture& texture);
 
     /// <summary>The window shown in (the display's).</summary>

@@ -15,6 +15,14 @@ std::string VersionLineText(std::string_view running);
 std::string_view ReleaseOf(std::string_view shown);
 
 /// <summary>
+/// What the remade main menu's UPDATE says of the update as shown, <paramref name="update"/>, with
+/// <paramref name="running"/> running: "Update to 0.6.4" for "0.6.4 (912)"; the bare "Update" when it names the release
+/// running (that release's content alone, for a program that came ahead of it: one forced alone, or installed over an
+/// older copy's files), which the version line beside it names already.
+/// </summary>
+std::string UpdateButtonText(std::string_view running, std::string_view update);
+
+/// <summary>
 /// Whether RESTART is offered for the update ready: only where what the game starts outlives it, not for a setup waiting
 /// for the player's own start, and in a lobby's room only when every game there can rejoin (the old page's and the remade
 /// UPDATE's, logistics/MCUpdateScreen.h).

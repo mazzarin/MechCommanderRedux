@@ -68,7 +68,10 @@ namespace MCMainMenuModel
 
     MCSoloList SoloMissions();
 
-    /// <summary>The menus' foot: the version running ("Redux HD 0.6.3"; none without an updater), UPDATE's word while an update waits.</summary>
+    /// <summary>
+    /// The menus' foot: the version running ("Redux HD 0.6.3"; none without an updater), UPDATE's word while an update
+    /// waits (UpdateButtonText: "Update to 0.6.4", or "Update" for the release running's content alone).
+    /// </summary>
     struct MCFoot
     {
         std::string Version;

@@ -37,7 +37,6 @@ namespace
 
     constexpr std::string_view StandsFormat = "Operation {}, mission {}";
     constexpr std::string_view LineFormat = "{} · {}";
-    constexpr std::string_view UpdateFormat = "Update to {}";
     constexpr std::string_view SoloFormat = "Buy {} tons with {} RP";
     constexpr std::string_view OnlineFormat = "{} players online";
     constexpr std::string_view OneOnline = "1 player online";
@@ -150,8 +149,9 @@ auto MCMainMenuModel::SoloMissions() -> MCSoloList
 auto MCMainMenuModel::Foot() -> MCFoot
 {
     const bool waiting = MCUpdater::Available() && MCUpdater::Waiting();
-    return {.Version = VersionLineText(MCUpdater::RunningVersion()),
-            .Update = waiting ? std::format(UpdateFormat, ReleaseOf(MCUpdater::Status().Version)) : std::string()};
+    const std::string running = MCUpdater::RunningVersion();
+    return {.Version = VersionLineText(running),
+            .Update = waiting ? UpdateButtonText(running, MCUpdater::Status().Version) : std::string()};
 }
 
 auto MCMainMenuModel::EnterMultiplayer() -> void

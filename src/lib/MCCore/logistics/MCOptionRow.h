@@ -32,7 +32,9 @@ struct MCOptionRow
     std::string_view Description;
     /// <summary>The PREFS key of the setting it edits (<see cref="MCHdSettings::Find"/>).</summary>
     std::string_view Key;
-    /// <summary>Port: the value it edits instead, with no PREFS key (none: the key's).</summary>
+    /// <summary>
+    /// Port: the value it edits instead, with no PREFS key (none: the key's): a global, which outlives the rows.
+    /// </summary>
     MCOptionalRef<int> Value;
     /// <summary>
     /// Port: what <see cref="Value"/> stands for as things are now, read into it each time it's asked for, as the

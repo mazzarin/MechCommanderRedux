@@ -469,6 +469,82 @@ TEST_CASE_ISOLATED("game: a LAN guest's room shows the map its host loads, and w
 
 namespace
 {
+    /// <summary>The time limit test's host's address, and its guest's host's port, so it can run beside the others.</summary>
+    constexpr std::string_view TimeLimitHostAddress = "127.0.0.1:29001";
+    constexpr std::string_view TimeLimitGuestHostPort = "29003";
+    /// <summary>3 is a Magic Number, and its room packet's time limit (MissionTime 900).</summary>
+    constexpr std::string_view TimedMission = "THREE";
+    constexpr std::string_view TimedLimit = "15:00";
+    /// <summary>Capture Base, whose room packet has no MissionTime.</summary>
+    constexpr std::string_view UntimedMission = "CPTRBASE";
+
+    /// <summary>
+    /// Loads 3 is a Magic Number, then Capture Base, with <paramref name="load"/>: the room's time limit the first's,
+    /// then none, as the model keeps it (the 1998 session screen draws it) and as the remade room shows it.
+    /// </summary>
+    void CheckTimeLimitGoes(const std::function<void(std::string_view)>& load)
+    {
+        load(TimedMission);
+        CHECK_EQ(GlobalLog()->Room.MissionTime, std::string(TimedLimit));
+        CHECK_EQ(RoomSeen().MapTime, std::format("Time limit {}.", TimedLimit));
+        load(UntimedMission);
+        CHECK_EQ(RoomSeen().Map, std::string("Capture Base"));
+        CHECK_EQ(GlobalLog()->Room.MissionTime, std::string());
+        CHECK_EQ(RoomSeen().MapTime, std::string());
+    }
+}
+
+/// <summary>
+/// OB-195: a map whose room packet has no time limit shows none after a map with one (3 is a Magic Number's 15:00, then
+/// Capture Base), in the host's room and in a LAN guest's. Fails with the room keeping the last map's time limit.
+/// </summary>
+TEST_CASE_ISOLATED("game: a map with no time limit shows none after one with a limit, for the host and a LAN guest")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+
+    // Bob hosts alone (the file check done at once) and loads them.
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(TimeLimitHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Time limits", 6);
+    REQUIRE(SettleUntil([] { return RoomScreenShown(); }));
+    {
+        const MCTest::Scope scope{"host"};
+        CheckTimeLimitGoes(
+            [](std::string_view mission)
+            {
+                const MCTest::Scope missionScope{mission};
+                GlobalLog()->Room.LoadMission(mission);
+                REQUIRE(SettleUntil([] { return !GlobalLog()->Message->IsShowing(); }));
+                Settle();
+            });
+    }
+
+    // Bob leaves, and as Ann joins Dan's room, whose host loads them.
+    MCTestGuest::PressInRoom("leave");
+    REQUIRE(SettleUntil(MCTestGuest::OnLan));
+    Host dan;
+    REQUIRE(dan.Open(TimeLimitGuestHostPort, "Dan", "Steel Rain"));
+    MCTestGuest::JoinFromLan(TimeLimitGuestHostPort, "Ann");
+    const uint32_t ann = MultiPlayer()->SessionManager->MyPlayerID;
+    dan.SendNumbers(ann, {dan.Id(), ann});
+    REQUIRE(SettleUntil([&dan] { return MultiPlayer()->SessionManager->ServerID == dan.Id(); }));
+    Settle();
+    {
+        const MCTest::Scope scope{"guest"};
+        CheckTimeLimitGoes([&dan, ann](std::string_view mission) { HostLoads(dan, ann, mission); });
+    }
+
+    dan.Close();
+}
+
+namespace
+{
     /// <summary>The MATCH OPTIONS list's rows (logistics/MCMatchOptionRows.cpp): its headings and its options.</summary>
     constexpr int32_t WeatherRow = 1;
     constexpr int32_t TimeRow = 2;

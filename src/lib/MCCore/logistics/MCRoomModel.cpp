@@ -1460,6 +1460,11 @@ auto MCRoomModel::LoadMission(std::string_view fileName) -> void
             StartMissionHold(*mission);
         }
 
+        // OB-195 (fixed): the original set the room's time limit only from a file that has one, so a map with none
+        // (Arena, Capture Base, Many Bases, Swamp Rat and others) went on showing the last map's. The room's alone: the
+        // battle's own is its mission's (MCScenario::LoadObjectives' TimeLeft).
+        MissionTime.clear();
+
         if (iniFile.ReadIdULong("MissionTime", value) == 0)
         {
             MissionTime = std::format("{}:{:02}", value / 60, value % 60);

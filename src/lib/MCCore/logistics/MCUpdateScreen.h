@@ -32,8 +32,11 @@ public:
     /// <summary>Whether the remade UPDATE shows (the reports' and the due art's notices wait for it).</summary>
     static bool Shows();
 
-    /// <summary>What the status line says of <paramref name="status"/> (in sentence case, the game's words).</summary>
-    static std::string StatusText(const MCUpdater::MCStatus& status);
+    /// <summary>
+    /// What the status line says of <paramref name="status"/> (in sentence case, the game's words), the game running
+    /// <paramref name="running"/> ("0.7.2 (1500)").
+    /// </summary>
+    static std::string StatusText(const MCUpdater::MCStatus& status, std::string_view running);
 
     void OnFrame() override;
 

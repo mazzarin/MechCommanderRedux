@@ -43,6 +43,8 @@ namespace
     constexpr int32_t SettleFrames = 3;
 
     constexpr std::string_view NewVersion = "0.2.2 (480)";
+    /// <summary>The playtest's build, offered its own release's game files (release 11's as "0.7.2 (1500)").</summary>
+    constexpr std::string_view PlaytestBuild = "0.7.2 (1500)";
     constexpr std::string_view Notes =
         "- Night missions: dusk and night lighting.\n\n- The main menu updates the game.";
     constexpr uint64_t Gigabyte = 1'000'000'000;
@@ -159,7 +161,7 @@ TEST_CASE("update screen: the status line says each state in the game's words")
     const auto text = [](MCStatus status)
     {
         status.Version = std::string(NewVersion);
-        return MCUpdateScreen::StatusText(status);
+        return MCUpdateScreen::StatusText(status, MCTestUpdater::FakeRunningVersion);
     };
 
     CHECK_EQ(text({.Stage = MCStage::None}), "");
@@ -185,6 +187,21 @@ TEST_CASE("update screen: the status line says each state in the game's words")
     CHECK_EQ(text({.Stage = MCStage::Failed, .Failure = MCFailureKind::Damaged}), "The download was damaged.");
     CHECK_EQ(text({.Stage = MCStage::Failed, .Error = "another copy of the game is installing it"}),
              "The update failed: another copy of the game is installing it.");
+
+    // The running release's own game files, found alone (a program running on an older release's files): no newer
+    // version, so no "A newer version is out.", with or without its size. The playtest's build, 0.7.2 (1500), offered
+    // release 11's files as 0.7.2 (1500).
+    const auto ownFiles = [](MCStatus status)
+    {
+        status.Version = std::string(PlaytestBuild);
+        return MCUpdateScreen::StatusText(status, PlaytestBuild);
+    };
+
+    CHECK_EQ(ownFiles({.Stage = MCStage::Found}), "New game files for 0.7.2 are out.");
+    CHECK_EQ(ownFiles({.Stage = MCStage::Found, .Expected = 12 * Gigabyte / 10}),
+             "New game files for 0.7.2 are out: 1.2 GB to download.");
+    CHECK_EQ(MCUpdateScreen::StatusText({.Stage = MCStage::Found, .Version = "0.7.2 (1318)"}, "0.7.1 (1316)"),
+             "A newer version is out.");
 }
 
 /// <summary>

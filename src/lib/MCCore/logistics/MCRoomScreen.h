@@ -38,6 +38,9 @@ public:
         std::string Points2;
         /// <summary>The map's name; empty with none ("No map yet").</summary>
         std::string Map;
+        /// <summary>The map's picture (its art's address) and its time limit's line; empty with none.</summary>
+        std::string MapPicture;
+        std::string MapTime;
         std::vector<std::string> MapText;
         /// <summary>The match options as played: "Weather | Mission's".</summary>
         std::vector<std::string> Options;

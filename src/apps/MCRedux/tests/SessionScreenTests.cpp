@@ -52,6 +52,7 @@
 #include "platform/MCInput.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
+#include "ui/MCRmlArt.h"
 #include "ui/MCRmlFlow.h"
 #include "ui/MCRmlKit.h"
 #include "ui/MCRmlMenus.h"
@@ -116,11 +117,11 @@ namespace
 
 /// <summary>
 /// SPEC-menus.md's "Testing" for stage 4's screens: the room (the host's alone with a guest on no team, then the teams
-/// picked, points and tech bases set and a chat; with a map; a guest's), CHOOSE MAP's window (from the keys too) and
-/// MATCH OPTIONS' (FORCES, PLAY and WEAPONS, the host's and a guest's), each drawn on the software path at 640x480,
-/// 1280x720 and 1280x1024 (--shots saves them), and laid out and read at every window the players' reports name. CHOOSE
-/// MAP lists the game's room packets by name, each with its file, points and time limit, and CHOOSE loads the one picked
-/// into the room as 1998's LOAD MAP did.
+/// picked, points and tech bases set and a chat; with a map), CHOOSE MAP's window (from the keys too) and MATCH OPTIONS'
+/// (FORCES, PLAY and WEAPONS), the host's (a guest's are a real guest's: the guest's room test), each drawn on the
+/// software path at 640x480, 1280x720 and 1280x1024 (--shots saves them), and laid out and read at every window the
+/// players' reports name. CHOOSE MAP lists the game's room packets by name, each with its file, points and time limit,
+/// and CHOOSE loads the one picked into the room as 1998's LOAD MAP did.
 /// </summary>
 TEST_CASE_ISOLATED(
     "game: the room, CHOOSE MAP and MATCH OPTIONS draw their frames, and lay out and read at every players' window")
@@ -257,19 +258,6 @@ TEST_CASE_ISOLATED(
     CheckMenusFrames("match options weapons", {0xd51b87ca, 0x5a3deec6, 0x0e6ac3e3});
     options.PressDone();
     Settle();
-
-    // A guest's: the values, the host setting them; the guest's room waits for the host.
-    MultiPlayer()->IsHost = false;
-    Settle();
-    CheckMenusFrames("room guest", {0xef04f5cf, 0x8472c9b5, 0xf95098d5});
-    MCTestGuest::PressInRoom("view-options");
-    REQUIRE(MatchOptionsWindowShown());
-    options.ShowTab(MCMatchOptionsWindow::MCTab::Weapons);
-    Settle();
-    CheckMenusFrames("match options guest", {0xad5ff921, 0x3f8f9012, 0x7260d083});
-    options.PressDone();
-    MultiPlayer()->IsHost = true;
-    Settle();
 }
 
 namespace
@@ -335,6 +323,147 @@ TEST_CASE_ISOLATED("game: a LAN guest loads an NA map its host names, though CHO
     CHECK_EQ(room.Team2Points, 300'000);
     CHECK(std::ranges::any_of(room.Description,
                               [](const std::string& line) { return line.find(NoArtilleryLine) != std::string::npos; }));
+    bob.Close();
+}
+
+namespace
+{
+    /// <summary>The guest's room test's host's port, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view GuestRoomHostPort = "28978";
+    /// <summary>MCLogChat::ProcessChatString's colour for a line to all (its default, 1998's white).</summary>
+    constexpr int32_t ChatToAll = -1;
+
+    /// <summary>
+    /// The test's host <paramref name="host"/> names room packet <paramref name="mission"/> to player
+    /// <paramref name="to"/>, as its CHOOSE MAP does once every player has the file; once the game has read it.
+    /// </summary>
+    void HostLoads(Host& host, uint32_t to, std::string_view mission)
+    {
+        const MCTest::Scope scope{std::string(mission)};
+        const std::string path = GamePath(SavePath, mission, ".mpk");
+        REQUIRE(path.size() < Host::MaxMissionName);
+        host.SendLoadMission(to, path);
+        REQUIRE(SettleUntil([mission] { return GlobalLog()->Room.LoadedMission == mission; }));
+        Settle();
+    }
+
+    /// <summary>Whether the remade room shows and what it shows passes <paramref name="test"/>.</summary>
+    bool RoomShowsThat(const std::function<bool(const MCRoomScreen::MCSeen&)>& test)
+    {
+        return RoomScreenShown() && test(RoomScreen()->Seen());
+    }
+
+    /// <summary>What the remade room shows now.</summary>
+    MCRoomScreen::MCSeen RoomSeen()
+    {
+        REQUIRE(RoomScreenShown());
+        return RoomScreen()->Seen();
+    }
+}
+
+/// <summary>
+/// A LAN guest's room shows the map its host loads as the host's room shows a guest (SPEC-menus.md's room: its picture,
+/// name, time limit and description, the mission's points), never "No map yet", and its foot what the guest waits for:
+/// the host to choose a map and the teams, what is left of them, then to begin planning. The host's first load, a
+/// change of map, and the room shown again (as a host shows it for a player joining or rejoining, and to a rematch's
+/// guests back), its map named again; drawn at the frames' windows (the room's frames' guest's), and laid out and read
+/// at the players'. A launcher's and MCO's rooms are a guest's room the same way (the same model and screen, the
+/// host's same messages). Fails with a room keyed on the host's mission file, which a guest never has.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN guest's room shows the map its host loads, and what it waits for")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    using MCMenusPictures::CheckMenusFrames;
+    REQUIRE(MCTestGame::StartLogistics());
+
+    // Ann joins Bob's room: no map, nobody on a team.
+    MCTestGuest::OpenLan();
+    Host bob;
+    REQUIRE(bob.Open(GuestRoomHostPort, "Bob", "Steel Rain"));
+    MCTestGuest::JoinFromLan(GuestRoomHostPort, "Ann");
+    const uint32_t ann = MultiPlayer()->SessionManager->MyPlayerID;
+    bob.SendNumbers(ann, {bob.Id(), ann});
+    REQUIRE(SettleUntil([&bob] { return MultiPlayer()->SessionManager->ServerID == bob.Id(); }));
+    Settle();
+    MCRoomScreen::MCSeen seen = RoomSeen();
+    CHECK(!seen.Hosting);
+    CHECK_EQ(seen.Map, std::string());
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to choose a map and the teams."));
+
+    // Bob loads Capture Base: its picture, name and description, and its points; no time limit. The teams to come.
+    HostLoads(bob, ann, "CPTRBASE");
+    seen = RoomSeen();
+    CHECK_EQ(seen.Map, std::string("Capture Base"));
+    CHECK_EQ(seen.MapPicture, std::format("{}mp0701", MCRmlArt::TerrainScheme));
+    CHECK_EQ(seen.MapTime, std::string());
+    CHECK(!seen.MapText.empty());
+    CHECK_EQ(seen.Points1, std::string("300,000"));
+    CHECK_EQ(seen.Points2, std::string("300,000"));
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to choose the teams."));
+    CheckMenusFrames("room guest map", {0xeff530fa, 0x0ec70166, 0x2e86101f});
+
+    // Bob on team 1, Ann on team 2 with the Clan's mechs, a line each way: the room waits for Bob to begin planning.
+    bob.SendJoinTeam(ann, bob.Id(), MCRoomModel::Team1, 0);
+    bob.SendJoinTeam(ann, ann, MCRoomModel::Team2, 0);
+    bob.SendTechBase(ann, MCRoomModel::Team2, MCRoomModel::Clan);
+    REQUIRE(SettleUntil(
+        []
+        {
+            return RoomShowsThat([](const MCRoomScreen::MCSeen& now)
+                                 { return now.Tech2 == "Clan" && now.Pool.empty(); });
+        }));
+    GlobalLog()->Chat->ProcessChatString(bob.Id(), "Evening all. Map in a minute.", ChatToAll);
+    RoomScreen()->Say("Clan for me, if nobody minds.", false);
+    Settle();
+    seen = RoomSeen();
+    CHECK(seen.Team1.front() == "Bob (host)");
+    CHECK(seen.Team2.front() == "Ann");
+    CHECK_EQ(seen.Map, std::string("Capture Base"));
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
+    CheckMenusFrames("room guest", {0xe0dc9844, 0x96e2b7e7, 0x9650e8d3});
+
+    // A guest's MATCH OPTIONS: VIEW, the values, the host setting them.
+    MCTestGuest::PressInRoom("view-options");
+    REQUIRE(MatchOptionsWindowShown());
+    MCMatchOptionsWindow& options = *MatchOptionsWindow();
+    options.ShowTab(MCMatchOptionsWindow::MCTab::Weapons);
+    Settle();
+    CheckMenusFrames("match options guest", {0xa707756a, 0x2375272f, 0x162ac09a});
+    options.PressDone();
+    Settle();
+
+    // A change of map: 3 is a Magic Number, its picture, points and time limit; the teams kept.
+    HostLoads(bob, ann, "THREE");
+    seen = RoomSeen();
+    CHECK_EQ(seen.Map, std::string("3 is a Magic Number"));
+    CHECK_EQ(seen.MapPicture, std::format("{}mp0722", MCRmlArt::TerrainScheme));
+    CHECK_EQ(seen.MapTime, std::string("Time limit 15:00."));
+    CHECK(!seen.MapText.empty());
+    CHECK_EQ(seen.Points1, std::string("600,000"));
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
+    CheckMenusFrames("room guest change map", {0x6b82b674, 0xd92d8408, 0x2b8f982b});
+
+    // The room shown again: afresh, no map and nobody placed. The teams first this time, then the map named again.
+    bob.SendRoomAgain(ann);
+    REQUIRE(SettleUntil([] { return GlobalLog()->Room.LoadedMission.empty(); }));
+    Settle();
+    seen = RoomSeen();
+    CHECK_EQ(seen.Map, std::string());
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to choose a map and the teams."));
+    bob.SendJoinTeam(ann, bob.Id(), MCRoomModel::Team1, 0);
+    bob.SendJoinTeam(ann, ann, MCRoomModel::Team2, 0);
+    REQUIRE(
+        SettleUntil([] { return RoomShowsThat([](const MCRoomScreen::MCSeen& now) { return now.Pool.empty(); }); }));
+    CHECK_EQ(RoomSeen().Status, std::string("Waiting for Bob to choose a map."));
+    HostLoads(bob, ann, "THREE");
+    seen = RoomSeen();
+    CHECK_EQ(seen.Map, std::string("3 is a Magic Number"));
+    CHECK(!seen.MapText.empty());
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
     bob.Close();
 }
 

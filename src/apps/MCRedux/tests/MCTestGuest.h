@@ -823,7 +823,53 @@ namespace MCTestGuest
             Send(to, message);
         }
 
+        /// <summary>
+        /// Numbers <paramref name="players"/> from 0 in their order, this host the session's server, telling player
+        /// <paramref name="to"/>, as a host's session does as a player joins (MCSessionManager's PlayerNumbers): the
+        /// player's game knows who hosts and each player's colour.
+        /// </summary>
+        void SendNumbers(uint32_t to, std::initializer_list<uint32_t> players)
+        {
+            MCFIPlayerNumbersMessage message{};
+            message.Header = LinkupHeader(MCLinkupMessageType::PlayerNumbers, FIMSG_GUARANTEED);
+            REQUIRE(players.size() <= message.PlayerIDs.size());
+            std::ranges::copy(players, message.PlayerIDs.begin());
+            const auto server = std::ranges::find(message.PlayerIDs, Id());
+            REQUIRE(server != message.PlayerIDs.end());
+            message.ServerNumber = static_cast<uint8_t>(server - message.PlayerIDs.begin());
+            Send(to, message);
+        }
+
+        /// <summary>
+        /// Gives team <paramref name="team"/> (1 or 2) tech base <paramref name="techBase"/>, telling player
+        /// <paramref name="to"/>, as a host's room does (not guaranteed).
+        /// </summary>
+        void SendTechBase(uint32_t to, int8_t team, int8_t techBase)
+        {
+            SendTwoLongs(to, MCMPMessageType::TechbaseChange, team, techBase);
+        }
+
+        /// <summary>
+        /// Shows player <paramref name="to"/> the room again, afresh (its teams and map cleared), as a host does for a
+        /// player joining or rejoining and a rematch's guests back (MCRoomModel::ShowRoomAgain; not guaranteed): its
+        /// mission's name follows once every player has the file (<see cref="SendLoadMission"/>).
+        /// </summary>
+        void SendRoomAgain(uint32_t to) { SendTwoLongs(to, MCMPMessageType::SwitchScreen, SwitchToRoom, 0); }
+
     private:
+        /// <summary>A SwitchScreen's screen: the room.</summary>
+        static constexpr int32_t SwitchToRoom = 1;
+
+        /// <summary>Sends player <paramref name="to"/> a two-value message of <paramref name="type"/>.</summary>
+        void SendTwoLongs(uint32_t to, MCMPMessageType type, int32_t value1, int32_t value2)
+        {
+            MCMPTwoLongMessage message{};
+            message.Header = PlainHeader(type);
+            message.Value1 = value1;
+            message.Value2 = value2;
+            Send(to, message);
+        }
+
         /// <summary>
         /// Sends player <paramref name="to"/> a file name message of <paramref name="type"/> naming
         /// <paramref name="name"/>.

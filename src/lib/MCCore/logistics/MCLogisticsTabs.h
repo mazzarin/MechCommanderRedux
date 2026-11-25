@@ -115,8 +115,10 @@ public:
     MCLogisticsTabs(const MCLogisticsTabs&) = delete;
     MCLogisticsTabs& operator=(const MCLogisticsTabs&) = delete;
 
-    /// <summary>The values bound into the campaign's model.</summary>
+    /// <summary>The values bound into the campaign's model, kept until <see cref="Unbind"/>.</summary>
     void Bind(MCRmlModel& model);
+    /// <summary>The model let go of: the campaign's goes as its screen is destroyed, before these tabs.</summary>
+    void Unbind() { _Model.reset(); }
 
     /// <summary>PURCHASING (or the 'MECH BAY) shown: everything read afresh.</summary>
     void Show(MCCampaignScreen::MCTab tab);

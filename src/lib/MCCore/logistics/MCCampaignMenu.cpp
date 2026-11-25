@@ -378,6 +378,8 @@ void MCCampaignScreen::OnDestroy()
         }
     }
 
+    // The tabs (made with the screen, kept until its memory goes) let go of the model before it goes.
+    _Logistics->Unbind();
     _Model.reset();
     MCRmlScreen::OnDestroy();
 }

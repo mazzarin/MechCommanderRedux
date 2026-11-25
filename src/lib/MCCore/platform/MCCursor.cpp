@@ -290,6 +290,25 @@ namespace
         MCTones Tones = MCTones::None();
     };
 
+    /// <summary>
+    /// Port-only: a shape's picture as drawn over the window (MCCursor::DrawShapeOver), and what it was made for.
+    /// </summary>
+    struct MCOverCursor
+    {
+        size_t Shape = 0;
+        float ScaleX = 0.0f;
+        float ScaleY = 0.0f;
+        /// <summary>The colours of the indices the picture shows; the others are zero.</summary>
+        std::array<SDL_Color, 256> Colors{};
+        /// <summary>The curve its HD copy went through (<see cref="TonesOf"/>).</summary>
+        MCTones Tones = MCTones::None();
+        /// <summary>The picture at the window's pixels, premultiplied, and the rectangle showing it; null until made.</summary>
+        std::shared_ptr<const MCUiTexture> Picture;
+        std::shared_ptr<const MCUiGeometry> Rectangle;
+        int HotX = 0;
+        int HotY = 0;
+    };
+
     struct MCCursorState
     {
         /// <summary>
@@ -314,6 +333,8 @@ namespace
         float ScaleX = 0.0f;
         float ScaleY = 0.0f;
         float Density = 0.0f;
+        /// <summary>Port-only: the shape drawn over the window (MCCursor::DrawShapeOver).</summary>
+        MCOverCursor Over;
         /// <summary>The colours shown, as the last call read them.</summary>
         std::array<SDL_Color, 256> ShownColors{};
         uint64_t MadeCount = 0;
@@ -555,6 +576,26 @@ namespace
     std::shared_ptr<MCDisplay> shownDisplay()
     {
         return MCInput::Display();
+    }
+
+    /// <summary><paramref name="bitmap"/>'s colours times their coverage (MCUiTexture's premultiplied RGBA).</summary>
+    std::vector<uint8_t> premultiplied(const MCCursorBitmap& bitmap)
+    {
+        constexpr uint32_t Full = 255;
+        constexpr uint32_t Half = Full / 2;
+        std::vector<uint8_t> pixels = bitmap.Rgba;
+
+        for (size_t at = 0; at + 4 <= pixels.size(); at += 4)
+        {
+            const uint32_t coverage = pixels[at + 3];
+
+            for (size_t c = 0; c < 3; ++c)
+            {
+                pixels[at + c] = static_cast<uint8_t>((pixels[at + c] * coverage + Half) / Full);
+            }
+        }
+
+        return pixels;
     }
 }
 
@@ -1008,6 +1049,72 @@ namespace MCCursor
         showCursor(cursor, cursor.Other.Cursor, display->Window());
     }
 
+    void DrawShapeOver(size_t shape, SDL_Point at)
+    {
+        const std::shared_ptr<MCDisplay> display = shownDisplay();
+
+        if (display == nullptr)
+        {
+            return;
+        }
+
+        const MCCursorImage& image = ShapeImage(shape);
+
+        if (image.Width <= 0 || image.Height <= 0)
+        {
+            display->SetCursorOver(std::nullopt);
+            return;
+        }
+
+        MCCursorState& cursor = state();
+        display->GetShownColors(cursor.ShownColors);
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        display->FollowingPixelScale(scaleX, scaleY);
+        MCOverCursor& over = cursor.Over;
+        const std::array<SDL_Color, 256> used = usedColors(image, cursor.ShownColors);
+        MCTones tones = TonesOf(image, cursor.ShownColors);
+
+        if (over.Picture == nullptr || over.Shape != shape || over.ScaleX != scaleX || over.ScaleY != scaleY ||
+            !sameColors(over.Colors, used) || !(over.Tones == tones))
+        {
+            MCFrameLog::Scope part("cursor.over");
+            const MCCursorBitmap bitmap =
+                Rasterize(MCCursorImage::WithHotSpotInside(image), cursor.ShownColors, scaleX, scaleY);
+            over = MCOverCursor{
+                .Shape = shape,
+                .ScaleX = scaleX,
+                .ScaleY = scaleY,
+                .Colors = used,
+                .Tones = std::move(tones),
+                .Picture = MCUiMakeTexture(bitmap.Width, bitmap.Height, premultiplied(bitmap), false),
+                .Rectangle = MCUiPictureRectangle(bitmap.Width, bitmap.Height),
+                .HotX = bitmap.HotX,
+                .HotY = bitmap.HotY,
+            };
+
+            if (MCFrameLog::Enabled())
+            {
+                MCFrameLog::Note(std::format("cursor drawn over the window made, shape {} {}x{}", shape, bitmap.Width,
+                                             bitmap.Height));
+            }
+        }
+
+        display->SetCursorOver(MCUiDraw{.Geometry = over.Rectangle,
+                                        .X = static_cast<float>(at.x - over.HotX),
+                                        .Y = static_cast<float>(at.y - over.HotY),
+                                        .Texture = over.Picture});
+    }
+
+    void DrawNothingOver()
+    {
+        if (const std::shared_ptr<MCDisplay> display = shownDisplay();
+            display != nullptr && display->CursorOver().has_value())
+        {
+            display->SetCursorOver(std::nullopt);
+        }
+    }
+
     void Hide()
     {
         MCInput::SetGameCursor(nullptr);
@@ -1024,6 +1131,12 @@ namespace MCCursor
         }
 
         retire(cursor, cursor.Other);
+
+        if (const std::shared_ptr<MCDisplay> display = shownDisplay(); display != nullptr)
+        {
+            display->SetCursorOver(std::nullopt);
+        }
+
         const uint64_t madeCount = cursor.MadeCount;
         cursor = MCCursorState{};
         cursor.MadeCount = madeCount;

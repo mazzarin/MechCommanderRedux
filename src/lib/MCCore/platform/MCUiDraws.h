@@ -43,6 +43,13 @@ struct MCUiTexture
 };
 
 /// <summary>
+/// A picture of <paramref name="pixels"/> (RGBA8, premultiplied), numbered anew: no other picture of the run has its
+/// number, the menus' (MCRmlRecorder::MakeTexture) or the cursor's drawn over them (MCCursor::DrawShapeOver).
+/// </summary>
+std::shared_ptr<const MCUiTexture> MCUiMakeTexture(int32_t width, int32_t height, std::vector<uint8_t> pixels,
+                                                   bool smooth);
+
+/// <summary>
 /// <paramref name="part"/> of <paramref name="picture"/> (inside it) scaled to <paramref name="width"/> x
 /// <paramref name="height"/> as SDL scales a picture (SDL_ScaleSurface: smoothly for a smooth picture, else its nearest
 /// texels), RGBA32; why not when SDL can't.
@@ -61,6 +68,12 @@ struct MCUiDraw
     /// <summary>The window pixels it may draw on; none: all.</summary>
     std::optional<SDL_Rect> Scissor;
 };
+
+/// <summary>
+/// The rectangle from (0, 0) to (<paramref name="width"/>, <paramref name="height"/>) as two triangles in white, showing
+/// the whole of a picture that size texel for texel (a picture drawn at its own size: MCCursor::DrawShapeOver's).
+/// </summary>
+std::shared_ptr<const MCUiGeometry> MCUiPictureRectangle(int32_t width, int32_t height);
 
 /// <summary>A frame's draws over a window of <see cref="Width"/> x <see cref="Height"/> pixels, in order.</summary>
 struct MCUiDraws

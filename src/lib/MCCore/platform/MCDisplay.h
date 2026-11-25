@@ -429,9 +429,28 @@ public:
     }
 
     /// <summary>
+    /// Port-only (SPEC-menus.md): the game's cursor drawn over the whole window, over the menus' draws too, from the
+    /// next frame on: one draw at the window's pixels (MCCursor::DrawShapeOver: the software cursor where the game's
+    /// frame can't carry it); none: none.
+    /// </summary>
+    void SetCursorOver(std::optional<MCUiDraw> cursor) { _CursorOver = std::move(cursor); }
+
+    /// <summary>Port-only: the cursor drawn over the window (<see cref="SetCursorOver"/>), if any.</summary>
+    const std::optional<MCUiDraw>& CursorOver() const { return _CursorOver; }
+
+    /// <summary>
+    /// Port-only: how many window pixels a screen pixel covers across and down as a scenario shows it in the window now
+    /// (the screen <see cref="ScreenSizeFor"/> gives its pixels, shown whole), whatever screen is shown: the battle's
+    /// size for what the game draws on its screen (its cursor over the menus: MCCursor::DrawShapeOver). The screen
+    /// shown now's (<see cref="PixelScale"/>) when the screen doesn't follow the window or the window has no pixels.
+    /// </summary>
+    void FollowingPixelScale(float& scaleX, float& scaleY) const;
+
+    /// <summary>
     /// Port-only: the whole window's picture at its pixels: <see cref="ReadShownScreen"/>'s where the view lands (its
     /// nearest pixel), black around it, and the menus' draws over it all (<see cref="SetOverlay"/>, as the presenter
-    /// draws them: MCPresenter::ReadOverlay). An error when the window has no pixels (minimised).
+    /// draws them: MCPresenter::ReadOverlay), the cursor over them (<see cref="SetCursorOver"/>). An error when the
+    /// window has no pixels (minimised).
     /// </summary>
     std::expected<MCShownScreen, std::string> ReadWindow();
 
@@ -552,6 +571,12 @@ private:
     bool WindowPixelSize(int& pixelWidth, int& pixelHeight) const;
     /// <summary>The limits the setters give a window-following screen.</summary>
     MCScreenFit ScreenFit() const;
+    /// <summary>
+    /// Port-only: the draws over the window a frame shows: the menus' (<see cref="SetOverlay"/>), then the cursor over
+    /// them (<see cref="SetCursorOver"/>); the same ones again while neither changes, so the presenters keep their
+    /// picture. None: nothing over the game's picture.
+    /// </summary>
+    std::shared_ptr<const MCUiDraws> ShownOverlay();
 
     /// <summary>The window; the presenter shares it, so it outlives what draws into it.</summary>
     std::shared_ptr<SDL_Window> _Window;
@@ -603,4 +628,12 @@ private:
     std::shared_ptr<const MCUiDraws> _Overlay;
     /// <summary>Port-only: what gives the menus' draws each frame (<see cref="SetOverlaySource"/>).</summary>
     MCOverlaySource _OverlaySource;
+    /// <summary>Port-only: the cursor drawn over the window (<see cref="SetCursorOver"/>).</summary>
+    std::optional<MCUiDraw> _CursorOver;
+    /// <summary>
+    /// Port-only: the draws <see cref="ShownOverlay"/> gave last with the cursor over the menus', and the menus' they
+    /// were made from.
+    /// </summary>
+    std::shared_ptr<const MCUiDraws> _ShownOverlay;
+    std::shared_ptr<const MCUiDraws> _ShownMenus;
 };

@@ -24,3 +24,10 @@ void MCHardwareCursorPreload(std::span<const MCRegisteredBlock> shapes);
 
 /// <summary>Shows the current cursor shape (<c>application->cursorShape</c>, -1 for none) as the system cursor.</summary>
 void MCHardwareCursorUpdate();
+
+/// <summary>
+/// Port-only (SPEC-menus.md): with <paramref name="over"/>, the current cursor shape (none for -1) drawn over the whole
+/// window at the mouse (MCCursor::DrawShapeOver), the software cursor's picture where the game's frame can't carry it
+/// (under the remade screens drawn over it, or beside it, over the bars); else none drawn so.
+/// </summary>
+void MCCursorDrawnOver(bool over);

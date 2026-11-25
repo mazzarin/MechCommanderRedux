@@ -42,6 +42,8 @@ namespace
         std::optional<SDL_Rect> CornerGuard;
         /// <summary>The mouse is over the window's letterbox bars, not the picture.</summary>
         bool OutsidePicture = false;
+        /// <summary>Port-only: where the last mouse event (or warp) put the mouse, in window points (MousePixel).</summary>
+        std::optional<SDL_FPoint> MouseAt;
         uint32_t DoubleClickTime = 500;
         bool Active = false;
         /// <summary>Whether a text field has the keyboard (<see cref="MCInput::SetTextInput"/>).</summary>
@@ -60,7 +62,7 @@ namespace
         /// <summary>Port-only: what the layer shows (SetEventLayer), and its answer as the pump last asked.</summary>
         std::function<MCInput::MCLayerShows()> LayerShows;
         MCInput::MCLayerShows LayerShown = MCInput::MCLayerShows::Nothing;
-        /// <summary>Port-only: whether the game draws its cursor into the frame (SetDrawnCursor).</summary>
+        /// <summary>Port-only: whether the game draws its cursor, into the frame or over the window (SetDrawnCursor).</summary>
         bool DrawnCursor = false;
         /// <summary>Tests: the window taken as full screen and focused (TakeAsFullscreen).</summary>
         bool TakenAsFullscreen = false;
@@ -284,10 +286,13 @@ namespace
         }
     }
 
-    /// <summary>Notes whether the mouse, at window point (x, y), is over the letterbox bars or the picture.</summary>
+    /// <summary>
+    /// Notes where the mouse is, at window point (x, y), and whether that's over the letterbox bars or the picture.
+    /// </summary>
     void followPicture(float x, float y)
     {
         MCInputState& input = state();
+        input.MouseAt = SDL_FPoint{x, y};
         const std::shared_ptr<MCDisplay> display = input.Display.lock();
 
         if (display == nullptr)
@@ -868,15 +873,22 @@ namespace MCInput
         MCPoint point{std::clamp(x, area.left, area.right - 1), std::clamp(y, area.top, area.bottom - 1)};
         input.CursorX = point.x;
         input.CursorY = point.y;
+        const std::shared_ptr<MCDisplay> display = input.Display.lock();
+
+        if (display == nullptr)
+        {
+            return;
+        }
+
+        float windowX = 0.0f;
+        float windowY = 0.0f;
+        display->LogicalToWindow(static_cast<float>(point.x) + 0.5f, static_cast<float>(point.y) + 0.5f, windowX,
+                                 windowY);
+        input.MouseAt = SDL_FPoint{windowX, windowY};
 
         // A hidden window (the headless tests) has no mouse of its own: warping would move the user's.
-        if (const std::shared_ptr<MCDisplay> display = input.Display.lock();
-            display != nullptr && (SDL_GetWindowFlags(&display->Window()) & SDL_WINDOW_HIDDEN) == 0)
+        if ((SDL_GetWindowFlags(&display->Window()) & SDL_WINDOW_HIDDEN) == 0)
         {
-            float windowX = 0.0f;
-            float windowY = 0.0f;
-            display->LogicalToWindow(static_cast<float>(point.x) + 0.5f, static_cast<float>(point.y) + 0.5f, windowX,
-                                     windowY);
             SDL_WarpMouseInWindow(&display->Window(), windowX, windowY);
         }
     }
@@ -927,11 +939,18 @@ namespace MCInput
             return MCShownCursor::Game;
         }
 
-        // Port-only: the layer's screens are drawn over the game's frame, bars and all: the arrow stands in for the
-        // cursor drawn into it, which they cover.
+        // Port-only (SPEC-menus.md): a cursor the game draws shows wherever the mouse is: in its frame, or drawn over the
+        // window where the frame can't carry it (under the layer's screens, drawn over the frame, and over the bars).
+        if (showing.DrawnCursor)
+        {
+            return MCShownCursor::None;
+        }
+
+        // Port-only: a cursor the game hides (a load's) stays hidden over the layer's screens; over the bars, with no
+        // screen up, the arrow.
         if (showing.Layer != MCLayerShows::Nothing)
         {
-            return showing.DrawnCursor ? MCShownCursor::Arrow : MCShownCursor::None;
+            return MCShownCursor::None;
         }
 
         return showing.OutsidePicture ? MCShownCursor::Arrow : MCShownCursor::None;
@@ -1142,6 +1161,7 @@ namespace MCInput
                     break;
                 }
 
+                followPicture(event.button.x, event.button.y);
                 MCPoint point = toLogical(event.button.x, event.button.y);
                 setCursor(point);
                 setKey(vk, event.button.down);
@@ -1224,6 +1244,7 @@ namespace MCInput
         input.LayerShows = nullptr;
         input.LayerShown = MCLayerShows::Nothing;
         input.DrawnCursor = false;
+        input.MouseAt.reset();
         input.TakenAsFullscreen = false;
     }
 
@@ -1235,9 +1256,49 @@ namespace MCInput
         followLayer();
     }
 
-    bool LayerHasMouse()
+    bool LayerShowsScreen()
     {
-        return state().LayerShown != MCLayerShows::Nothing;
+        const MCInputState& input = state();
+        return input.LayerShows && input.LayerShows() != MCLayerShows::Nothing;
+    }
+
+    bool OverBars()
+    {
+        return state().OutsidePicture;
+    }
+
+    std::optional<SDL_Point> MousePixel()
+    {
+        const MCInputState& input = state();
+        const std::shared_ptr<MCDisplay> display = input.Display.lock();
+
+        if (display == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        // Before any mouse event, where the game's cursor is.
+        SDL_FPoint at{};
+
+        if (input.MouseAt.has_value())
+        {
+            at = *input.MouseAt;
+        }
+        else
+        {
+            display->LogicalToWindow(static_cast<float>(input.CursorX) + 0.5f, static_cast<float>(input.CursorY) + 0.5f,
+                                     at.x, at.y);
+        }
+
+        // As the menus take a mouse event's point (MCRmlLayer): the window pixel it falls in.
+        float density = SDL_GetWindowPixelDensity(&display->Window());
+
+        if (density <= 0.0f)
+        {
+            density = 1.0f;
+        }
+
+        return SDL_Point{static_cast<int>(std::floor(at.x * density)), static_cast<int>(std::floor(at.y * density))};
     }
 
     void HoldInput(bool held, std::function<void()> escape)

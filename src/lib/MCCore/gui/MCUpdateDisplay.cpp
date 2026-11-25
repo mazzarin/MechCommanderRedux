@@ -169,19 +169,24 @@ namespace
     void DrawCursorInBuffer()
     {
         const bool drawn = GSoftwareCursor != 0 && GuiSystem().CursorShape != -1;
-        // Port-only (SPEC-menus.md): over the remade screens, drawn over this frame, the system's arrow stands in for
-        // the cursor drawn here, and none is drawn (round a screen floating over the battle it would show beside it).
         MCInput::SetDrawnCursor(drawn);
 
         // Port fix: the cursor is the system's, which follows the mouse between frames; the original drew it here.
         if (GSoftwareCursor == 0)
         {
             MCFrameLog::Scope cursor("cursor");
+            MCCursorDrawnOver(false);
             MCHardwareCursorUpdate();
             return;
         }
 
-        if (!drawn || MCInput::LayerHasMouse())
+        // Port-only (SPEC-menus.md): where this frame can't carry the cursor at the mouse (under the remade screens,
+        // drawn over it, a screen floating over the battle among them, or beside it, over the bars), the same picture is
+        // drawn over the whole window there instead, at the size the battle shows it, and none here.
+        const bool over = drawn && (MCInput::LayerShowsScreen() || MCInput::OverBars());
+        MCCursorDrawnOver(over);
+
+        if (!drawn || over)
         {
             return;
         }

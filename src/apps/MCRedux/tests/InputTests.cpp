@@ -13,6 +13,7 @@
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
+#include "platform/MCCursor.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
@@ -152,43 +153,52 @@ TEST_CASE("input: full screen, the mouse reaches the whole window while the menu
 }
 
 /// <summary>
-/// The cursor shown: the game's own as a system cursor wherever it gives one; a cursor it draws into its frame has the
-/// system's arrow in its place over the layer's screens (drawn over that frame, bars and all) and over the bars; a
-/// cursor it hides stays hidden over the screens (a load's).
+/// The cursor shown: the game's own as a system cursor wherever it gives one; none of the system's wherever the game
+/// draws its own (in its frame over the picture, and, port-only, drawn over the window where the frame can't carry it:
+/// under the layer's screens and over the bars); a cursor the game hides stays hidden over the screens (a load's), and
+/// with no screen up the arrow shows over the bars.
 /// </summary>
-TEST_CASE("input: the system's arrow stands in for the game's drawn cursor over the menus' screens and the bars")
+TEST_CASE("input: no system cursor where the game draws its own, over the menus' screens and the bars too")
 {
     using MCInput::MCLayerShows;
     using MCInput::MCShownCursor;
     MCInput::MCCursorShowing showing;
     CHECK(MCInput::ShownCursor(showing) == MCShownCursor::Arrow);
 
-    // The game hid the system's: its cursor drawn into the frame, over the picture.
+    // The game hid the system's and draws its own: none of the system's, over the picture, the bars and the screens.
     showing.Counter = -1;
     showing.DrawnCursor = true;
-    CHECK(MCInput::ShownCursor(showing) == MCShownCursor::None);
-    showing.OutsidePicture = true;
-    CHECK(MCInput::ShownCursor(showing) == MCShownCursor::Arrow);
-    showing.OutsidePicture = false;
+
+    for (const MCLayerShows layer : {MCLayerShows::Nothing, MCLayerShows::Window, MCLayerShows::OverPicture})
+    {
+        for (const bool bars : {false, true})
+        {
+            MCTest::Scope scope(std::format("layer {}, bars {}", static_cast<int>(layer), bars));
+            showing.Layer = layer;
+            showing.OutsidePicture = bars;
+            CHECK(MCInput::ShownCursor(showing) == MCShownCursor::None);
+        }
+    }
+
+    // The game shows no cursor (a load): none over the screens, over the bars too; with none up, the arrow there.
+    showing.DrawnCursor = false;
 
     for (const MCLayerShows layer : {MCLayerShows::Window, MCLayerShows::OverPicture})
     {
         showing.Layer = layer;
-        CHECK(MCInput::ShownCursor(showing) == MCShownCursor::Arrow);
-
-        // The game shows no cursor (a load): none over the screens, beside the 1998 frame too.
-        showing.DrawnCursor = false;
-        showing.OutsidePicture = true;
         CHECK(MCInput::ShownCursor(showing) == MCShownCursor::None);
-        showing.DrawnCursor = true;
-        showing.OutsidePicture = false;
     }
+
+    showing.Layer = MCLayerShows::Nothing;
+    CHECK(MCInput::ShownCursor(showing) == MCShownCursor::Arrow);
+    showing.OutsidePicture = false;
+    CHECK(MCInput::ShownCursor(showing) == MCShownCursor::None);
 
     // The game's cursor as a system cursor (the default, hardware): it, over the screens and the bars too.
     showing.GameCursor = true;
     CHECK(MCInput::ShownCursor(showing) == MCShownCursor::Game);
     showing.OutsidePicture = true;
-    showing.Layer = MCLayerShows::Nothing;
+    showing.Layer = MCLayerShows::Window;
     CHECK(MCInput::ShownCursor(showing) == MCShownCursor::Game);
 }
 
@@ -254,12 +264,6 @@ TEST_CASE_ISOLATED(
 
 namespace
 {
-    /// <summary>Whether the window shows the system's own arrow (SDL's default cursor), not the game's.</summary>
-    bool ArrowShows()
-    {
-        return SDL_CursorVisible() && SDL_GetCursor() != nullptr && SDL_GetCursor() == SDL_GetDefaultCursor();
-    }
-
     /// <summary>
     /// Whether the game's frame (the screen as shown) has its cursor drawn where the game last drew it (UpdateDisplay's
     /// MouseScreenX, MouseScreenY): every pixel of the shape's picture there.
@@ -307,25 +311,97 @@ namespace
         return opaque > 0 && matching == opaque;
     }
 
-    /// <summary>Where the mouse is put over the remade main menu: the 1998 frame's middle, and beside the frame.</summary>
+    /// <summary>
+    /// Whether the window's picture (MCDisplay::ReadWindow: the game's frame, the menus over it and what's drawn over
+    /// them) shows the game's cursor with its hot spot on window pixel (<paramref name="x"/>, <paramref name="y"/>): every
+    /// opaque pixel of the picture the hardware cursor shows for the shape up (MCCursor::Rasterize, in the colours
+    /// shown), at the size the battle shows it in this window (its screen for the window, shown whole).
+    /// </summary>
+    bool CursorDrawnOverWindow(float x, float y)
+    {
+        const int32_t shape = GuiSystem().CursorShape;
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        int width = 0;
+        int height = 0;
+
+        if (shape < 0 || display == nullptr || !SDL_GetWindowSizeInPixels(&display->Window(), &width, &height))
+        {
+            return false;
+        }
+
+        const SDL_Point screen = display->ScreenSizeFor(width, height);
+        const MCViewport battle = display->Presenter().Viewport(screen.x, screen.y);
+        REQUIRE(screen.x > 0);
+        REQUIRE(screen.y > 0);
+        std::array<SDL_Color, 256> colors{};
+        display->GetShownColors(colors);
+        const MCCursorBitmap cursor = MCCursor::Rasterize(
+            MCCursorImage::WithHotSpotInside(MCCursor::ShapeImage(static_cast<size_t>(shape))), colors,
+            battle.W / static_cast<float>(screen.x), battle.H / static_cast<float>(screen.y));
+        const auto window = display->ReadWindow();
+        REQUIRE(window.has_value());
+        const int left = static_cast<int>(std::floor(x)) - cursor.HotX;
+        const int top = static_cast<int>(std::floor(y)) - cursor.HotY;
+        constexpr uint8_t Opaque = 255;
+        int32_t opaque = 0;
+        int32_t matching = 0;
+
+        for (int row = 0; row < cursor.Height; row++)
+        {
+            for (int column = 0; column < cursor.Width; column++)
+            {
+                const size_t from =
+                    (static_cast<size_t>(row) * static_cast<size_t>(cursor.Width) + static_cast<size_t>(column)) * 4;
+                const int atX = left + column;
+                const int atY = top + row;
+
+                if (cursor.Rgba[from + 3] != Opaque || atX < 0 || atY < 0 || atX >= window->Width ||
+                    atY >= window->Height)
+                {
+                    continue;
+                }
+
+                opaque++;
+                const SDL_Color shown = window->Pixels[static_cast<size_t>(atY) * static_cast<size_t>(window->Width) +
+                                                       static_cast<size_t>(atX)];
+
+                if (shown.r == cursor.Rgba[from] && shown.g == cursor.Rgba[from + 1] &&
+                    shown.b == cursor.Rgba[from + 2])
+                {
+                    matching++;
+                }
+            }
+        }
+
+        return opaque > 0 && matching == opaque;
+    }
+
+    /// <summary>
+    /// Where the mouse is put over the remade main menu: the window's middle, and its side (beside the 1998 frame, which
+    /// is gone).
+    /// </summary>
     constexpr float MenuMiddleX = WideWidth / 2.0f;
     constexpr float MenuSideX = 40.0f;
     constexpr float MenuY = WideHeight / 2.0f;
     /// <summary>Where the mouse is put over the battle: its world, clear of the edges that scroll it and of the pause.</summary>
     constexpr float BattleX = WideWidth / 2.0f;
     constexpr float BattleY = WideHeight / 3.0f;
+    /// <summary>Where the mouse is put round the pause: on its panel, in the window's middle, and over the battle beside it.</summary>
+    constexpr float PauseX = WideWidth / 2.0f;
+    constexpr float PauseY = WideHeight / 2.0f;
     constexpr float BesidePauseX = WideWidth / 8.0f;
     constexpr float BesidePauseY = WideHeight / 8.0f;
 }
 
 /// <summary>
-/// With the software cursor (PREFS SoftwareCursor: the 1998 cursor drawn into the game's frame), over the remade screens,
-/// which are drawn over that frame, the system's arrow shows at the mouse, and no cursor is drawn into the frame (round a
-/// screen that floats over the battle, the pause, it would show beside the arrow); in the battle the cursor is drawn into
-/// the frame and the system's hidden, as before.
+/// With the software cursor (PREFS SoftwareCursor: the game's cursor drawn into its frame, the system's hidden), the
+/// game's cursor shows everywhere, as in the battle (you, 25 Nov: "why can't we just do the same everywhere?"): over the
+/// remade screens, which are drawn over that frame, it's drawn over them at the mouse, the picture the hardware cursor
+/// shows at the battle's size for the window, and none into the frame (round a screen that floats over the battle, the
+/// pause, it would show beside it), the system's hidden; a cursor the game hides stays hidden; in the battle it's drawn
+/// into the frame at the mouse, as before.
 /// </summary>
-TEST_CASE_ISOLATED(
-    "game: with the software cursor, the system's arrow over the remade screens, the drawn cursor in battle")
+TEST_CASE_ISOLATED("game: with the software cursor, the game's cursor drawn over the remade screens as in battle")
 {
     if (!MCTestGame::Available())
     {
@@ -339,16 +415,28 @@ TEST_CASE_ISOLATED(
     REQUIRE(MCTestGame::StartLogistics());
     RunWhileChanging();
     REQUIRE(MCRmlFlow::Showing());
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
 
-    // The remade main menu: the arrow, over the 1998 frame's middle and beside it.
+    // The remade main menu: the game's cursor over it at the mouse, in the window's middle and at its side.
     for (const float x : {MenuMiddleX, MenuSideX})
     {
         MCTest::Scope scope(std::format("the main menu at {}", x));
         MCScreenInput::PixelMove(x, MenuY, FlowFrame);
         REQUIRE(GuiSystem().CursorShape >= 0);
-        CHECK(ArrowShows());
+        CHECK(!SDL_CursorVisible());
+        CHECK(CursorDrawnOverWindow(x, MenuY));
         CHECK(!CursorDrawnInFrame());
     }
+
+    // A cursor the game hides stays hidden over the menu: a load's frame (the logistics' frames show it again).
+    GuiSystem().SetCursorVisible(false);
+    BlankScreen();
+    CHECK(!SDL_CursorVisible());
+    CHECK(!display->CursorOver().has_value());
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(GuiSystem().CursorShape >= 0);
+    CHECK(display->CursorOver().has_value());
 
     // The mission begun from the remade campaign screens: the cursor drawn into the battle's frame at the mouse.
     REQUIRE(MCTestGame::StartCampaignMission());
@@ -363,20 +451,29 @@ TEST_CASE_ISOLATED(
     MCScreenInput::PixelMove(BattleX, BattleY, FlowFrame);
     CHECK(!SDL_CursorVisible());
     CHECK(CursorDrawnInFrame());
+    CHECK(!display->CursorOver().has_value());
 
-    // The pause over the battle: the arrow, over the battle beside it too.
+    // The pause over the battle: the game's cursor over it at the mouse, on its panel and over the battle beside it.
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     REQUIRE(MCPauseScreen::Shows());
-    MCScreenInput::PixelMove(BesidePauseX, BesidePauseY, FlowFrame);
-    CHECK(ArrowShows());
-    CHECK(!CursorDrawnInFrame());
 
-    // Back in the battle: drawn again, the system's hidden.
+    for (const auto [x, y] : {std::pair{PauseX, PauseY}, std::pair{BesidePauseX, BesidePauseY}})
+    {
+        MCTest::Scope scope(std::format("the pause at {},{}", x, y));
+        MCScreenInput::PixelMove(x, y, FlowFrame);
+        REQUIRE(GuiSystem().CursorShape >= 0);
+        CHECK(!SDL_CursorVisible());
+        CHECK(CursorDrawnOverWindow(x, y));
+        CHECK(!CursorDrawnInFrame());
+    }
+
+    // Back in the battle: drawn into the frame again, none over the window, the system's hidden.
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     REQUIRE(!MCPauseScreen::Shows());
     MCScreenInput::PixelMove(BattleX, BattleY, FlowFrame);
     CHECK(!SDL_CursorVisible());
     CHECK(CursorDrawnInFrame());
+    CHECK(!display->CursorOver().has_value());
 }
 
 TEST_CASE("input: posted messages reach the window procedure")

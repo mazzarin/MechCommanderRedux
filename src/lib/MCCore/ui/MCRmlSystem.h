@@ -87,7 +87,7 @@ public:
 
 private:
     /// <summary>The open file <paramref name="file"/> stands for; none for a handle this didn't give.</summary>
-    MCOpenFile* Find(Rml::FileHandle file);
+    MCOptionalRef<MCOpenFile> Find(Rml::FileHandle file);
 
     std::filesystem::path _Folder;
     std::map<Rml::FileHandle, std::unique_ptr<MCOpenFile>> _Open;

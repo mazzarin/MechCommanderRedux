@@ -142,10 +142,10 @@ std::filesystem::path MCRmlFiles::AppFolder()
     return base != nullptr ? MCFileSystem::FromUtf8(base) / UiFolder : std::filesystem::path(UiFolder);
 }
 
-auto MCRmlFiles::Find(Rml::FileHandle file) -> MCOpenFile*
+auto MCRmlFiles::Find(Rml::FileHandle file) -> MCOptionalRef<MCOpenFile>
 {
     const auto found = _Open.find(file);
-    return found != _Open.end() ? found->second.get() : nullptr;
+    return found != _Open.end() ? MCOptionalOf(found->second.get()) : std::nullopt;
 }
 
 std::expected<std::vector<char>, std::string> MCRmlFiles::ReadFile(std::string_view path) const
@@ -200,30 +200,32 @@ void MCRmlFiles::Close(Rml::FileHandle file)
 
 size_t MCRmlFiles::Read(void* buffer, size_t size, Rml::FileHandle file)
 {
-    MCOpenFile* open = Find(file);
+    const MCOptionalRef<MCOpenFile> found = Find(file);
 
-    if (open == nullptr)
+    if (!found.has_value())
     {
         return 0;
     }
 
-    const size_t count = std::min(size, open->Bytes.size() - open->At);
-    std::copy_n(open->Bytes.begin() + static_cast<ptrdiff_t>(open->At), count, static_cast<char*>(buffer));
-    open->At += count;
+    MCOpenFile& open = *found;
+    const size_t count = std::min(size, open.Bytes.size() - open.At);
+    std::copy_n(open.Bytes.begin() + static_cast<ptrdiff_t>(open.At), count, static_cast<char*>(buffer));
+    open.At += count;
     return count;
 }
 
 bool MCRmlFiles::Seek(Rml::FileHandle file, long offset, int origin)
 {
-    MCOpenFile* open = Find(file);
+    const MCOptionalRef<MCOpenFile> found = Find(file);
 
-    if (open == nullptr)
+    if (!found.has_value())
     {
         return false;
     }
 
-    const auto size = static_cast<int64_t>(open->Bytes.size());
-    const int64_t from = origin == SEEK_SET ? 0 : origin == SEEK_CUR ? static_cast<int64_t>(open->At) : size;
+    MCOpenFile& open = *found;
+    const auto size = static_cast<int64_t>(open.Bytes.size());
+    const int64_t from = origin == SEEK_SET ? 0 : origin == SEEK_CUR ? static_cast<int64_t>(open.At) : size;
     const int64_t to = from + offset;
 
     if (to < 0 || to > size)
@@ -231,18 +233,18 @@ bool MCRmlFiles::Seek(Rml::FileHandle file, long offset, int origin)
         return false;
     }
 
-    open->At = static_cast<size_t>(to);
+    open.At = static_cast<size_t>(to);
     return true;
 }
 
 size_t MCRmlFiles::Tell(Rml::FileHandle file)
 {
-    const MCOpenFile* open = Find(file);
-    return open != nullptr ? open->At : 0;
+    const MCOptionalRef<MCOpenFile> open = Find(file);
+    return open.has_value() ? open->get().At : 0;
 }
 
 size_t MCRmlFiles::Length(Rml::FileHandle file)
 {
-    const MCOpenFile* open = Find(file);
-    return open != nullptr ? open->Bytes.size() : 0;
+    const MCOptionalRef<MCOpenFile> open = Find(file);
+    return open.has_value() ? open->get().Bytes.size() : 0;
 }

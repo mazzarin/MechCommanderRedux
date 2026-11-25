@@ -398,21 +398,18 @@ bool MCSoundSystem::PreloadSoundBite(int32_t biteId)
     }
 
     file.ReadPacket(biteId, std::span(bite.BiteData).first(std::min<size_t>(size, bite.BiteData.size())));
-    _BiteHdIds.resize(Sounds.size());
-    _BiteHdIds[biteId] = {MCHdAudio::SampleId(bite.BiteData), bite.BiteData.data(), bite.BiteData.size()};
+    bite.HdId = MCHdAudio::SampleId(bite.BiteData);
     return true;
 }
 
 std::optional<uint64_t> MCSoundSystem::BiteHdId(int32_t biteId) const
 {
-    if (biteId < 0 || static_cast<size_t>(biteId) >= _BiteHdIds.size() || static_cast<size_t>(biteId) >= Sounds.size())
+    if (biteId < 0 || static_cast<size_t>(biteId) >= Sounds.size())
     {
         return std::nullopt;
     }
 
-    const MCBiteHdId& known = _BiteHdIds[biteId];
-    const std::vector<uint8_t>& data = Sounds[biteId].BiteData;
-    return known.Data == data.data() && known.Size == data.size() ? known.Id : std::nullopt;
+    return Sounds[biteId].HdId;
 }
 
 std::optional<uint64_t> MCSoundSystem::BettyHdId()
@@ -571,9 +568,9 @@ void MCSoundSystem::PurgeSoundSystem()
     for (MCSoundBite& bite : Sounds)
     {
         bite.BiteData = {};
+        bite.HdId.reset();
     }
 
-    _BiteHdIds.clear();
     NoiseFile.reset();
     RadioMessageInfoLoaded = false;
     _BettySoundBite = {};

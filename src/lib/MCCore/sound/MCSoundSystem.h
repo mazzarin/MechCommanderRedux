@@ -47,10 +47,15 @@ struct MCSoundBite
     /// <summary>"soundId" (read, not used).</summary>
     uint32_t SoundId = 0;
     /// <summary>
-    /// The wave, when loaded (empty while not). Port: the sound system keeps its HD audio identity as it loads it, so
-    /// it is loaded only by the sound system.
+    /// The wave, when loaded (empty while not). Port: loaded only by the sound system, which sets <see cref="HdId"/>
+    /// with it.
     /// </summary>
     std::vector<uint8_t> BiteData;
+    /// <summary>
+    /// Port: <see cref="BiteData"/>'s MCHdAudio::SampleId, set and cleared by the sound system with the wave (none
+    /// while it isn't loaded, or for a wave set by hand).
+    /// </summary>
+    std::optional<uint64_t> HdId;
     /// <summary>"volume" (0..1): the bite's level, 20 * (volume - 1) dB (see <see cref="SoundBiteGain"/>).</summary>
     float Volume = 0.0f;
 };
@@ -412,18 +417,6 @@ private:
     /// <summary>The Betty samples' MCHdAudio::SampleIds, by sample, as each was first played (betty.pak's don't change).
     /// </summary>
     std::unordered_map<int32_t, std::optional<uint64_t>> _BettyHdIds;
-    /// <summary>
-    /// A loaded bite's MCHdAudio::SampleId and the bytes it was worked out for (the bite's own, checked when used).
-    /// </summary>
-    struct MCBiteHdId
-    {
-        std::optional<uint64_t> Id;
-        const uint8_t* Data = nullptr;
-        size_t Size = 0;
-    };
-
-    /// <summary>Each sound bite's HD audio identity, as <see cref="PreloadSoundBite"/> loaded it.</summary>
-    std::vector<MCBiteHdId> _BiteHdIds;
     /// <summary>The radio static wave (empty while not loaded).</summary>
     std::vector<uint8_t> _NoiseData;
     /// <summary>Every pilot's radio.</summary>

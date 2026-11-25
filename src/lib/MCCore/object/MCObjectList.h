@@ -159,7 +159,9 @@ int BlockInList(int32_t blockNumber);
 /// </summary>
 struct MCDrawWatch
 {
-    const MCBaseObject* Object = nullptr;
+    /// <summary>The object watched (none by default): a reference, so a new object made where it was isn't taken for
+    /// it.</summary>
+    std::weak_ptr<const MCBaseObject> Object;
     size_t First = 0;
     size_t End = 0;
     int32_t RenderTurn = -1;

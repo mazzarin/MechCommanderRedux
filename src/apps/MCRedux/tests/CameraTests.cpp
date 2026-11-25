@@ -249,7 +249,7 @@ namespace
         eye.SetPosition(MCVector3D(at.X, at.Y, eye.GetPosition().Z));
         const float out = (across ? width : height) / 2.0f + beyond;
         scroll(sign * out);
-        DrawWatch().Object = &object;
+        DrawWatch().Object = object.weak_from_this();
         MCTestGame::RunFrame(FrameSeconds);
 
         struct MCStep
@@ -280,7 +280,7 @@ namespace
             }
         }
 
-        DrawWatch().Object = nullptr;
+        DrawWatch().Object.reset();
         MCPanIn found;
 
         if (steps.empty() || !drawnInView(steps.back().Drawn))

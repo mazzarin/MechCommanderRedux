@@ -27,7 +27,8 @@ namespace
     {
         MCDrawWatch& watch = DrawWatch();
 
-        if (watch.Object == &object)
+        // With no object watched (as in play) the reference is empty, and locking it takes no count.
+        if (const std::shared_ptr<const MCBaseObject> watched = watch.Object.lock(); watched.get() == &object)
         {
             watch.First = made;
             watch.End = ElementList().MadeCount();

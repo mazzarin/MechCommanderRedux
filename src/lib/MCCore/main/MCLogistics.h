@@ -52,24 +52,10 @@ namespace MCTelemetry
 /// </summary>
 struct MCLogisticsArtFiles
 {
-    /// <summary>The mech repair screen shapes (<c>mechrep##.shp</c>, by mech name index).</summary>
-    std::array<MCRegisteredBlock, 24> MechRepShapes;
-    /// <summary>The vehicle repair screen shapes (<c>vr1_##.shp</c>; none where the file is missing).</summary>
-    std::array<MCRegisteredBlock, 35> VehicleRepShapes;
     /// <summary>The mech icon shapes (<c>mi##.shp</c>).</summary>
     std::array<MCRegisteredBlock, 24> MechIconShapes;
     /// <summary>The vehicle icon shapes (<c>vi1_##.shp</c>; none where the file is missing).</summary>
     std::array<MCRegisteredBlock, 35> VehicleIconShapes;
-    /// <summary>The repair screen's mech picture background (<c>lsrupm00.tga</c>).</summary>
-    std::shared_ptr<MCLogPort> RepairBackPort;
-    /// <summary>The repair screen pieces (<c>lsrupm03, 01, 04, 02, 06, 07.tga</c>).</summary>
-    std::array<std::shared_ptr<MCLogPort>, 6> RepairPorts;
-    /// <summary>The purchase screen pieces (<c>lspcb05, 07, 06, 09.tga</c>).</summary>
-    std::array<std::shared_ptr<MCLogPort>, 4> PurchasePorts;
-    /// <summary>The screen switch buttons' pictures: button 0, exit, buttons 1..3; normal, highlighted, gray.</summary>
-    std::array<std::array<std::shared_ptr<MCLogPort>, 3>, 5> ScreenButtonPorts;
-    /// <summary>The inventory tab icons: mechs, pilots, components, vehicles (<c>lscii?.tga</c>).</summary>
-    std::array<std::shared_ptr<MCLogPort>, 4> InventoryIconPorts;
 };
 
 /// <summary>

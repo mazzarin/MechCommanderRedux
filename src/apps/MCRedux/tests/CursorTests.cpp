@@ -75,32 +75,6 @@ namespace
     }
 }
 
-TEST_CASE("cursor: Overlay puts both hot spots on one point and keeps the lower picture where the upper is clear")
-{
-    // A 4x4 dragged icon with the mouse at (1, 2) on it, and a 3x2 arrow whose tip (hot spot) is its top-left.
-    const MCCursorImage icon = FromRows({"AAAA", "AAAA", "AAAA", "AAAA"}, 1, 2);
-    const MCCursorImage arrow = FromRows({"BB.", "B.."}, 0, 0);
-    const MCCursorImage both = MCCursorImage::Overlay(icon, arrow);
-    CHECK_EQ(both.HotX, 1);
-    CHECK_EQ(both.HotY, 2);
-    const std::vector<std::string> expected{"AAAA", "AAAA", "ABBA", "ABAA"};
-    CHECK(ToRows(both) == expected);
-}
-
-TEST_CASE("cursor: Overlay grows past either picture")
-{
-    // The arrow hangs off the icon's bottom-right corner.
-    const MCCursorImage icon = FromRows({"AA", "AA"}, 1, 1);
-    const MCCursorImage arrow = FromRows({"BBB", "BBB"}, 0, 0);
-    const MCCursorImage both = MCCursorImage::Overlay(icon, arrow);
-    CHECK_EQ(both.Width, 4);
-    CHECK_EQ(both.Height, 3);
-    CHECK_EQ(both.HotX, 1);
-    CHECK_EQ(both.HotY, 1);
-    const std::vector<std::string> expected{"AA..", "ABBB", ".BBB"};
-    CHECK(ToRows(both) == expected);
-}
-
 TEST_CASE("cursor: WithHotSpotInside grows a picture whose hot spot is off it")
 {
     const MCCursorImage inside = FromRows({"AB", "CD"}, 1, 1);
@@ -113,6 +87,13 @@ TEST_CASE("cursor: WithHotSpotInside grows a picture whose hot spot is off it")
     CHECK_EQ(grown.HotY, 0);
     const std::vector<std::string> expected{"..AB"};
     CHECK(ToRows(grown) == expected);
+
+    // Hot spot two pixels past the picture's right and one below it: two columns added on the right, a row below.
+    const MCCursorImage below = MCCursorImage::WithHotSpotInside(FromRows({"AB"}, 3, 1));
+    CHECK_EQ(below.HotX, 3);
+    CHECK_EQ(below.HotY, 1);
+    const std::vector<std::string> belowExpected{"AB..", "...."};
+    CHECK(ToRows(below) == belowExpected);
 }
 
 TEST_CASE("cursor: Rasterize colours each pixel from the palette and leaves transparent pixels clear")
@@ -429,25 +410,6 @@ TEST_CASE("cursor: Rasterize leaves the water's entries out of a brightness step
 
     CHECK_EQ(MCCursor::Rasterize(highlight, moved, 3.0f, 3.0f).Rgba,
              MCCursor::Rasterize(highlight, bright, 3.0f, 3.0f).Rgba);
-}
-
-TEST_CASE("cursor: a pane becomes an opaque picture with the given hot spot")
-{
-    // A 3x2 pane at (1, 1) inside a 5x4 window.
-    const std::shared_ptr<MCWindow> window = MCWindow::Make(5, 4);
-    const std::span<uint8_t> pixels = window->Bytes();
-
-    for (size_t i = 0; i < pixels.size(); ++i)
-    {
-        pixels[i] = static_cast<uint8_t>('a' + i);
-    }
-
-    const MCPane pane{window, 1, 1, 3, 2};
-    const MCCursorImage image = MCCursorImageFromPane(pane, 2, 0);
-    CHECK_EQ(image.HotX, 2);
-    CHECK_EQ(image.HotY, 0);
-    const std::vector<std::string> expected{"ghi", "lmn"};
-    CHECK(ToRows(image) == expected);
 }
 
 TEST_CASE("cursor: a shape becomes a picture that draws exactly as the game draws the shape")

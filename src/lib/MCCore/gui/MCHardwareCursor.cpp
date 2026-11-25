@@ -105,38 +105,6 @@ MCCursorImage MCCursorImageFromShape(std::span<const uint8_t> shapeTable, int32_
     return image;
 }
 
-MCCursorImage MCCursorImageFromPane(const MCPane& pane, int32_t hotX, int32_t hotY)
-{
-    const std::shared_ptr<MCWindow> window = pane.Window.lock();
-
-    if (window == nullptr || window->Pixels == nullptr)
-    {
-        return {};
-    }
-
-    const int32_t width = pane.X1 - pane.X0 + 1;
-    const int32_t height = pane.Y1 - pane.Y0 + 1;
-
-    if (width <= 0 || height <= 0)
-    {
-        return {};
-    }
-
-    MCCursorImage image = MCCursorImage::Blank(width, height, hotX, hotY);
-    const int32_t pitch = window->XMax + 1;
-
-    for (int32_t y = 0; y < height; ++y)
-    {
-        const std::span<const uint8_t> row = window->Bytes().subspan(
-            static_cast<size_t>(pane.Y0 + y) * static_cast<size_t>(pitch) + static_cast<size_t>(pane.X0),
-            static_cast<size_t>(width));
-        std::ranges::copy(row, image.Pixels.begin() + static_cast<ptrdiff_t>(y) * width);
-    }
-
-    std::ranges::fill(image.Opaque, 1);
-    return image;
-}
-
 void MCHardwareCursorPreload(std::span<const MCRegisteredBlock> shapes)
 {
     Preloaded = true;

@@ -28,7 +28,7 @@
 
 namespace
 {
-    /// <summary>A player's 16:9 window: the 1998 frame (640x480) 960x720 in its middle, the menus' stone beside it.</summary>
+    /// <summary>A player's 16:9 window, which the remade menus fill.</summary>
     constexpr int WideWidth = 1280;
     constexpr int WideHeight = 720;
     constexpr float FlowFrame = 1.0f / 60.0f;
@@ -125,7 +125,7 @@ TEST_CASE("input: full screen, the cursor stays off the screen's corners and sti
 /// </summary>
 TEST_CASE("input: full screen, the mouse reaches the whole window while the menus fill it, else the picture")
 {
-    // A 1512x982-point window (an M1 Air's screen) with the 1998 frame 1309 points wide in its middle.
+    // A 1512x982-point window (an M1 Air's screen) with the game's picture 1309 points wide in its middle.
     MCInput::MCMouseAreaState area;
     area.FullscreenFocused = true;
     area.Picture = SDL_Rect{101, 0, 1309, 982};
@@ -176,7 +176,7 @@ TEST_CASE("input: the system's arrow stands in for the game's drawn cursor over 
         showing.Layer = layer;
         CHECK(MCInput::ShownCursor(showing) == MCShownCursor::Arrow);
 
-        // The game shows no cursor (a load): none over the screens, beside the 1998 frame too.
+        // The game shows no cursor (a load): none over the screens, beside the game's picture too.
         showing.DrawnCursor = false;
         showing.OutsidePicture = true;
         CHECK(MCInput::ShownCursor(showing) == MCShownCursor::None);
@@ -307,7 +307,7 @@ namespace
         return opaque > 0 && matching == opaque;
     }
 
-    /// <summary>Where the mouse is put over the remade main menu: the 1998 frame's middle, and beside the frame.</summary>
+    /// <summary>Where the mouse is put over the remade main menu: the window's middle, and near its left edge.</summary>
     constexpr float MenuMiddleX = WideWidth / 2.0f;
     constexpr float MenuSideX = 40.0f;
     constexpr float MenuY = WideHeight / 2.0f;
@@ -340,7 +340,7 @@ TEST_CASE_ISOLATED(
     RunWhileChanging();
     REQUIRE(MCRmlFlow::Showing());
 
-    // The remade main menu: the arrow, over the 1998 frame's middle and beside it.
+    // The remade main menu: the arrow, at the window's middle and near its left edge.
     for (const float x : {MenuMiddleX, MenuSideX})
     {
         MCTest::Scope scope(std::format("the main menu at {}", x));

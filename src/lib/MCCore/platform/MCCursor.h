@@ -28,7 +28,7 @@ struct MCCursorImage
     std::vector<uint8_t> Opaque;
     /// <summary>
     /// Port-only: the picture's HD copy, shown instead of its pixels (smoothly, at the size it is shown); none for a
-    /// picture the pack has no frame of. A picture made from others (an overlay, a grown one) has none.
+    /// picture the pack has no frame of. A grown picture (<see cref="WithHotSpotInside"/>) has none.
     /// </summary>
     std::shared_ptr<const MCCursorHd> Hd;
 
@@ -36,12 +36,6 @@ struct MCCursorImage
 
     /// <summary>A transparent picture of <paramref name="width"/> x <paramref name="height"/>.</summary>
     static MCCursorImage Blank(int width, int height, int hotX, int hotY);
-
-    /// <summary>
-    /// <paramref name="over"/> drawn on <paramref name="under"/> with their hot spots on the same point; the result
-    /// is as large as both need.
-    /// </summary>
-    static MCCursorImage Overlay(const MCCursorImage& under, const MCCursorImage& over);
 
     /// <summary>The picture grown with transparent pixels until it holds its hot spot.</summary>
     static MCCursorImage WithHotSpotInside(const MCCursorImage& image);

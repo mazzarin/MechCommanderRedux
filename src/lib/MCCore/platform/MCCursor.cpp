@@ -18,41 +18,6 @@ MCCursorImage MCCursorImage::Blank(int width, int height, int hotX, int hotY)
     return image;
 }
 
-MCCursorImage MCCursorImage::Overlay(const MCCursorImage& under, const MCCursorImage& over)
-{
-    // Both pictures relative to the shared hot spot.
-    const int left = std::min(-under.HotX, -over.HotX);
-    const int top = std::min(-under.HotY, -over.HotY);
-    const int right = std::max(under.Width - under.HotX, over.Width - over.HotX);
-    const int bottom = std::max(under.Height - under.HotY, over.Height - over.HotY);
-    MCCursorImage result = Blank(right - left, bottom - top, -left, -top);
-
-    for (const MCCursorImage& layer : {std::cref(under), std::cref(over)})
-    {
-        const int originX = result.HotX - layer.HotX;
-        const int originY = result.HotY - layer.HotY;
-
-        for (int y = 0; y < layer.Height; ++y)
-        {
-            for (int x = 0; x < layer.Width; ++x)
-            {
-                const size_t from = static_cast<size_t>(y) * layer.Width + x;
-
-                if (layer.Opaque[from] == 0)
-                {
-                    continue;
-                }
-
-                const size_t to = static_cast<size_t>(originY + y) * result.Width + originX + x;
-                result.Pixels[to] = layer.Pixels[from];
-                result.Opaque[to] = 1;
-            }
-        }
-    }
-
-    return result;
-}
-
 MCCursorImage MCCursorImage::WithHotSpotInside(const MCCursorImage& image)
 {
     if (image.HotX >= 0 && image.HotY >= 0 && image.HotX < image.Width && image.HotY < image.Height)
@@ -60,7 +25,33 @@ MCCursorImage MCCursorImage::WithHotSpotInside(const MCCursorImage& image)
         return image;
     }
 
-    return Overlay(image, Blank(1, 1, 0, 0));
+    // The box holding the picture and its hot spot's pixel, relative to the hot spot.
+    const int left = std::min(-image.HotX, 0);
+    const int top = std::min(-image.HotY, 0);
+    const int right = std::max(image.Width - image.HotX, 1);
+    const int bottom = std::max(image.Height - image.HotY, 1);
+    MCCursorImage grown = Blank(right - left, bottom - top, -left, -top);
+    const int originX = grown.HotX - image.HotX;
+    const int originY = grown.HotY - image.HotY;
+
+    for (int y = 0; y < image.Height; ++y)
+    {
+        for (int x = 0; x < image.Width; ++x)
+        {
+            const size_t from = static_cast<size_t>(y) * image.Width + x;
+
+            if (image.Opaque[from] == 0)
+            {
+                continue;
+            }
+
+            const size_t to = static_cast<size_t>(originY + y) * grown.Width + originX + x;
+            grown.Pixels[to] = image.Pixels[from];
+            grown.Opaque[to] = 1;
+        }
+    }
+
+    return grown;
 }
 
 namespace

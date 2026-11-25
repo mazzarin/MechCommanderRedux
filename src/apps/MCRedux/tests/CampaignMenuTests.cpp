@@ -387,6 +387,22 @@ TEST_CASE("logistics: a briefing's text is read into its objectives, fire suppor
 }
 
 /// <summary>
+/// A centred line of briefing text too long for 1998's briefing pane reads whole, its last character once: the remade
+/// BRIEFING lays the words out itself, from MCBriefingText's parts. 1998's pane wrote such a line from its left edge and
+/// drew the character that overflowed twice (MCSmuti's OB-070, gone from the briefing with the 1998 screens).
+/// </summary>
+TEST_CASE("logistics: an over-long centred line of briefing text reads whole, its last character once")
+{
+    constexpr std::string_view Long = "Your lance must capture the enemy base before the Clan reinforcements reach the "
+                                      "landing zone at dawn, holding the headquarters until the DropShip lands.";
+    const MCBriefingText::MCRead read =
+        MCBriefingText::Read(std::format("%fc6%c*** CAPTURE ENEMY BASE ***%n%fc21-Capture Enemy Headquarters%n%n"
+                                         "%fc5%c----------%n%fc4%c{}%n%n%fc6<<<<END DISPATCH%n",
+                                         Long));
+    CHECK_EQ(read.Orders, std::vector<std::string>{std::string(Long)});
+}
+
+/// <summary>
 /// A match's drop zone tag (tools/upscale/zone_tags.py's pictures, 39 by 19 map pixels) hangs its tail's tip on its
 /// zone: from the bottom right, as 1998's flags, wherever that keeps it on the map's picture; near the left edge from
 /// the bottom left, near the top from the top right, in the top left corner from the top left; hard by the right edge,
@@ -2597,6 +2613,96 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's sliders repair and undo point by point
     CHECK_EQ(ResourcePoints, Points - ArrivedShort * logistics->ArmorCost - ArrivedEngineHits * logistics->EngineCost);
 }
 
+namespace
+{
+    /// <summary>The structure points the knobs' test's 'Mech arrived short, and the steps its slider takes each way.</summary>
+    constexpr int32_t ArrivedStructureShort = 10;
+    constexpr int32_t StructureSteps = 3;
+
+    /// <summary>Where slider <paramref name="id"/> of <paramref name="screen"/> draws its knob: its value.</summary>
+    int32_t ShownKnob(const MCCampaignScreen& screen, const std::string& id)
+    {
+        const std::string value = ElementOf(screen, id).GetAttribute<Rml::String>("value", "");
+        REQUIRE(!value.empty());
+        return static_cast<int32_t>(std::lround(std::stod(value)));
+    }
+
+    /// <summary>
+    /// Slider <paramref name="id"/> moved by <paramref name="key"/> <paramref name="steps"/> times, its knob drawn where
+    /// the 'MECH BAY's model has it after each (<paramref name="knob"/>).
+    /// </summary>
+    void StepAndCheckKnob(MCCampaignScreen& screen, const std::string& id, SDL_Scancode key, int32_t steps,
+                          const std::function<int32_t()>& knob)
+    {
+        for (int32_t step = 0; step < steps; ++step)
+        {
+            KeyOn(ElementOf(screen, id), key);
+            const MCTest::Scope scope(
+                std::format("{} after {} steps {}", id, step + 1, key == SDL_SCANCODE_LEFT ? "left" : "right"));
+            CHECK_EQ(ShownKnob(screen, id), knob());
+        }
+    }
+}
+
+/// <summary>
+/// The 'MECH BAY's internal structure and engine sliders draw their knobs where each move leaves them, to the left as to
+/// the right: after every step, each slider's value (where RmlUi draws its knob) is the model's knob. 1998's structure
+/// and engine knobs, dragged left, were drawn again only after the repair (gone with the 1998 screens).
+/// </summary>
+TEST_CASE_ISOLATED("game: the 'MECH BAY's structure and engine sliders draw their knobs where each move leaves them")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogMech> mech = GlobalLog()->ForceMechList->Mechs.front();
+
+    // It arrived damaged as the sliders' test has it, and its internal structure short too (each location keeps a point).
+    ArriveDamaged(*mech);
+    int32_t missing = ArrivedStructureShort;
+
+    for (size_t location = 0; location < mech->Internals.size(); location++)
+    {
+        MCLogMech::ArmorPoints& internal = mech->Internals[location];
+        const auto taken = static_cast<uint8_t>(std::min<int32_t>(std::max(internal.CurArmor - 1, 0), missing));
+        internal.CurArmor = static_cast<uint8_t>(internal.CurArmor - taken);
+        missing -= taken;
+        mech->Arrived.Internals[location] = internal.CurArmor;
+    }
+
+    REQUIRE_EQ(missing, 0);
+    MCMechBay::PlaceKnobs(*mech);
+    constexpr int32_t Points = 100000;
+    ResourcePoints = Points;
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.LabUnit() == mech);
+
+    // The structure: right, then back left to where it arrived.
+    const auto structure = [&tabs] { return tabs.StructureRepair().Knob; };
+    const int32_t structureStart = structure();
+    CHECK_EQ(ShownKnob(screen, "structure"), structureStart);
+    StepAndCheckKnob(screen, "structure", SDL_SCANCODE_RIGHT, StructureSteps, structure);
+    CHECK(structure() > structureStart);
+    StepAndCheckKnob(screen, "structure", SDL_SCANCODE_LEFT, StructureSteps, structure);
+    CHECK_EQ(structure(), structureStart);
+
+    // The engine: a level right each step, then back.
+    const auto engine = [&tabs] { return tabs.EngineRepair().Knob; };
+    const int32_t engineStart = engine();
+    CHECK_EQ(ShownKnob(screen, "engine"), engineStart);
+    StepAndCheckKnob(screen, "engine", SDL_SCANCODE_RIGHT, ArrivedEngineHits, engine);
+    CHECK_EQ(engine(), engineStart + ArrivedEngineHits);
+    StepAndCheckKnob(screen, "engine", SDL_SCANCODE_LEFT, ArrivedEngineHits, engine);
+    CHECK_EQ(engine(), engineStart);
+    CHECK_EQ(ResourcePoints, Points);
+}
+
 /// <summary>
 /// The 'MECH BAY moves parts and MechWarriors as 1998's drags: a fitted part taken out by the right button goes to the
 /// INVENTORY, its tons freed; ENTER on its INVENTORY card fits it back; a part too heavy is dim with its reason and
@@ -3238,24 +3344,26 @@ TEST_CASE_ISOLATED("game: a campaign's mission started as the tests start it sho
 namespace
 {
     /// <summary>The walk's match's port, its own so it runs beside the other tests (--jobs).</summary>
-    constexpr std::string_view NoOldMenusPort = "28949";
+    constexpr std::string_view MenusWalkPort = "28949";
 
-    /// <summary>Port-only (SPEC-menus.md's stage 9): nothing of the 1998 menus made (MCTestGame::OldMenusMade) at <paramref name="where"/>.</summary>
-    void CheckNoOldMenus(std::string_view where)
+    /// <summary>The remade menus show a screen at <paramref name="where"/>.</summary>
+    void CheckMenusShown(std::string_view where)
     {
         const MCTest::Scope scope{std::string(where)};
-        CHECK_EQ(MCTestGame::OldMenusMade().value_or(std::string()), std::string());
+        const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
+        REQUIRE(menus.has_value());
+        CHECK(menus->get().Showing());
     }
 }
 
 /// <summary>
-/// Port-only (SPEC-menus.md's stage 9): no 1998 menu screen, window or control is made, nor their art loaded (only the
-/// units' icon shapes, which the remade screens draw their outlines from), from the game's start, through a campaign
-/// (its four tabs; the main menu between missions, LOAD GAME, SAVE GAME, Preferences and RETURN TO GAME; a mission,
-/// its results and the way back), to a match (the LAN games, the room, its briefing and DEPLOY). Every frame checks
-/// the same (MCTestGame::OldMenusMade); this walks the ways in and out.
+/// Port-only (SPEC-menus.md's stage 9): the menus' ways in and out, each a remade screen (no 1998 menu screen is left to
+/// make, nor its art: logistics loads only the units' icon shapes, which the remade screens draw their outlines from),
+/// from the game's start, through a campaign (its four tabs; the main menu between missions, LOAD GAME, SAVE GAME,
+/// Preferences and RETURN TO GAME; a mission, its results and the way back), to a match (the LAN games, the room, its
+/// briefing and DEPLOY).
 /// </summary>
-TEST_CASE_ISOLATED("game: no 1998 menu screen or its art is made from the start, through a campaign, to a match")
+TEST_CASE_ISOLATED("game: the remade menus walked from the start, through a campaign, to a match")
 {
     if (!MCTestGame::Available())
     {
@@ -3266,7 +3374,7 @@ TEST_CASE_ISOLATED("game: no 1998 menu screen or its art is made from the start,
     std::optional<MCTestGame::PinnedSaves> pinned;
     REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     RunWhileChanging();
-    CheckNoOldMenus("the main menu");
+    CheckMenusShown("the main menu");
     REQUIRE(GlobalLog() != nullptr);
     CHECK(std::ranges::none_of(GlobalLog()->MechIconShapes, &MCRegisteredBlock::Empty));
 
@@ -3281,13 +3389,13 @@ TEST_CASE_ISOLATED("game: no 1998 menu screen or its art is made from the start,
     {
         Shown().ChooseTab(tab);
         MCTestGame::RunFrame(FlowFrame);
-        CheckNoOldMenus(name);
+        CheckMenusShown(name);
     }
 
     // The main menu between missions: LOAD GAME, SAVE GAME and Preferences, each left by Escape; RETURN TO GAME.
     MCMenuScreens::LeaveCampaign();
     RunWhileChanging();
-    CheckNoOldMenus("the main menu between missions");
+    CheckMenusShown("the main menu between missions");
 
     for (const auto& [screen, name] :
          {std::pair{MCMenuScreens::Load(), "LOAD GAME"}, std::pair{MCMenuScreens::Save(), "SAVE GAME"},
@@ -3295,7 +3403,7 @@ TEST_CASE_ISOLATED("game: no 1998 menu screen or its art is made from the start,
     {
         REQUIRE(MCScreenFlow::Open(screen));
         RunWhileChanging();
-        CheckNoOldMenus(name);
+        CheckMenusShown(name);
         MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
         RunWhileChanging();
         REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Main());
@@ -3304,23 +3412,22 @@ TEST_CASE_ISOLATED("game: no 1998 menu screen or its art is made from the start,
     MCScreenFlow::Via("return to game", ReturnToGame)();
     RunWhileChanging();
     REQUIRE(MCCampaignMenu::Shown());
-    CheckNoOldMenus("RETURN TO GAME");
+    CheckMenusShown("RETURN TO GAME");
 
-    // A mission (what it keeps of logistics' art), its results and the way back to the next briefing.
+    // A mission, its results and the way back to the next briefing.
     BeginFromDeploy();
-    CheckNoOldMenus("the mission");
     EndAndCloseResults(Won);
     REQUIRE(GlobalLog() != nullptr);
     REQUIRE(MCCampaignMenu::Shown());
-    CheckNoOldMenus("the next briefing");
+    CheckMenusShown("the next briefing");
 
     // A match: from the main menu, the LAN games, the room with ANN in it, its briefing and DEPLOY.
     MCMenuScreens::LeaveCampaign();
     RunWhileChanging();
     MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
-    MCCampaignScreen& match = PlanMatch(ann, NoOldMenusPort);
-    CheckNoOldMenus("the match's briefing");
+    MCCampaignScreen& match = PlanMatch(ann, MenusWalkPort);
+    CheckMenusShown("the match's briefing");
     match.ChooseTab(MCCampaignScreen::MCTab::Deploy);
     MCTestGame::RunFrame(FlowFrame);
-    CheckNoOldMenus("the match's DEPLOY");
+    CheckMenusShown("the match's DEPLOY");
 }

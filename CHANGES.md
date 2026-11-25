@@ -308,7 +308,7 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - The purchase and repair tickers no longer show garbage text.
 - The marks of a fourth or later drop zone no longer overwrite the drop zone data.
 - Fixed several memory leaks in the logistics screens.
-- The menus are remade, and the 1998 screens are gone with these bugs of theirs:
+- **Redux HD.** The menus are remade, and the 1998 screens are gone with these bugs of theirs:
   - A component picked up with the right mouse button could be lost when it couldn't be mounted (OB-079).
   - Ticker text wider than the ticker never scrolled (OB-072). The ticker is gone: the hint line and the players' row
     do its jobs.
@@ -316,6 +316,10 @@ adds are in the [README](README.md#what-redux-hd-adds).
   - The purchase screen's chat button stopped blinking for new messages (OB-096).
   - The Ctrl+Alt resource cheat on the purchase and repair screens never fired (OB-077).
   - A key typed after a shorter text brought back what a longer one had left past its end (OB-161).
+  - Backspace left the deleted character on screen until the next one was typed.
+  - An over-long centred line of briefing text showed its last character twice.
+  - Dragging the internal structure or engine slider left only redrew its knob after the repair.
+  - Logistics widgets leaked a little memory when destroyed, and the vehicle pane each time it was redrawn.
 - Refitting a mech assigns its critical slots as intended. This changes how the game plays, because a component is
   lost with the location that holds it.
   - Large weapons are spread over the side torsos and arms. The original put nearly all of them in the left arm, so
@@ -497,12 +501,9 @@ These bugs are in the original MechCommander Gold. Some of these bugs are kept o
 - Removing a unit from its drop slot, or loading a campaign, can remove the wrong pilot.
 - A lance holding only vehicles can show 0 tons.
 - Pilots of the same rank are listed in a scrambled order in the mission results.
-- Backspace leaves the deleted character on screen until the next one is typed.
-- An over-long centred line of briefing text shows its last character doubled.
-- Dragging the internal structure or engine slider left only redraws its knob after the repair.
 - Non-weapon equipment shows a range of "0.0 m".
 - A multiplayer save always uses the default pilot costs.
-- Small memory leaks when logistics widgets are destroyed, the vehicle pane is redrawn, or a multiplayer session ends.
+- Small memory leaks when a multiplayer session ends.
 
 ### Interface
 

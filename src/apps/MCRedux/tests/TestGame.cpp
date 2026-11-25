@@ -816,79 +816,6 @@ namespace MCTestGame
         return false;
     }
 
-    namespace
-    {
-        /// <summary>What <see cref="OldMenusMade"/> said at the last frame's end (each finding fails once).</summary>
-        std::optional<std::string>& OldMenusSeen()
-        {
-            static std::optional<std::string> seen;
-            return seen;
-        }
-
-        /// <summary>Port-only (SPEC-menus.md's stage 9): a 1998 menu screen or its art made fails the test.</summary>
-        void CheckNoOldMenus()
-        {
-            std::optional<std::string> made = OldMenusMade();
-
-            if (made == OldMenusSeen())
-            {
-                return;
-            }
-
-            OldMenusSeen() = made;
-
-            if (made.has_value())
-            {
-                FAIL_CHECK(std::format("the 1998 menus' art was loaded: {}", *made));
-            }
-        }
-
-        /// <summary>Which of the 1998 screens' art files <paramref name="files"/> holds loaded, if any.</summary>
-        std::optional<std::string> OldArtLoaded(const MCLogisticsArtFiles& files)
-        {
-            const auto loaded = [](const auto& blocks)
-            { return std::ranges::any_of(blocks, [](const MCRegisteredBlock& block) { return !block.Empty(); }); };
-            const auto made = [](const auto& ports)
-            { return std::ranges::any_of(ports, [](const auto& port) { return port != nullptr; }); };
-
-            if (loaded(files.MechRepShapes) || loaded(files.VehicleRepShapes))
-            {
-                return "the repair shapes";
-            }
-
-            if (files.RepairBackPort != nullptr || made(files.RepairPorts) || made(files.PurchasePorts) ||
-                made(files.InventoryIconPorts) ||
-                std::ranges::any_of(files.ScreenButtonPorts, [&made](const auto& ports) { return made(ports); }))
-            {
-                return "the repair, purchase, tab or button pictures";
-            }
-
-            return std::nullopt;
-        }
-    }
-
-    std::optional<std::string> OldMenusMade()
-    {
-        if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
-        {
-            if (std::optional<std::string> art = OldArtLoaded(*logistics); art.has_value())
-            {
-                return std::format("logistics' {}", *art);
-            }
-        }
-
-        if (const std::shared_ptr<MCMission> mission = Mission();
-            mission != nullptr && mission->KeptLogisticsArt != nullptr)
-        {
-            if (std::optional<std::string> art = OldArtLoaded(mission->KeptLogisticsArt->Files); art.has_value())
-            {
-                return std::format("the mission's kept {}", *art);
-            }
-        }
-
-        return std::nullopt;
-    }
-
     void RunFrame(float seconds)
     {
         BootClock().Advance(static_cast<uint64_t>(static_cast<double>(seconds) * 1e9));
@@ -950,8 +877,6 @@ namespace MCTestGame
             static int32_t stateFrame = 0;
             stateLog << std::format("{} 0x{:08x}\n", stateFrame++, StateHash()) << std::flush;
         }
-
-        CheckNoOldMenus();
     }
 }
 

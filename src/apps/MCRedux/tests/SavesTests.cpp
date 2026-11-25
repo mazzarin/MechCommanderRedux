@@ -21,6 +21,7 @@
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
+#include "platform/MCUiDraws.h"
 #include "ui/MCRmlChecks.h"
 #include "ui/MCRmlFlow.h"
 #include "ui/MCRmlMenus.h"
@@ -1044,4 +1045,66 @@ TEST_CASE_ISOLATED("game: SAVE GAME's NAME, a shorter save's name put in after a
     TypeText("z");
     CHECK_EQ(screen.Name(), std::string(Shorter) + "z");
     CHECK_EQ(shown(), std::string(Shorter) + "z");
+}
+
+namespace
+{
+    /// <summary>The remade menus' frame recorded now, as the presenter draws it (MCDisplay::ReadOverlay), its bytes.</summary>
+    std::vector<uint8_t> MenusDrawn()
+    {
+        const std::shared_ptr<const MCUiDraws> frame = MCRmlFlow::Menus().Frame();
+        REQUIRE(frame != nullptr);
+        const std::expected<std::vector<SDL_Color>, std::string> drawn = MCInput::Display()->ReadOverlay(*frame);
+        REQUIRE(drawn.has_value());
+        std::vector<uint8_t> bytes(drawn->size() * sizeof(SDL_Color));
+        std::memcpy(bytes.data(), drawn->data(), bytes.size());
+        return bytes;
+    }
+}
+
+/// <summary>
+/// Backspace in the remade SAVE GAME's NAME takes the character before the caret off the screen at once: the box holds
+/// and draws what it did before that character was typed. 1998's text box cleared the character after the caret, so the
+/// one deleted stayed on show until the next one typed (MCGuiTextObject's OB-067, gone from the menus with the 1998
+/// screens).
+/// </summary>
+TEST_CASE_ISOLATED("game: Backspace in SAVE GAME's NAME takes the character off the screen at once")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    // The menus' clock held, so the caret shows alike in every frame drawn.
+    double clock = 0.0;
+    MCRmlFlow::Menus().SetClock([&clock] { return clock; });
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Save()));
+    RunWhileChanging();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& screen = MCSavesMenu::Screen()->get();
+    Rml::Element& name = ElementOf(screen, "name");
+    const auto shown = [&name] { return name.GetAttribute<Rml::String>("value", ""); };
+
+    // A character typed at the name's end, and the box as drawn then; another typed after it.
+    ClickOn(name);
+    MCScreenInput::RealKey(SDL_SCANCODE_END);
+    TypeText("a");
+    const std::string typed = screen.Name();
+    const std::vector<uint8_t> drawn = MenusDrawn();
+    TypeText("b");
+    CHECK_EQ(screen.Name(), typed + "b");
+    CHECK(MenusDrawn() != drawn);
+
+    // Backspace: the second gone from the name and from the screen.
+    MCScreenInput::RealKey(SDL_SCANCODE_BACKSPACE);
+    CHECK_EQ(screen.Name(), typed);
+    CHECK_EQ(shown(), typed);
+    CHECK(MenusDrawn() == drawn);
 }

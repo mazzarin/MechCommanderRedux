@@ -40,7 +40,6 @@
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
-#include "logistics/MCArtWords.h"
 #include "main/MCInventoryList.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCDeploy.h"
@@ -101,6 +100,7 @@
 #include "sprite/MCElementalTree.h"
 #include "sprite/MCGVAppearanceType.h"
 #include "sprite/MCHdArt.h"
+#include "ui/MCRmlArt.h"
 #include "ui/MCRmlMenus.h"
 #include "ui/MCRmlProbe.h"
 #include "sprite/MCPackRecords.h"
@@ -135,16 +135,19 @@
 #include "logistics/MCMainMenuModel.h"
 #include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
+#include "platform/MCUiDraws.h"
 // The final audit's screen tour and call stacks.
 #include "gui/MCUpdateDisplay.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCMissionNames.h"
 #include "main/MCLogMech.h"
 #include "mission/MCMission.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "MCVersion.h"
+#include <RmlUi/Core/Box.h>
 #include <random>
 #if __has_include(<execinfo.h>) && __has_include(<dlfcn.h>)
 #include <dlfcn.h>
@@ -13685,16 +13688,9 @@ namespace
 /// <summary>
 /// Tool: <c>--hd-extract-menus &lt;folder&gt;</c> writes every picture of the menus' and logistics' art for the HD art
 /// generator (tools/upscale/make_menu_pack.py): the TGAs in the install's FastFiles and the GIF packets of the GUI's art
-/// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from; and the
-/// pictures the port makes, which the pack draws in its font: every word the port's text buttons show
-/// (MCTextButtonLabels), named as the art's buttons are (<c>textbutton\b&lt;state&gt;_text_&lt;word&gt;.tga</c>, the
-/// state's letter h up, g pressed, n grayed); the 1998 main menu's UPDATE button as the menu's own are named
-/// (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>); the 1998 session screen's MATCH OPTIONS tabs
-/// (<c>matchtabs\lsbdw02_match.tga</c> behind MULTIPLAYER CHAT, <c>matchtabs\lsbdw03_match.tga</c> in front); the 1998
-/// results screen's REMATCH, named as the faces it is made from (<c>rematchbutton\mr_ms01_rematch.tga</c> up, <c>mr_ms02_rematch.tga</c> held);
-/// and MULTIPLAYER ACCESS's LAN button and the INTERNET screen's panel, named as the pictures they're made from
-/// (<c>lanbutton\b&lt;state&gt;_lan_lan.tga</c> on NETWORK's plates, <c>internetpanel\lan00_internet.tga</c>). The made
-/// words are logistics/MCArtWords.h's (stage 9's census decides whether new packs still make them: nothing draws them).
+/// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from. The words
+/// the port once made of the 1998 screens' pictures (the text buttons, UPDATE, the MATCH OPTIONS tabs, REMATCH, LAN and
+/// the INTERNET panel) aren't written: since SPEC-menus.md's stage 9 nothing looks them up.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD art generator")
 {
@@ -13714,27 +13710,6 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
     std::set<uint64_t> written;
     int32_t pictures = 0;
     int32_t skipped = 0;
-    // UPDATE is drawn in ORIGINAL CINEMA's colours, which its picture holds; MATCH OPTIONS' tabs in the tabs'.
-    constexpr std::string_view cinemaPicture = "mm_xbh08.tga";
-    std::optional<std::array<SDL_Color, 256>> cinemaColors;
-    constexpr std::string_view tabsPicture = "lsbdw02.tga";
-    std::optional<std::array<SDL_Color, 256>> tabsColors;
-    // REMATCH in its faces' own colours, as it is made: its up face's picture and its held one's.
-    constexpr std::string_view rematchUp = "mr_ms01.tga";
-    constexpr std::string_view rematchDown = "mr_ms02.tga";
-    std::map<std::string, std::optional<std::array<SDL_Color, 256>>, std::less<>> rematchColors = {
-        {std::string(rematchUp), std::nullopt}, {std::string(rematchDown), std::nullopt}};
-    // The LAN button in NETWORK's plates' colours, each state's; the INTERNET screen's panel in the LAN screen's.
-    constexpr std::array<std::pair<char, std::string_view>, 3> lanPlates = {
-        {{'h', "bh_lan.tga"}, {'g', "bg_lan.tga"}, {'n', "bn_lan.tga"}}};
-    constexpr std::string_view lanPanel = "lan00.tga";
-    std::map<std::string, std::optional<std::array<SDL_Color, 256>>, std::less<>> madeColors = {
-        {std::string(lanPanel), std::nullopt}};
-
-    for (const auto& [state, plate] : lanPlates)
-    {
-        madeColors.emplace(plate, std::nullopt);
-    }
 
     ForEachPicture(colors, skipped,
                    [&](std::string_view source, std::span<const uint8_t> pixels, int32_t width, int32_t height,
@@ -13742,124 +13717,7 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
                    {
                        WritePicture(folder, manifest, source, pixels, width, height, pictureColors, written);
                        ++pictures;
-                       std::string file(source.substr(source.find_last_of("\\/") + 1));
-                       std::ranges::transform(file, file.begin(),
-                                              [](char c) { return static_cast<char>(std::tolower(c)); });
-
-                       if (file == cinemaPicture)
-                       {
-                           cinemaColors.emplace();
-                           std::ranges::copy(pictureColors, cinemaColors->begin());
-                       }
-
-                       if (file == tabsPicture)
-                       {
-                           tabsColors.emplace();
-                           std::ranges::copy(pictureColors, tabsColors->begin());
-                       }
-
-                       if (const auto face = rematchColors.find(file); face != rematchColors.end())
-                       {
-                           std::ranges::copy(pictureColors, face->second.emplace().begin());
-                       }
-
-                       if (const auto made = madeColors.find(file); made != madeColors.end())
-                       {
-                           std::ranges::copy(pictureColors, made->second.emplace().begin());
-                       }
                    });
-
-    // The main menu's UPDATE button, from the 1998 main menu's palette (its background's, mainScreen.fit's first
-    // element's: no 1998 screen is made since SPEC-menus.md's stage 9).
-    REQUIRE(cinemaColors.has_value());
-    MCFitIniFile mainScreenFit;
-    REQUIRE_EQ(mainScreenFit.Open(GamePath(ArtPath, "mainScreen", ".fit")), 0);
-    REQUIRE_EQ(mainScreenFit.SeekBlock("Element0"), 0);
-    const MCFitResult<std::string> mainScreenArt = mainScreenFit.Read<std::string>("NormalArt");
-    REQUIRE(mainScreenArt.has_value());
-    const std::vector<uint8_t> mainScreenPalette = mainScreenFit.Read<bool>("UseBackPalette").value_or(false)
-                                                       ? PaletteFromArt(*mainScreenArt)
-                                                       : std::vector<uint8_t>();
-    mainScreenFit.Close();
-    const MCButtonPictures update = UpdateButtonPictures(mainScreenPalette);
-
-    for (const auto& [state, picture] :
-         {std::pair{'h', update.Up}, std::pair{'g', update.Down}, std::pair{'n', update.Gray}})
-    {
-        WritePicture(folder, manifest, std::format("updatebutton\\mm_xb{}_update.tga", state), picture->Pixels(),
-                     picture->Width(), picture->Height(), *cinemaColors, written);
-        ++pictures;
-    }
-
-    // The 1998 session screen's MATCH OPTIONS tabs, named as the tabs they're made from.
-    REQUIRE(tabsColors.has_value());
-
-    for (const auto& [front, name] : {std::pair{MCSessionTab::Chat, "matchtabs\\lsbdw02_match.tga"},
-                                      std::pair{MCSessionTab::Options, "matchtabs\\lsbdw03_match.tga"}})
-    {
-        const std::shared_ptr<MCLogPort> tabs = MakeMatchTabs(front);
-        REQUIRE(tabs != nullptr);
-        WritePicture(folder, manifest, name, tabs->Pixels(), tabs->Width(), tabs->Height(), *tabsColors, written);
-        ++pictures;
-    }
-
-    // The 1998 results screen's REMATCH, named as the faces it's made from.
-    const MCRematchFaces rematch = RematchFaces();
-    REQUIRE(rematch.Up != nullptr);
-    REQUIRE(rematch.Down != nullptr);
-
-    for (const auto& [picture, face] : {std::pair{rematch.Up, rematchUp}, std::pair{rematch.Down, rematchDown}})
-    {
-        const std::optional<std::array<SDL_Color, 256>>& faceColors = rematchColors.at(std::string(face));
-        REQUIRE(faceColors.has_value());
-        const std::string name = std::format("rematchbutton\\{}_rematch.tga", face.substr(0, face.find('.')));
-        WritePicture(folder, manifest, name, picture->Pixels(), picture->Width(), picture->Height(), *faceColors,
-                     written);
-        ++pictures;
-    }
-
-    // MULTIPLAYER ACCESS's LAN button and the INTERNET screen's panel.
-    const std::optional<MCButtonPictures> lan = MCLanButtonPictures();
-    REQUIRE(lan.has_value());
-
-    for (const auto& [state, plate] : lanPlates)
-    {
-        const std::optional<std::array<SDL_Color, 256>>& plateColors = madeColors.at(std::string(plate));
-        REQUIRE(plateColors.has_value());
-        const std::shared_ptr<MCLogPort>& picture = state == 'h' ? lan->Up : state == 'g' ? lan->Down : lan->Gray;
-        WritePicture(folder, manifest, std::format("lanbutton\\b{}_lan_lan.tga", state), picture->Pixels(),
-                     picture->Width(), picture->Height(), *plateColors, written);
-        ++pictures;
-    }
-
-    const std::shared_ptr<MCLogPort> internetPanel = MCInternetPanel();
-    REQUIRE(internetPanel != nullptr);
-    const std::optional<std::array<SDL_Color, 256>>& panelColors = madeColors.at(std::string(lanPanel));
-    REQUIRE(panelColors.has_value());
-    WritePicture(folder, manifest, "internetpanel\\lan00_internet.tga", internetPanel->Pixels(), internetPanel->Width(),
-                 internetPanel->Height(), *panelColors, written);
-    ++pictures;
-
-    // Every word the port's text buttons show, in the preferences' colours (ACCEPT's, whose pictures they're made of):
-    // the 1998 preferences kept the palette shown, logistics' (MCGenericScreen::ShowGuiWindow), and none is made since
-    // SPEC-menus.md's stage 9.
-    MCTestGame::RunFrame(FrameSeconds);
-    MCInput::Display()->GetShownColors(colors);
-
-    for (const std::string_view label : MCTextButtonLabels)
-    {
-        std::string word(label);
-        std::ranges::transform(word, word.begin(), [](char c) { return static_cast<char>(std::tolower(c)); });
-        const MCButtonPictures faces = MCTextButtonPictures(label);
-
-        for (const auto& [state, picture] :
-             {std::pair{'h', faces.Up}, std::pair{'g', faces.Down}, std::pair{'n', faces.Gray}})
-        {
-            WritePicture(folder, manifest, std::format("textbutton\\b{}_text_{}.tga", state, word), picture->Pixels(),
-                         picture->Width(), picture->Height(), colors, written);
-            ++pictures;
-        }
-    }
 
     std::cout << std::format("  {} pictures ({} distinct) in {}, {} skipped\n", pictures, written.size(),
                              folder.string(), skipped);
@@ -21107,6 +20965,231 @@ TEST_CASE_ISOLATED("game: a mission's first crater and footprint need no unpack 
                              FramesReadOnTheGamesThread() - trimmed);
     CHECK(FramesReadOnTheGamesThread() > trimmed);
     MCHdArt::SetCacheBudget(0);
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+namespace
+{
+    /// <summary>The pilots' portraits in the game's art (data\art\pilot##.tga), which the remade screens show as art:.</summary>
+    constexpr std::string_view ArtFolder = "data\\art\\";
+    constexpr std::string_view PortraitStart = "pilot";
+    constexpr std::string_view TgaEnding = ".tga";
+    /// <summary>The results' count's ticks a test frame (as the results tests count it), and the most frames it takes.</summary>
+    constexpr uint32_t ResultsTicksPerFrame = 5;
+    constexpr int32_t ResultsMostFrames = 3000;
+    /// <summary>A campaign mission won (single player's results: above 3 a win).</summary>
+    constexpr uint32_t ResultsWon = 5;
+    /// <summary>The results' pilots' faces (ui/results.rml), a row each in the pilots' order.</summary>
+    constexpr const char* ResultsFaces = ".pilot-row .face";
+    /// <summary>How far a picture's corner may be outside its face's box (a pixel's rounding).</summary>
+    constexpr float FaceSlack = 1.0f;
+
+    struct PortraitSize
+    {
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Writes an HD copy of every pilot's portrait into <paramref name="pack"/>'s pictures (archived, as the shipped pack
+    /// holds them), each named as MCRmlArt looks an art: picture up (its pixels' hash, MCHdArt::FindPicture), at the
+    /// test pack's scale in inverted colours; each portrait's size, by its name after art: in lower case.
+    /// </summary>
+    std::map<std::string, PortraitSize> WritePortraits(const std::filesystem::path& pack,
+                                                       std::span<const SDL_Color, 256> shown)
+    {
+        std::filesystem::create_directories(PictureFolderOf(pack));
+        std::map<std::string, PortraitSize> portraits;
+        int32_t skipped = 0;
+
+        ForEachPicture(shown, skipped,
+                       [&](std::string_view source, std::span<const uint8_t> pixels, int32_t width, int32_t height,
+                           std::span<const SDL_Color, 256> colors)
+                       {
+                           const std::string name = MCMissionNames::Lowered(source);
+
+                           if (!name.starts_with(ArtFolder) || !name.ends_with(TgaEnding) ||
+                               !name.substr(ArtFolder.size()).starts_with(PortraitStart) ||
+                               name.find('\\', ArtFolder.size()) != std::string::npos)
+                           {
+                               return;
+                           }
+
+                           DecodedFrame picture;
+                           picture.Width = width;
+                           picture.Height = height;
+                           picture.Index.assign(pixels.begin(), pixels.end());
+                           picture.Drawn.assign(picture.Index.size(), 1);
+                           WriteFramePngs(PictureFolderOf(pack) /
+                                              MCHdArt::PictureName(MCHdArt::PictureHash(pixels, width, height)),
+                                          picture, colors, TestPackScale, Inverted, false);
+                           const size_t named = name.size() - ArtFolder.size() - TgaEnding.size();
+                           portraits[name.substr(ArtFolder.size(), named)] = {width, height};
+                       });
+
+        WritePaletteRgb(pack, shown);
+        ArchiveFolderPngs(PictureFolderOf(pack), TestPackScale);
+        return portraits;
+    }
+
+    /// <summary>The name after art: in a face's decorator (MCCampaignMenu::Pictured), in lower case; empty without one.</summary>
+    std::string PortraitOf(std::string_view face)
+    {
+        const size_t at = face.find(MCRmlArt::Scheme);
+
+        if (at == std::string_view::npos)
+        {
+            return {};
+        }
+
+        const std::string_view rest = face.substr(at + MCRmlArt::Scheme.size());
+        return MCMissionNames::Lowered(rest.substr(0, rest.find_first_of(" )")));
+    }
+
+    /// <summary>
+    /// The picture the menus' frame draws inside each of <paramref name="results"/>' pilots' faces, by row (none where a
+    /// face isn't drawn): the frame recorded again, the one presented as nothing changed since (MCRmlMenus::Frame).
+    /// </summary>
+    std::vector<std::shared_ptr<const MCUiTexture>> FacesDrawn(const MCResultsScreen& results)
+    {
+        const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
+        REQUIRE(menus.has_value());
+        const std::shared_ptr<const MCUiDraws> frame = menus->get().Frame();
+        const MCOptionalRef<Rml::ElementDocument> document = results.Document();
+        REQUIRE(document.has_value());
+        Rml::ElementList faces;
+        document->get().QuerySelectorAll(faces, ResultsFaces);
+        std::vector<std::shared_ptr<const MCUiTexture>> drawn(faces.size());
+
+        for (size_t row = 0; row < faces.size() && frame != nullptr; ++row)
+        {
+            if (!faces[row]->IsVisible(true))
+            {
+                continue;
+            }
+
+            const Rml::Vector2f at = faces[row]->GetAbsoluteOffset(Rml::BoxArea::Border);
+            const Rml::Vector2f size = faces[row]->GetBox().GetSize(Rml::BoxArea::Border);
+            const auto inside = [&at, &size](const SDL_Rect& target)
+            {
+                return static_cast<float>(target.x) >= at.x - FaceSlack &&
+                       static_cast<float>(target.y) >= at.y - FaceSlack &&
+                       static_cast<float>(target.x + target.w) <= at.x + size.x + FaceSlack &&
+                       static_cast<float>(target.y + target.h) <= at.y + size.y + FaceSlack;
+            };
+
+            for (const MCUiDraw& draw : frame->Draws)
+            {
+                if (draw.Texture == nullptr)
+                {
+                    continue;
+                }
+
+                for (const MCUiPiece& piece : MCUiPieces(draw))
+                {
+                    if (piece.Quad.has_value() && inside(piece.Quad->Target))
+                    {
+                        drawn[row] = draw.Texture;
+                    }
+                }
+            }
+        }
+
+        return drawn;
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 9): with HD art on, the remade results draw each pilot's face from the pack's HD copy
+/// from the first frame it shows, as their later frames do, never the original's pixels for a frame (you, 19 Nov, of the
+/// 1998 results: "can you fix this so it doesn't ever load the 1998 pixels for one frame"): campaign mission 1 won with a
+/// pack holding every pilot's portrait under the name MCRmlArt looks an art: picture up by (its pixels' hash), at the
+/// test pack's scale in inverted colours. Each face's picture on the frame its row is first drawn is that copy (smooth, the
+/// portrait's size times the pack's scale), and the one the count's end draws.
+/// </summary>
+TEST_CASE_ISOLATED("game: the remade results' first frame shows the pilots' HD faces, as its later frames do")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_results_faces";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const std::map<std::string, PortraitSize> portraits = WritePortraits(pack, colors);
+    REQUIRE(!portraits.empty());
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+
+    // Won as the game decides it, the count's clock the test's (the mouse timer stopped, as the results tests stop it);
+    // each face's picture kept from the first frame it's drawn.
+    MouseTimerKill();
+
+    for (int32_t i = 0; i < Scenario()->Objectives.Count(); i++)
+    {
+        Scenario()->Objectives[i].Status = MCScenarioObjective::Succeeded;
+    }
+
+    ScenarioResult = ResultsWon;
+    std::shared_ptr<MCResultsScreen> results;
+    std::vector<std::shared_ptr<const MCUiTexture>> first;
+
+    for (int32_t frame = 0; frame < ResultsMostFrames && (results == nullptr || !Mission()->ResultsFinished()); ++frame)
+    {
+        if (results != nullptr)
+        {
+            MouseTicks += ResultsTicksPerFrame;
+        }
+
+        MCTestGame::RunFrame(FrameSeconds);
+        results = MCRemadeTest::OnTop<MCResultsScreen>(MCRemadeTest::MCLayer::Mission);
+
+        if (results == nullptr)
+        {
+            continue;
+        }
+
+        const std::vector<std::shared_ptr<const MCUiTexture>> drawn = FacesDrawn(*results);
+        first.resize(drawn.size());
+
+        for (size_t row = 0; row < drawn.size(); ++row)
+        {
+            if (first[row] == nullptr)
+            {
+                first[row] = drawn[row];
+            }
+        }
+    }
+
+    REQUIRE(results != nullptr);
+    REQUIRE(Mission()->ResultsFinished());
+    MCTestGame::RunFrame(FrameSeconds);
+    const std::vector<std::shared_ptr<const MCUiTexture>> last = FacesDrawn(*results);
+    REQUIRE(!results->Pilots().empty());
+    REQUIRE_EQ(last.size(), results->Pilots().size());
+    REQUIRE_EQ(first.size(), last.size());
+
+    for (size_t row = 0; row < last.size(); ++row)
+    {
+        const MCResultsScreen::MCPilotRow& pilot = results->Pilots()[row];
+        const MCTest::Scope scope(std::format("{}'s face, {}", pilot.Name, pilot.Face));
+        const auto portrait = portraits.find(PortraitOf(pilot.Face));
+        REQUIRE(portrait != portraits.end());
+        REQUIRE(first[row] != nullptr);
+        CHECK(first[row]->Smooth);
+        CHECK_EQ(first[row]->Width, portrait->second.Width * TestPackScale);
+        CHECK_EQ(first[row]->Height, portrait->second.Height * TestPackScale);
+        REQUIRE(last[row] != nullptr);
+        CHECK_EQ(last[row]->Id, first[row]->Id);
+    }
+
+    std::cout << std::format("  {} pilots' faces drawn from the pack's copies from their first frame\n", last.size());
     hdArt.reset();
     std::filesystem::remove_all(scratch);
 }

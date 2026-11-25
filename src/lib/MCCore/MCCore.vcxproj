@@ -183,7 +183,6 @@
     <ClCompile Include="linkup\MCSessionManagerPlayers.cpp" />
     <ClCompile Include="linkup\MCSessionManagerReceive.cpp" />
     <ClCompile Include="linkup\MCSessionManagerSend.cpp" />
-    <ClCompile Include="logistics\MCArtWords.cpp" />
     <ClCompile Include="logistics\MCBriefingText.cpp" />
     <ClCompile Include="logistics\MCCampaignMenu.cpp" />
     <ClCompile Include="logistics\MCChatView.cpp" />
@@ -694,7 +693,6 @@
     <ClInclude Include="linkup\MCFidpSession.h" />
     <ClInclude Include="linkup\MCLinkupMessages.h" />
     <ClInclude Include="linkup\MCSessionManager.h" />
-    <ClInclude Include="logistics\MCArtWords.h" />
     <ClInclude Include="logistics\MCBriefingText.h" />
     <ClInclude Include="logistics\MCCampaignMenu.h" />
     <ClInclude Include="logistics\MCChatView.h" />
@@ -777,7 +775,6 @@
     <ClInclude Include="mission\MCMissionEnd.h" />
     <ClInclude Include="mission\MCMissionResults.h" />
     <ClInclude Include="mission\MCNightLights.h" />
-    <ClInclude Include="mission\MCRematchLetters.h" />
     <ClInclude Include="mission\MCResultsMenu.h" />
     <ClInclude Include="mission\MCResultsReads.h" />
     <ClInclude Include="mission\MCScenario.h" />

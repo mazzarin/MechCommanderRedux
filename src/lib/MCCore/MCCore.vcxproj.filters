@@ -480,9 +480,6 @@
     <ClCompile Include="linkup\MCSessionManagerSend.cpp">
       <Filter>linkup</Filter>
     </ClCompile>
-    <ClCompile Include="logistics\MCArtWords.cpp">
-      <Filter>logistics</Filter>
-    </ClCompile>
     <ClCompile Include="logistics\MCBriefingText.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -1924,9 +1921,6 @@
     <ClInclude Include="linkup\MCSessionManager.h">
       <Filter>linkup</Filter>
     </ClInclude>
-    <ClInclude Include="logistics\MCArtWords.h">
-      <Filter>logistics</Filter>
-    </ClInclude>
     <ClInclude Include="logistics\MCBriefingText.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -2167,9 +2161,6 @@
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCNightLights.h">
-      <Filter>mission</Filter>
-    </ClInclude>
-    <ClInclude Include="mission\MCRematchLetters.h">
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCResultsMenu.h">

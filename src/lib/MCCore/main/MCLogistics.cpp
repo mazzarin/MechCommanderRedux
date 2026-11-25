@@ -117,16 +117,8 @@ MCLogistics::MCLogistics()
 
 namespace
 {
-    /// <summary>A new <paramref name="width"/> x <paramref name="height"/> port with its own bitmap.</summary>
-    std::shared_ptr<MCLogPort> NewPort(int32_t width, int32_t height)
-    {
-        auto port = std::make_shared<MCLogPort>();
-        port->Init(width, height);
-        return port;
-    }
-
     /// <summary>
-    /// Loads the whole of an opened shape file into a block registered as shapes (the repair and icon shapes): with HD
+    /// Loads the whole of an opened shape file into a block registered as shapes (the units' icon shapes): with HD
     /// art's numbered folders drawn, the pack's copy (MCShapeFile).
     /// </summary>
     MCRegisteredBlock ReadShapeFile(MCShapeFile& file, std::string_view sizeError)

@@ -123,13 +123,6 @@ namespace MCTestGame
     std::filesystem::path UserFolder();
 
     /// <summary>
-    /// Port-only (SPEC-menus.md's stage 9): what of the 1998 menus is made, if anything: their classes are gone with
-    /// them, so their art loaded (logistics', or what a mission keeps of it); none otherwise. Every frame checks it
-    /// (RunFrame).
-    /// </summary>
-    std::optional<std::string> OldMenusMade();
-
-    /// <summary>
     /// While it lives, the game's save folder (SavePath, and the folder logistics' file panes list) is a folder of the
     /// tests' user folder holding copies of what the game ships in its own (campaign starts, solo missions, multiplayer
     /// maps) and, of saves, just those it names (empty files: the load screen lists each by name, without an operation,
@@ -187,10 +180,10 @@ namespace MCTestGame
         RepairShapes(const RepairShapes&) = delete;
         RepairShapes& operator=(const RepairShapes&) = delete;
 
-        /// <summary>By mech name index.</summary>
-        decltype(MCLogisticsArtFiles::MechRepShapes) Mechs;
+        /// <summary>By mech name index (as logistics' icon shapes).</summary>
+        decltype(MCLogisticsArtFiles::MechIconShapes) Mechs;
         /// <summary>By vehicle icon; none where the file is missing.</summary>
-        decltype(MCLogisticsArtFiles::VehicleRepShapes) Vehicles;
+        decltype(MCLogisticsArtFiles::VehicleIconShapes) Vehicles;
     };
 
     /// <summary>

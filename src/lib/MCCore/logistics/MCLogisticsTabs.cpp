@@ -2031,7 +2031,11 @@ void MCLogisticsTabs::OfferDeal(const MCThing& thing)
                 return;
             }
 
-            deal = {.Thing = thing, .Each = component.ResourcePoints, .Most = part->Count, .Type = BuyPartType};
+            // A part the store has no limit of counts to 1998's most.
+            deal = {.Thing = thing,
+                    .Each = component.ResourcePoints,
+                    .Most = MCStore::MostParts(part->Count),
+                    .Type = BuyPartType};
         }
         else
         {

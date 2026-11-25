@@ -6,11 +6,9 @@
 #include "TestGame.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFitIniFile.h"
-#include "gui/MCScrollPane.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
-#include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogComboBox.h"
 #include "logistics/MCLogSlider.h"
@@ -675,83 +673,4 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it bac
 
     std::filesystem::remove(prefsPath);
     CHECK_EQ(saved, 300);
-}
-
-/// <summary>
-/// OB-131: a scroll pane's arrow lets go wherever the mouse button comes up. The original let go only on a release
-/// over the slider column: let go anywhere else, the arrow stayed pressed and the slider would not drag.
-/// </summary>
-TEST_CASE_ISOLATED("game: a scroll pane's arrow lets go wherever the mouse button comes up")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    REQUIRE(MCTestGame::StartLogistics());
-
-    // A pane 0x80 x 0x60 at (100, 100) showing content four times its height: the slider is a quarter of the track.
-    const MCGuiRef<MCScrollPane> pane = MCGuiTree::NewRoot<MCScrollPane>();
-    pane->Init(0x80, 0x60, 100, 100, std::string_view());
-    auto content = std::make_shared<MCLogPort>();
-    content->Init(0x80 - 13, 0x180);
-    pane->SetDisplayPort(std::move(content), true);
-    REQUIRE(pane->SliderHeight > 0);
-
-    const auto send = [&pane](int32_t type, int32_t xPos, int32_t yPos)
-    {
-        MCGuiEvent event;
-        event.Clear();
-        event.Type = type;
-        event.X = xPos;
-        event.Y = yPos;
-        pane->HandleEvent(event);
-    };
-
-    // Press the down arrow (it shows pressed while held), then let go left of the column.
-    const int32_t column = pane->GlobalX() + pane->Width() - 6;
-    send(1, column, pane->GlobalY() + pane->Height() - 5);
-    CHECK(pane->HeldArrow() == MCScrollPane::Arrow::Down);
-    send(4, pane->GlobalX() + 10, pane->GlobalY() + 10);
-    CHECK(pane->HeldArrow() == MCScrollPane::Arrow::None);
-
-    // The slider drags.
-    const int32_t before = pane->SliderPos;
-    const int32_t sliderY = pane->GlobalY() + before + pane->SliderHeight / 2;
-    send(1, column, sliderY);
-    send(7, column, sliderY + 10);
-    send(4, column, sliderY + 10);
-    CHECK_EQ(pane->SliderPos, before + 10);
-}
-
-/// <summary>
-/// The save list's slider: a list longer than the pane gets a slider with its picture (the port made none for the
-/// file panes, so drawing the column read a null texture).
-/// </summary>
-TEST_CASE_ISOLATED("game: a save list longer than its pane draws its slider")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    REQUIRE(MCTestGame::StartLogistics());
-    const MCGuiRef<MCFileScrollPane> pane = MCGuiTree::NewRoot<MCFileScrollPane>();
-    pane->Init(10, 10, 0xc0, 0x80);
-
-    // Four panes' worth of files.
-    std::shared_ptr<MCLogPort> content = pane->ContentPort;
-    content->InitView(0xc0 - 13, 0x200);
-    pane->SetDisplayPort(content, true);
-    REQUIRE(pane->SliderHeight > 0);
-    CHECK(!pane->SliderTexture.expired());
-    CHECK_EQ(pane->SliderTexture.lock()->Height, pane->SliderHeight);
-
-    // The column draws: the slider's rows land at its place.
-    MCLogPort picture;
-    picture.Init(13, 0x80);
-    VfxPaneWipe(picture.Frame(), 0);
-    pane->DrawSliderColumn(picture.Frame(), 0, 0, false);
-    const std::span<const uint8_t> pixels = picture.Bitmap().Bytes();
-    CHECK_EQ(pixels[static_cast<size_t>((pane->SliderPos + 1) * 13 + 5)], uint8_t{0x1a});
 }

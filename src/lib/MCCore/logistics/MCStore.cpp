@@ -157,6 +157,11 @@ int32_t MCStore::MostUnits(int32_t available)
     return MaxPurchase(available);
 }
 
+int32_t MCStore::MostParts(int32_t inStore)
+{
+    return inStore < 0 ? MostInADeal : inStore;
+}
+
 bool MCStore::PaysFor(int32_t each, int32_t quantity)
 {
     return static_cast<int64_t>(each) * (quantity + 1) <= ResourcePoints;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "logistics/MCLogDialogBox.h"
+#include "logistics/MCStore.h"
 
 /// <summary>
 /// The buy/sell dialog: shows the unit cost, a quantity spinner and the resource points left, and calls
@@ -10,8 +11,8 @@
 class MCPurchaseDlg : public MCLogDialogBox
 {
 public:
-    /// <summary>The most a spinner goes to (a game rule; also the quantity when none is given).</summary>
-    static constexpr int32_t MaxSpinnerQuantity = 199;
+    /// <summary>The most a spinner goes to (a game rule, the store's; also the quantity when none is given).</summary>
+    static constexpr int32_t MaxSpinnerQuantity = MCStore::MostInADeal;
     /// <summary>The most a held arrow repeats up to.</summary>
     static constexpr int32_t MaxRepeatQuantity = 200;
     /// <summary>The spinner's repeat timer (its id, and every 200 ms).</summary>

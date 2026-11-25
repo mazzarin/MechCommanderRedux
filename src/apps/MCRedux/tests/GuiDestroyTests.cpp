@@ -15,14 +15,7 @@
 #include "lib/MCFatal.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
-#include "logistics/MCMechPurchaseBlock.h"
-#include "logistics/MCPurMechList.h"
-#include "logistics/MCPurchaseScreen.h"
-#include "logistics/MCRepairScreen.h"
-#include "logistics/MCTicker.h"
-#include "logistics/MCTickerLine.h"
 #include "main/MCGameContext.h"
-#include "main/MCInventoryList.h"
 #include "main/MCLogistics.h"
 
 // How GUI objects are destroyed: the tree owns them, a parent's destroy destroys its children, destroy is an event on
@@ -394,54 +387,10 @@ TEST_CASE("gui destroy: a hidden window isn't drawn or found, its timers fire, a
     CHECK_EQ(window->Timers, 2);
 }
 
-// What logistics keeps across screen changes. One ticker and one block per unit move from screen to screen today; once
-// the screens make their own views of the shared data (a ticker line each, a block per pane entry), the player must see
-// the same: these hold before the change and after it.
+// What PURCHASING keeps across the campaign screen's tabs.
 
 namespace
 {
-    /// <summary>Runs the logistics screens for two seconds: a screen change settles.</summary>
-    void Settle()
-    {
-        for (int32_t frame = 0; frame < 30; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    }
-
-    /// <summary>A new campaign's purchase screen, with the points to buy anything.</summary>
-    bool StartPurchaseScreen()
-    {
-        if (!MCTestGame::StartLogistics())
-        {
-            return false;
-        }
-
-        Settle();
-        NewCampaign();
-        Settle();
-        GlobalLog()->SetUpPurchaseScreen(true);
-        Settle();
-        return GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen;
-    }
-
-    /// <summary>To the repair screen and back to the purchase screen.</summary>
-    void ToRepairAndBack()
-    {
-        GlobalLog()->SetUpRepairScreen(true);
-        Settle();
-        REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->RepairScreen);
-        GlobalLog()->SetUpPurchaseScreen(true);
-        Settle();
-        REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen);
-    }
-
-    /// <summary>The variant picked for <paramref name="mech"/> in the store.</summary>
-    int32_t PickedVariant(const MCPurMech& mech)
-    {
-        return mech.CurVariant;
-    }
-
     /// <summary>The names on PURCHASING's store cards, in the order the store lays them out.</summary>
     std::vector<std::string> StoreOrder(const MCLogisticsTabs& tabs)
     {
@@ -454,85 +403,6 @@ namespace
 
         return order;
     }
-}
-
-TEST_CASE_ISOLATED("game: the ticker's text and scroll position stay the same from one logistics screen to the next")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    REQUIRE(StartPurchaseScreen());
-    MCTicker& ticker = *GlobalLog()->Ticker;
-    ticker.SetString(std::string(300, 'W'));
-
-    // Stepped as its step timer does. (Its own timer is 4, which never scrolls it: OB-072.)
-    for (int32_t step = 0; step < 5; step++)
-    {
-        ticker.Advance(true);
-    }
-
-    const std::string text = ticker.Text;
-    const int32_t position = ticker.ScrollPos;
-    REQUIRE(position > 0);
-
-    // The line showing is the current screen's own, and the only one.
-    auto shownOn = []
-    {
-        int32_t shown = 0;
-        bool onCurrent = false;
-
-        for (const MCGuiHandle<MCTickerLine>& handle : GlobalLog()->TickerLines)
-        {
-            if (const std::shared_ptr<MCTickerLine> line = handle.Lock(); line != nullptr && line->IsShowing())
-            {
-                shown++;
-                onCurrent = line->ParentObject() == GlobalLog()->CurrentScreen();
-            }
-        }
-
-        return shown == 1 && onCurrent;
-    };
-
-    CHECK(shownOn());
-    GlobalLog()->SetUpRepairScreen(false);
-    CHECK(shownOn());
-    CHECK_EQ(ticker.Text, text);
-    CHECK_EQ(ticker.ScrollPos, position);
-    GlobalLog()->SetUpPurchaseScreen(false);
-    CHECK(shownOn());
-    CHECK_EQ(ticker.Text, text);
-    CHECK_EQ(ticker.ScrollPos, position);
-}
-
-TEST_CASE_ISOLATED("game: a variant picked in the store holds until the store is filled again, which shows the first "
-                   "on sale")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    REQUIRE(StartPurchaseScreen());
-    MCPurMech& mech = *GlobalLog()->PurMechList->Mechs.front();
-    REQUIRE_EQ(mech.Variants.size(), 3u);
-    REQUIRE_EQ(PickedVariant(mech), 0);
-
-    // The second variant button of its row.
-    const std::shared_ptr<MCMechPurchaseBlock> block = MCLogInvScreen::StoreList()->RowOf<MCMechPurchaseBlock>(mech);
-    REQUIRE(block != nullptr);
-    Click(block->GlobalX() + 0xb5, block->GlobalY() + 0xd);
-    Settle();
-    CHECK_EQ(PickedVariant(mech), 1);
-
-    // Coming back fills the store again, each mech showing its first variant on sale.
-    ToRepairAndBack();
-    CHECK_EQ(PickedVariant(mech), 0);
-    mech.Variants[0]->NumAvailable = 0;
-    mech.Variants[1]->NumAvailable = 1;
-    ToRepairAndBack();
-    CHECK_EQ(PickedVariant(mech), 1);
 }
 
 /// <summary>

@@ -992,3 +992,59 @@ TEST_CASE_ISOLATED("game: LOAD GAME and SAVE GAME work from the mouse")
     CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
 }
+
+/// <summary>
+/// OB-161 on the remade SAVE GAME: a save picked puts its name in NAME, so a shorter one's goes in after a longer one's;
+/// a key typed after it then follows the shorter name alone. 1998's text box ended a text set into it but not a
+/// character typed into it, so a key typed after the shorter name brought back what the longer one had left past its
+/// end ("Annz, second try" for "Annz": the 1998 box's own, kept there as OB-161).
+/// </summary>
+TEST_CASE_ISOLATED("game: SAVE GAME's NAME, a shorter save's name put in after a longer one's, takes a key typed after "
+                   "it alone (OB-161)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Longer = "Kaio, second try";
+    constexpr std::string_view Shorter = "Ann";
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+    REQUIRE_EQ(MCLogistics::SaveCampaign(Longer), 0);
+    REQUIRE_EQ(MCLogistics::SaveCampaign(Shorter), 0);
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Save()));
+    RunWhileChanging();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& screen = MCSavesMenu::Screen()->get();
+    const auto rowOf = [&screen](std::string_view name)
+    {
+        const auto found = std::ranges::find(screen.Saves(), name);
+        REQUIRE(found != screen.Saves().end());
+        return static_cast<int>(found - screen.Saves().begin());
+    };
+
+    Rml::Element& name = ElementOf(screen, "name");
+    const auto shown = [&name] { return name.GetAttribute<Rml::String>("value", ""); };
+
+    // The longer save's name, typed into at its end; then the shorter one's.
+    ClickOn(RowOf(screen, rowOf(Longer)));
+    CHECK_EQ(screen.Name(), std::string(Longer));
+    ClickOn(name);
+    MCScreenInput::RealKey(SDL_SCANCODE_END);
+    ClickOn(RowOf(screen, rowOf(Shorter)));
+    CHECK_EQ(screen.Name(), std::string(Shorter));
+    CHECK_EQ(shown(), std::string(Shorter));
+
+    // A key typed after it: the shorter name and the key, nothing of the longer.
+    ClickOn(name);
+    MCScreenInput::RealKey(SDL_SCANCODE_END);
+    TypeText("z");
+    CHECK_EQ(screen.Name(), std::string(Shorter) + "z");
+    CHECK_EQ(shown(), std::string(Shorter) + "z");
+}

@@ -77,6 +77,19 @@ namespace MCStore
     /// </summary>
     int32_t MostUnits(int32_t available);
 
+    /// <summary>
+    /// The most one deal counts to: where 1998's purchase dialog's count stopped (its spinner's most), which a part the
+    /// store has no limit of counts to.
+    /// </summary>
+    inline constexpr int32_t MostInADeal = 199;
+
+    /// <summary>
+    /// How many of the store's part, <paramref name="inStore"/> in stock, one deal may buy: the stock, or
+    /// <see cref="MostInADeal"/> where the store has no limit of it (a stock below zero), as 1998's purchase dialog
+    /// counted.
+    /// </summary>
+    int32_t MostParts(int32_t inStore);
+
     /// <summary>Whether <paramref name="each"/> resource points pay for one more after <paramref name="quantity"/>.</summary>
     bool PaysFor(int32_t each, int32_t quantity);
 

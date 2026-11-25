@@ -974,6 +974,94 @@ TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space hol
 }
 
 /// <summary>
+/// OB-191 on the remade BRIEFING: PLAY pressed again at once, as a quick second click comes, plays the operation's video
+/// once, from its start, and on. A second click where PLAY is lands on the video window's veil; PLAY's own press while
+/// the window shows (MCCampaignScreen::PlayVideo, as a click or Space reaching it would) leaves the video as it is, at
+/// once and once its frames come; CLOSE at once leaves BRIEFING with nothing to start later. 1998's operation tab armed a
+/// start for each click, the later one stopping the movie the first had started, and the mission tab clicked just after
+/// left a start waiting, which flipped back to the movie (fixed on the 1998 briefing, MCBriefingScreen's OB-191).
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: BRIEFING's PLAY pressed again at once plays the operation's video once, from its start, and on "
+    "(OB-191)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr uint32_t FramesPlayed = 30;
+    constexpr int32_t MostFrames = 2400;
+    constexpr int32_t PlayOnFrames = 30;
+    constexpr int32_t LaterFrames = 180;
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    REQUIRE(screen.HasVideo());
+    const Rml::Element& play = ElementOf(screen, "play");
+    const auto playing = []() -> const MCOperationVideo*
+    {
+        const MCOptionalRef<MCOperationVideoWindow> window = MCVideoMenu::Window();
+
+        if (!window.has_value() || !window->get().Shown() || !window->get().Video().has_value())
+        {
+            return nullptr;
+        }
+
+        return &window->get().Video()->get();
+    };
+
+    // Two clicks on PLAY, the second at once: one video, from its start.
+    ClickOn(play);
+    const MCOperationVideo* const video = playing();
+    REQUIRE(video != nullptr);
+    ClickOn(play);
+    REQUIRE_EQ(playing(), video);
+    CHECK(!video->Paused());
+
+    // PLAY's press again at once: the same video, not started again.
+    const uint32_t started = video->Shown();
+    screen.PlayVideo();
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(playing(), video);
+    CHECK(video->Shown() >= started);
+
+    // Its frames come; PLAY's press while they do: it plays on, none shown again.
+    for (int32_t frame = 0; frame < MostFrames && video->Shown() < FramesPlayed; frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    REQUIRE_EQ(video->Shown(), FramesPlayed);
+    screen.PlayVideo();
+
+    for (int32_t frame = 0; frame < PlayOnFrames; frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    REQUIRE_EQ(playing(), video);
+    CHECK(video->Shown() > FramesPlayed);
+    CHECK(!video->Paused());
+
+    // CLOSE, then PLAY and Escape at once: BRIEFING, and nothing starts later.
+    ClickOn(ElementOf(MCVideoMenu::Window()->get(), "close"));
+    REQUIRE(playing() == nullptr);
+    screen.PlayVideo();
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(playing() != nullptr);
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+
+    for (int32_t frame = 0; frame < LaterFrames; frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    CHECK(!MCVideoMenu::Shown());
+    CHECK(MCCampaignMenu::Shown());
+    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
+}
+
+/// <summary>
 /// The operation's video held at its sixtieth frame over the briefing: on the software renderer, the whole window at
 /// 640x480, 1280x720 and 1280x1024, the hashes recorded; at every window the players' reports name, laid out and
 /// legible (MCRmlChecks). With <c>--shots</c> each picture is saved.

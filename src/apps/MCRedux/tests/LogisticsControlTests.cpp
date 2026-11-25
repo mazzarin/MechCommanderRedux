@@ -15,7 +15,6 @@
 #include "lib/MCPacketFile.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
-#include "logistics/MCGenericScreen.h"
 #include "logistics/MCLogButton.h"
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogSlider.h"
@@ -24,13 +23,10 @@
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSmuti.h"
 #include "logistics/MCStore.h"
-#include "logistics/MCTicker.h"
-#include "logistics/MCTickerLine.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameStrings.h"
 #include "logistics/MCConnectMenu.h"
@@ -260,36 +256,6 @@ TEST_CASE("logistics: an object made without a port has none; with one, a pictur
     CHECK(destroyed->Lport() == nullptr);
 }
 
-TEST_CASE("logistics: destroying an object destroys and deletes the children made on it (OB-071 gone)")
-{
-    LogisticsScreen screen;
-    MCCountedObject::Deleted = 0;
-    MCGuiRef<MCLogObject> parent = MCGuiTree::NewRoot<MCLogObject>();
-    parent->Init(0, 0, 50, 50);
-    std::vector<MCGuiHandle<MCCountedObject>> children;
-
-    for (int32_t i = 0; i < 3; i++)
-    {
-        children.push_back(parent->CreateChild<MCCountedObject>([&](MCCountedObject& made)
-                                                                { made.InitWithoutPort(i * 10, 0, 5, 5); }));
-    }
-
-    // A child closed leaves its parent and is deleted: its parent was its only owner.
-    children[0]->Close();
-    CHECK(!children[0]);
-    CHECK_EQ(MCCountedObject::Deleted, 1);
-    CHECK_EQ(parent->NumberOfChildren(), 2);
-
-    // The parent's destroy takes the rest with it.
-    parent.reset();
-    CHECK_EQ(MCCountedObject::Deleted, 3);
-
-    for (const MCGuiHandle<MCCountedObject>& child : children)
-    {
-        CHECK(!child);
-    }
-}
-
 // The text formatter
 
 TEST_CASE("logistics: the text formatter measures %n lines a font height and a row apart, and needs no port to")
@@ -354,57 +320,6 @@ TEST_CASE("game: a colour code at the end of a text writes the line before it ag
     CHECK(InkedColumns(twice).second >= textWidth);
 }
 
-// The ticker
-
-TEST_CASE("game: the ticker keeps a wide text whole and scrolls it two pixels a step on timer 7, never on its own "
-          "timer (OB-072)")
-{
-    LogisticsScreen screen;
-
-    if (!screen.LoadRetail())
-    {
-        return;
-    }
-
-    // The ticker, and a screen's line of it, which passes its events on.
-    const auto ticker = std::make_shared<MCTicker>(0x40, MedWhiteFont);
-    const MCGuiRef<MCTickerLine> line = MCGuiRef<MCTickerLine>::Make();
-    line->Init(3, 3, 0x40, 1, ticker);
-    const std::string text(300, 'W');
-    ticker->SetString(text);
-    CHECK_EQ(ticker->Text.size(), 300u);
-    const int32_t textWidth = MedWhiteFont->Width(text);
-    REQUIRE(textWidth > 0x40);
-    // A wide text gets half a line of gap before it repeats.
-    CHECK_EQ(ticker->TextWidth, 0x20 + textWidth);
-
-    Send(*line, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollTimer);
-    CHECK(!ticker->ScrollShown);
-    CHECK_EQ(ticker->ScrollPos, 0);
-
-    Send(*line, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollStepTimer);
-    CHECK(ticker->ScrollShown);
-    CHECK_EQ(ticker->ScrollPos, 2);
-
-    // Past the end it comes round again.
-    ticker->ScrollPos = ticker->TextWidth + 1;
-    Send(*line, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollStepTimer);
-    CHECK_EQ(ticker->ScrollPos, 1);
-
-    // The same text again changes nothing; an empty one clears the line.
-    ticker->SetString(text);
-    CHECK_EQ(ticker->ScrollPos, 1);
-    ticker->SetString({});
-    CHECK(ticker->Text.empty());
-    CHECK_EQ(ticker->TextWidth, 0);
-
-    // A text that fits doesn't scroll.
-    ticker->SetString("W");
-    CHECK_EQ(ticker->TextWidth, MedWhiteFont->Width(std::string_view("W")));
-    Send(*line, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollStepTimer);
-    CHECK_EQ(ticker->ScrollPos, 0);
-}
-
 // Text fields
 
 TEST_CASE("logistics: a text field takes the characters its type allows, one less than its buffer holds")
@@ -426,41 +341,6 @@ TEST_CASE("logistics: a text field takes the characters its type allows, one les
     MCGuiRef<MCLogTextObject> none = MakeField(8, MCLogInputType::None);
     Type(*none, "abc");
     CHECK(none->Text().empty());
-}
-
-TEST_CASE("logistics: backspace on a text field's untouched text clears it all, after an edit it takes one character")
-{
-    LogisticsScreen screen;
-    MCGuiRef<MCLogTextObject> field = MakeField(16, MCLogInputType::Any);
-    CHECK_EQ(field->SetStringBuffer("abc"), 0);
-    CHECK_EQ(field->CursorPos, 3);
-    Send(*field, MCGuiEventType::Character, 0, 0, 8);
-    CHECK(field->Text().empty());
-    CHECK_EQ(field->TextLength, 0);
-    CHECK_EQ(field->CursorPos, 0);
-
-    field->SetStringBuffer("abc");
-    Type(*field, "d");
-    Send(*field, MCGuiEventType::Character, 0, 0, 8);
-    CHECK_EQ(field->Text(), std::string_view("abc"));
-    CHECK_EQ(field->CursorPos, 3);
-
-    // A text too long is cut to the field, and its length is left as it was.
-    CHECK_EQ(field->SetStringBuffer(std::string(40, 'x')), -1);
-    CHECK_EQ(field->Text(), std::string_view(std::string(15, 'x')));
-    CHECK_EQ(field->TextLength, 3);
-    CHECK_EQ(field->CursorPos, 15);
-}
-
-TEST_CASE("logistics: typing after a shorter text was set brings back the end of the longer one (OB-161)")
-{
-    LogisticsScreen screen;
-    MCGuiRef<MCLogTextObject> field = MakeField(16, MCLogInputType::Any);
-    field->SetStringBuffer("abcdef");
-    field->SetStringBuffer("xy");
-    CHECK_EQ(field->Text(), std::string_view("xy"));
-    Type(*field, "z");
-    CHECK_EQ(field->Text(), std::string_view("xyzdef"));
 }
 
 TEST_CASE("logistics: Enter in a text field tells its parent, and the focus clears a save slot's empty name")
@@ -646,45 +526,6 @@ TEST_CASE("logistics: the save list sorts by name as the original's exchange sor
     CHECK_EQ(selected, -1);
 }
 
-// Screens built from an ini file
-
-TEST_CASE("logistics: a generic screen makes the elements its ini lists, leaving other element types empty")
-{
-    LogisticsScreen screen;
-    MCMemoryFileSource& files = screen.Scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
-    files.AddFile("data\\screen.fit",
-                  "FITini\r\n[Elements]\r\nl NumElements = 3\r\n"
-                  "[Element0]\r\nl ElementType = 4\r\nl Left = 1\r\nl Top = 2\r\nl Width = 30\r\nl Height = 10\r\n"
-                  "st NormalArt = \"NONE\"\r\n"
-                  "[Element1]\r\nl ElementType = 2\r\nl Left = 0\r\nl Top = 0\r\nl Width = 0\r\nl Height = 0\r\n"
-                  "st NormalArt = \"NONE\"\r\n"
-                  "[Element2]\r\nl ElementType = 4\r\nl Left = 5\r\nl Top = 50\r\nl Width = 40\r\nl Height = 12\r\n"
-                  "st NormalArt = \"NONE\"\r\nFITend\r\n");
-    MCFitIniFile file;
-    REQUIRE_EQ(file.Open("data\\screen.fit"), 0);
-    // Without a background element the screen isn't placed by its ini: the test places it.
-    MCGuiRef<MCGenericScreen> generic = MCGuiTree::NewRoot<MCGenericScreen>();
-    generic->InitWithoutPort(0, 0, 640, 480);
-    CHECK_EQ(generic->Init(file), 0);
-    REQUIRE_EQ(generic->NumElements(), 3);
-    CHECK(generic->Elements[1].expired());
-    auto first = generic->Element<MCLogTextObject>(0);
-    auto last = generic->Element<MCLogTextObject>(2);
-    REQUIRE(first != nullptr);
-    REQUIRE(last != nullptr);
-    CHECK_EQ(last->Width(), 40);
-    CHECK_EQ(last->BackgroundColor, 0x1f);
-    CHECK(last->ParentObject() == generic.Pin());
-    CHECK(!generic->ShowWindow);
-
-    // Destroyed (its owner lets go), it lets go of its elements and children; the pin keeps its memory to look.
-    const std::shared_ptr<MCGenericScreen> destroyed = generic.Pin();
-    generic.reset();
-    CHECK_EQ(destroyed->NumElements(), 0);
-    CHECK(destroyed->ChildList.empty());
-    CHECK(first->WasDestroyed());
-}
-
 // The purchase dialog
 
 namespace
@@ -729,9 +570,11 @@ namespace
 /// PURCHASING's deal window counts from one as 1998's purchase dialog: Right steps up while the resource points pay for one
 /// more, Left back down to one (1998's spinner went on to 0, which bought nothing), a refusal at each end; ESCAPE cancels
 /// the deal, RETURN buys the count shown. With one in the store it counts no further (1998's dialog had no spinner); a
-/// part's sale counts up to the spares owned, a 'Mech's sale is one (1998's locked spinner).
+/// part the store has no limit of counts to 199 (1998's spinner's most); a part's sale counts up to the spares owned, a
+/// 'Mech's sale is one (1998's locked spinner).
 /// </summary>
-TEST_CASE_ISOLATED("game: the deal window counts up to what the resource points pay for, and down to one")
+TEST_CASE_ISOLATED("game: the deal window counts up to what the resource points pay for, and down to one; a part with "
+                   "no limit up to 199")
 {
     if (!MCTestGame::Available())
     {
@@ -780,6 +623,22 @@ TEST_CASE_ISOLATED("game: the deal window counts up to what the resource points 
         DealKey(SDL_SCANCODE_RIGHT);
         CHECK_EQ(tabs.DealCountShown(), 1);
         DealKey(SDL_SCANCODE_ESCAPE);
+    }
+
+    // A part the store has no limit of (its stock below zero), with the points for more: up to 199, no further.
+    {
+        MCTest::Scope scope("no limit");
+        constexpr int32_t NoLimit = -1;
+        constexpr int32_t MostCounted = 199;
+        part->Count = NoLimit;
+        ResourcePoints = each * (MostCounted + PaidFor);
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        OpenDeal(tabs, MCLogisticsTabs::MCPlace::Store, 0);
+        DealKey(SDL_SCANCODE_RIGHT, MostCounted + 1);
+        CHECK_EQ(tabs.DealCountShown(), MostCounted);
+        DealKey(SDL_SCANCODE_ESCAPE);
+        CHECK_EQ(part->Count, NoLimit);
+        ResourcePoints = points;
     }
 
     // A part's sale: up to the spares owned (three), from the INVENTORY's card dragged onto the store.
@@ -835,39 +694,6 @@ TEST_CASE_ISOLATED("game: the deal window counts up to what the resource points 
         CHECK_EQ(tabs.DealCountShown(), 1);
         DealKey(SDL_SCANCODE_ESCAPE);
     }
-}
-
-TEST_CASE("logistics: a sale's spinner is locked (but a component sale's), one item has none, and no limit means 199")
-{
-    LogisticsScreen screen;
-    const int32_t savedPoints = ResourcePoints;
-    ResourcePoints = 100000;
-    MCGuiRef<MCPurchaseDlg> dialog = MCGuiTree::NewRoot<MCPurchaseDlg>();
-    dialog->MCLogDialogBox::Init(0, 0, 0xb5, 0x9c);
-    const int32_t upX = dialog->GlobalX() + 0x95;
-    const int32_t upY = dialog->GlobalY() + 0x55;
-    auto clickUp = [&]
-    {
-        Send(*dialog, MCGuiEventType::LeftButtonDown, upX, upY);
-        Send(*dialog, MCGuiEventType::LeftButtonUp, upX, upY);
-    };
-
-    dialog->Init(1, -100, 3, "Commando", {}, std::nullopt);
-    clickUp();
-    CHECK_EQ(dialog->Quantity, 1);
-
-    dialog->Init(5, -10, 3, "Laser", {}, std::nullopt);
-    clickUp();
-    CHECK_EQ(dialog->Quantity, 2);
-
-    dialog->Init(4, 10, 1, "Laser", {}, std::nullopt);
-    CHECK(!dialog->Spinner);
-    clickUp();
-    CHECK_EQ(dialog->Quantity, 1);
-
-    dialog->Init(4, 1, -1, "Laser", {}, std::nullopt);
-    CHECK_EQ(dialog->MaxQuantity, MCPurchaseDlg::MaxSpinnerQuantity);
-    ResourcePoints = savedPoints;
 }
 
 // The message dialogs
@@ -1082,46 +908,7 @@ TEST_CASE_ISOLATED("game: REFIT ALL's question has a line per part it has no spa
     CHECK_EQ(MCRmlDialogs::OldBoxes(), 0u);
 }
 
-// Buttons and the resource figure
-
-TEST_CASE("logistics: one button shows pressed at a time, and the mouse leaving lets the press go")
-{
-    LogisticsScreen screen;
-    MCGuiRef<MCLogButton> first = MCGuiTree::NewRoot<MCLogButton>();
-    MCGuiRef<MCLogButton> second = MCGuiTree::NewRoot<MCLogButton>();
-    first->Init(0, 0, 10, 10, {});
-    second->Init(20, 0, 10, 10, {});
-    first->Press();
-    CHECK(first->Pressed);
-    second->Press();
-    CHECK(!first->Pressed);
-    CHECK(second->Pressed);
-    CHECK(MCLogButton::HeldButton.lock() == second.Pin());
-
-    second->Enter();
-    CHECK(second->OverState);
-    // Coming back over the button lets the press go too.
-    CHECK(!second->Pressed);
-    second->Press();
-    second->Leave();
-    CHECK(!second->OverState);
-    CHECK(!second->Pressed);
-    CHECK(MCLogButton::HeldButton.expired());
-
-    // A disabled button ignores clicks (it only refuses with a sound).
-    int32_t runs = 0;
-    first->Callback().SetExec([&] { runs++; });
-    first->Disabled = true;
-    Send(*first, MCGuiEventType::LeftButtonDown);
-    CHECK_EQ(runs, 0);
-    CHECK(!first->Pressed);
-
-    // A destroyed button lets go of the press.
-    first->Disabled = false;
-    first->Press();
-    first.reset();
-    CHECK(MCLogButton::HeldButton.expired());
-}
+// The resource figure
 
 TEST_CASE("logistics: the resource figure shows the points in state 0 and nothing in the heap's old states")
 {

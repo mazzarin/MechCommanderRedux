@@ -1,9 +1,10 @@
 #pragma once
 
 // Port-only (SPEC-menus.md's stage 4, CHOOSE MAP): the host's window over the remade room (ui/choose_map.rml), the
-// room's CHOOSE MAP or CHANGE: the maps the room can play (logistics/MCMatchMaps), each with its file, the points each
-// team starts with and its time limit; beside them the picked one's picture, points, time limit and description. CHOOSE
-// (Enter, or a double click on a map) loads it into the room, as 1998's LOAD MAP did; CANCEL (Escape) goes back.
+// room's CHOOSE MAP or CHANGE: the maps the room can play (logistics/MCMatchMaps; not 1998's NA maps, which the match
+// options' ARTILLERY OFF and PROBES OFF stand in for), each with its file, the points each team starts with and its
+// time limit; beside them the picked one's picture, points, time limit and description. CHOOSE (Enter, or a double
+// click on a map) loads it into the room, as 1998's LOAD MAP did; CANCEL (Escape) goes back.
 
 #include "logistics/MCMatchMaps.h"
 #include "ui/MCRmlScreen.h"

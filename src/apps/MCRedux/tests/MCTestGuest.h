@@ -701,7 +701,10 @@ namespace MCTestGuest
     class Host final : public Peer
     {
     public:
-        /// <summary>The longest mission name <see cref="SendStart"/> sends, with its NUL.</summary>
+        /// <summary>
+        /// The longest name <see cref="SendStart"/> (a mission's) and <see cref="SendLoadMission"/> (a room packet's
+        /// path) send, with its NUL.
+        /// </summary>
         static constexpr size_t MaxMissionName = 32;
         /// <summary>The most players a room holds.</summary>
         static constexpr uint32_t MaxPlayers = 6;
@@ -789,18 +792,14 @@ namespace MCTestGuest
         /// Tells player <paramref name="to"/> to start <paramref name="mission"/> (a bare name), as a host's START does,
         /// though not guaranteed (the game takes it either way).
         /// </summary>
-        void SendStart(uint32_t to, std::string_view mission)
-        {
-            struct Start
-            {
-                MCMPFileNameMessage Header{};
-                std::array<char, MaxMissionName> Name{};
-            } message;
+        void SendStart(uint32_t to, std::string_view mission) { SendName(to, MCMPMessageType::Start, mission); }
 
-            message.Header.Header = PlainHeader(MCMPMessageType::Start);
-            std::ranges::copy(mission.substr(0, MaxMissionName - 1), message.Name.begin());
-            Send(to, message);
-        }
+        /// <summary>
+        /// Tells player <paramref name="to"/> to load room packet <paramref name="path"/> (as a host's MissionFile has
+        /// it: the save folder's NAME.mpk), as a host's CHOOSE MAP does once its players have the file, though not
+        /// guaranteed (the game takes it either way).
+        /// </summary>
+        void SendLoadMission(uint32_t to, std::string_view path) { SendName(to, MCMPMessageType::LoadMission, path); }
 
         /// <summary>
         /// Puts player <paramref name="player"/> on <paramref name="team"/> (1 or 2) in <paramref name="slot"/>, telling
@@ -825,6 +824,23 @@ namespace MCTestGuest
         }
 
     private:
+        /// <summary>
+        /// Sends player <paramref name="to"/> a file name message of <paramref name="type"/> naming
+        /// <paramref name="name"/>.
+        /// </summary>
+        void SendName(uint32_t to, MCMPMessageType type, std::string_view name)
+        {
+            struct Named
+            {
+                MCMPFileNameMessage Header{};
+                std::array<char, MaxMissionName> Name{};
+            } message;
+
+            message.Header.Header = PlainHeader(type);
+            std::ranges::copy(name.substr(0, MaxMissionName - 1), message.Name.begin());
+            Send(to, message);
+        }
+
         /// <summary>Counts <paramref name="message"/> from <paramref name="from"/> if it is a guest's Updating or a player joining.</summary>
         void Take(uint32_t from, std::span<const uint8_t> message) override
         {

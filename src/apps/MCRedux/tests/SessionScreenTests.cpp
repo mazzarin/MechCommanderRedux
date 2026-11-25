@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCPort.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "MCScratchFolder.h"
@@ -61,11 +62,35 @@
 
 using namespace MCScreenInput;
 using MCTestGuest::Guest;
+using MCTestGuest::Host;
 using MCTestGuest::Settle;
 using MCTestGuest::SettleUntil;
 
 namespace
 {
+    /// <summary>1998's NA maps (each one's description says NoArtilleryLine), each with its plain map.</summary>
+    struct MCNoArtilleryMap
+    {
+        std::string_view Plain;
+        std::string_view NoArtillery;
+    };
+
+    constexpr auto NoArtilleryMaps = std::to_array<MCNoArtilleryMap>({{"BRCHLINE", "BRCLINNA"},
+                                                                      {"CPTRBASE", "CPTBASNA"},
+                                                                      {"FORT", "FORTNA"},
+                                                                      {"INDYSTRK", "INDSTKNA"},
+                                                                      {"MANYBASE", "MNYBSENA"},
+                                                                      {"POWRSURG", "PWRSRGNA"},
+                                                                      {"SWAMPRAT", "SWAMPNA"},
+                                                                      {"THREE", "THREENA"}});
+
+    /// <summary>Whether <paramref name="maps"/> has room packet <paramref name="file"/>, whatever its capitals.</summary>
+    bool HasMap(const std::vector<MCMatchMap>& maps, std::string_view file)
+    {
+        return std::ranges::any_of(maps,
+                                   [file](const MCMatchMap& map) { return MCPort::StrICmp(map.File, file) == 0; });
+    }
+
     /// <summary>The loopback address the game hosts on (not the default port, so a running game is left alone).</summary>
     constexpr std::string_view HostAddress = "127.0.0.1:28877";
     /// <summary>The MATCH OPTIONS test's, so it can run beside the frames test (--jobs).</summary>
@@ -149,6 +174,18 @@ TEST_CASE_ISOLATED(
     REQUIRE(ChooseMapWindowShown());
     MCChooseMapWindow& choose = *ChooseMapWindow();
     REQUIRE(!choose.Maps().empty());
+
+    // Not 1998's NA maps (MATCH OPTIONS' ARTILLERY OFF and PROBES OFF stand in): each one's plain map listed, the NA
+    // one not; URBANA, no NA map, listed.
+    for (const MCNoArtilleryMap& map : NoArtilleryMaps)
+    {
+        const MCTest::Scope scope{std::string(map.NoArtillery)};
+        CHECK(HasMap(choose.Maps(), map.Plain));
+        CHECK(!HasMap(choose.Maps(), map.NoArtillery));
+    }
+
+    CHECK(std::ranges::none_of(choose.Maps(), &MCMatchMap::NoArtillery));
+    CHECK(HasMap(choose.Maps(), "URBANA"));
     CHECK(std::ranges::is_sorted(choose.Maps(), {},
                                  [](const MCMatchMap& map)
                                  {
@@ -158,12 +195,12 @@ TEST_CASE_ISOLATED(
                                      return name;
                                  }));
     CHECK_EQ(choose.Picked(), 0);
-    CheckMenusFrames("room choose map", {0x0836541b, 0x8563f464, 0xe368ce56});
+    CheckMenusFrames("room choose map", {0xdf3df296, 0x5302f216, 0x2602111c});
     // The keys' focus is on the picked map: Down picks the next.
     MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
     Settle();
     CHECK_EQ(choose.Picked(), 1);
-    CheckMenusFrames("room choose map keys", {0x6b13d73c, 0xfb449dde, 0xd0b511ec});
+    CheckMenusFrames("room choose map keys", {0xe40e0ba7, 0x000b1d7a, 0x99af7468});
 
     // Capture Base: its points and no time limit, CHOOSE loads it (the guest has the same file).
     const auto capture = std::ranges::find(choose.Maps(), std::string("CPTRBASE"), &MCMatchMap::File);
@@ -172,7 +209,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(MCChooseMapWindow::FactsOf(*capture), std::string("300,000 RP a team. No time limit."));
     choose.Pick(static_cast<int>(capture - choose.Maps().begin()));
     Settle();
-    CheckMenusFrames("room choose map picked", {0x25fe5524, 0x6129ac85, 0xc03036c1});
+    CheckMenusFrames("room choose map picked", {0x29816296, 0xdd65d3b4, 0x1973cb30});
     guest.AnswerFiles(MCMissionDataHash(GamePath(SavePath, "CPTRBASE", ".mpk")));
     choose.PressChoose();
     REQUIRE(SettleUntil([&] { return guest.MissionsLoaded() == 1; }));
@@ -230,6 +267,72 @@ TEST_CASE_ISOLATED(
     options.PressDone();
     MultiPlayer()->IsHost = true;
     Settle();
+}
+
+namespace
+{
+    /// <summary>The NA map test's host's port, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view NoArtilleryHostPort = "28974";
+}
+
+/// <summary>
+/// 1998's NA maps are known by their description's line (NoArtilleryLine): the eight, no others. CHOOSE MAP leaves them
+/// out (the frames test), but a host on another build may still pick one: a LAN guest's room loads it as before, its
+/// name, points and description (the line too), and its game would play it.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN guest loads an NA map its host names, though CHOOSE MAP leaves them out")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+
+    // The NA maps by their descriptions, as the game reads every room packet.
+    std::vector<std::string> marked;
+
+    for (const MCMatchMap& map : MCMatchMaps())
+    {
+        if (map.NoArtillery)
+        {
+            std::string file = map.File;
+            std::ranges::transform(file, file.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            marked.push_back(std::move(file));
+        }
+    }
+
+    std::vector<std::string> named;
+    std::ranges::transform(NoArtilleryMaps, std::back_inserter(named),
+                           [](const MCNoArtilleryMap& map) { return std::string(map.NoArtillery); });
+    std::ranges::sort(marked);
+    std::ranges::sort(named);
+    CHECK(marked == named);
+
+    // ANN joins BOB's room, whose game (another build's) loads Capture Base's NA map.
+    MCTestGuest::OpenLan();
+    Host bob;
+    REQUIRE(bob.Open(NoArtilleryHostPort, "BOB", "BOB'S GAME"));
+    MCTestGuest::JoinFromLan(NoArtilleryHostPort, "ANN");
+    const uint32_t ann = MultiPlayer()->SessionManager->MyPlayerID;
+    constexpr std::string_view Mission = "CPTBASNA";
+    const std::string path = GamePath(SavePath, Mission, ".mpk");
+    REQUIRE(path.size() < Host::MaxMissionName);
+    bob.SendLoadMission(ann, path);
+    MCRoomModel& room = GlobalLog()->Room;
+    REQUIRE(SettleUntil([&room] { return !room.LoadedMission.empty(); }));
+    Settle();
+    CHECK(MCTestGuest::InSession());
+    CHECK(MCTestGuest::OnScreen(MCMenuScreens::Room()));
+    CHECK_EQ(room.LoadedMission, std::string(Mission));
+    CHECK_EQ(room.MissionName, std::string("Capture Base"));
+    CHECK_EQ(room.MapFile, std::string("mp0701"));
+    CHECK_EQ(room.Team1Points, 300'000);
+    CHECK_EQ(room.Team2Points, 300'000);
+    CHECK(std::ranges::any_of(room.Description,
+                              [](const std::string& line) { return line.find(NoArtilleryLine) != std::string::npos; }));
+    bob.Close();
 }
 
 namespace

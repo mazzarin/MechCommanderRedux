@@ -1810,7 +1810,7 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
     REQUIRE(display != nullptr);
     REQUIRE(display->RendererKind() == MCRendererKind::Software);
     HideClock(screen);
-    DrawnEach(*display, clock, "briefing_mp", {0xdcb34a67, 0xbaa0c8d8, 0x25a44f9c});
+    DrawnEach(*display, clock, "briefing_mp", {0x7100b114, 0x912dc805, 0xd719000e});
     CheckLaidOut(menus, "briefing mp");
 
     // DEPLOY: ALL chosen under the groups holds in every place; a line then goes to all.
@@ -1831,7 +1831,7 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
     REQUIRE(!screen.ChatLines().empty());
     CHECK_EQ(screen.ChatLines().back(),
              (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "Good luck, all."}));
-    DrawnEach(*display, clock, "deploy_mp", {0x25c84f0e, 0x33d343b8, 0x2210d70f});
+    DrawnEach(*display, clock, "deploy_mp", {0xff3d4309, 0x6d3e14f9, 0x97a96359});
     CheckLaidOut(menus, "deploy mp");
 
     // ANN leaves: gone from the bar, the chat saying so as the room's does (the host's line,
@@ -2034,7 +2034,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(screen.ChatLines().back().Text, std::string("Lasers for everyone"));
     CHECK(screen.ChatLines().back().Team);
     CHECK_EQ(ElementOf(screen, "say-logistics").GetAttribute<Rml::String>("value", "unread"), std::string());
-    DrawnEach(*display, clock, "purchase_mp", {0x8a84dad2, 0xb9b8efc1, 0xf5b60b70});
+    DrawnEach(*display, clock, "purchase_mp", {0x1309bd7c, 0xe19a1043, 0xc6b2006d});
     CheckLaidOut(menus, "purchase mp");
 
     // A 'Mech bought into the force for the 'MECH BAY: its lab without repairs.
@@ -2055,7 +2055,7 @@ TEST_CASE_ISOLATED(
     MCTestGame::RunFrame(FlowFrame);
     CHECK(tabs.LabUnit() != nullptr);
     CHECK(!tabs.Repairs());
-    DrawnEach(*display, clock, "mechbay_mp", {0x9dc6402a, 0x22850a91, 0x67f1f8e6});
+    DrawnEach(*display, clock, "mechbay_mp", {0xa1a1121c, 0xc70bba23, 0x2237615f});
     CheckLaidOut(menus, "mechbay mp");
 }
 

@@ -167,10 +167,12 @@
 #room { padding-bottom: 42dp; }
 
 /* The host's TEAM 1 and TEAM 2 on a card under the pointer or with the keys' focus; off for a full team. A card the host
-   drags. */
+   drags, and its copy under the pointer as wide as the card (the teams' column): RmlUi lays the copy out with nothing
+   round it to take a width from, which left it none, its name, HOST and buttons drawn over each other. */
 .person .button.small { opacity: 0; }
 .person:hover .button.small, .person .button.small:focus-visible, .person .button.small:hover { opacity: 1; }
 .person.drags { drag: clone; }
+.person:drag { width: 256dp; }
 .person:hover { background-color: #1b2c38; border-left-color: #1b2c38; }
 .person.me:hover { border-left-color: #7cd4ec; }
 .slot.drop, .pool-drop.drop { background-color: #12222e; }

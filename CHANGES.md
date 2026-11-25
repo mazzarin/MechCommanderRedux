@@ -366,6 +366,9 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - **Redux HD.** The game that takes a match over from a host that dropped out no longer sends every battle update it
   hadn't sent since the match began, one a frame, before settling into the usual few a second: ten minutes in, that
   was an update every frame for up to 12 seconds (OB-194).
+- **Redux HD.** A map with no time limit (Arena, Capture Base, Many Bases, Swamp Rat and others) no longer shows the
+  time limit of the map loaded before it in the room, for the host and the other players. The battle always played by
+  its own mission's limit (OB-195).
 - **Redux HD.** The host checks that every player has the same mission and game data as its own, so players whose
   files differ no longer start a match that drifts apart. The original only checked that the mission file was there.
   Each game sends a hash of the mission's files (its scenario, script, map and purchase list) and of the data every

@@ -51,6 +51,9 @@ namespace
     /// <summary>The status line's words (SPEC-menus.md's UPDATE, and its "When something goes wrong").</summary>
     constexpr std::string_view FoundText = "A newer version is out.";
     constexpr std::string_view FoundSizeFormat = "A newer version is out: {} to download.";
+    /// <summary>The running release's own game files, found alone (the playtest's state; you, 25 Nov).</summary>
+    constexpr std::string_view GameFilesFormat = "New game files for {} are out.";
+    constexpr std::string_view GameFilesSizeFormat = "New game files for {} are out: {} to download.";
     constexpr std::string_view DownloadingFormat = "Downloading: {}.";
     constexpr std::string_view StoppedFormat = "The download stopped at {}.";
     constexpr std::string_view InRestartFormat = "Version {} is in. Restart to play it.";
@@ -75,6 +78,25 @@ namespace
         return status.Expected == 0 ? MCUpdateWork::SizeText(status.Received)
                                     : std::format("{} of {}", MCUpdateWork::SizeText(status.Received),
                                                   MCUpdateWork::SizeText(status.Expected));
+    }
+
+    /// <summary>
+    /// Port-only: the found update's line. A newer version; or, when it is the release <paramref name="running"/> is
+    /// (a program running on an older release's game files is offered its own release's, as the main menu's bare
+    /// "Update" says, MCUpdateModel's UpdateButtonText), its new game files.
+    /// </summary>
+    std::string FoundLine(const MCStatus& status, std::string_view running)
+    {
+        const std::string_view release = ReleaseOf(status.Version);
+        const bool ownRelease = release == ReleaseOf(running);
+
+        if (status.Expected == 0)
+        {
+            return ownRelease ? std::format(GameFilesFormat, release) : std::string(FoundText);
+        }
+
+        const std::string size = MCUpdateWork::SizeText(status.Expected);
+        return ownRelease ? std::format(GameFilesSizeFormat, release, size) : std::format(FoundSizeFormat, size);
     }
 
     std::string ReadyText(const MCStatus& status)
@@ -239,15 +261,14 @@ bool MCUpdateScreen::Shows()
     return screen != nullptr && screen->Shown();
 }
 
-std::string MCUpdateScreen::StatusText(const MCStatus& status)
+std::string MCUpdateScreen::StatusText(const MCStatus& status, std::string_view running)
 {
     switch (status.Stage)
     {
         case MCStage::None:
             return {};
         case MCStage::Found:
-            return status.Expected == 0 ? std::string(FoundText)
-                                        : std::format(FoundSizeFormat, MCUpdateWork::SizeText(status.Expected));
+            return FoundLine(status, running);
         case MCStage::Downloading:
             return MCUpdater::DownloadStopped() ? std::format(StoppedFormat, InHand(status))
                                                 : std::format(DownloadingFormat, InHand(status));
@@ -332,7 +353,7 @@ void MCUpdateScreen::Refresh()
     SetShown(document, SizeFactId, sized);
     SetWords(document, SizeId, sized ? MCUpdateWork::SizeText(status.Expected) : std::string());
 
-    if (std::string words = StatusText(status); words != _Status)
+    if (std::string words = StatusText(status, MCUpdater::RunningVersion()); words != _Status)
     {
         _Status = std::move(words);
         SetWords(document, StatusId, _Status);

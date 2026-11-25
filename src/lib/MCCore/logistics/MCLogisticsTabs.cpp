@@ -69,7 +69,7 @@ namespace
     constexpr uint32_t PickedSound = 0x35;
     constexpr uint32_t PlacedSound = 0x34;
     constexpr uint32_t RefusedSound = 0x33;
-    /// <summary>1998's click: the purchase dialog's arrows, a store mech's variant buttons.</summary>
+    /// <summary>1998's click: the purchase dialog's arrows (a store mech's variant buttons are the kit's switch).</summary>
     constexpr uint32_t ClickSound = 0xf;
     /// <summary>1998's messages: too poor, the force full, too heavy, short of points to repair; the refit's question.</summary>
     constexpr uint32_t TooPoorMessage = 0x4d;
@@ -1555,7 +1555,8 @@ void MCLogisticsTabs::ChooseStock(MCStock stock)
 
 void MCLogisticsTabs::ChooseVariant(int variant)
 {
-    // 1998's variant buttons: the store mech shows (and sells) the variant chosen.
+    // 1998's variant buttons: the store mech shows (and sells) the variant chosen. Their click is the switch's own (the
+    // kit's button press), once.
     const std::optional<MCThing>& shown = _Hovered.has_value() ? _Hovered : _Picked;
     const std::shared_ptr<MCPurMech> purMech = shown.has_value() ? shown->StoreMech.lock() : nullptr;
 
@@ -1565,7 +1566,6 @@ void MCLogisticsTabs::ChooseVariant(int variant)
         return;
     }
 
-    PlayLogSound(ClickSound);
     purMech->CurVariant = variant;
     _Fingerprint = 0;
     Fill();

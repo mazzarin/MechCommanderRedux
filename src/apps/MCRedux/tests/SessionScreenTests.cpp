@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCPort.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "MCScratchFolder.h"
@@ -38,17 +39,49 @@
 #include "platform/MCInput.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
+#include "ui/MCRmlArt.h"
+#include "ui/MCRmlFlow.h"
+#include "ui/MCRmlKit.h"
+#include "ui/MCRmlMenus.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/ElementText.h>
+#include <RmlUi/Core/ElementUtilities.h>
 
 using namespace MCScreenInput;
 using MCTestGuest::Guest;
+using MCTestGuest::Host;
 using MCTestGuest::Settle;
 using MCTestGuest::SettleUntil;
 
 namespace
 {
+    /// <summary>1998's NA maps (each one's description says NoArtilleryLine), each with its plain map.</summary>
+    struct MCNoArtilleryMap
+    {
+        std::string_view Plain;
+        std::string_view NoArtillery;
+    };
+
+    constexpr auto NoArtilleryMaps = std::to_array<MCNoArtilleryMap>({{"BRCHLINE", "BRCLINNA"},
+                                                                      {"CPTRBASE", "CPTBASNA"},
+                                                                      {"FORT", "FORTNA"},
+                                                                      {"INDYSTRK", "INDSTKNA"},
+                                                                      {"MANYBASE", "MNYBSENA"},
+                                                                      {"POWRSURG", "PWRSRGNA"},
+                                                                      {"SWAMPRAT", "SWAMPNA"},
+                                                                      {"THREE", "THREENA"}});
+
+    /// <summary>Whether <paramref name="maps"/> has room packet <paramref name="file"/>, whatever its capitals.</summary>
+    bool HasMap(const std::vector<MCMatchMap>& maps, std::string_view file)
+    {
+        return std::ranges::any_of(maps,
+                                   [file](const MCMatchMap& map) { return MCPort::StrICmp(map.File, file) == 0; });
+    }
+
     /// <summary>The loopback address the game hosts on (not the default port, so a running game is left alone).</summary>
     constexpr std::string_view HostAddress = "127.0.0.1:28877";
     /// <summary>The MATCH OPTIONS test's, so it can run beside the frames test (--jobs).</summary>
@@ -71,11 +104,11 @@ namespace
 
 /// <summary>
 /// SPEC-menus.md's "Testing" for stage 4's screens: the room (the host's alone with a guest on no team, then the teams
-/// picked, points and tech bases set and a chat; with a map; a guest's), CHOOSE MAP's window (from the keys too) and
-/// MATCH OPTIONS' (FORCES, PLAY and WEAPONS, the host's and a guest's), each drawn on the software path at 640x480,
-/// 1280x720 and 1280x1024 (--shots saves them), and laid out and read at every window the players' reports name. CHOOSE
-/// MAP lists the game's room packets by name, each with its file, points and time limit, and CHOOSE loads the one picked
-/// into the room as 1998's LOAD MAP did.
+/// picked, points and tech bases set and a chat; with a map), CHOOSE MAP's window (from the keys too) and MATCH OPTIONS'
+/// (FORCES, PLAY and WEAPONS), the host's (a guest's are a real guest's: the guest's room test), each drawn on the
+/// software path at 640x480, 1280x720 and 1280x1024 (--shots saves them), and laid out and read at every window the
+/// players' reports name. CHOOSE MAP lists the game's room packets by name, each with its file, points and time limit,
+/// and CHOOSE loads the one picked into the room as 1998's LOAD MAP did.
 /// </summary>
 TEST_CASE_ISOLATED(
     "game: the room, CHOOSE MAP and MATCH OPTIONS draw their frames, and lay out and read at every players' window")
@@ -132,6 +165,18 @@ TEST_CASE_ISOLATED(
     REQUIRE(ChooseMapWindowShown());
     MCChooseMapWindow& choose = *ChooseMapWindow();
     REQUIRE(!choose.Maps().empty());
+
+    // Not 1998's NA maps (MATCH OPTIONS' ARTILLERY OFF and PROBES OFF stand in): each one's plain map listed, the NA
+    // one not; URBANA, no NA map, listed.
+    for (const MCNoArtilleryMap& map : NoArtilleryMaps)
+    {
+        const MCTest::Scope scope{std::string(map.NoArtillery)};
+        CHECK(HasMap(choose.Maps(), map.Plain));
+        CHECK(!HasMap(choose.Maps(), map.NoArtillery));
+    }
+
+    CHECK(std::ranges::none_of(choose.Maps(), &MCMatchMap::NoArtillery));
+    CHECK(HasMap(choose.Maps(), "URBANA"));
     CHECK(std::ranges::is_sorted(choose.Maps(), {},
                                  [](const MCMatchMap& map)
                                  {
@@ -141,12 +186,12 @@ TEST_CASE_ISOLATED(
                                      return name;
                                  }));
     CHECK_EQ(choose.Picked(), 0);
-    CheckMenusFrames("room choose map", {0x0836541b, 0x8563f464, 0xe368ce56});
+    CheckMenusFrames("room choose map", {0xdf3df296, 0x5302f216, 0x2602111c});
     // The keys' focus is on the picked map: Down picks the next.
     MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
     Settle();
     CHECK_EQ(choose.Picked(), 1);
-    CheckMenusFrames("room choose map keys", {0x6b13d73c, 0xfb449dde, 0xd0b511ec});
+    CheckMenusFrames("room choose map keys", {0xe40e0ba7, 0x000b1d7a, 0x99af7468});
 
     // Capture Base: its points and no time limit, CHOOSE loads it (the guest has the same file).
     const auto capture = std::ranges::find(choose.Maps(), std::string("CPTRBASE"), &MCMatchMap::File);
@@ -155,7 +200,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(MCChooseMapWindow::FactsOf(*capture), std::string("300,000 RP a team. No time limit."));
     choose.Pick(static_cast<int>(capture - choose.Maps().begin()));
     Settle();
-    CheckMenusFrames("room choose map picked", {0x25fe5524, 0x6129ac85, 0xc03036c1});
+    CheckMenusFrames("room choose map picked", {0x29816296, 0xdd65d3b4, 0x1973cb30});
     guest.AnswerFiles(MCMissionDataHash(GamePath(SavePath, "CPTRBASE", ".mpk")));
     choose.PressChoose();
     REQUIRE(SettleUntil([&] { return guest.MissionsLoaded() == 1; }));
@@ -200,19 +245,289 @@ TEST_CASE_ISOLATED(
     CheckMenusFrames("match options weapons", {0xd51b87ca, 0x5a3deec6, 0x0e6ac3e3});
     options.PressDone();
     Settle();
+}
 
-    // A guest's: the values, the host setting them; the guest's room waits for the host.
-    MultiPlayer()->IsHost = false;
+namespace
+{
+    /// <summary>The NA map test's host's port, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view NoArtilleryHostPort = "28974";
+}
+
+/// <summary>
+/// 1998's NA maps are known by their description's line (NoArtilleryLine): the eight, no others. CHOOSE MAP leaves them
+/// out (the frames test), but a host on another build may still pick one: a LAN guest's room loads it as before, its
+/// name, points and description (the line too), and its game would play it.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN guest loads an NA map its host names, though CHOOSE MAP leaves them out")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+
+    // The NA maps by their descriptions, as the game reads every room packet.
+    std::vector<std::string> marked;
+
+    for (const MCMatchMap& map : MCMatchMaps())
+    {
+        if (map.NoArtillery)
+        {
+            std::string file = map.File;
+            std::ranges::transform(file, file.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            marked.push_back(std::move(file));
+        }
+    }
+
+    std::vector<std::string> named;
+    std::ranges::transform(NoArtilleryMaps, std::back_inserter(named),
+                           [](const MCNoArtilleryMap& map) { return std::string(map.NoArtillery); });
+    std::ranges::sort(marked);
+    std::ranges::sort(named);
+    CHECK(marked == named);
+
+    // ANN joins BOB's room, whose game (another build's) loads Capture Base's NA map.
+    MCTestGuest::OpenLan();
+    Host bob;
+    REQUIRE(bob.Open(NoArtilleryHostPort, "BOB", "BOB'S GAME"));
+    MCTestGuest::JoinFromLan(NoArtilleryHostPort, "ANN");
+    const uint32_t ann = MultiPlayer()->SessionManager->MyPlayerID;
+    constexpr std::string_view Mission = "CPTBASNA";
+    const std::string path = GamePath(SavePath, Mission, ".mpk");
+    REQUIRE(path.size() < Host::MaxMissionName);
+    bob.SendLoadMission(ann, path);
+    MCRoomModel& room = GlobalLog()->Room;
+    REQUIRE(SettleUntil([&room] { return !room.LoadedMission.empty(); }));
     Settle();
-    CheckMenusFrames("room guest", {0xef04f5cf, 0x8472c9b5, 0xf95098d5});
+    CHECK(MCTestGuest::InSession());
+    CHECK(MCTestGuest::OnScreen(MCMenuScreens::Room()));
+    CHECK_EQ(room.LoadedMission, std::string(Mission));
+    CHECK_EQ(room.MissionName, std::string("Capture Base"));
+    CHECK_EQ(room.MapFile, std::string("mp0701"));
+    CHECK_EQ(room.Team1Points, 300'000);
+    CHECK_EQ(room.Team2Points, 300'000);
+    CHECK(std::ranges::any_of(room.Description,
+                              [](const std::string& line) { return line.find(NoArtilleryLine) != std::string::npos; }));
+    bob.Close();
+}
+
+namespace
+{
+    /// <summary>The guest's room test's host's port, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view GuestRoomHostPort = "28978";
+    /// <summary>MCLogChat::ProcessChatString's colour for a line to all (its default, 1998's white).</summary>
+    constexpr int32_t ChatToAll = -1;
+
+    /// <summary>
+    /// The test's host <paramref name="host"/> names room packet <paramref name="mission"/> to player
+    /// <paramref name="to"/>, as its CHOOSE MAP does once every player has the file; once the game has read it.
+    /// </summary>
+    void HostLoads(Host& host, uint32_t to, std::string_view mission)
+    {
+        const MCTest::Scope scope{std::string(mission)};
+        const std::string path = GamePath(SavePath, mission, ".mpk");
+        REQUIRE(path.size() < Host::MaxMissionName);
+        host.SendLoadMission(to, path);
+        REQUIRE(SettleUntil([mission] { return GlobalLog()->Room.LoadedMission == mission; }));
+        Settle();
+    }
+
+    /// <summary>Whether the remade room shows and what it shows passes <paramref name="test"/>.</summary>
+    bool RoomShowsThat(const std::function<bool(const MCRoomScreen::MCSeen&)>& test)
+    {
+        return RoomScreenShown() && test(RoomScreen()->Seen());
+    }
+
+    /// <summary>What the remade room shows now.</summary>
+    MCRoomScreen::MCSeen RoomSeen()
+    {
+        REQUIRE(RoomScreenShown());
+        return RoomScreen()->Seen();
+    }
+}
+
+/// <summary>
+/// A LAN guest's room shows the map its host loads as the host's room shows a guest (SPEC-menus.md's room: its picture,
+/// name, time limit and description, the mission's points), never "No map yet", and its foot what the guest waits for:
+/// the host to choose a map and the teams, what is left of them, then to begin planning. The host's first load, a
+/// change of map, and the room shown again (as a host shows it for a player joining or rejoining, and to a rematch's
+/// guests back), its map named again; drawn at the frames' windows (the room's frames' guest's), and laid out and read
+/// at the players'. A launcher's and MCO's rooms are a guest's room the same way (the same model and screen, the
+/// host's same messages). Fails with a room keyed on the host's mission file, which a guest never has.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN guest's room shows the map its host loads, and what it waits for")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    using MCMenusPictures::CheckMenusFrames;
+    REQUIRE(MCTestGame::StartLogistics());
+
+    // Ann joins Bob's room: no map, nobody on a team.
+    MCTestGuest::OpenLan();
+    Host bob;
+    REQUIRE(bob.Open(GuestRoomHostPort, "Bob", "Steel Rain"));
+    MCTestGuest::JoinFromLan(GuestRoomHostPort, "Ann");
+    const uint32_t ann = MultiPlayer()->SessionManager->MyPlayerID;
+    bob.SendNumbers(ann, {bob.Id(), ann});
+    REQUIRE(SettleUntil([&bob] { return MultiPlayer()->SessionManager->ServerID == bob.Id(); }));
+    Settle();
+    MCRoomScreen::MCSeen seen = RoomSeen();
+    CHECK(!seen.Hosting);
+    CHECK_EQ(seen.Map, std::string());
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to choose a map and the teams."));
+
+    // Bob loads Capture Base: its picture, name and description, and its points; no time limit. The teams to come.
+    HostLoads(bob, ann, "CPTRBASE");
+    seen = RoomSeen();
+    CHECK_EQ(seen.Map, std::string("Capture Base"));
+    CHECK_EQ(seen.MapPicture, std::format("{}mp0701", MCRmlArt::TerrainScheme));
+    CHECK_EQ(seen.MapTime, std::string());
+    CHECK(!seen.MapText.empty());
+    CHECK_EQ(seen.Points1, std::string("300,000"));
+    CHECK_EQ(seen.Points2, std::string("300,000"));
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to choose the teams."));
+    CheckMenusFrames("room guest map", {0xeff530fa, 0x0ec70166, 0x2e86101f});
+
+    // Bob on team 1, Ann on team 2 with the Clan's mechs, a line each way: the room waits for Bob to begin planning.
+    bob.SendJoinTeam(ann, bob.Id(), MCRoomModel::Team1, 0);
+    bob.SendJoinTeam(ann, ann, MCRoomModel::Team2, 0);
+    bob.SendTechBase(ann, MCRoomModel::Team2, MCRoomModel::Clan);
+    REQUIRE(SettleUntil(
+        []
+        {
+            return RoomShowsThat([](const MCRoomScreen::MCSeen& now)
+                                 { return now.Tech2 == "Clan" && now.Pool.empty(); });
+        }));
+    GlobalLog()->Chat->ProcessChatString(bob.Id(), "Evening all. Map in a minute.", ChatToAll);
+    RoomScreen()->Say("Clan for me, if nobody minds.", false);
+    Settle();
+    seen = RoomSeen();
+    CHECK(seen.Team1.front() == "Bob (host)");
+    CHECK(seen.Team2.front() == "Ann");
+    CHECK_EQ(seen.Map, std::string("Capture Base"));
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
+    CheckMenusFrames("room guest", {0xe0dc9844, 0x96e2b7e7, 0x9650e8d3});
+
+    // A guest's MATCH OPTIONS: VIEW, the values, the host setting them.
     MCTestGuest::PressInRoom("view-options");
     REQUIRE(MatchOptionsWindowShown());
+    MCMatchOptionsWindow& options = *MatchOptionsWindow();
     options.ShowTab(MCMatchOptionsWindow::MCTab::Weapons);
     Settle();
-    CheckMenusFrames("match options guest", {0xad5ff921, 0x3f8f9012, 0x7260d083});
+    CheckMenusFrames("match options guest", {0xa707756a, 0x2375272f, 0x162ac09a});
     options.PressDone();
-    MultiPlayer()->IsHost = true;
     Settle();
+
+    // A change of map: 3 is a Magic Number, its picture, points and time limit; the teams kept.
+    HostLoads(bob, ann, "THREE");
+    seen = RoomSeen();
+    CHECK_EQ(seen.Map, std::string("3 is a Magic Number"));
+    CHECK_EQ(seen.MapPicture, std::format("{}mp0722", MCRmlArt::TerrainScheme));
+    CHECK_EQ(seen.MapTime, std::string("Time limit 15:00."));
+    CHECK(!seen.MapText.empty());
+    CHECK_EQ(seen.Points1, std::string("600,000"));
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
+    CheckMenusFrames("room guest change map", {0x6b82b674, 0xd92d8408, 0x2b8f982b});
+
+    // The room shown again: afresh, no map and nobody placed. The teams first this time, then the map named again.
+    bob.SendRoomAgain(ann);
+    REQUIRE(SettleUntil([] { return GlobalLog()->Room.LoadedMission.empty(); }));
+    Settle();
+    seen = RoomSeen();
+    CHECK_EQ(seen.Map, std::string());
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to choose a map and the teams."));
+    bob.SendJoinTeam(ann, bob.Id(), MCRoomModel::Team1, 0);
+    bob.SendJoinTeam(ann, ann, MCRoomModel::Team2, 0);
+    REQUIRE(
+        SettleUntil([] { return RoomShowsThat([](const MCRoomScreen::MCSeen& now) { return now.Pool.empty(); }); }));
+    CHECK_EQ(RoomSeen().Status, std::string("Waiting for Bob to choose a map."));
+    HostLoads(bob, ann, "THREE");
+    seen = RoomSeen();
+    CHECK_EQ(seen.Map, std::string("3 is a Magic Number"));
+    CHECK(!seen.MapText.empty());
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
+    bob.Close();
+}
+
+namespace
+{
+    /// <summary>The time limit test's host's address, and its guest's host's port, so it can run beside the others.</summary>
+    constexpr std::string_view TimeLimitHostAddress = "127.0.0.1:29001";
+    constexpr std::string_view TimeLimitGuestHostPort = "29003";
+    /// <summary>3 is a Magic Number, and its room packet's time limit (MissionTime 900).</summary>
+    constexpr std::string_view TimedMission = "THREE";
+    constexpr std::string_view TimedLimit = "15:00";
+    /// <summary>Capture Base, whose room packet has no MissionTime.</summary>
+    constexpr std::string_view UntimedMission = "CPTRBASE";
+
+    /// <summary>
+    /// Loads 3 is a Magic Number, then Capture Base, with <paramref name="load"/>: the room's time limit the first's,
+    /// then none, as the model keeps it (the 1998 session screen draws it) and as the remade room shows it.
+    /// </summary>
+    void CheckTimeLimitGoes(const std::function<void(std::string_view)>& load)
+    {
+        load(TimedMission);
+        CHECK_EQ(GlobalLog()->Room.MissionTime, std::string(TimedLimit));
+        CHECK_EQ(RoomSeen().MapTime, std::format("Time limit {}.", TimedLimit));
+        load(UntimedMission);
+        CHECK_EQ(RoomSeen().Map, std::string("Capture Base"));
+        CHECK_EQ(GlobalLog()->Room.MissionTime, std::string());
+        CHECK_EQ(RoomSeen().MapTime, std::string());
+    }
+}
+
+/// <summary>
+/// OB-195: a map whose room packet has no time limit shows none after a map with one (3 is a Magic Number's 15:00, then
+/// Capture Base), in the host's room and in a LAN guest's. Fails with the room keeping the last map's time limit.
+/// </summary>
+TEST_CASE_ISOLATED("game: a map with no time limit shows none after one with a limit, for the host and a LAN guest")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+
+    // Bob hosts alone (the file check done at once) and loads them.
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(TimeLimitHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Time limits", 6);
+    REQUIRE(SettleUntil([] { return RoomScreenShown(); }));
+    {
+        const MCTest::Scope scope{"host"};
+        CheckTimeLimitGoes(
+            [](std::string_view mission)
+            {
+                const MCTest::Scope missionScope{mission};
+                GlobalLog()->Room.LoadMission(mission);
+                REQUIRE(SettleUntil([] { return !GlobalLog()->Message->IsShowing(); }));
+                Settle();
+            });
+    }
+
+    // Bob leaves, and as Ann joins Dan's room, whose host loads them.
+    MCTestGuest::PressInRoom("leave");
+    REQUIRE(SettleUntil(MCTestGuest::OnLan));
+    Host dan;
+    REQUIRE(dan.Open(TimeLimitGuestHostPort, "Dan", "Steel Rain"));
+    MCTestGuest::JoinFromLan(TimeLimitGuestHostPort, "Ann");
+    const uint32_t ann = MultiPlayer()->SessionManager->MyPlayerID;
+    dan.SendNumbers(ann, {dan.Id(), ann});
+    REQUIRE(SettleUntil([&dan] { return MultiPlayer()->SessionManager->ServerID == dan.Id(); }));
+    Settle();
+    {
+        const MCTest::Scope scope{"guest"};
+        CheckTimeLimitGoes([&dan, ann](std::string_view mission) { HostLoads(dan, ann, mission); });
+    }
+
+    dan.Close();
 }
 
 namespace
@@ -1443,4 +1758,557 @@ TEST_CASE_ISOLATED(
     {
         MCTestGuest::CheckRecorded(cat, ids, ann, cat.Instance(), CatTypes, CatDigest);
     }
+}
+
+namespace
+{
+    /// <summary>The room's seats' test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view SeatsHostAddress = "127.0.0.1:28931";
+    /// <summary>The game's frame while a card is carried, as the room's tests step it.</summary>
+    constexpr float CarryFrame = 1.0f / 15.0f;
+    /// <summary>The pointer's moves from a card to where it's put.</summary>
+    constexpr int32_t CarrySteps = 4;
+    constexpr std::string_view LongName = "Commander";
+    constexpr std::string_view ShortName = "Al";
+    constexpr std::string_view LastName = "Bartholomew";
+    /// <summary>An open place, as the room's Seen() reads it.</summary>
+    constexpr std::string_view OpenPlaceName = "Open";
+
+    Rml::Vector2f MiddleOf(Rml::Element& element)
+    {
+        return element.GetAbsoluteOffset(Rml::BoxArea::Border) + element.GetBox().GetSize(Rml::BoxArea::Border) / 2.0f;
+    }
+
+    /// <summary>The shown card of the player <paramref name="name"/>, on a team or on none.</summary>
+    Rml::Element& CardNamed(Rml::ElementDocument& document, std::string_view name)
+    {
+        Rml::ElementList cards;
+        document.QuerySelectorAll(cards, ".person");
+
+        for (Rml::Element* card : cards)
+        {
+            Rml::ElementList names;
+            card->GetElementsByClassName(names, "name");
+
+            if (card->IsVisible(true) && !names.empty() && names.front()->GetInnerRML() == name)
+            {
+                return *card;
+            }
+        }
+
+        FAIL(std::format("no card shows {}", name));
+        return document;
+    }
+
+    /// <summary>Team <paramref name="team"/>'s place <paramref name="slot"/>: its OPEN well, or the card in it.</summary>
+    Rml::Element& PlaceOf(Rml::ElementDocument& document, int8_t team, int8_t slot)
+    {
+        Rml::ElementList teams;
+        document.QuerySelectorAll(teams, ".team");
+        REQUIRE(teams.size() == static_cast<size_t>(MCRoomModel::Team2 - MCRoomModel::Team1 + 1));
+        // A place is its well then its card, one of them shown.
+        Rml::ElementList places;
+        teams[static_cast<size_t>(team - MCRoomModel::Team1)]->QuerySelectorAll(places, ".slot, .person");
+        REQUIRE(places.size() == static_cast<size_t>(MCRoomModel::TeamSlots) * 2);
+        Rml::Element& well = *places[static_cast<size_t>(slot) * 2];
+        return well.IsVisible(true) ? well : *places[static_cast<size_t>(slot) * 2 + 1];
+    }
+
+    /// <summary>How far a box may lie past another and still be clear of it (RmlUi's layout is floats).</summary>
+    constexpr float BoxSlack = 0.5f;
+
+    /// <summary>
+    /// What's wrong with a card's parts (its name, HOST, its buttons): each as wide as its words, and each clear of the
+    /// one before it. (The box checks pass a part with no width: its words spill unseen by them.) Empty: nothing.
+    /// </summary>
+    std::string PartsProblems(Rml::Element& card)
+    {
+        std::string wrong;
+        float before = card.GetAbsoluteOffset(Rml::BoxArea::Content).x;
+
+        for (int i = 0; i < card.GetNumChildren(); ++i)
+        {
+            Rml::Element& part = *card.GetChild(i);
+
+            if (!part.IsVisible())
+            {
+                continue;
+            }
+
+            const float left = part.GetAbsoluteOffset(Rml::BoxArea::Border).x;
+            const float width = part.GetBox().GetSize(Rml::BoxArea::Content).x;
+            float words = 0.0f;
+
+            // Its words' width in its own letters (a part's words are one line: the card's are white-space: nowrap).
+            for (int j = 0; j < part.GetNumChildren(); ++j)
+            {
+                if (const auto* text = dynamic_cast<Rml::ElementText*>(part.GetChild(j)); text != nullptr)
+                {
+                    words += static_cast<float>(Rml::ElementUtilities::GetStringWidth(&part, text->GetText()));
+                }
+            }
+
+            if (width + BoxSlack < words)
+            {
+                wrong += std::format("'{}' is wider than its {}; ", part.GetInnerRML(), part.GetClassNames());
+            }
+
+            if (left + BoxSlack < before)
+            {
+                wrong +=
+                    std::format("'{}' ({}) lies over what's before it; ", part.GetInnerRML(), part.GetClassNames());
+            }
+
+            before = left + part.GetBox().GetSize(Rml::BoxArea::Border).x;
+        }
+
+        return wrong;
+    }
+
+    /// <summary>
+    /// What the layout checks find in the menus as they stand, at the game's window (none laid out again), and in the
+    /// room's shown cards' parts.
+    /// </summary>
+    std::string ProblemsNow(Rml::ElementDocument& room)
+    {
+        std::string problems = MCRmlChecks::BoxProblems(MCMenusPictures::GameMenus().Menus().Context());
+        Rml::ElementList cards;
+        room.QuerySelectorAll(cards, ".person");
+
+        for (Rml::Element* card : cards)
+        {
+            if (card->IsVisible(true))
+            {
+                problems += PartsProblems(*card);
+            }
+        }
+
+        return problems;
+    }
+
+    /// <summary>
+    /// What the layout checks find in <paramref name="card"/> as a drag carries it: RmlUi's copy under the pointer
+    /// (Context::CreateDragClone, out of the tests' reach) made the same way, the card cloned into a document of the
+    /// room's style sheets alone and no size (the context's cursor proxy, which borrows the room's sheets, has no parent
+    /// to take a size from), placed where the card lies, :drag on.
+    /// </summary>
+    std::string CarriedProblems(Rml::Element& card)
+    {
+        Rml::Context& context = MCMenusPictures::GameMenus().Menus().Context();
+        Rml::ElementDocument* room = card.GetOwnerDocument();
+        REQUIRE(room != nullptr);
+        Rml::ElementDocument* carried = context.LoadDocumentFromMemory(
+            R"(<rml><head><link type="text/rcss" href="look.rcss"/><link type="text/rcss" href="room.rcss"/></head>)"
+            "<body></body></rml>",
+            room->GetSourceURL());
+        REQUIRE(carried != nullptr);
+        carried->SetProperty(Rml::PropertyId::Width, Rml::Property(0.0f, Rml::Unit::PX));
+        carried->SetProperty(Rml::PropertyId::Height, Rml::Property(0.0f, Rml::Unit::PX));
+        const Rml::Vector2f at = card.GetAbsoluteOffset(Rml::BoxArea::Border);
+        Rml::Element& copy = *carried->AppendChild(card.Clone());
+        copy.SetProperty(Rml::PropertyId::Position, Rml::Property(Rml::Style::Position::Absolute));
+        copy.SetProperty(Rml::PropertyId::Left, Rml::Property(at.x, Rml::Unit::PX));
+        copy.SetProperty(Rml::PropertyId::Top, Rml::Property(at.y, Rml::Unit::PX));
+        copy.SetProperty(Rml::PropertyId::MarginLeft, Rml::Property(0.0f, Rml::Unit::PX));
+        copy.SetProperty(Rml::PropertyId::MarginTop, Rml::Property(0.0f, Rml::Unit::PX));
+        copy.SetPseudoClass("drag", true);
+        carried->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+        context.Update();
+        std::string problems = MCRmlChecks::BoxProblems(context) + PartsProblems(copy);
+        carried->Close();
+        context.Update();
+        return problems;
+    }
+
+    /// <summary>
+    /// <paramref name="card"/> carried by the mouse to <paramref name="place"/> and put there, as the host drags it:
+    /// what the layout checks find while it's carried, and once it's put down.
+    /// </summary>
+    void Carry(Rml::Element& card, Rml::Element& place)
+    {
+        // The card may go once it's put down (the players on no team one fewer).
+        Rml::ElementDocument* room = card.GetOwnerDocument();
+        REQUIRE(room != nullptr);
+        const Rml::Vector2f start = MiddleOf(card);
+        const Rml::Vector2f end = MiddleOf(place);
+        MCScreenInput::PixelMove(start.x, start.y, CarryFrame);
+        MCScreenInput::PixelButton(SDL_BUTTON_LEFT, true, start.x, start.y, CarryFrame);
+
+        for (int32_t step = 1; step <= CarrySteps; step++)
+        {
+            const Rml::Vector2f at = start + (end - start) * (static_cast<float>(step) / CarrySteps);
+            MCScreenInput::PixelMove(at.x, at.y, CarryFrame);
+        }
+
+        CHECK_EQ(CarriedProblems(card), "");
+        MCScreenInput::PixelButton(SDL_BUTTON_LEFT, false, end.x, end.y, CarryFrame);
+        Settle();
+        CHECK_EQ(ProblemsNow(*room), "");
+    }
+}
+
+/// <summary>
+/// The room's cards lay out their name and HOST apart while the host carries one (RmlUi's copy under the pointer took
+/// no width of its own, and drew HOST over the name) and once it's put down: the host's and a guest's, from the players
+/// on no team to a team and between teams, until none is left on no team, with names long and short, at the frames'
+/// windows (4:3, 16:9, 5:4) as the game's window, laid out as the room goes (not afresh).
+/// </summary>
+TEST_CASE_ISOLATED("game: the room's cards keep their name and HOST apart while carried and once placed")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.ConnectTcp(SeatsHostAddress);
+    MCTestGuest::HostOnLan(LongName, "Seats", 6);
+    Settle();
+    Guest al{std::string(ShortName)};
+    REQUIRE(al.Join(*manager.DirectPlay, SeatsHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(al.Id()); }));
+    Guest bart{std::string(LastName)};
+    REQUIRE(bart.Join(*manager.DirectPlay, SeatsHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(bart.Id()); }));
+    Settle();
+    REQUIRE(RoomScreenShown());
+    MCRoomScreen& room = *RoomScreen();
+    Rml::ElementDocument& document = room.Document()->get();
+    MCDisplay& display = *MCInput::Display();
+    const uint32_t hostId = manager.MyPlayer()->Id;
+
+    for (const MCMenusPictures::MCWindowSize window : MCMenusPictures::FrameWindows)
+    {
+        const MCTest::Scope scope{std::format("{}x{}", window.Width, window.Height)};
+        REQUIRE(MCMenusPictures::SetWindowPixels(display, window.Width, window.Height));
+        Settle();
+        REQUIRE_EQ(room.Seen().Pool.size(), size_t{3});
+        CHECK_EQ(ProblemsNow(document), "");
+
+        // A guest onto team 1, the host from the players on no team onto team 2, then between the teams; the last
+        // player onto team 2, leaving none on no team.
+        Carry(CardNamed(document, ShortName), PlaceOf(document, MCRoomModel::Team1, 0));
+        Carry(CardNamed(document, LongName), PlaceOf(document, MCRoomModel::Team2, 0));
+        CHECK_EQ(room.Seen().Team2.front(), std::format("{} (host)", LongName));
+        Carry(CardNamed(document, LongName), PlaceOf(document, MCRoomModel::Team1, 1));
+        Carry(CardNamed(document, LastName), PlaceOf(document, MCRoomModel::Team2, 0));
+        const MCRoomScreen::MCSeen placed = room.Seen();
+        const std::vector<std::string> team1 = {std::string(ShortName), std::format("{} (host)", LongName),
+                                                std::string(OpenPlaceName)};
+        CHECK(placed.Team1 == team1);
+        CHECK_EQ(placed.Team2.front(), std::string(LastName));
+        CHECK(placed.Pool.empty());
+
+        // All on no team again for the next window.
+        for (const uint32_t id : {hostId, al.Id(), bart.Id()})
+        {
+            room.Drop(id, MCRoomModel::NoTeam, 0);
+        }
+
+        Settle();
+    }
+}
+
+namespace
+{
+    /// <summary>The room's team chat test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view TeamChatHostAddress = "127.0.0.1:28933";
+    /// <summary>
+    /// 1998's chat text to a team (MCLogChatInput's colour 4: blue.fnt, its ink palette 0xe3), the look's cyan, as
+    /// 0xRRGGBB.
+    /// </summary>
+    constexpr uint32_t TeamLineInk = 0x7cd4ec;
+    /// <summary>1998's chat text to all (colour 6: white.fnt, its ink 0x1f), the look's white.</summary>
+    constexpr uint32_t AllLineInk = 0xfcfcfc;
+    /// <summary>The 1998 chat's text colour codes (MCLogChatInput): to the team, and to all.</summary>
+    constexpr int32_t TeamTextCode = 4;
+    constexpr int32_t AllTextCode = 6;
+
+    /// <summary>The game's menus' kit, keeping the sounds it plays from now on.</summary>
+    MCRmlKit& KitKeepingSounds()
+    {
+        const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
+        REQUIRE(menus.has_value());
+        MCRmlKit& kit = menus->get().Kit();
+        kit.KeepPlayed(true);
+        return kit;
+    }
+
+    /// <summary>The sounds <paramref name="kit"/> played since <paramref name="heard"/> of them, which it moves past.</summary>
+    std::vector<uint32_t> SoundsSince(const MCRmlKit& kit, size_t& heard)
+    {
+        const std::vector<uint32_t>& played = kit.Played();
+        std::vector<uint32_t> since(played.begin() + static_cast<std::ptrdiff_t>(std::min(heard, played.size())),
+                                    played.end());
+        heard = played.size();
+        return since;
+    }
+
+    /// <summary>The colour <paramref name="element"/>'s letters are drawn in, as 0xRRGGBB.</summary>
+    uint32_t InkOf(Rml::Element& element)
+    {
+        constexpr int RedShift = 16;
+        constexpr int GreenShift = 8;
+        const Rml::Colourb ink = element.GetComputedValues().color();
+        return static_cast<uint32_t>(ink.red) << RedShift | static_cast<uint32_t>(ink.green) << GreenShift |
+               static_cast<uint32_t>(ink.blue);
+    }
+}
+
+/// <summary>
+/// A line to the team reads apart from a line to all, as 1998's did (MCLogChatInput, MCLogChat::ProcessChatString):
+/// the sayer's name in their colour on both, the team's text in 1998's team colour (blue.fnt's, the look's cyan) and
+/// all's white, the team's marked TEAM; the player's own lines and a guest's alike.
+/// </summary>
+TEST_CASE_ISOLATED("game: the room's chat shows a line to the team in 1998's team colour, apart from a line to all")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(TeamChatHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Team chat", 6);
+    REQUIRE(SettleUntil([] { return RoomScreenShown(); }));
+    MCRoomScreen& room = *RoomScreen();
+    const std::shared_ptr<MCFidpPlayer> host = MultiPlayer()->SessionManager->MyPlayer();
+    REQUIRE(host != nullptr);
+    room.PressJoin(host->Id, MCRoomModel::Team1);
+    Settle();
+
+    // The host's own, to the team then to all; a guest's (as the chat holds a received line), to the team then to all.
+    room.Say("Flank left.", true);
+    room.Say("Good luck.", false);
+    constexpr int32_t AnnNumber = 1;
+    const int32_t annColour = GlobalLog()->PlayerColors[static_cast<size_t>(AnnNumber)];
+    GlobalLog()->Chat->AddLine(std::format("%fc{}Ann: %fc{}On it.", annColour, TeamTextCode));
+    GlobalLog()->Chat->AddLine(std::format("%fc{}Ann: %fc{}You too.", annColour, AllTextCode));
+    Settle();
+
+    // The lines shown: RmlUi keeps the list's hidden template after them.
+    Rml::ElementList lines;
+    room.Document()->get().QuerySelectorAll(lines, "#talk .chat-line");
+    std::erase_if(lines, [](const Rml::Element* line) { return !line->IsVisible(); });
+    constexpr size_t Said = 4;
+    REQUIRE(lines.size() >= Said);
+    const std::span<Rml::Element*> last(lines.end() - static_cast<std::ptrdiff_t>(Said), lines.end());
+    const std::array<bool, Said> toTeam = {true, false, true, false};
+
+    for (size_t at = 0; at < Said; ++at)
+    {
+        Rml::Element& line = *last[at];
+        const MCTest::Scope scope{line.GetInnerRML()};
+        Rml::ElementList names;
+        line.GetElementsByClassName(names, "name");
+        REQUIRE(names.size() == 1);
+        Rml::ElementList marks;
+        line.GetElementsByClassName(marks, "to");
+        REQUIRE(marks.size() == 1);
+        CHECK_EQ(line.IsClassSet("team"), toTeam[at]);
+        CHECK_EQ(InkOf(line), toTeam[at] ? TeamLineInk : AllLineInk);
+        CHECK_EQ(marks.front()->IsVisible(), toTeam[at]);
+        // The name in the sayer's colour either way: the host's first, then Ann's.
+        constexpr size_t HostLines = 2;
+        CHECK(names.front()->IsClassSet(MCChatView::ColourOf(at < HostLines ? host->PlayerNumber : AnnNumber)));
+        CHECK(InkOf(*names.front()) != TeamLineInk);
+    }
+}
+
+namespace
+{
+    /// <summary>The locked map test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view LockedHostAddress = "127.0.0.1:28949";
+    /// <summary>A disabled form control's attribute (RmlUi's: no focus, no typing).</summary>
+    constexpr const char* DisabledAttribute = "disabled";
+}
+
+/// <summary>
+/// A locked map (1998's [Lock]: CPTRLOCK, team 1 Inner Sphere with 360,000 RP against team 2 Clan with 300,000) holds
+/// the host's points boxes as it holds the tech base switches: each shows the map's points, grouped, takes no focus
+/// and no typing, and a click on it plays the refusal of something off; its plain map's boxes take the host's typing.
+/// </summary>
+TEST_CASE_ISOLATED("game: a locked map holds the host's points boxes at its own points, as its tech bases")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(LockedHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Locked map", 6);
+    REQUIRE(SettleUntil([] { return RoomScreenShown(); }));
+    MCRoomScreen& room = *RoomScreen();
+    MCRoomModel& model = GlobalLog()->Room;
+    const MCRmlKit& kit = KitKeepingSounds();
+    size_t heard = kit.Played().size();
+    const auto load = [](std::string_view mission)
+    {
+        GlobalLog()->Room.LoadMission(mission);
+        REQUIRE(SettleUntil([] { return !GlobalLog()->Message->IsShowing(); }));
+        Settle();
+    };
+
+    Rml::Element* points1 = MCTestGuest::ElementOf(room, "points1");
+    Rml::Element* points2 = MCTestGuest::ElementOf(room, "points2");
+    REQUIRE(points1 != nullptr);
+    REQUIRE(points2 != nullptr);
+    Rml::Context* context = points1->GetContext();
+    REQUIRE(context != nullptr);
+
+    // The locked map: both boxes held at its points, as the tech base switches are.
+    load("CPTRLOCK");
+    REQUIRE(model.Locked);
+    constexpr std::array<std::string_view, 2> LockedPoints = {"360,000", "300,000"};
+    const std::array<Rml::Element*, 2> boxes = {points1, points2};
+    const std::array<const char*, 2> techIds = {"tech1", "tech2"};
+
+    for (size_t at = 0; at < boxes.size(); ++at)
+    {
+        const MCTest::Scope scope{boxes[at]->GetId()};
+        CHECK(boxes[at]->IsClassSet("off"));
+        CHECK(boxes[at]->HasAttribute(DisabledAttribute));
+        CHECK_EQ(boxes[at]->GetAttribute<Rml::String>("value", ""), std::string(LockedPoints[at]));
+        Rml::Element* tech = MCTestGuest::ElementOf(room, techIds[at]);
+        REQUIRE(tech != nullptr);
+        CHECK(tech->IsClassSet("off"));
+    }
+
+    CHECK_EQ(room.Seen().Points1, std::string(LockedPoints[0]));
+    CHECK_EQ(room.Seen().Points2, std::string(LockedPoints[1]));
+
+    // Clicked and typed in: refused, the keys not in it, the points as they were.
+    MCTestGuest::RealClickOn(*points1);
+    CHECK(context->GetFocusElement() != points1);
+    CHECK(SoundsSince(kit, heard) == std::vector<uint32_t>{MCRmlKit::OffClickSound});
+    MCTestGuest::RealType("5");
+    Settle();
+    CHECK_EQ(model.Team1Points, 360'000);
+    CHECK_EQ(points1->GetAttribute<Rml::String>("value", ""), std::string(LockedPoints[0]));
+    CHECK_EQ(room.Seen().Points1, std::string(LockedPoints[0]));
+
+    // Its plain map: the boxes free, the host's typing its points.
+    load("CPTRBASE");
+    REQUIRE(!model.Locked);
+
+    for (Rml::Element* box : boxes)
+    {
+        const MCTest::Scope scope{box->GetId()};
+        CHECK(!box->IsClassSet("off"));
+        CHECK(!box->HasAttribute(DisabledAttribute));
+        CHECK_EQ(box->GetAttribute<Rml::String>("value", ""), std::string("300,000"));
+    }
+
+    MCTestGuest::RealClickOn(*points1);
+    CHECK(context->GetFocusElement() == points1);
+    CHECK(SoundsSince(kit, heard).empty());
+    MCScreenInput::RealKey(SDL_SCANCODE_END);
+    MCTestGuest::RealType("1");
+    Settle();
+    CHECK_EQ(model.Team1Points, 3'000'001);
+}
+
+namespace
+{
+    /// <summary>The held TEAM test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view HeldTeamHostAddress = "127.0.0.1:28935";
+    /// <summary>The chat's switch's choices (room.rml's #to): TEAM, then ALL.</summary>
+    constexpr int TeamChoice = 0;
+    constexpr int AllChoice = 1;
+
+    /// <summary>The room's last chat line shown (RmlUi keeps the list's hidden template after the lines).</summary>
+    Rml::Element* LastChatLine(const MCRoomScreen& room)
+    {
+        Rml::ElementList lines;
+        room.Document()->get().QuerySelectorAll(lines, "#talk .chat-line");
+        std::erase_if(lines, [](const Rml::Element* line) { return !line->IsVisible(); });
+        return lines.empty() ? nullptr : lines.back();
+    }
+}
+
+/// <summary>
+/// The room's chat with the player on no team: its TEAM, dim, is held as the spec's held controls are (a click on it,
+/// or Left onto it, refused with the sound of something off, the switch staying on ALL), and a line goes to all.
+/// On a team TEAM is chosen with the button press and a line goes to the team; off it again, the switch back on ALL.
+/// </summary>
+TEST_CASE_ISOLATED("game: the room's chat refuses TEAM to a player on no team, whose line goes to all")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(HeldTeamHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Held team", 6);
+    // The room shown and its change of screen over: a player's clicks are held while it fades.
+    REQUIRE(SettleUntil([] { return RoomScreenShown() && !MCScreenChange::Running(); }));
+    MCRoomScreen& room = *RoomScreen();
+    const std::shared_ptr<MCFidpPlayer> host = MultiPlayer()->SessionManager->MyPlayer();
+    REQUIRE(host != nullptr);
+    const MCRmlKit& kit = KitKeepingSounds();
+    size_t heard = kit.Played().size();
+    Rml::Element* to = MCTestGuest::ElementOf(room, "to");
+    Rml::Element* say = MCTestGuest::ElementOf(room, "say");
+    REQUIRE(to != nullptr);
+    REQUIRE(say != nullptr);
+    REQUIRE(to->GetNumChildren() == 2);
+    Rml::Element& team = *to->GetChild(TeamChoice);
+    const auto sayLine = [say](std::string_view line)
+    {
+        MCTestGuest::RealClickOn(*say);
+        MCTestGuest::RealType(line);
+        MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+        Settle();
+    };
+
+    const auto lastToTeam = [&room](std::string_view line)
+    {
+        Rml::Element* last = LastChatLine(room);
+        REQUIRE(last != nullptr);
+        REQUIRE(last->GetInnerRML().find(line) != std::string::npos);
+        return last->IsClassSet("team");
+    };
+
+    // On no team: TEAM held, the switch on ALL; its click and Left onto it refused.
+    CHECK(team.IsClassSet("held"));
+    CHECK(team.IsClassSet("off"));
+    CHECK_EQ(MCRmlKit::Choice(*to), AllChoice);
+    MCTestGuest::RealClickOn(team);
+    CHECK_EQ(MCRmlKit::Choice(*to), AllChoice);
+    CHECK(SoundsSince(kit, heard) == std::vector<uint32_t>{MCRmlKit::OffClickSound});
+    to->Focus(true);
+    MCScreenInput::RealKey(SDL_SCANCODE_LEFT);
+    CHECK_EQ(MCRmlKit::Choice(*to), AllChoice);
+    CHECK(SoundsSince(kit, heard) == std::vector<uint32_t>{MCRmlKit::OffClickSound});
+    sayLine("Anyone here?");
+    CHECK(!lastToTeam("Anyone here?"));
+
+    // On team 1: TEAM chosen with the button press, the line to the team.
+    room.PressJoin(host->Id, MCRoomModel::Team1);
+    Settle();
+    CHECK(!team.IsClassSet("held"));
+    SoundsSince(kit, heard);
+    MCTestGuest::RealClickOn(team);
+    CHECK_EQ(MCRmlKit::Choice(*to), TeamChoice);
+    CHECK(SoundsSince(kit, heard) == std::vector<uint32_t>{MCRmlKit::PressSound});
+    sayLine("Flank left.");
+    CHECK(lastToTeam("Flank left."));
+
+    // Off the team again: the switch back on ALL, TEAM held, the line to all.
+    room.Drop(host->Id, MCRoomModel::NoTeam, 0);
+    Settle();
+    CHECK(team.IsClassSet("held"));
+    CHECK_EQ(MCRmlKit::Choice(*to), AllChoice);
+    sayLine("Regroup.");
+    CHECK(!lastToTeam("Regroup."));
 }

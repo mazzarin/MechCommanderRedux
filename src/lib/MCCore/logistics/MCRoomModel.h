@@ -242,6 +242,11 @@ public:
     /// <summary>Team <paramref name="team"/>'s points and tech base.</summary>
     int32_t Points(int8_t team) const;
     int8_t TechBase(int8_t team) const;
+    /// <summary>
+    /// Whether the room has a mission as this game holds it: the host's loaded (its file, which the match plays), a
+    /// guest's read as its host named it (<see cref="LoadedMission"/>: a guest has no file of the room's).
+    /// </summary>
+    bool HasMission() const;
     /// <summary>Whether the host may place players and choose the map now (its controls live).</summary>
     bool CanChangeTeams() const { return Hosting() && HostControls; }
     /// <summary>Whether the host may set the teams' tech bases and points (and the mission doesn't fix them).</summary>

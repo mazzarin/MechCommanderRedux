@@ -388,6 +388,11 @@ auto MCRoomModel::TechBase(int8_t team) const -> int8_t
     return team == Team1 ? Team1TechBase : team == Team2 ? Team2TechBase : InnerSphere;
 }
 
+auto MCRoomModel::HasMission() const -> bool
+{
+    return Hosting() ? !MissionFile.empty() : !LoadedMission.empty();
+}
+
 auto MCRoomModel::Assign(uint32_t playerId, int8_t team, int8_t slot) -> void
 {
     if (Made() && CanChangeTeams())
@@ -1459,6 +1464,11 @@ auto MCRoomModel::LoadMission(std::string_view fileName) -> void
             StartMissionHold(*mission);
         }
 
+        // OB-195 (fixed): the original set the room's time limit only from a file that has one, so a map with none
+        // (Arena, Capture Base, Many Bases, Swamp Rat and others) went on showing the last map's. The room's alone: the
+        // battle's own is its mission's (MCScenario::LoadObjectives' TimeLeft).
+        MissionTime.clear();
+
         if (iniFile.ReadIdULong("MissionTime", value) == 0)
         {
             MissionTime = std::format("{}:{:02}", value / 60, value % 60);
@@ -1582,6 +1592,14 @@ auto MCRoomModel::LoadMission(std::string_view fileName) -> void
     SetTeam1RP(0);
     SetTeam2RP(0);
     Description.clear();
+
+    // Port-only (Redux HD): a guest holds no mission it couldn't read (its room shows none; a room rolled over to it
+    // loads none), not the one its host named before.
+    if (MultiPlayer()->IsHost == 0)
+    {
+        LoadedMission.clear();
+    }
+
     ToView([](MCRoomView& view) { view.ShowMissionText(DescriptionFont, {}); });
     ShowDialog(MCFormatPrintf(LoadGameString(0xad, 0xfe).c_str(), std::string(fileName).c_str()), MPCancel,
                "bh_okay.tga", "bg_okay.tga", nullptr);

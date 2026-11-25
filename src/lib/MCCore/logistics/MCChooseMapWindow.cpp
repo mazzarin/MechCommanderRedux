@@ -160,7 +160,11 @@ void MCChooseMapWindow::OnDestroy()
 void MCChooseMapWindow::OpenOver(std::string_view roomsMap)
 {
     _Maps = MCMatchMaps();
-    SDL_Log("CHOOSE MAP: %zu maps", _Maps.size());
+    // Port-only (the menus' playtest, 24 Nov): 1998's NA maps left out, the match options' ARTILLERY OFF and PROBES OFF
+    // in their place. Only the list: a room whose host picked one (another build's) loads and plays it as before.
+    const size_t read = _Maps.size();
+    std::erase_if(_Maps, [](const MCMatchMap& map) { return map.NoArtillery; });
+    SDL_Log("CHOOSE MAP: %zu maps (%zu NA maps left out)", _Maps.size(), read - _Maps.size());
     const auto found = std::ranges::find_if(
         _Maps,
         [roomsMap](const MCMatchMap& map)

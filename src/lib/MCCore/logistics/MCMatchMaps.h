@@ -25,12 +25,20 @@ struct MCMatchMap
     std::optional<uint32_t> Seconds;
     /// <summary>Its description's lines (packet 1), an empty line between paragraphs.</summary>
     std::vector<std::string> Description;
+    /// <summary>
+    /// Whether it is one of 1998's NA maps, its plain map with the artillery crates' scripting taken out, as its
+    /// description says (<see cref="NoArtilleryLine"/>): the match options' ARTILLERY OFF and PROBES OFF stand in.
+    /// </summary>
+    bool NoArtillery = false;
 };
+
+/// <summary>The line an NA map's description has (CPTBASNA's, FORTNA's and the six others').</summary>
+inline constexpr std::string_view NoArtilleryLine = "**NO FUNCTIONING ARTILLERY CRATES**";
 
 /// <summary>Room packet <paramref name="file"/> (its name without the extension) read; none when it can't be.</summary>
 std::optional<MCMatchMap> MCReadMatchMap(std::string_view file);
 
-/// <summary>Every room packet the game finds that can be read, by name, then file.</summary>
+/// <summary>Every room packet the game finds that can be read (the NA maps too), by name, then file.</summary>
 std::vector<MCMatchMap> MCMatchMaps();
 
 /// <summary>Points as the menus write them, grouped by thousands: "300,000".</summary>

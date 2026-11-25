@@ -642,6 +642,10 @@ public:
     /// resolution (from the HD art pack, the ground's HD atlas, text redrawn sharp, a line or ellipse drawn smooth, or a
     /// mech's shadow with smooth edges), not from the original's pixels.
     /// </summary>
+    /// <remarks>
+    /// Its windows and data are borrowed from the draw command, which holds them while it runs: it is kept only from
+    /// the command's start to its end (AuditScope), and handed to <see cref="Audit"/> for that call alone.
+    /// </remarks>
     struct AuditedDraw
     {
         std::string_view Command;

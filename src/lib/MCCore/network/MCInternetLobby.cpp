@@ -443,11 +443,12 @@ std::unique_ptr<MCInternetList> MCInternetList::Open()
         return nullptr;
     }
 
-    return std::make_unique<MCInternetList>(
-        Key{}, setup.Open, std::format("{}{}?proto={}", setup.Service, ListPath, MCServiceProtocol));
+    return std::make_unique<MCInternetList>(Key{}, setup.Open,
+                                            std::format("{}{}?proto={}", setup.Service, ListPath, MCServiceProtocol));
 }
 
-MCInternetList::MCInternetList(Key, MCWebSocketOpener open, std::string url) : _Open(std::move(open)), _Url(std::move(url))
+MCInternetList::MCInternetList(Key, MCWebSocketOpener open, std::string url)
+    : _Open(std::move(open)), _Url(std::move(url))
 {
     Reopen(Clock::now());
 }

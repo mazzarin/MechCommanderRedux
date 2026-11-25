@@ -2880,8 +2880,8 @@ namespace
     /// (TraceNow's), its bytes in by <paramref name="read"/>: <c>H begun read archive offset bytes streams</c>, the
     /// streams those it holds.
     /// </summary>
-    void TraceHold(const std::shared_ptr<MCHdArchive>& archive, int64_t begun, int64_t read, uint64_t offset, uint64_t bytes,
-                   size_t streams)
+    void TraceHold(const std::shared_ptr<MCHdArchive>& archive, int64_t begun, int64_t read, uint64_t offset,
+                   uint64_t bytes, size_t streams)
     {
         if (!Tracing())
         {

@@ -41,8 +41,9 @@ namespace
         MCOptionalRef<SDL_GPUTransferBuffer> Buffer() override
         {
             // A number for a buffer, never read (SDL's buffers are opaque).
-            return _Buffer != 0 ? MCOptionalRef<SDL_GPUTransferBuffer>(*reinterpret_cast<SDL_GPUTransferBuffer*>(_Buffer))
-                                : std::nullopt;
+            return _Buffer != 0
+                       ? MCOptionalRef<SDL_GPUTransferBuffer>(*reinterpret_cast<SDL_GPUTransferBuffer*>(_Buffer))
+                       : std::nullopt;
         }
 
         bool Done(SDL_GPUFence& fence) override

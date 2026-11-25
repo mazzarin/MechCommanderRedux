@@ -1504,7 +1504,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader = &vertexShader;
-        pipeline.fragment_shader = fragmentShader.has_value() ? &fragmentShader->get() : renderer->_FragmentShader.get();
+        pipeline.fragment_shader =
+            fragmentShader.has_value() ? &fragmentShader->get() : renderer->_FragmentShader.get();
         pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
         pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
@@ -1545,10 +1546,9 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     const SetShaders plainShaders{*renderer->_FragmentShader,        *renderer->_BasicFragmentShader,
                                   *renderer->_HdFragmentShader,      *renderer->_TreesFragmentShader,
                                   *renderer->_TerrainFragmentShader, *renderer->_GroundShader};
-    const SetShaders standsShaders{
-        *renderer->_StandsFragmentShader,        *renderer->_StandsBasicFragmentShader,
-        *renderer->_StandsHdFragmentShader,      *renderer->_StandsTreesFragmentShader,
-        *renderer->_StandsTerrainFragmentShader, *renderer->_StandsGroundShader};
+    const SetShaders standsShaders{*renderer->_StandsFragmentShader,        *renderer->_StandsBasicFragmentShader,
+                                   *renderer->_StandsHdFragmentShader,      *renderer->_StandsTreesFragmentShader,
+                                   *renderer->_StandsTerrainFragmentShader, *renderer->_StandsGroundShader};
 
     const auto makeSurfacePipelines = [&](SurfaceLayout layout, std::string_view surface)
     {
@@ -1564,8 +1564,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
             {
                 job(std::format("{} draw ({}, {})", surface, variant, kind), slow, into,
                     [&makePipeline, vertex = std::ref(vertexShader), fragment = std::ref(fragmentShader), layout, blend,
-                     indexOnly, marks,
-                     fold] { return makePipeline(layout, vertex, blend, indexOnly, false, marks, fragment, fold); });
+                     indexOnly, marks, fold]
+                    { return makePipeline(layout, vertex, blend, indexOnly, false, marks, fragment, fold); });
             };
 
             if (!trees)

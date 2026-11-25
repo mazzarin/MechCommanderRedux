@@ -744,8 +744,9 @@ std::expected<void, std::string> MCDisplay::SaveShownScreenshot(const std::files
         return std::unexpected(screen.error());
     }
 
-    const MCSdlHandle<SDL_Surface> surface(SDL_CreateSurfaceFrom(
-        screen->Width, screen->Height, SDL_PIXELFORMAT_RGBA32, screen->Pixels.data(), screen->Width * sizeof(SDL_Color)));
+    const MCSdlHandle<SDL_Surface> surface(SDL_CreateSurfaceFrom(screen->Width, screen->Height, SDL_PIXELFORMAT_RGBA32,
+                                                                 screen->Pixels.data(),
+                                                                 screen->Width * sizeof(SDL_Color)));
 
     if (surface == nullptr)
     {

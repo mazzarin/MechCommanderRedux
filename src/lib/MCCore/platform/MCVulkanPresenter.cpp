@@ -1401,7 +1401,7 @@ void MCVulkanPresenter::PlanComposite(const MCFrame& frame, PlannedFrame& planne
 }
 
 std::expected<void, std::string> MCVulkanPresenter::RunPlanned(SDL_GPUCommandBuffer& commands, PlannedFrame& planned,
-                                                                MCOptionalRef<const MCFrame> frame)
+                                                               MCOptionalRef<const MCFrame> frame)
 {
     // A frame run ahead logs its parts as the render thread's.
     const bool ahead = !frame.has_value();
@@ -1431,7 +1431,7 @@ std::expected<void, std::string> MCVulkanPresenter::RunPlanned(SDL_GPUCommandBuf
 }
 
 std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer& commands, const PlannedFrame& planned,
-                                                            MCOptionalRef<const MCFrame> shown)
+                                                           MCOptionalRef<const MCFrame> shown)
 {
     const uint32_t width = static_cast<uint32_t>(planned.Width);
     const uint32_t height = static_cast<uint32_t>(planned.Height);
@@ -1690,6 +1690,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
         world.Texture = held.emplace_back(std::move(texture)).get();
         world.Size = {static_cast<float>(worldWidth), static_cast<float>(worldHeight), static_cast<float>(worldWidth),
                       static_cast<float>(worldHeight)};
+
         if (const MCOptionalRef<SDL_GPUTexture> bloom =
                 planned.BloomFrom.has_value()
                     ? Bloom(commands, i, *world.Texture, worldWidth, worldHeight, *planned.BloomFrom)
@@ -2140,8 +2141,9 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, PlannedFrame& 
     SDL_EndGPURenderPass(pass);
 }
 
-MCOptionalRef<SDL_GPUTexture> MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t index, SDL_GPUTexture& world,
-                                         uint32_t width, uint32_t height, float from)
+MCOptionalRef<SDL_GPUTexture> MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t index,
+                                                       SDL_GPUTexture& world, uint32_t width, uint32_t height,
+                                                       float from)
 {
     // A texel for BloomScale x BloomScale of the world's pixels, which must hold the bloom's levels.
     const uint32_t bloomWidth = (width + BloomScale - 1) / BloomScale;

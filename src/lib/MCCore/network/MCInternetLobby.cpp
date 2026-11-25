@@ -443,11 +443,11 @@ std::unique_ptr<MCInternetList> MCInternetList::Open()
         return nullptr;
     }
 
-    return std::unique_ptr<MCInternetList>(
-        new MCInternetList(setup.Open, std::format("{}{}?proto={}", setup.Service, ListPath, MCServiceProtocol)));
+    return std::make_unique<MCInternetList>(
+        Key{}, setup.Open, std::format("{}{}?proto={}", setup.Service, ListPath, MCServiceProtocol));
 }
 
-MCInternetList::MCInternetList(MCWebSocketOpener open, std::string url) : _Open(std::move(open)), _Url(std::move(url))
+MCInternetList::MCInternetList(Key, MCWebSocketOpener open, std::string url) : _Open(std::move(open)), _Url(std::move(url))
 {
     Reopen(Clock::now());
 }
@@ -655,7 +655,7 @@ std::unique_ptr<MCInternetCount> MCInternetCount::Ask()
         return nullptr;
     }
 
-    return std::unique_ptr<MCInternetCount>(new MCInternetCount(std::move(get), std::move(*url)));
+    return std::make_unique<MCInternetCount>(Key{}, std::move(get), std::move(*url));
 }
 
 struct MCInternetCount::MCAsking
@@ -667,7 +667,7 @@ struct MCInternetCount::MCAsking
     std::optional<int32_t> Online;
 };
 
-MCInternetCount::MCInternetCount(std::unique_ptr<MCHttpSource::MCGet> get, std::string url)
+MCInternetCount::MCInternetCount(Key, std::unique_ptr<MCHttpSource::MCGet> get, std::string url)
     : _Asking(std::make_shared<MCAsking>())
 {
     _Asking->Get = std::move(get);

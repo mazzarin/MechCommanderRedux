@@ -523,7 +523,7 @@ struct MCIceLink::Impl
     }
 };
 
-MCIceLink::MCIceLink(std::unique_ptr<Impl> impl) : _Impl(std::move(impl))
+MCIceLink::MCIceLink(Key, std::unique_ptr<Impl> impl) : _Impl(std::move(impl))
 {
 }
 
@@ -548,7 +548,7 @@ std::unique_ptr<MCIceLink> MCIceLink::Offer(const Settings& settings)
         return nullptr;
     }
 
-    return std::unique_ptr<MCIceLink>(new MCIceLink(std::move(impl)));
+    return std::make_unique<MCIceLink>(Key{}, std::move(impl));
 }
 
 std::unique_ptr<MCIceLink> MCIceLink::Answer(const Settings& settings)
@@ -566,7 +566,7 @@ std::unique_ptr<MCIceLink> MCIceLink::Answer(const Settings& settings)
         return nullptr;
     }
 
-    return std::unique_ptr<MCIceLink>(new MCIceLink(std::move(impl)));
+    return std::make_unique<MCIceLink>(Key{}, std::move(impl));
 }
 
 std::vector<MCIceLink::Signal> MCIceLink::TakeSignals()

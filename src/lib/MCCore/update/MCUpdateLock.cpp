@@ -137,7 +137,7 @@ std::unique_ptr<MCUpdateLock> MCUpdateLock::Open(const std::filesystem::path& ga
         return nullptr;
     }
 
-    return std::unique_ptr<MCUpdateLock>(new MCUpdateLock(reinterpret_cast<intptr_t>(handle)));
+    return std::make_unique<MCUpdateLock>(Key{}, reinterpret_cast<intptr_t>(handle));
 #else
     // Not inherited: a game started again by this one (a restart) locks its own.
     int handle = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, LockFileMode);
@@ -153,7 +153,7 @@ std::unique_ptr<MCUpdateLock> MCUpdateLock::Open(const std::filesystem::path& ga
         return nullptr;
     }
 
-    return std::unique_ptr<MCUpdateLock>(new MCUpdateLock(handle));
+    return std::make_unique<MCUpdateLock>(Key{}, handle);
 #endif
 }
 

@@ -44,7 +44,7 @@ struct MCFlac::Impl
     }
 };
 
-MCFlac::MCFlac() : _Impl(std::make_unique<Impl>())
+MCFlac::MCFlac(Key) : _Impl(std::make_unique<Impl>())
 {
 }
 
@@ -52,7 +52,7 @@ MCFlac::~MCFlac() = default;
 
 std::unique_ptr<MCFlac> MCFlac::Open(const std::filesystem::path& path)
 {
-    auto result = std::unique_ptr<MCFlac>(new MCFlac());
+    auto result = std::make_unique<MCFlac>(Key{});
     result->_Impl->File = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Buffered);
 
     if (!result->_Impl->File.has_value())
@@ -71,7 +71,7 @@ std::unique_ptr<MCFlac> MCFlac::Open(std::shared_ptr<const std::vector<uint8_t>>
         return nullptr;
     }
 
-    auto result = std::unique_ptr<MCFlac>(new MCFlac());
+    auto result = std::make_unique<MCFlac>(Key{});
     result->_Impl->Memory = std::move(bytes);
     const std::vector<uint8_t>& memory = *result->_Impl->Memory;
     result->_Impl->Decoder = drflac_open_memory(memory.data(), memory.size(), nullptr);

@@ -26,6 +26,12 @@
 /// </summary>
 class MCUpdateLock
 {
+    /// <summary>Only <see cref="Open"/> makes one.</summary>
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
 public:
     /// <summary>The locks, in the game folder.</summary>
     static constexpr std::string_view GameLock = MCContentList::InUpdateFolder<"game.lock">;
@@ -43,6 +49,8 @@ public:
     ~MCUpdateLock();
     MCUpdateLock(const MCUpdateLock&) = delete;
     MCUpdateLock& operator=(const MCUpdateLock&) = delete;
+    /// <summary>A lock on the open file <paramref name="handle"/> (Open's).</summary>
+    MCUpdateLock(Key, intptr_t handle) : _Handle(handle) {}
 
     /// <summary>Takes it exclusive without waiting: false while another holds it, shared or exclusive.</summary>
     bool TryExclusive();
@@ -72,8 +80,6 @@ private:
         Shared,
         Exclusive,
     };
-
-    explicit MCUpdateLock(intptr_t handle) : _Handle(handle) {}
 
     /// <summary>The open file: a descriptor on the Mac, a HANDLE on Windows.</summary>
     intptr_t _Handle;

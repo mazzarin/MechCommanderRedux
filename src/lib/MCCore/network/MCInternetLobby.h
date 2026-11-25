@@ -74,6 +74,12 @@ std::chrono::minutes MCLocalUtcOffset();
 /// </summary>
 class MCInternetList
 {
+    /// <summary>Only <see cref="Open"/> makes one.</summary>
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
 public:
     /// <summary>Opens the list; null when internet games aren't available (no socket opener set).</summary>
     static std::unique_ptr<MCInternetList> Open();
@@ -81,6 +87,8 @@ public:
     ~MCInternetList();
     MCInternetList(const MCInternetList&) = delete;
     MCInternetList& operator=(const MCInternetList&) = delete;
+    /// <summary>A list read from <paramref name="url"/> through <paramref name="open"/> (Open's).</summary>
+    MCInternetList(Key, MCWebSocketOpener open, std::string url);
 
     /// <summary>Moves it along (the service's messages, its pings, coming back after a drop).</summary>
     /// <returns>Whether the listing or the busiest hours changed.</returns>
@@ -95,7 +103,6 @@ public:
 private:
     using Clock = std::chrono::steady_clock;
 
-    MCInternetList(MCWebSocketOpener open, std::string url);
     void Reopen(Clock::time_point now);
     /// <summary>Reads one message from the service: true when it changed what the screen shows.</summary>
     bool Hear(const MCWebSocket::Message& message);
@@ -121,6 +128,12 @@ private:
 /// </summary>
 class MCInternetCount
 {
+    /// <summary>Only <see cref="Ask"/> makes one.</summary>
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
 public:
     /// <summary>Asks the service; null when internet games aren't available (no transfer set).</summary>
     static std::unique_ptr<MCInternetCount> Ask();
@@ -128,6 +141,8 @@ public:
     ~MCInternetCount();
     MCInternetCount(const MCInternetCount&) = delete;
     MCInternetCount& operator=(const MCInternetCount&) = delete;
+    /// <summary>Asks <paramref name="url"/> through <paramref name="get"/> (Ask's).</summary>
+    MCInternetCount(Key, std::unique_ptr<MCHttpSource::MCGet> get, std::string url);
 
     /// <summary>Whether the service answered, or the asking failed (the log says why).</summary>
     bool Done();
@@ -137,8 +152,6 @@ public:
 private:
     /// <summary>What the asking thread and the count share: the transfer, and the answer once it's in.</summary>
     struct MCAsking;
-
-    MCInternetCount(std::unique_ptr<MCHttpSource::MCGet> get, std::string url);
 
     std::shared_ptr<MCAsking> _Asking;
     /// <summary>Last, so it starts once what it shares is made.</summary>

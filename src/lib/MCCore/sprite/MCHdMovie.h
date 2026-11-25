@@ -27,12 +27,20 @@ struct MCYuvFactors
 /// </summary>
 class MCHdMovie
 {
+    /// <summary>Only <see cref="Open"/> makes one.</summary>
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
 public:
     /// <summary>Opens the movie at <paramref name="path"/>, reading its header, and starts decoding it.</summary>
     static std::expected<std::unique_ptr<MCHdMovie>, std::string> Open(const std::filesystem::path& path);
     ~MCHdMovie();
     MCHdMovie(const MCHdMovie&) = delete;
     MCHdMovie& operator=(const MCHdMovie&) = delete;
+    /// <summary>A movie with nothing open (Open's).</summary>
+    explicit MCHdMovie(Key);
 
     /// <summary>The frames' width and height, from the file's header.</summary>
     int32_t Width() const { return _Width; }
@@ -83,7 +91,6 @@ public:
     static std::expected<std::vector<uint8_t>, std::string> Rgba(const MCHdArt::Frame& frame);
 
 private:
-    MCHdMovie();
     struct Impl;
     std::unique_ptr<Impl> _Impl;
     int32_t _Width = 0;

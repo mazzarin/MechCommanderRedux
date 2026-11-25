@@ -22,6 +22,14 @@
 /// <summary>One end of a link to another game over ICE (see the file's comment).</summary>
 class MCIceLink
 {
+    /// <summary>Only <see cref="Offer"/> or <see cref="Answer"/> makes one.</summary>
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
+    struct Impl;
+
 public:
     /// <summary>Where a link finds its paths: none listed, only the machines' own addresses (a LAN's).</summary>
     struct Settings
@@ -132,6 +140,8 @@ public:
     ~MCIceLink();
     MCIceLink(const MCIceLink&) = delete;
     MCIceLink& operator=(const MCIceLink&) = delete;
+    /// <summary>A link run by <paramref name="impl"/> (its makers').</summary>
+    MCIceLink(Key, std::unique_ptr<Impl> impl);
 
     /// <summary>This end's signals since the last call, in order, for the service to pass to the other end.</summary>
     std::vector<Signal> TakeSignals();
@@ -193,7 +203,5 @@ public:
     void Close();
 
 private:
-    struct Impl;
-    explicit MCIceLink(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> _Impl;
 };

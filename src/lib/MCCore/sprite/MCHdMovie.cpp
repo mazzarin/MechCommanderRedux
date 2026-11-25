@@ -431,7 +431,7 @@ struct MCHdMovie::Impl
     }
 };
 
-MCHdMovie::MCHdMovie() : _Impl(std::make_unique<Impl>())
+MCHdMovie::MCHdMovie(Key) : _Impl(std::make_unique<Impl>())
 {
 }
 
@@ -442,7 +442,7 @@ auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::un
     // Port-only (lib/MCFirstUse.h): a movie the game's thread opens in play (its file, its header, the decoder).
     const MCFirstUseScope use(
         MCFirstUseKind::Movie, [&] { return "opened: " + MCFileSystem::ToUtf8(path.filename()); }, 0);
-    auto movie = std::unique_ptr<MCHdMovie>(new MCHdMovie());
+    auto movie = std::make_unique<MCHdMovie>(Key{});
     Impl& impl = *movie->_Impl;
     impl.Name = MCFileSystem::ToUtf8(path.filename());
     impl.File = MCDiskFile::Open(path, MCDiskFileMode::Read, MCDiskFileReads::Buffered);

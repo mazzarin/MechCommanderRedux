@@ -36,6 +36,12 @@
 /// </remarks>
 class MCUploadSlots : public std::enable_shared_from_this<MCUploadSlots>
 {
+    /// <summary>Only <see cref="MakeWith"/> makes one.</summary>
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
 public:
     /// <summary>A slot's bytes: an upload bigger than one takes a run of neighbours.</summary>
     static constexpr size_t SlotBytes = size_t{2} << 20;
@@ -209,6 +215,8 @@ public:
 
     MCUploadSlots(const MCUploadSlots&) = delete;
     MCUploadSlots& operator=(const MCUploadSlots&) = delete;
+    /// <summary>Slots in <paramref name="backing"/>, more made by <paramref name="more"/> (MakeWith's).</summary>
+    MCUploadSlots(Key, std::unique_ptr<MCBacking> backing, MCMakeBacking more);
 
     /// <summary>How many slots there are (those let go once their copies have run among them), and their bytes in all.</summary>
     size_t Slots() const;
@@ -321,8 +329,6 @@ private:
         std::chrono::steady_clock::time_point SentAt;
         size_t Bytes = 0;
     };
-
-    MCUploadSlots(std::unique_ptr<MCBacking> backing, MCMakeBacking more);
 
     /// <summary>The lease's slots no longer its (free once no batch sent with them is in flight).</summary>
     void GiveBack(MCLease& lease);

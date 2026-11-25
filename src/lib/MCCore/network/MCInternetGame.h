@@ -49,6 +49,12 @@ struct MCInternetSetup
 /// <summary>An internet game on this machine (see the file's comment).</summary>
 class MCInternetGame
 {
+    /// <summary>Only <see cref="Host"/>, <see cref="HostAgain"/> or <see cref="Join"/> makes one.</summary>
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
 public:
     enum class Stage
     {
@@ -91,6 +97,8 @@ public:
     ~MCInternetGame();
     MCInternetGame(const MCInternetGame&) = delete;
     MCInternetGame& operator=(const MCInternetGame&) = delete;
+    /// <summary>A game on <paramref name="net"/> (its makers' own).</summary>
+    MCInternetGame(Key, MCNetSwitch& net, const MCInternetSetup& setup, bool hosting, bool isPublic, std::string code);
 
     /// <summary>Moves it along (the service's answer, a guest's link): how far it has got.</summary>
     Stage Update();
@@ -145,8 +153,6 @@ public:
 
 private:
     using Clock = std::chrono::steady_clock;
-
-    MCInternetGame(MCNetSwitch& net, const MCInternetSetup& setup, bool hosting, bool isPublic, std::string code);
 
     /// <summary>Fails with <paramref name="refusal"/>, saying why in the log.</summary>
     Stage Fail(MCServiceRefusal refusal, std::string_view why);

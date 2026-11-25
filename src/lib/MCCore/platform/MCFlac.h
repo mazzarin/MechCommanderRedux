@@ -5,6 +5,12 @@
 /// <summary>A bounded, seekable FLAC reader. dr_flac is the only compressed-audio decoder.</summary>
 class MCFlac
 {
+    /// <summary>Only <see cref="Open"/> makes one.</summary>
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
 public:
     static std::unique_ptr<MCFlac> Open(const std::filesystem::path& path);
     /// <summary>
@@ -18,6 +24,8 @@ public:
     ~MCFlac();
     MCFlac(const MCFlac&) = delete;
     MCFlac& operator=(const MCFlac&) = delete;
+    /// <summary>A reader with nothing open (Open's).</summary>
+    explicit MCFlac(Key);
 
     const MCSoundFormat& Format() const { return _Format; }
     uint64_t Frames() const { return _Frames; }
@@ -33,7 +41,6 @@ public:
     bool CheckEnd();
 
 private:
-    MCFlac();
     /// <summary>Whether the decoder just opened (none: it didn't open) is one this code plays; takes its format.</summary>
     bool Opened();
     struct Impl;

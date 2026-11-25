@@ -71,7 +71,7 @@ std::unique_ptr<MCInternetGame> MCInternetGame::Host(MCNetSwitch& net, bool isPu
         return nullptr;
     }
 
-    auto game = std::unique_ptr<MCInternetGame>(new MCInternetGame(net, setup, true, isPublic, {}));
+    auto game = std::make_unique<MCInternetGame>(Key{}, net, setup, true, isPublic, std::string());
     game->_Signaling->Host();
     SDL_Log("Internet game: hosting a %s game", isPublic ? "public" : "private");
     return game;
@@ -86,7 +86,7 @@ std::unique_ptr<MCInternetGame> MCInternetGame::HostAgain(MCNetSwitch& net, bool
         return nullptr;
     }
 
-    auto game = std::unique_ptr<MCInternetGame>(new MCInternetGame(net, setup, true, isPublic, {}));
+    auto game = std::make_unique<MCInternetGame>(Key{}, net, setup, true, isPublic, std::string());
     game->_Signaling->HostAgain(place.Code, place.Token);
     SDL_Log("Internet game: hosting game %s again, back in its place", place.Code.c_str());
     return game;
@@ -102,7 +102,7 @@ std::unique_ptr<MCInternetGame> MCInternetGame::Join(MCNetSwitch& net, std::stri
     }
 
     std::string upper = CodeOf(code);
-    auto game = std::unique_ptr<MCInternetGame>(new MCInternetGame(net, setup, false, relayOnly, upper));
+    auto game = std::make_unique<MCInternetGame>(Key{}, net, setup, false, relayOnly, upper);
     game->_Signaling->Join(upper);
     SDL_Log("Internet game: joining game %s%s", upper.c_str(), relayOnly ? ", known public: relays only" : "");
     return game;
@@ -116,7 +116,7 @@ std::string MCInternetGame::CodeOf(std::string_view typed)
     return code;
 }
 
-MCInternetGame::MCInternetGame(MCNetSwitch& net, const MCInternetSetup& setup, bool hosting, bool isPublic,
+MCInternetGame::MCInternetGame(Key, MCNetSwitch& net, const MCInternetSetup& setup, bool hosting, bool isPublic,
                                std::string code)
     : _Net(net)
     , _Signaling(std::make_shared<MCServiceSignaling>(

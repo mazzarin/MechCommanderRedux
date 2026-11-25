@@ -217,7 +217,7 @@ std::expected<std::shared_ptr<MCUploadSlots>, std::string> MCUploadSlots::Make(
 
 std::shared_ptr<MCUploadSlots> MCUploadSlots::MakeWith(std::unique_ptr<MCBacking> backing, MCMakeBacking more)
 {
-    return std::shared_ptr<MCUploadSlots>(new MCUploadSlots(std::move(backing), std::move(more)));
+    return std::make_shared<MCUploadSlots>(Key{}, std::move(backing), std::move(more));
 }
 
 size_t MCUploadSlots::StartBytes()
@@ -237,7 +237,7 @@ void MCUploadSlots::SetBytes(std::optional<size_t> bytes)
     SetSlotBytes.store(bytes.has_value() ? std::clamp(*bytes, (NearSlots + 1) * SlotBytes, MostBytes) : 0);
 }
 
-MCUploadSlots::MCUploadSlots(std::unique_ptr<MCBacking> backing, MCMakeBacking more)
+MCUploadSlots::MCUploadSlots(Key, std::unique_ptr<MCBacking> backing, MCMakeBacking more)
     : _Backing(std::move(backing)), _MakeMore(std::move(more))
 {
     _Buffer = _Backing->Buffer();

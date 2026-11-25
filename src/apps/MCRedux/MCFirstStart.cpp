@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCFirstStart.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCSdlHandle.h"
 
 namespace
 {
@@ -72,29 +73,44 @@ namespace
     /// <summary>The window and its renderer, closed as it goes.</summary>
     class MCOpenWindow
     {
+        /// <summary>Only <see cref="Open"/> makes one.</summary>
+        struct Key
+        {
+            explicit Key() = default;
+        };
+
     public:
         /// <summary>A window of the width every one has, <paramref name="height"/> points tall; or why it can't open.</summary>
         static std::expected<std::unique_ptr<MCOpenWindow>, std::string> Open(int height, bool hidden)
         {
-            auto open = std::unique_ptr<MCOpenWindow>(new MCOpenWindow());
             const SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | (hidden ? SDL_WINDOW_HIDDEN : 0);
+            SDL_Window* window = nullptr;
+            SDL_Renderer* renderer = nullptr;
 
             if (!SDL_CreateWindowAndRenderer(std::string(MCFirstStart::WindowTitle).c_str(), WindowWidth, height, flags,
-                                             &open->Window, &open->Renderer))
+                                             &window, &renderer))
             {
                 return std::unexpected(std::format("its window can't open ({})", SDL_GetError()));
             }
 
-            const float scale = DrawingScale * SDL_GetWindowPixelDensity(open->Window);
-            SDL_SetRenderScale(open->Renderer, scale, scale);
+            auto open = std::make_unique<MCOpenWindow>(Key{}, MCSdlHandle<SDL_Window>(window),
+                                                       MCSdlHandle<SDL_Renderer>(renderer));
+            const float scale = DrawingScale * SDL_GetWindowPixelDensity(window);
+            SDL_SetRenderScale(renderer, scale, scale);
 
             // In front of the window the player started it from (the setup's, Explorer's), not behind it.
-            if (!hidden && !SDL_RaiseWindow(open->Window))
+            if (!hidden && !SDL_RaiseWindow(window))
             {
                 SDL_Log("First start: the window can't be brought to the front: %s", SDL_GetError());
             }
 
             return open;
+        }
+
+        /// <summary>Takes <paramref name="window"/> and <paramref name="renderer"/> (Open's).</summary>
+        MCOpenWindow(Key, MCSdlHandle<SDL_Window> window, MCSdlHandle<SDL_Renderer> renderer)
+            : _Window(std::move(window)), _Renderer(std::move(renderer))
+        {
         }
 
         MCOpenWindow(const MCOpenWindow&) = delete;
@@ -103,30 +119,21 @@ namespace
         /// <summary>Makes the window <paramref name="height"/> points tall (a question's, or the progress's).</summary>
         void SetHeight(int height)
         {
-            if (!SDL_SetWindowSize(Window, WindowWidth, height))
+            if (!SDL_SetWindowSize(_Window.get(), WindowWidth, height))
             {
                 SDL_Log("First start: the window can't be made %d points tall: %s", height, SDL_GetError());
             }
         }
 
-        ~MCOpenWindow()
-        {
-            if (Renderer != nullptr)
-            {
-                SDL_DestroyRenderer(Renderer);
-            }
-
-            if (Window != nullptr)
-            {
-                SDL_DestroyWindow(Window);
-            }
-        }
-
-        SDL_Window* Window = nullptr;
-        SDL_Renderer* Renderer = nullptr;
+        /// <summary>The window.</summary>
+        SDL_Window& Window() const { return *_Window; }
+        /// <summary>The window's renderer.</summary>
+        SDL_Renderer& Renderer() const { return *_Renderer; }
 
     private:
-        MCOpenWindow() = default;
+        /// <summary>The window, and its renderer (destroyed first, as it was made after it).</summary>
+        MCSdlHandle<SDL_Window> _Window;
+        MCSdlHandle<SDL_Renderer> _Renderer;
     };
 
     void SetColor(SDL_Renderer* renderer, MCColor color)
@@ -311,7 +318,7 @@ namespace
                                                        MCFirstStart::MCWork work,
                                                        const MCFirstStart::MCWindowOptions& options)
     {
-        SDL_Renderer* const renderer = window.Renderer;
+        SDL_Renderer* const renderer = &window.Renderer();
         MCUpdateWork::MCWork<void, MCFirstStart::MCFailure> running(
             std::string(heading), [work = std::move(work)](MCUpdateWork::MCContext& context)
             { return work(context.Progress, context.Stop); });
@@ -520,8 +527,8 @@ namespace
         const std::vector<std::string>& lines = question.Lines;
         const std::vector<MCButton>& laidOut = question.Buttons;
         window.SetHeight(question.Height);
-        SDL_Renderer* const renderer = window.Renderer;
-        SDL_RaiseWindow(window.Window);
+        SDL_Renderer* const renderer = &window.Renderer();
+        SDL_RaiseWindow(&window.Window());
         size_t lit = 0;
         // The button the mouse went down on: one pressed is one let go on where it went down.
         std::optional<size_t> pressedOn;

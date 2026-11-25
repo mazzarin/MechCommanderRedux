@@ -75,9 +75,9 @@ namespace
     /// <summary>
     /// Port-only: mission 1 drawn by the GPU with the third swapchain image on every driver
     /// (<see cref="MCVulkanPresenter::ThirdImageEverywhere"/>, so the Mac's Metal runs its waits), started with vsync
-    /// <paramref name="vsync"/>; its presenter, or null (with a note) when this machine has no GPU renderer.
+    /// <paramref name="vsync"/>; its presenter, or none (with a note) when this machine has no GPU renderer.
     /// </summary>
-    const MCVulkanPresenter* StartThirdImageMission(bool vsync)
+    MCOptionalRef<const MCVulkanPresenter> StartThirdImageMission(bool vsync)
     {
         MCVulkanPresenter::ThirdImageEverywhere = true;
         GVSync = vsync;
@@ -90,10 +90,10 @@ namespace
         if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || presenter == nullptr)
         {
             std::cout << "  (skipped: no GPU renderer on this machine)\n";
-            return nullptr;
+            return std::nullopt;
         }
 
-        return presenter;
+        return *presenter;
     }
 
     /// <summary>
@@ -828,14 +828,14 @@ TEST_CASE_ISOLATED("game: with a third swapchain image, the game keeps at most o
         return;
     }
 
-    const MCVulkanPresenter* const presenter = StartThirdImageMission(true);
+    const MCOptionalRef<const MCVulkanPresenter> presenter = StartThirdImageMission(true);
 
-    if (presenter == nullptr)
+    if (!presenter.has_value())
     {
         return;
     }
 
-    CHECK_EQ(presenter->FramesInFlight(), MCVulkanPresenter::ThirdImageFrames);
+    CHECK_EQ(presenter->get().FramesInFlight(), MCVulkanPresenter::ThirdImageFrames);
     CheckFramesHeld(*presenter, MCVulkanPresenter::HeldWithThirdImage);
 }
 
@@ -852,20 +852,20 @@ TEST_CASE_ISOLATED("game: with a third swapchain image, vsync off keeps two imag
         return;
     }
 
-    const MCVulkanPresenter* const presenter = StartThirdImageMission(false);
+    const MCOptionalRef<const MCVulkanPresenter> presenter = StartThirdImageMission(false);
 
-    if (presenter == nullptr)
+    if (!presenter.has_value())
     {
         return;
     }
 
-    CHECK_EQ(presenter->FramesInFlight(), MCVulkanPresenter::TwoImageFrames);
+    CHECK_EQ(presenter->get().FramesInFlight(), MCVulkanPresenter::TwoImageFrames);
     CheckFramesHeld(*presenter, MCVulkanPresenter::HeldWithTwoImages);
 
     for (const bool vsync : {true, false})
     {
         MCInput::Display()->SetVSync(vsync);
-        CHECK_EQ(presenter->FramesInFlight(),
+        CHECK_EQ(presenter->get().FramesInFlight(),
                  vsync ? MCVulkanPresenter::ThirdImageFrames : MCVulkanPresenter::TwoImageFrames);
         CheckFramesHeld(*presenter,
                         vsync ? MCVulkanPresenter::HeldWithThirdImage : MCVulkanPresenter::HeldWithTwoImages);

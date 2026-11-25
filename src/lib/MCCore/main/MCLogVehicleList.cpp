@@ -4,7 +4,6 @@
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "logistics/MCLogRows.h"
 #include "main/MCGameStrings.h"
-#include "logistics/MCRepairScreen.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
@@ -211,12 +210,6 @@ auto MCLogVehicleList::RemoveVehicle(int32_t index) -> int32_t
     if (index >= GetVehicleCount() || position >= Vehicles.size())
     {
         return -1;
-    }
-
-    // Its repair row takes no more clicks (the original's block went with the vehicle).
-    if (GlobalLog() != nullptr && GlobalLog()->RepairScreen != nullptr)
-    {
-        GlobalLog()->RepairScreen->HideUnitRow(*Vehicles[position]);
     }
 
     Vehicles.erase(Vehicles.begin() + static_cast<ptrdiff_t>(position));

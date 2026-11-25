@@ -522,9 +522,14 @@ auto MCRoomModel::SetView(std::weak_ptr<MCRoomView> view) -> void
     _View = std::move(view);
 }
 
+auto MCRoomModel::SetMade(bool made) -> void
+{
+    _Made = made;
+}
+
 auto MCRoomModel::Made() const -> bool
 {
-    return !_View.expired();
+    return _Made;
 }
 
 auto MCRoomModel::LeftMissionPick() const -> void

@@ -321,11 +321,8 @@ auto MCLogistics::BeginCampaignShop(std::string_view purchaseFile, MCPacketFile&
 
     if (const MCFitResult<int32_t> operation = purchasing.Read<int32_t>("Operation"); operation.has_value())
     {
+        // (The 1998 briefing loaded the operation's picture here, lsb_op or mcxcard.)
         Operation = *operation;
-        BriefingScreen->OperationPicture = std::make_shared<MCLogPort>();
-        BriefingScreen->OperationPicture->Load(CurPlanet == 0
-                                                   ? std::format("{}logart\\lsb_op{}.tga", ArtPath, Operation)
-                                                   : std::format("{}logart\\mcxcard{}.tga", ArtPath, Operation));
     }
     else
     {

@@ -169,7 +169,7 @@ namespace
         FAIL(std::format("no briefing: logistics state {}, the briefing current {} and showing {}, a remade screen "
                          "showing {}, a change running {}, the mission's state {}, the flow's stack {}",
                          logistics->LogisticsState, MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing),
-                         logistics->BriefingScreen->IsShowing(), MCRmlFlow::Showing(), MCScreenChange::Running(),
+                         MCCampaignMenu::Shown(), MCRmlFlow::Showing(), MCScreenChange::Running(),
                          std::to_underlying(Mission()->State), MCScreenFlow::StackText()));
     }
 

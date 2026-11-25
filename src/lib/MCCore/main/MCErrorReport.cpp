@@ -1,7 +1,6 @@
 #include "stdafx.h"
 #include "main/MCErrorReport.h"
 #include "lib/MCFatal.h"
-#include "logistics/MCBriefingScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 
@@ -20,12 +19,6 @@ bool AssertTest(int32_t errorCode, std::string_view text)
     }
 
     InAssertTest = true;
-
-    if (GlobalLog() != nullptr && GlobalLog()->BriefingScreen != nullptr &&
-        GlobalLog()->BriefingScreen->SmackerWindow != nullptr)
-    {
-        GlobalLog()->BriefingScreen->StopSmackerMovies();
-    }
 
     const std::string message(text);
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "AssertTest %02X: %s", static_cast<uint32_t>(errorCode),

@@ -1,8 +1,5 @@
 #pragma once
 
-class MCGuiObject;
-class MCLogTextButton;
-
 /// <summary>
 /// What the screen tests share: the hash of the screen as shown, screenshots, and mouse and key input sent the way the
 /// game's own input code makes it.
@@ -107,7 +104,4 @@ namespace MCScreenInput
     /// does: an SDL wheel event, then a frame.
     /// </summary>
     void RealWheel(int32_t notches);
-
-    /// <summary>The text button showing <paramref name="label"/> under <paramref name="parent"/> (at any depth), or null.</summary>
-    std::shared_ptr<MCLogTextButton> FindTextButton(MCGuiObject& parent, std::string_view label);
 }

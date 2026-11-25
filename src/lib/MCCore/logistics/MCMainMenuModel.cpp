@@ -5,17 +5,15 @@
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFile.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
-#include "logistics/MCGenericScreen.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogDialogButton.h"
+#include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCRegistrySettings.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateModel.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
@@ -317,9 +315,7 @@ namespace
     /// <summary>The briefing of the campaign started, in place of the main menu (BeginCampaign's end).</summary>
     void ShowCampaignStarted()
     {
-        GlobalLog()->BriefingScreen->HideBriefing();
         GlobalLog()->SetUpBriefingScreen(false);
-        GlobalLog()->MainScreen->ShowGuiWindow(false);
     }
 
     /// <summary>
@@ -367,8 +363,9 @@ void NewMcxCampaign()
 void ShowMultiPlayer()
 {
     // Port-only (SPEC-menus.md's stage 7): 1998's MULTIPLAYER screen (mpscreen.fit) isn't made; its button opens the
-    // remade one, in the main menu's panel.
-    ConnectScreen();
+    // remade one, in the main menu's panel, which makes the multiplayer game as it shows (INTERNET and LAN, or "No
+    // network connection."). Shown at once: the old code's way to it runs in a change's dark work.
+    MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
 }
 
 void ReplayCinema()
@@ -377,7 +374,6 @@ void ReplayCinema()
     Mission()->NextState = MCMissionState::PlayMovie;
     Mission()->State = MCMissionState::PlayMovie;
     Mission()->CurrentMovie = 0;
-    GlobalLog()->MainScreen->ShowGuiWindow(false);
     SoundSystem()->StopDigitalMusic();
 }
 
@@ -388,22 +384,10 @@ void ReturnToGame()
         return;
     }
 
-    if (GlobalLog()->PreviousState == 2)
-    {
-        GlobalLog()->SetUpPurchaseScreen(false);
-    }
-    else if (GlobalLog()->PreviousState == 4)
-    {
-        GlobalLog()->SetUpRepairScreen(false);
-    }
-    else
-    {
-        // Port-only (SPEC-menus.md's stage 8): the remade briefing on the tab it was left on.
-        MCCampaignMenu::ComeBack();
-        GlobalLog()->SetUpBriefingScreen(false);
-    }
-
-    GlobalLog()->MainScreen->ShowGuiWindow(false);
+    // Port-only (SPEC-menus.md's stage 8): the remade briefing on the tab it was left on (1998's PURCHASING and 'MECH
+    // BAY, its own screens, came back as they were left: the remade campaign's pages are its tabs).
+    MCCampaignMenu::ComeBack();
+    GlobalLog()->SetUpBriefingScreen(false);
 }
 
 void GameOverMan()

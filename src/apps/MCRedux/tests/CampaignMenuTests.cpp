@@ -8,18 +8,14 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
+#include "lib/MCFile.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCChatView.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCDeploy.h"
-#include "logistics/MCFileScrollPane.h"
-#include "logistics/MCGenericScreen.h"
-#include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLoadingMenu.h"
 #include "logistics/MCLogChat.h"
-#include "logistics/MCLogInvScreen.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCLogisticsTabs.h"
@@ -32,8 +28,6 @@
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSavesMenu.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCStore.h"
 #include "logistics/MCUnitLimits.h"
 #include "gui/MCUpdateDisplay.h"
@@ -74,7 +68,7 @@
 #include "object/MCMasterComponent.h"
 
 // Port-only (SPEC-menus.md's stage 8): the campaign's screens remade, BRIEFING and DEPLOY (logistics/MCCampaignMenu),
-// over the 1998 briefing, with DEPLOY's rules the 1998 briefing's own (logistics/MCDeploy).
+// with DEPLOY's rules the 1998 briefing's own (logistics/MCDeploy).
 
 namespace
 {
@@ -454,9 +448,8 @@ TEST_CASE("logistics: a match's drop zone tag hangs its tail on its zone, mirror
 }
 
 /// <summary>
-/// A new campaign's first briefing shows the remade BRIEFING over the 1998 briefing (set up as ever, hidden, logistics'
-/// screen still): the mission's operation and number over its title, its objectives, fire support, orders, warnings and
-/// map, read from its briefing; Q and E change between BRIEFING and DEPLOY; Escape goes to the main menu. With
+/// A new campaign's first briefing shows the remade BRIEFING: the mission's operation and number over its title, its
+/// objectives, fire support, orders, warnings and map, read from its briefing; Q and E change between BRIEFING and DEPLOY; Escape goes to the main menu. With
 /// <c>--shots</c> each tab is saved at the three windows the frames are recorded at.
 /// </summary>
 TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, read from the mission's briefing")
@@ -470,7 +463,6 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
     MCCampaignScreen& screen = Shown();
     CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
-    CHECK(logistics->BriefingScreen->ShowWindow == 0);
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
     CHECK_EQ(screen.Eyebrow(), std::string("Beachhead · Mission 1"));
@@ -513,7 +505,7 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     MCTestGame::RunFrame(FlowFrame);
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
 
-    // E: PURCHASING, the same screen (no change of screens; the 1998 briefing stays logistics' screen).
+    // E: PURCHASING, the same screen (no change of screens).
     MCScreenInput::RealKey(SDL_SCANCODE_E);
     MCTestGame::RunFrame(FlowFrame);
     CHECK(MCCampaignMenu::Shown());
@@ -1175,8 +1167,7 @@ namespace
 
     /// <summary>
     /// The remade briefing up on BRIEFING where the campaign stands (<paramref name="eyebrow"/> over
-    /// <paramref name="title"/>), the 1998 briefing logistics' screen and hidden under it, the main menu under it in the
-    /// stack.
+    /// <paramref name="title"/>), the campaign logistics' screen, the main menu under it in the stack.
     /// </summary>
     void CheckRemadeBriefing(std::string_view eyebrow, std::string_view title)
     {
@@ -1184,7 +1175,6 @@ namespace
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         REQUIRE(logistics != nullptr);
         CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
-        CHECK(logistics->BriefingScreen->ShowWindow == 0);
         CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
         CHECK_EQ(Shown().Eyebrow(), std::string(eyebrow));
         CHECK_EQ(Shown().Title(), std::string(title));
@@ -1240,8 +1230,7 @@ namespace
 
 /// <summary>
 /// The ways back to the remade briefing between missions (SPEC-menus.md's stage 8 walk): Escape to the main menu and
-/// its RETURN TO GAME, SAVE GAME's "Game saved.", LOAD GAME's LOAD; each opens it where the campaign stands, the 1998
-/// briefing hidden under it.
+/// its RETURN TO GAME, SAVE GAME's "Game saved.", LOAD GAME's LOAD; each opens it where the campaign stands.
 /// </summary>
 TEST_CASE_ISOLATED("game: RETURN TO GAME, SAVE GAME and LOAD GAME go back to the remade briefing")
 {
@@ -1352,9 +1341,9 @@ TEST_CASE_ISOLATED("game: the results' NEXT MISSION and REPLAY MISSION go back t
 }
 
 /// <summary>
-/// A solo mission's PLAY (1998's load screen here; the remade SOLO MISSIONS' in MainMenuTests) opens its remade
-/// briefing: its name (its briefing's STARCOM line, as two of the expansion's solo missions write it), no force yet
-/// (BEGIN MISSION dark), the tons that drop and the RP to buy them; 1998's tabs for it, the same four as a campaign's.
+/// A solo mission's PLAY (SOLO MISSIONS' first, picked as it opens) opens its remade briefing: its name (its
+/// briefing's STARCOM line, as two of the expansion's solo missions write it), no force yet (BEGIN MISSION dark), the
+/// tons that drop and the RP to buy them; the same four tabs as a campaign's.
 /// (Its win's way back to SOLO MISSIONS: the results' test.)
 /// </summary>
 TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its force to buy")
@@ -1367,22 +1356,18 @@ TEST_CASE_ISOLATED("game: a solo mission's PLAY opens its remade briefing, its f
     std::optional<MCTestGame::PinnedSaves> pinned;
     REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
     RunWhileChanging();
-    SoloLoadScreen();
+    MCTestGuest::ClickOn(MCMainPanel::Main, "solo");
     RunWhileChanging();
-    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Load());
-    const std::shared_ptr<MCFileScrollPane> pane = logistics->LoadScreen->FilePane.Lock();
-    REQUIRE(pane != nullptr);
-    REQUIRE(!pane->Files.empty());
-    REQUIRE_EQ(pane->Files.front().Name, std::string("ACEHUNT"));
-    pane->SetSelectedFile(0);
-    MCScreenFlow::Via("load", LoadGame)();
+    const MCMainMenuScreen& solos = MCTestGuest::Panel(MCMainPanel::Solo);
+    REQUIRE(!solos.Rows().empty());
+    REQUIRE_EQ(solos.Rows().front().Title, std::string("Destroy All Aces"));
+    REQUIRE_EQ(solos.Picked(), 0);
+    MCTestGuest::ClickOn(MCMainPanel::Solo, "main");
     RunWhileChanging();
     REQUIRE(MCCampaignMenu::Shown());
     CHECK(Solo);
     MCCampaignScreen& screen = Shown();
     CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
-    CHECK(GlobalLog()->BriefingScreen->ShowWindow == 0);
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
     CHECK_EQ(screen.Eyebrow(), std::string("Solo"));
     CHECK_EQ(screen.Title(), std::string("Destroy All Aces"));
@@ -1551,13 +1536,19 @@ namespace
         constexpr std::array<MCMenusPictures::MCWindowSize, 2> MoreShots = {{{1920, 1080}, {3440, 1440}}};
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         REQUIRE(logistics != nullptr);
-        REQUIRE(logistics->BriefingScreen != nullptr);
-        const MCBriefingScreen& briefing = *logistics->BriefingScreen;
-        REQUIRE_EQ(briefing.MarkedZone, firstZone);
-        REQUIRE(briefing.MapPicture != nullptr);
+        // 1998's marks, as its briefing worked them out from the match's map (MCLogistics::ZoneMarks).
+        const MCLogistics::MCZoneMarks& marks = logistics->ZoneMarks;
+        REQUIRE_EQ(marks.Zone, firstZone);
+        REQUIRE(marks.Scale > 0.0f);
+        // The match map's own briefing picture, its size the one the marks were worked out on.
+        const std::optional<MCLogistics::MCPicturePixels> picture =
+            MCLogistics::MapPictureAt(GamePath(TerrainPath, logistics->MissionFileName, ".log.tga"));
+        REQUIRE(picture.has_value());
+        CHECK_EQ(marks.MapWidth, picture->Width);
+        CHECK_EQ(marks.MapHeight, picture->Height);
         const MCCampaignMenu::MCZoneMap& map = screen.ZoneMap();
-        CHECK_EQ(map.Width, static_cast<float>(briefing.MapPicture->Bitmap().XMax + 1));
-        CHECK_EQ(map.Height, static_cast<float>(briefing.MapPicture->Bitmap().YMax + 1));
+        CHECK_EQ(map.Width, static_cast<float>(picture->Width));
+        CHECK_EQ(map.Height, static_cast<float>(picture->Height));
         REQUIRE_EQ(map.Tags.size(), Zones);
         // 1998 stretched the picture over its map area, its first to its last pixel each way.
         const float areaWidth = static_cast<float>(MCBriefingScreen::MapRight - MCBriefingScreen::MapLeft + 1);
@@ -1569,7 +1560,7 @@ namespace
             const MCCampaignMenu::MCZoneTag& tag = map.Tags[i];
             const MCLogistics::DropZonePosition& zone =
                 logistics->DropZonePositions[static_cast<size_t>(firstZone) + i];
-            const SDL_FPoint marked = MCBriefingScreen::MapPointOf(zone.X, zone.Y, briefing.MarkerScale);
+            const SDL_FPoint marked = MCBriefingScreen::MapPointOf(zone.X, zone.Y, marks.Scale);
             CHECK_EQ(tag.Group, static_cast<int>(i + 1));
             CHECK(std::abs(tag.X - (marked.x - MCBriefingScreen::MapLeft) / areaWidth * map.Width) < Exact);
             CHECK(std::abs(tag.Y - (marked.y - MCBriefingScreen::MapTop) / areaHeight * map.Height) < Exact);
@@ -3151,4 +3142,94 @@ TEST_CASE_ISOLATED("game: a campaign's mission started as the tests start it sho
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE(MCTestGame::StartCampaignMission());
     CheckWorldShown("started");
+}
+
+namespace
+{
+    /// <summary>The walk's match's port, its own so it runs beside the other tests (--jobs).</summary>
+    constexpr std::string_view NoOldMenusPort = "28949";
+
+    /// <summary>Port-only (SPEC-menus.md's stage 9): nothing of the 1998 menus made (MCTestGame::OldMenusMade) at <paramref name="where"/>.</summary>
+    void CheckNoOldMenus(std::string_view where)
+    {
+        const MCTest::Scope scope{std::string(where)};
+        CHECK_EQ(MCTestGame::OldMenusMade().value_or(std::string()), std::string());
+    }
+}
+
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 9): no 1998 menu screen, window or control is made, nor their art loaded (only the
+/// units' icon shapes, which the remade screens draw their outlines from), from the game's start, through a campaign
+/// (its four tabs; the main menu between missions, LOAD GAME, SAVE GAME, Preferences and RETURN TO GAME; a mission,
+/// its results and the way back), to a match (the LAN games, the room, its briefing and DEPLOY). Every frame checks
+/// the same (MCTestGame::OldMenusMade); this walks the ways in and out.
+/// </summary>
+TEST_CASE_ISOLATED("game: no 1998 menu screen or its art is made from the start, through a campaign, to a match")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::SaveGameCleanup cleanup;
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    CheckNoOldMenus("the main menu");
+    REQUIRE(GlobalLog() != nullptr);
+    CHECK(std::ranges::none_of(GlobalLog()->MechIconShapes, &MCRegisteredBlock::Empty));
+
+    // The campaign's four tabs.
+    NewCampaign();
+    RunWhileChanging();
+
+    for (const auto& [tab, name] : {std::pair{MCCampaignScreen::MCTab::Briefing, "BRIEFING"},
+                                    std::pair{MCCampaignScreen::MCTab::Purchasing, "PURCHASING"},
+                                    std::pair{MCCampaignScreen::MCTab::MechBay, "'MECH BAY"},
+                                    std::pair{MCCampaignScreen::MCTab::Deploy, "DEPLOY"}})
+    {
+        Shown().ChooseTab(tab);
+        MCTestGame::RunFrame(FlowFrame);
+        CheckNoOldMenus(name);
+    }
+
+    // The main menu between missions: LOAD GAME, SAVE GAME and Preferences, each left by Escape; RETURN TO GAME.
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    CheckNoOldMenus("the main menu between missions");
+
+    for (const auto& [screen, name] :
+         {std::pair{MCMenuScreens::Load(), "LOAD GAME"}, std::pair{MCMenuScreens::Save(), "SAVE GAME"},
+          std::pair{MCMenuScreens::Preferences(), "PREFERENCES"}})
+    {
+        REQUIRE(MCScreenFlow::Open(screen));
+        RunWhileChanging();
+        CheckNoOldMenus(name);
+        MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+        RunWhileChanging();
+        REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Main());
+    }
+
+    MCScreenFlow::Via("return to game", ReturnToGame)();
+    RunWhileChanging();
+    REQUIRE(MCCampaignMenu::Shown());
+    CheckNoOldMenus("RETURN TO GAME");
+
+    // A mission (what it keeps of logistics' art), its results and the way back to the next briefing.
+    BeginFromDeploy();
+    CheckNoOldMenus("the mission");
+    EndAndCloseResults(Won);
+    REQUIRE(GlobalLog() != nullptr);
+    REQUIRE(MCCampaignMenu::Shown());
+    CheckNoOldMenus("the next briefing");
+
+    // A match: from the main menu, the LAN games, the room with ANN in it, its briefing and DEPLOY.
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    MCCampaignScreen& match = PlanMatch(ann, NoOldMenusPort);
+    CheckNoOldMenus("the match's briefing");
+    match.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CheckNoOldMenus("the match's DEPLOY");
 }

@@ -1,8 +1,6 @@
 #include "stdafx.h"
 #include "main/MCLogistics.h"
 #include "logistics/MCMechInventoryBlock.h"
-#include "logistics/MCMechRepairBlock.h"
-#include "logistics/MCRepairScreen.h"
 #include "logistics/MCVehicleInventoryBlock.h"
 #include "network/MCMultiPlayer.h"
 
@@ -26,15 +24,7 @@ auto MCLogistics::SetPilot(int32_t mechIndex, int32_t pilotIndex) const -> void
         return;
     }
 
-    // A negative index takes the pilot off: the row shows the portrait's place blank until it is painted again.
-    if (RepairScreen != nullptr)
-    {
-        if (const std::shared_ptr<MCMechRepairBlock> row = RepairScreen->RowOf(*mech); row != nullptr)
-        {
-            row->ClearPilot();
-        }
-    }
-
+    // A negative index takes the pilot off.
     mech->PilotIndex = pilotIndex;
     mech->CalcPilotModifier();
 }

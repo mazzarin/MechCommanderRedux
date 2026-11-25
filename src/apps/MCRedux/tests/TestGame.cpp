@@ -13,23 +13,13 @@
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFastFileSet.h"
 #include "logistics/MCCampaignMenu.h"
-#include "logistics/MCFileScrollPane.h"
 #include "logistics/MCMainMenuScreen.h"
-#include "logistics/MCGameList.h"
-#include "logistics/MCLogComboBox.h"
-#include "logistics/MCLogInvScreen.h"
-#include "logistics/MCCompPurchaseBlock.h"
-#include "logistics/MCLogSlider.h"
 #include "logistics/MCMainMenuModel.h"
-#include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
-#include "logistics/MCVehiclePurchaseBlock.h"
 #include "logistics/MCRoomScreen.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCUnitLimits.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -37,16 +27,18 @@
 #include "main/MCGamePaths.h"
 #include "object/MCBattleMech.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCShapeFile.h"
 #include "sprite/MCSpriteTree.h"
 #include "main/MCSystemConfig.h"
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
+#include "mission/MCMissionResultsScreen.h"
+#include "gui/MCGuiMessageBox.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
-#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
@@ -109,28 +101,10 @@ namespace MCTestGame
             return UserFolder() / "data" / PinnedSaveFolder;
         }
 
-        /// <summary>
-        /// Makes <paramref name="folder"/> the save folder: SavePath, and the folder the file panes of logistics' screens
-        /// list (each took SavePath as the boot made it).
-        /// </summary>
+        /// <summary>Makes <paramref name="folder"/> the save folder (SavePath, which LOAD GAME and SAVE GAME list).</summary>
         void SetSaveFolder(const std::string& folder)
         {
             SavePath = folder;
-            const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-
-            if (logistics == nullptr)
-            {
-                return;
-            }
-
-            for (const std::shared_ptr<MCSplashScreen>& screen :
-                 {logistics->LoadScreen.Lock(), logistics->SaveScreen.Lock(), logistics->MultiplayerScreen.Lock()})
-            {
-                if (screen != nullptr && screen->FilePane != nullptr)
-                {
-                    screen->FilePane->StartDirectory = folder;
-                }
-            }
         }
     }
 
@@ -222,6 +196,70 @@ namespace MCTestGame
         }
 
         return files;
+    }
+
+    RepairShapes::RepairShapes()
+    {
+        MCShapeFile file;
+        std::vector<MCHdArt::LineArtFrame> lineArt;
+        const auto read = [&file](MCRegisteredBlock& shapes)
+        {
+            MCRegisteredBlock block(file.GetLength(), MCDataKind::Shapes);
+            REQUIRE_EQ(file.Read(block.Bytes()), static_cast<int32_t>(block.Bytes().size()));
+            file.Close();
+            shapes = std::move(block);
+        };
+
+        // A diagram's runs of frames, a location a frame from each first, and its sold-out outline.
+        const auto tie = [&lineArt](const MCRegisteredBlock& shapes, std::initializer_list<int32_t> diagram,
+                                    int32_t locations, int32_t soldOut, std::optional<size_t> mech)
+        {
+            const MCAddressKey table = MCAddressKey::OfData(shapes.Bytes());
+            const auto add = [&](int32_t frame)
+            {
+                lineArt.push_back({table, frame,
+                                   mech.has_value() ? MCLogistics::RepairShapesDrawn(*mech, frame)
+                                                    : std::vector<MCSharpLines::MCDrawnLoop>{}});
+            };
+
+            for (const int32_t first : diagram)
+            {
+                for (int32_t location = 0; location < locations; ++location)
+                {
+                    add(first + location);
+                }
+            }
+
+            add(soldOut);
+        };
+
+        for (size_t mech = 0; mech < Mechs.size(); ++mech)
+        {
+            const std::string name = std::format("{}mechrep{:02}.shp", ArtPath, mech);
+            const MCTest::Scope scope(name);
+            REQUIRE_EQ(file.Open(name), 0);
+            read(Mechs[mech]);
+            tie(Mechs[mech], {MCLogistics::MechArmorShapes, MCLogistics::MechInternalShapes},
+                MCLogistics::MechDiagramLocations, MCLogistics::MechSoldOutShape, mech);
+        }
+
+        for (size_t vehicle = 0; vehicle < Vehicles.size(); ++vehicle)
+        {
+            if (file.Open(std::format("{}vr1{:02}.shp", ArtPath, vehicle)) == 0)
+            {
+                read(Vehicles[vehicle]);
+                tie(Vehicles[vehicle], {MCLogistics::VehicleArmorShapes}, MCLogistics::VehicleDiagramLocations,
+                    MCLogistics::VehicleSoldOutShape, std::nullopt);
+            }
+        }
+
+        MCHdArt::SetLineArtFrames(lineArt, MCHdArt::LineArtSet::Logistics);
+    }
+
+    RepairShapes::~RepairShapes()
+    {
+        // Before the shapes' memory goes.
+        MCHdArt::SetLineArtFrames({}, MCHdArt::LineArtSet::Logistics);
     }
 
     // The test user folder the game boots into (Boot): MCFileSystem::UserRoot() names it only once the game is up, and
@@ -802,6 +840,119 @@ namespace MCTestGame
             OldBoxesSeen() = boxes;
             FAIL_CHECK("a 1998 dialog box showed (the log's \"Dialogs:\" line names it)");
         }
+
+        /// <summary>What <see cref="OldMenusMade"/> said at the last frame's end (each finding fails once).</summary>
+        std::optional<std::string>& OldMenusSeen()
+        {
+            static std::optional<std::string> seen;
+            return seen;
+        }
+
+        /// <summary>Port-only (SPEC-menus.md's stage 9): a 1998 menu screen or its art made fails the test.</summary>
+        void CheckNoOldMenus()
+        {
+            std::optional<std::string> made = OldMenusMade();
+
+            if (made == OldMenusSeen())
+            {
+                return;
+            }
+
+            OldMenusSeen() = made;
+
+            if (made.has_value())
+            {
+                FAIL_CHECK(std::format("a 1998 menu screen or its art was made: {}", *made));
+            }
+        }
+
+        /// <summary>Which of the 1998 screens' art files <paramref name="files"/> holds loaded, if any.</summary>
+        std::optional<std::string> OldArtLoaded(const MCLogisticsArtFiles& files)
+        {
+            const auto loaded = [](const auto& blocks)
+            { return std::ranges::any_of(blocks, [](const MCRegisteredBlock& block) { return !block.Empty(); }); };
+            const auto made = [](const auto& ports)
+            { return std::ranges::any_of(ports, [](const auto& port) { return port != nullptr; }); };
+
+            if (loaded(files.MechRepShapes) || loaded(files.VehicleRepShapes))
+            {
+                return "the repair shapes";
+            }
+
+            if (files.RepairBackPort != nullptr || made(files.RepairPorts) || made(files.PurchasePorts) ||
+                made(files.InventoryIconPorts) ||
+                std::ranges::any_of(files.ScreenButtonPorts, [&made](const auto& ports) { return made(ports); }))
+            {
+                return "the repair, purchase, tab or button pictures";
+            }
+
+            return std::nullopt;
+        }
+    }
+
+    std::optional<std::string> OldMenusMade()
+    {
+        if (const std::shared_ptr<MCGuiObject> window = ScreenWindow(); window != nullptr)
+        {
+            for (const std::shared_ptr<MCGuiObject>& child : window->Children())
+            {
+                if (dynamic_cast<const MCLogObject*>(child.get()) != nullptr ||
+                    dynamic_cast<const MCGuiMessageBox*>(child.get()) != nullptr ||
+                    dynamic_cast<const MCMissionResultsScreen*>(child.get()) != nullptr)
+                {
+                    const MCGuiObject& made = *child;
+                    return std::format("a {} under the screen window", typeid(made).name());
+                }
+            }
+        }
+
+        if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
+        {
+            // Held is made: none of them is ever set (their types' own files go with SPEC-menus.md's stage 9 too).
+            const auto held = [](const auto& handle) { return !handle.Weak().expired(); };
+            const std::array<bool, 12> screens = {
+                held(logistics->SessionScreen),  held(logistics->SerialScreen),   held(logistics->ConnectScreen),
+                held(logistics->ModemScreen),    held(logistics->MainScreen),     held(logistics->MultiplayerScreen),
+                held(logistics->LoadScreen),     held(logistics->SaveScreen),     held(logistics->PrefScreen),
+                held(logistics->BriefingScreen), held(logistics->PurchaseScreen), held(logistics->RepairScreen)};
+
+            if (logistics->CurrentScreen() != nullptr || std::ranges::contains(screens, true))
+            {
+                return "a logistics screen";
+            }
+
+            const auto viewed = [&held](const std::shared_ptr<MCMenuDialog>& dialog)
+            { return dialog != nullptr && held(dialog->View()); };
+
+            if (held(logistics->PurchaseDialog) || held(logistics->MessageDialog) || held(logistics->QuestionDialog) ||
+                held(logistics->RefitDialog) || viewed(logistics->Message) || viewed(logistics->Question) ||
+                viewed(logistics->Refit))
+            {
+                return "a logistics dialog's 1998 window";
+            }
+
+            if (held(logistics->ChatWindow) || !logistics->ChatWindows.empty() || logistics->Ticker != nullptr ||
+                !logistics->TickerLines.empty() || held(logistics->DragIcon))
+            {
+                return "a logistics chat window, the ticker or the drag icon";
+            }
+
+            if (std::optional<std::string> art = OldArtLoaded(*logistics); art.has_value())
+            {
+                return std::format("logistics' {}", *art);
+            }
+        }
+
+        if (const std::shared_ptr<MCMission> mission = Mission();
+            mission != nullptr && mission->KeptLogisticsArt != nullptr)
+        {
+            if (std::optional<std::string> art = OldArtLoaded(mission->KeptLogisticsArt->Files); art.has_value())
+            {
+                return std::format("the mission's kept {}", *art);
+            }
+        }
+
+        return std::nullopt;
     }
 
     void RunFrame(float seconds)
@@ -867,6 +1018,7 @@ namespace MCTestGame
         }
 
         CheckNoOldBox();
+        CheckNoOldMenus();
     }
 }
 
@@ -963,8 +1115,6 @@ void MCTestGame::StockStore(int32_t count)
     {
         vehicle->Data->NumAvailable = count;
     }
-
-    MCLogInvScreen::RefreshStoreRows();
 }
 
 void MCTestGame::OwnUnits(int32_t units)

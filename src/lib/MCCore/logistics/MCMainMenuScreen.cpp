@@ -136,21 +136,20 @@ namespace
     }
 
     /// <summary>
-    /// Logistics' main screen made its screen, hidden, the one shown before hidden: the panels show in its place (as
-    /// MCLogistics::ShowLogScreen keeps it), so its CANCEL's way back and the old screens' sets go from it.
+    /// Logistics' screen the main menu (MCLogistics::NoteTop), as MCLogistics::ShowLogScreen keeps it, so its CANCEL's
+    /// way back and logistics' sets go from it.
     /// </summary>
     void MainScreenUnder()
     {
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
         const MCScreenFlow::MCScreenId top = MCMenuScreens::Top();
 
-        if (top == MCScreenFlow::NoScreen || !logistics->MainScreen || top == MCMenuScreens::Main())
+        if (logistics == nullptr || top == MCScreenFlow::NoScreen || top == MCMenuScreens::Main())
         {
             return;
         }
 
-        logistics->HideScreen();
-        logistics->SetCurrentScreen(logistics->MainScreen);
+        logistics->NoteTop(MCMenuScreens::Main());
     }
 
 }
@@ -681,7 +680,7 @@ void MCMainMenuScreens::ShowNow(MCMainPanel panel)
         return;
     }
 
-    // As an old screen coming up does (MCRmlFlow::OldScreenShown), the remade screens over the main menu go.
+    // As logistics' screen changing does (MCRmlFlow::HideScreens), the remade screens over the main menu go.
     MainScreenUnder();
     screen->Layer().HideAll();
     screen->Show();

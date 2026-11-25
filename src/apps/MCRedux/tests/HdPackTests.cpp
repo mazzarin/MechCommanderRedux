@@ -6920,8 +6920,10 @@ namespace
             }
         }
 
-        // A mech's diagram's first frame, never made ahead: read from the pack as it's first drawn.
-        const std::span<const uint8_t> atlas = GlobalLog()->MechRepShapes[0].Bytes();
+        // A mech's diagram's first frame (the Atlas's repair shapes, which logistics no longer loads: SPEC-menus.md's
+        // stage 9), tied as line art here, never made ahead: read from the pack as it's first drawn.
+        const MCTestGame::RepairShapes repairs;
+        const std::span<const uint8_t> atlas = repairs.Mechs[0].Bytes();
         const int32_t frame = MCLogistics::MechArmorShapes;
         REQUIRE(MCHdArt::LineArt(atlas, frame));
         const std::optional<MCSharpPictures::MCLineArtCut> cut =

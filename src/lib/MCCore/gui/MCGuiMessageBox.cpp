@@ -42,7 +42,16 @@ auto MCGuiMessageBox::Init(std::string_view text) -> int32_t
 
             made.SetUpPicture(0x10);
             made.SetDownPicture(0x11);
-            made.Callback().SetExec(DestroyVersion);
+            // Port-only (SPEC-menus.md's stage 9): the box is never made (the remade dialog says the version); its OK
+            // hides it.
+            made.Callback().SetExec(
+                [box = weak_from_this()]
+                {
+                    if (const std::shared_ptr<MCGuiObject> shown = box.lock(); shown != nullptr)
+                    {
+                        shown->ShowGuiWindow(false);
+                    }
+                });
             made.SetDepth(100);
             return 0;
         });

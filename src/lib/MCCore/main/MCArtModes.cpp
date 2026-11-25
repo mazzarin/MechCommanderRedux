@@ -141,7 +141,6 @@ auto AttachHdArtToLoaded() -> void
     {
         logistics->AttachHdArt();
         logistics->MakeAhead();
-        logistics->MakeLineArtAhead();
     }
     else if (HasGuiSystem())
     {

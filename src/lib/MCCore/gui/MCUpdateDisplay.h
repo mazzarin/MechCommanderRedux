@@ -80,27 +80,17 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
 /// surfaces shown and logistics up; nothing otherwise.
 /// </summary>
 void RehearseScreen();
-/// <summary>
-/// Port-only: hidden <paramref name="screen"/> rehearsed as it will be shown (see <see cref="RehearseScreen"/>), after
-/// <paramref name="setUp"/> fills it as its set-up will: for a screen a slide may bring in, readied in a fade, so the
-/// slide's first steps find what it shows ready. Nothing when a rehearsal can't run or the screen is shown (the screen
-/// window's: <see cref="RehearseScreen"/>). Whether it ran (<paramref name="setUp"/> with it).
-/// </summary>
-bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp);
-/// <summary>Port-only, for the tests: the rehearsals run so far (RehearseScreen's and RehearseHidden's).</summary>
+/// <summary>Port-only, for the tests: the rehearsals run so far (RehearseScreen's).</summary>
 size_t RehearsalsRun();
 /// <summary>
 /// Port-only: what a fade into a screen does, in pieces, each looked up as it runs: the screen shown rehearsed
-/// (RehearseScreen), then the screens a slide from it may bring in readied, a piece for each of their inventory tabs
-/// (the one shown first, then the others, each put back to the one shown), so a tab's first click finds its art loaded
-/// and its pictures sent up. Run in a palette fade near black (FadeOutWhile), or a frame each while a change of screen
-/// is dark (gui/MCScreenChange.h).
+/// (RehearseScreen). Run in a palette fade near black (FadeOutWhile), or a frame each while a change of screen is dark
+/// (gui/MCScreenChange.h).
 /// </summary>
 std::vector<std::function<void()>> IntoScreenPieces();
 /// <summary>
 /// Port-only: <paramref name="work"/> done in a fade of the screen shown (MCGuiSystem::FadeDownCurrentPalette) once it's
-/// nearly black (MCGuiSystem::FadeNearBlack), then what a fade into a screen does (the screen rehearsed, the screens a
-/// slide from it may bring in readied): for work that sets up the next screen where the one shown would sit frozen
+/// nearly black (MCGuiSystem::FadeNearBlack), then what a fade into a screen does (the screen rehearsed): for work that sets up the next screen where the one shown would sit frozen
 /// until its fade begins (the way back from a mission's results, NEW CAMPAIGN's click). With no fade (the screen black already, the display
 /// not up, the GUI stopping), only <paramref name="work"/>, as before.
 /// </summary>

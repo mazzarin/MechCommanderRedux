@@ -12,7 +12,7 @@ public:
 
     /// <summary>
     /// Sizes the box to <paramref name="text"/> in the white font, centres it on the screen, adds the OK button
-    /// (which runs <see cref="DestroyVersion"/>) and keeps the text.
+    /// (which hides the box) and keeps the text.
     /// </summary>
     /// <returns>0, -3 without the white font, or the button's error.</returns>
     int32_t Init(std::string_view text);

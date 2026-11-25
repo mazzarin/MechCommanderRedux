@@ -788,8 +788,11 @@ void MCSavesScreen::BackToCampaign()
                 screen->get().Hide();
             }
 
-            // The campaign screen it was left from (the old save screen's way back).
-            SaveWorkedCallback(0);
+            // The campaign's screens on the tab left (the old save screen's way back, whose 1998 PURCHASING and 'MECH
+            // BAY are the remade campaign's tabs).
+            MCCampaignMenu::ComeBack();
+            GlobalLog()->SetUpBriefingScreen(false);
+            SoundSystem()->PlayDigitalMusic(LogisticsMusic, true);
         },
         MCCampaignMenu::Ahead());
 }

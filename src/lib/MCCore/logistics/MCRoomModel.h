@@ -270,11 +270,16 @@ public:
     // ---- The room's logic (the 1998 session screen's, moved: SPEC-menus.md's stage 9) ----
 
     /// <summary>
-    /// The 1998 room, a view on the model while it lives (logistics/MCSessionScreen); nothing when none. A room is
-    /// made while it has one (<see cref="Made"/>).
+    /// The 1998 room, a view on the model while it lives (logistics/MCSessionScreen); nothing when none. Port-only
+    /// (SPEC-menus.md's stage 9): none is made; the remade room (logistics/MCRoomScreen) reads the model itself.
     /// </summary>
     void SetView(std::weak_ptr<MCRoomView> view);
-    /// <summary>Whether logistics made its room (its 1998 session screen, the room's view, is made).</summary>
+    /// <summary>
+    /// Logistics made its room (<paramref name="made"/>: at its start, with menus), or let it go (as it goes), as the
+    /// 1998 session screen was made with it.
+    /// </summary>
+    void SetMade(bool made);
+    /// <summary>Whether logistics made its room (<see cref="SetMade"/>).</summary>
     bool Made() const;
 
     /// <summary>
@@ -460,6 +465,7 @@ private:
     void SetPointsOf(int8_t team, int32_t resourcePoints);
 
     std::weak_ptr<MCRoomView> _View;
+    bool _Made = false;
     /// <summary>The GUI object the room's tick's timer goes to.</summary>
     MCGuiRef<MCRoomTicker> _Ticker;
 };

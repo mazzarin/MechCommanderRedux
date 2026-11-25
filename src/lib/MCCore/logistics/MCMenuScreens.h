@@ -20,7 +20,6 @@ namespace MCMenuScreens
     MCScreenFlow::MCScreenId Lan();
     MCScreenFlow::MCScreenId Internet();
     MCScreenFlow::MCScreenId Room();
-    MCScreenFlow::MCScreenId MissionPick();
     MCScreenFlow::MCScreenId Load();
     MCScreenFlow::MCScreenId Solo();
     MCScreenFlow::MCScreenId Save();
@@ -43,9 +42,8 @@ namespace MCMenuScreens
     /// <summary>
     /// Port-only (SPEC-menus.md's stage 9, step 2): the flow's top screen, which says which screen shows for the music,
     /// the notices, the idle check, the network's room and the benchmark: Main (the main menu, its submenus, LAN and
-    /// INTERNET over it), ReadyRoom, Load (LOAD GAME, SOLO's), MissionPick, Save, Preferences, Room or Campaign (at
-    /// <see cref="TopPage"/>); <see cref="MCScreenFlow::NoScreen"/> with none, or no logistics. Until the 1998 screens
-    /// go, the one logistics shows sets it (<see cref="NoteTop"/>).
+    /// INTERNET over it), ReadyRoom, Room or Campaign (at <see cref="TopPage"/>); <see cref="MCScreenFlow::NoScreen"/>
+    /// with none, or no logistics. Logistics' screen sets it (MCLogistics::NoteTop, through <see cref="NoteTop"/>).
     /// </summary>
     MCScreenFlow::MCScreenId Top();
 

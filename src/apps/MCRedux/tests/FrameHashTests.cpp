@@ -515,8 +515,7 @@ namespace
 
         REQUIRE(Mission()->State == MCMissionState::Results);
         REQUIRE(Mission()->ResultsUp());
-        // The remade results over the battlefield, never 1998's.
-        CHECK(Mission()->ResultsScreen == nullptr);
+        // The remade results over the battlefield.
         REQUIRE(MCRemadeTest::OnTop<MCResultsScreen>(MCRemadeTest::MCLayer::Mission) != nullptr);
 
         // Five ticks a frame: a resource point step takes one tick, the others resultsStepTicks (20). The battlefield's

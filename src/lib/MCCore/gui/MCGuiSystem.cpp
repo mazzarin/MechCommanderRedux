@@ -6,7 +6,6 @@
 #include "gui/MCGuiConsole.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiInput.h"
-#include "gui/MCGuiMessageBox.h"
 #include "gui/MCGuiStartup.h"
 #include "gui/MCHardwareCursor.h"
 #include "gui/MCScreenChange.h"
@@ -146,7 +145,6 @@ MCGuiSystem::~MCGuiSystem()
     Session.reset();
     CloseRetired();
     CloseGuiObject(Console);
-    CloseGuiObject(VersionDialog);
     CloseGuiObject(SmackerWindow);
     Screen.reset();
     TimerManager.reset();
@@ -441,7 +439,6 @@ auto MCGuiSystem::Stop() -> void
     // The screen's last windows (the original left a version box or a movie window still open to its assert).
     CloseRetired();
     CloseGuiObject(Console);
-    CloseGuiObject(VersionDialog);
 
     if (SmackerWindow != nullptr)
     {
@@ -1008,14 +1005,5 @@ auto APostMessage(std::weak_ptr<MCGuiObject> obj, int32_t message) -> void
     if (const std::shared_ptr<MCGuiObject> target = obj.lock(); target != nullptr)
     {
         APostMessage(*target, message);
-    }
-}
-
-auto DestroyVersion() -> void
-{
-    // The box goes from its own OK button's click: taken off the screen now, deleted after the click (OB-158).
-    if (HasGuiSystem() && GuiSystem().VersionDialog != nullptr)
-    {
-        GuiSystem().Retire(std::exchange(GuiSystem().VersionDialog, {}));
     }
 }

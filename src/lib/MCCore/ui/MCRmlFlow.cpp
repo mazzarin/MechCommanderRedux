@@ -227,12 +227,12 @@ void MCRmlFlow::Tend()
     }
 }
 
-void MCRmlFlow::OldScreenShown()
+void MCRmlFlow::HideScreens()
 {
     if (const MCOptionalRef<MCRmlMenus> running = MCRmlMenus::Running();
         running.has_value() && running->get().Menus().Showing())
     {
-        SDL_Log("Menus: a 1998 screen shows: the remade screens hide");
+        SDL_Log("Menus: logistics' screen changes: the remade screens hide");
         running->get().Menus().HideAll();
     }
 }

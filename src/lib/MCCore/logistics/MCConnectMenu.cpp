@@ -114,12 +114,7 @@ void ConnectScreen()
     // Port-only (SPEC-menus.md's stage 7): MULTIPLAYER remade in the main menu's panel (logistics/MCMainMenuScreen.h),
     // which makes the multiplayer game as it shows: INTERNET and LAN, or "No network connection." The original's
     // connection screen (a modem, a serial cable and the internet lobbies of 1999) isn't made. Shown at once: the old
-    // code's way to it runs in a change's dark work, the screen shown hidden, logistics' own the main screen under it.
-    if (const std::shared_ptr<MCLogObject> shown = GlobalLog()->CurrentScreen(); shown != nullptr)
-    {
-        shown->ShowGuiWindow(false);
-    }
-
+    // code's way to it runs in a change's dark work.
     MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
 }
 

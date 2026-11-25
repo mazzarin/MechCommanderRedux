@@ -2,25 +2,17 @@
 #include "logistics/MCMenuScreens.h"
 #include "gui/MCScreenChange.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
-#include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLoadSaveMenu.h"
-#include "logistics/MCLogDialogButton.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMainMenuScreen.h"
-#include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCPrefsScreen.h"
-#include "logistics/MCPurchaseScreen.h"
-#include "logistics/MCRepairScreen.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSavesMenu.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCGameStrings.h"
@@ -40,43 +32,13 @@ namespace
     /// <summary>The campaign screens' MAIN MENU sound (the original's).</summary>
     constexpr uint32_t MainMenuSample = 0x36;
 
-    /// <summary>Whether the screen logistics shows now is <paramref name="screen"/>'s.</summary>
-    template <typename T> bool Showing(const MCGuiHandle<T> MCLogistics::* screen)
+    /// <summary>
+    /// Whether logistics is on <paramref name="id"/> with no remade screen showing yet: a remade screen waits for its
+    /// first whole frame, so a change ends before it shows (1998's screen, hidden, was logistics' until stage 9).
+    /// </summary>
+    bool OnLogistics(MCScreenId id)
     {
-        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-
-        if (logistics == nullptr)
-        {
-            return false;
-        }
-
-        // Port-only (SPEC-menus.md's stage 3): not while a remade screen shows over it, hidden (ui/MCRmlFlow), though it
-        // stays logistics' screen.
-        const std::shared_ptr<MCLogObject> shown = logistics->CurrentScreen();
-        return shown != nullptr && (shown->ShowWindow || !MCRmlFlow::Showing()) &&
-               (logistics.get()->*screen).Is(*shown);
-    }
-
-    /// <summary>Whether the load screen shows in mode <paramref name="multiplayer"/>, <paramref name="solo"/>.</summary>
-    bool ShowingLoad(bool multiplayer, bool solo)
-    {
-        if (!Showing(&MCLogistics::LoadScreen))
-        {
-            return false;
-        }
-
-        const MCSplashScreen& screen = *GlobalLog()->LoadScreen;
-        const bool picksMission = screen.FilePane != nullptr && screen.FilePane->Multiplayer;
-        return picksMission == multiplayer && (multiplayer || LoadingSolo == solo);
-    }
-
-    /// <summary>Hides the screen logistics shows (an old screen's Hide).</summary>
-    void HideShown()
-    {
-        if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
-        {
-            logistics->HideScreen();
-        }
+        return MCMenuScreens::Top() == id && !MCRmlFlow::Showing();
     }
 
     /// <summary>The main menu shown, as CANCEL showed it from the screens over it (RETURN TO GAME's state kept).</summary>
@@ -109,22 +71,17 @@ namespace
         dialog.Activate();
     }
 
-    /// <summary>An old screen's kind: its name, whether it shows, how it shows again, what leaving it does.</summary>
-    MCScreenKind OldScreen(std::string name, std::function<bool()> shows, std::function<void()> show,
-                           std::function<void()> leave = {}, bool givesWay = false)
+    /// <summary>
+    /// A logistics screen's kind: its name, whether it shows, how it shows again, how it hides, what leaving it does.
+    /// </summary>
+    MCScreenKind LogisticsScreen(std::string name, std::function<bool()> shows, std::function<void()> show,
+                                 std::function<void()> hide, std::function<void()> leave)
     {
         return {.Name = std::move(name),
                 .Show = std::move(show),
-                .Hide = HideShown,
+                .Hide = std::move(hide),
                 .Leave = std::move(leave),
-                .Shows = std::move(shows),
-                .GivesWay = givesWay};
-    }
-
-    /// <summary>The old screen's way back <paramref name="work"/> as a change named <paramref name="name"/>.</summary>
-    std::function<void()> Back(std::string name, std::function<void()> work)
-    {
-        return MCScreenFlow::Via(std::move(name), std::move(work));
+                .Shows = std::move(shows)};
     }
 
     /// <summary>The ids, registered once (<see cref="MCMenuScreens::Register"/>).</summary>
@@ -136,7 +93,6 @@ namespace
         MCScreenId Lan = MCScreenFlow::NoScreen;
         MCScreenId Internet = MCScreenFlow::NoScreen;
         MCScreenId Room = MCScreenFlow::NoScreen;
-        MCScreenId MissionPick = MCScreenFlow::NoScreen;
         MCScreenId Load = MCScreenFlow::NoScreen;
         MCScreenId Solo = MCScreenFlow::NoScreen;
         MCScreenId Save = MCScreenFlow::NoScreen;
@@ -176,19 +132,14 @@ namespace
 auto MCMenuScreens::Register() -> void
 {
     Registered = true;
-    // Port-only (SPEC-menus.md, stage 7): the main menu remade (logistics/MCMainMenuScreen.h), read live from the press
-    // and shown over logistics' 1998 main screen, which stays its screen, hidden (MCLogistics::ShowLogScreen): shown
-    // as 1998's CANCEL showed the main menu, the multiplayer game let go.
+    // Port-only (SPEC-menus.md, stage 7): the main menu remade (logistics/MCMainMenuScreen.h), read live from the press,
+    // logistics' screen (MCLogistics::ShowLogScreen): shown as 1998's CANCEL showed the main menu, the multiplayer game
+    // let go.
     MCScreenKind main = MCMainMenuScreens::Kind(MCMainPanel::Main);
     main.Show = ShowMainMenu;
-    main.Hide = []
-    {
-        MCMainMenuScreens::HideAll();
-        HideShown();
-    };
-
+    main.Hide = [] { MCMainMenuScreens::HideAll(); };
     main.Leave = AskQuit;
-    main.Shows = [] { return MCMainMenuScreens::Shown(MCMainPanel::Main) || Showing(&MCLogistics::MainScreen); };
+    main.Shows = [] { return MCMainMenuScreens::Shown(MCMainPanel::Main) || OnLogistics(Main()); };
     Ids.Main = MCScreenFlow::Register(std::move(main));
     // Its submenus, swapped in its place from it with no fade; reached from another screen (INTERNET's BACK, a
     // landing), they fade as any change. MULTIPLAYER is 1998's MULTIPLAYER ACCESS, whose mpscreen.fit, modem and
@@ -198,24 +149,22 @@ auto MCMenuScreens::Register() -> void
     // Port-only (SPEC-menus.md's stage 3): LAN and INTERNET remade (logistics/MCGamesScreen).
     Ids.Lan = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Lan));
     Ids.Internet = MCScreenFlow::Register(MCGamesKind(MCGamesWhere::Internet));
-    // Port-only (SPEC-menus.md's stage 4): the remade room (logistics/MCRoomScreen) shows in the 1998 room's place, which
-    // stays logistics' screen, hidden.
-    Ids.Room = MCScreenFlow::Register(OldScreen(
-        "room", [] { return (Top() == Room() && RoomScreenShown()) || Showing(&MCLogistics::SessionScreen); },
+    // Port-only (SPEC-menus.md's stage 4): the remade room (logistics/MCRoomScreen), logistics' screen.
+    Ids.Room = MCScreenFlow::Register(LogisticsScreen(
+        "room", [] { return (Top() == Room() && RoomScreenShown()) || OnLogistics(Room()); },
         []
         {
             // Port-only (stage 4): back from a screen over the room (stage 6's UPDATE), the room as it stands: its
             // set-up would start it afresh.
-            const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-
             if (Top() == Room())
             {
-                logistics->SessionScreen->ShowGuiWindow(true);
+                ShowRoomScreen();
                 return;
             }
 
-            logistics->SetUpSessionScreen();
+            GlobalLog()->SetUpSessionScreen();
         },
+        HideRoomScreen,
         []
         {
             // A launcher's game: the room is where it starts, and leaving it ends the game.
@@ -227,9 +176,6 @@ auto MCMenuScreens::Register() -> void
 
             MCRoomEnd::Leave();
         }));
-    Ids.MissionPick = MCScreenFlow::Register(OldScreen(
-        "mission pick", [] { return ShowingLoad(true, false); }, [] { GlobalLog()->SetUpSessionScreen(); },
-        Back("mission pick back", CancelToSession), true));
     // Stage 5: LOAD GAME and SAVE GAME remade (logistics/MCSavesMenu); stage 7: SOLO MISSIONS, the main menu's submenu.
     Ids.Load = MCScreenFlow::Register(MCSavesMenu::Kind(MCSavesScreen::MCMode::Load));
     Ids.Solo = MCScreenFlow::Register(MCMainMenuScreens::Kind(MCMainPanel::Solo));
@@ -259,27 +205,16 @@ auto MCMenuScreens::Register() -> void
                 [](MCUpdateScreen& made) { made.Back = [] { MCScreenFlow::Back(); }; }));
         },
         MCRmlFlow::MCKeep::Afresh));
-    MCScreenKind campaign = OldScreen(
-        "campaign",
-        []
-        {
-            return Showing(&MCLogistics::BriefingScreen) || Showing(&MCLogistics::PurchaseScreen) ||
-                   Showing(&MCLogistics::RepairScreen) || MCCampaignMenu::Shown();
-        },
-        ReturnToGame, LeaveCampaign);
-    // Stage 8: BRIEFING and DEPLOY remade (logistics/MCCampaignMenu) over the 1998 briefing: hidden with it, and the
-    // change waits for their first whole frame.
-    campaign.Hide = []
-    {
-        MCCampaignMenu::Hide();
-        HideShown();
-    };
-
+    // Stage 8: the campaign's screens remade (logistics/MCCampaignMenu); the change waits for their first whole frame.
+    MCScreenKind campaign = LogisticsScreen(
+        "campaign", [] { return MCCampaignMenu::Shown() || OnLogistics(Campaign()); }, ReturnToGame,
+        [] { MCCampaignMenu::Hide(); }, LeaveCampaign);
     campaign.Ready = [] { return MCCampaignMenu::Ready(); };
     campaign.Prepare = [] { return MCCampaignMenu::Ahead(); };
     Ids.Campaign = MCScreenFlow::Register(std::move(campaign));
-    Ids.ReadyRoom = MCScreenFlow::Register(OldScreen(
-        "ready room", [] { return LauncherScreenShown() || Showing(&MCLogistics::ConnectScreen); }, [] {},
+    // Port-only (stage 4): a launcher's join, on the painting (logistics/MCRoomScreen); the room opening hides it.
+    Ids.ReadyRoom = MCScreenFlow::Register(LogisticsScreen(
+        "ready room", [] { return LauncherScreenShown() || OnLogistics(ReadyRoom()); }, [] {}, {},
         [] { KillTheGame(); }));
 }
 
@@ -311,11 +246,6 @@ auto MCMenuScreens::Internet() -> MCScreenId
 auto MCMenuScreens::Room() -> MCScreenId
 {
     return TheIds().Room;
-}
-
-auto MCMenuScreens::MissionPick() -> MCScreenId
-{
-    return TheIds().MissionPick;
 }
 
 auto MCMenuScreens::Load() -> MCScreenId
@@ -378,11 +308,6 @@ auto MCMenuScreens::ShowBack(MCScreenId id, MCBackWay way) -> void
 {
     MCLogistics& logistics = *GlobalLog();
 
-    if (way == MCBackWay::InPlace)
-    {
-        logistics.HideScreen();
-    }
-
     if (id == Solo())
     {
         // Port-only (stage 7): the remade SOLO MISSIONS, in the main menu's panel.
@@ -397,7 +322,7 @@ auto MCMenuScreens::ShowBack(MCScreenId id, MCBackWay way) -> void
         return;
     }
 
-    logistics.SetCurrentScreen(logistics.MainScreen);
+    logistics.NoteTop(Main());
     logistics.LogisticsState = MainMenuState;
     const bool show = way != MCBackWay::Hidden;
     logistics.ShowLogScreen(show, show);
@@ -486,12 +411,7 @@ auto MCMenuScreens::LeaveCampaign() -> void
         return;
     }
 
-    // The original's at the press: the briefing's movie stopped, the sound.
-    if (const std::shared_ptr<MCBriefingScreen> briefing = GlobalLog()->BriefingScreen.Lock(); briefing != nullptr)
-    {
-        briefing->StopSmackerMovies();
-    }
-
+    // The original's at the press: the sound (the operation's video goes as the briefing hides).
     PlayLogSound(MainMenuSample);
     MCScreenFlow::Change("campaign back", [] { GlobalLog()->SetUpMainScreen(false); });
 }

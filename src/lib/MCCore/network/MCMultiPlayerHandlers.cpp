@@ -29,7 +29,6 @@
 #include "main/MCTelemetry.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
-#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCNightLights.h"
 #include "mission/MCScenario.h"
 #include "object/MCArtillery.h"

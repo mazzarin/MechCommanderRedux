@@ -1,29 +1,18 @@
 #include "stdafx.h"
 #include "main/MCLogistics.h"
 #include "gui/MCGuiSystem.h"
-#include "gui/MCScrollPane.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCDeploy.h"
-#include "logistics/MCLogTextObject.h"
-#include "logistics/MCMechRepairBlock.h"
+#include "logistics/MCLogRows.h"
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "ai/MCMoveGeometry.h"
-#include "logistics/MCLogChatInput.h"
-#include "logistics/MCMechPurchaseBlock.h"
-#include "logistics/MCPilotPurchaseBlock.h"
 #include "logistics/MCPurMechList.h"
-#include "logistics/MCVehiclePurchaseBlock.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
-#include "logistics/MCPurchaseScreen.h"
-#include "logistics/MCRepairScreen.h"
-#include "logistics/MCSessionScreen.h"
-#include "logistics/MCSmuti.h"
 #include "logistics/MCUnitLimits.h"
-#include "logistics/MCVehicleRepairBlock.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCSystemConfig.h"
@@ -48,7 +37,6 @@ auto MCLogistics::LoadQuickStart(MCFitIniFile& file) -> void
 
     const int32_t result = file.SeekBlock(std::format("Side{}Units", homeTeam != 1 ? 1 : 0));
     Assert(result == 0, static_cast<uint32_t>(result), "Could not find SideUnit block in quickstart");
-    MCBriefingScreen& briefing = *BriefingScreen;
 
     for (size_t slotIndex = 0; slotIndex < NumDropSlots; ++slotIndex)
     {
@@ -144,20 +132,9 @@ auto MCLogistics::LoadQuickStart(MCFitIniFile& file) -> void
         }
     }
 
-    // The units placed show in their slots (the original made each unit's block there as it placed it).
-    briefing.ShowSlots();
-
-    int32_t index = 0;
-
-    for (const std::shared_ptr<MCLogMech>& mech : ForceMechList->Mechs)
-    {
-        mech->SlotIndex = index++;
-    }
-
-    for (const std::shared_ptr<MCLogVehicle>& vehicle : ForceVehicleList->Vehicles)
-    {
-        vehicle->SlotIndex = index++;
-    }
+    // The units placed show in their slots (the original made each unit's block there as it placed it; DEPLOY shows
+    // the slots as they are).
+    NumberForce();
 }
 
 auto MCLogistics::SaveCampaign(std::string_view fileName) -> int32_t
@@ -267,48 +244,58 @@ namespace
         return profile.Read<bool>("Assigned").value_or(false);
     }
 
-    /// <summary>The mission tab's picture's width, the margin round its text, and the rows below the text.</summary>
-    constexpr int32_t MissionPortWidth = 0xb3;
-    constexpr int32_t MissionMargin = 2;
-    constexpr int32_t MissionBottom = 10;
-    constexpr int32_t MissionBack = 0x10;
+    /// <summary>The scale of a match's drop zone marks for each world meter across the map's diagonal (1998's).</summary>
+    constexpr float MarkerScalePerMeter = 0.0017667845f;
+    /// <summary>The Clans' first drop zone (MultiPlayer homeTeam 1): the last three.</summary>
+    constexpr int32_t ClanFirstZone = 3;
+    /// <summary>The home team the Clans are.</summary>
+    constexpr int32_t ClanHomeTeam = 1;
+
+    /// <summary>Entry <paramref name="name"/> of a terrain file's TerrainData block; a missing one is reported.</summary>
+    template <MCFitValue T> T ReadTerrainEntry(MCFitIniFile& file, std::string_view name)
+    {
+        return ReadRequired<T>(file, name, std::format("Could not find variable {} in terrain .FIT file", name));
+    }
 
     /// <summary>
-    /// Port: the mission tab's content, <paramref name="text"/> (the briefing) formatted <paramref name="width"/> x
-    /// <paramref name="height"/>: a view the mission pane draws each frame, so with HD art on its text shows sharp. The
-    /// original formatted the text into a picture wiped to the key, copied that two pixels into one wiped to 0x10
-    /// (MissionPortWidth wide, MissionBottom rows taller), which the pane copied keyed. The view draws the same: the
-    /// margin in 0x10, the text over what the pane shows beneath, formatted by <paramref name="formatter"/> as it stood
-    /// when the original formatted it.
+    /// The drop zones' marks of the mission on map <paramref name="mapFile"/>, as 1998's briefing worked them out as it
+    /// drew the mission's map (MCBriefingScreen::DrawBackground): the scale from its terrain file, the zone in a match,
+    /// the map picture's size.
     /// </summary>
-    std::shared_ptr<MCLogPort> MissionTextPort(std::string text, const MCSmuti& formatter, int32_t width,
-                                               int32_t height)
+    MCLogistics::MCZoneMarks ReadZoneMarks(std::string_view mapFile)
     {
-        auto port = std::make_shared<MCLogPort>();
-        const int32_t portHeight = height + MissionBottom;
-        port->InitView(MissionPortWidth, portHeight);
-        port->DrawContent = [text = std::move(text), formatter, width, height, portHeight](MCGuiPort& view)
+        MCFitIniFile terrainFile;
+        int32_t result = terrainFile.Open(GamePath(TerrainPath, mapFile, ".fit"));
+        Assert(result == 0, result, "Could not find terrain file from .TGA ");
+        result = terrainFile.SeekBlock("TerrainData");
+        Assert(result == 0, result, "Could not find TerrainData block in terrain .FIT file");
+        const auto verticesBlockSide = ReadTerrainEntry<int32_t>(terrainFile, "VerticesBlockSide");
+        const auto blocksMapSide = ReadTerrainEntry<int32_t>(terrainFile, "BlocksMapSide");
+        const auto metersPerVertex = ReadTerrainEntry<float>(terrainFile, "MetersPerVertex");
+        terrainFile.Close();
+        MCLogistics::MCZoneMarks marks;
+
+        if (MultiPlayer() != nullptr)
         {
-            const auto wipe = [&view](int32_t xPos, int32_t yPos, int32_t boxWidth, int32_t boxHeight)
-            {
-                if (boxWidth > 0 && boxHeight > 0)
-                {
-                    MCLogBlockPort box(view.Frame(), xPos, yPos, boxWidth, boxHeight, false);
-                    VfxPaneWipe(box.Frame(), MissionBack);
-                }
-            };
+            const auto side = static_cast<double>(blocksMapSide * verticesBlockSide);
+            marks.Scale = static_cast<float>(std::sqrt(side * side + side * side) * metersPerVertex *
+                                             static_cast<double>(MarkerScalePerMeter));
+            marks.Zone = MultiPlayer()->HomeTeam == ClanHomeTeam ? ClanFirstZone : 0;
+        }
 
-            const int32_t right = MissionMargin + width;
-            wipe(0, 0, MissionPortWidth, MissionMargin);
-            wipe(0, MissionMargin + height, MissionPortWidth, portHeight - MissionMargin - height);
-            wipe(0, MissionMargin, MissionMargin, height);
-            wipe(right, MissionMargin, MissionPortWidth - right, height);
-            MCLogBlockPort block(view.Frame(), MissionMargin, MissionMargin, width, height, true);
-            MCSmuti writer = formatter;
-            writer.Process(text, block, 0, 0);
-        };
+        const std::optional<MCLogistics::MCPicturePixels> picture =
+            MCLogistics::MapPictureAt(GamePath(TerrainPath, mapFile, ".log.tga"));
 
-        return port;
+        if (!picture.has_value())
+        {
+            SDL_Log("MCLogistics: the briefing map of %.*s can't be read", static_cast<int>(mapFile.size()),
+                    mapFile.data());
+            return marks;
+        }
+
+        marks.MapWidth = picture->Width;
+        marks.MapHeight = picture->Height;
+        return marks;
     }
 
     /// <summary>Notes <paramref name="reason"/> as why the load refused its file, and gives back its error.</summary>
@@ -599,7 +586,6 @@ auto MCLogistics::ReadCampaignStart(MCCampaignReading& reading) -> int32_t
         PilotCosts[3] = ReadRequired<int32_t>(purchasing, "Elite", "Could not read Elite pilot in purchasing file.");
     }
 
-    RepairScreen->ClearSelection();
     savedMission = 0;
 
     if (MultiPlayer() == nullptr)
@@ -1086,7 +1072,7 @@ auto MCLogistics::ReadCampaignShop(MCCampaignReading& reading) -> int32_t
     else
     {
         SetUpMPPurchasing(PurchaseFile);
-        MCPurchaseScreen::CreatePurVehiclePane(false);
+        ReadyStoreDescriptions();
     }
 
     return 0;
@@ -1157,7 +1143,7 @@ auto MCLogistics::ReadCampaignShopEnd(MCCampaignReading& reading) -> int32_t
         index = 0;
     }
 
-    MCPurchaseScreen::CreatePurVehiclePane(false);
+    ReadyStoreDescriptions();
     return 0;
 }
 
@@ -1166,15 +1152,66 @@ auto MCLogistics::ReadCampaignBlocks(MCCampaignReading& reading) -> int32_t
     MCPacketFile& packetFile = reading.PacketFile;
 
     packetFile.Close();
-    // The spares' rows numbered, then the 1998 'MECH BAY's lists shown on them (its mech tab).
+    // The spares' rows numbered; then the force's, and each mech's condition and battle rating worked out, as the 1998
+    // 'MECH BAY's rows of the force did as its lists were shown on them (its mech tab).
     NumberMechs();
     NumberPilots();
     ReIndexInventory();
     NumberVehicles();
-    MCLogInvScreen& screen = *RepairScreen;
-    screen.SetUpMechInv(true, true);
-    screen.CreateVehiclePane();
+    NumberForce();
+
+    for (const std::shared_ptr<MCLogMech>& mech : ForceMechList->Mechs)
+    {
+        if (mech->PilotIndex >= 0 || !mech->NetworkPilot.expired())
+        {
+            mech->CalcStatus();
+        }
+
+        mech->CalcBR();
+    }
+
     return 0;
+}
+
+auto MCLogistics::NumberForce() -> void
+{
+    int32_t index = 0;
+
+    for (const std::shared_ptr<MCLogMech>& mech : ForceMechList->Mechs)
+    {
+        mech->SlotIndex = index++;
+    }
+
+    for (const std::shared_ptr<MCLogVehicle>& vehicle : ForceVehicleList->Vehicles)
+    {
+        vehicle->SlotIndex = index++;
+    }
+}
+
+auto MCLogistics::ReadyStoreDescriptions() const -> void
+{
+    for (const std::shared_ptr<MCPurMech>& purMech : PurMechList->Mechs)
+    {
+        PrepareInfoDescription(purMech->Variants[static_cast<size_t>(purMech->CurVariant)]->Description);
+    }
+
+    for (const std::shared_ptr<MCPurVehicle>& purVehicle : PurVehicleList->Vehicles)
+    {
+        PrepareInfoDescription(purVehicle->Data->Description);
+    }
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : PurchaseComponents->Items)
+    {
+        PrepareInfoDescription(item->Description);
+    }
+
+    for (const std::shared_ptr<MCPurPilotData>& pilot : PurPilotList->Pilots)
+    {
+        if (pilot->Status == MCPurPilotData::ForHire)
+        {
+            PrepareInfoDescription(pilot->Description);
+        }
+    }
 }
 
 auto MCLogistics::GetCurrentMission() -> void
@@ -1221,24 +1258,11 @@ auto MCLogistics::GetCurrentMission() -> void
                                         0x7f, " Could not find BriefingFile variable in mission file ");
     }
 
-    // Format the briefing text into a port the width of the mission pane (at least 0xbf high), then copy it into
-    // the briefing screen's mission port with a 2-pixel margin.
-    MCBriefingScreen& briefing = *BriefingScreen;
-    const int32_t paneWidth = briefing.MissionPane->Width();
-    // The texts below are read into the briefing path's buffer, as the original did: a missing one leaves the path.
+    // The briefing's text, which BRIEFING shows (MCCampaignMenu); the 1998 briefing formatted it into its mission
+    // pane's picture here. The texts below are read into the briefing path's buffer, as the original did: a missing
+    // one leaves the path.
     std::string text = GamePath(MissionPath, briefingFile);
     BriefingTextPath = text;
-    const int32_t height = std::max(GuiSystem().TextFormatter.ProcessFile(text, std::nullopt, paneWidth - 0x11), 0xbf);
-    {
-        // The port draws the text in place (MissionTextPort), formatted as the formatter stands now; the formatting
-        // into a picture is kept for the state it leaves the formatter in.
-        const MCSmuti formatter = GuiSystem().TextFormatter;
-        MCLogPort textPort;
-        textPort.Init(paneWidth - 0x11, height);
-        VfxPaneWipe(textPort.Frame(), 0xff);
-        GuiSystem().TextFormatter.ProcessFile(text, textPort, 0);
-        briefing.MissionPort = MissionTextPort(MCSmuti::ReadFile(text), formatter, paneWidth - 0x11, height);
-    }
 
     Assert(ReadText(file, "MapFile", 0xff, text), 0, " Could not find MapFile variable in mission file ");
     MissionFileName = text;
@@ -1295,5 +1319,5 @@ auto MCLogistics::GetCurrentMission() -> void
     }
 
     file.Close();
-    BriefingScreen->DrawBackground();
+    ZoneMarks = ReadZoneMarks(MissionFileName);
 }

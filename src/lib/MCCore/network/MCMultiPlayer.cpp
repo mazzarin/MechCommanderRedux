@@ -24,7 +24,6 @@
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
 #include "mission/MCMission.h"
-#include "mission/MCMissionResultsScreen.h"
 #include "object/MCGameObject.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
@@ -1112,11 +1111,8 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
         // no longer counts for START.
         MCLobbyUpdate::PlayerLeft(playerID);
 
-        // The room, or its mission pick (the 1998 load screen, either way).
-        const MCScreenFlow::MCScreenId top = MCMenuScreens::Top();
-
-        if ((top == MCMenuScreens::Room() || top == MCMenuScreens::MissionPick() || top == MCMenuScreens::Load()) &&
-            !MCLobbyUpdate::LeftToUpdate(playerID))
+        // The room (CHOOSE MAP over it too).
+        if (MCMenuScreens::Top() == MCMenuScreens::Room() && !MCLobbyUpdate::LeftToUpdate(playerID))
         {
             // Port-only (the personal build): the room goes on without the player, who is taken off every game's
             // screen (the host's chat said it left); a host left alone waits for others. The original ended the room

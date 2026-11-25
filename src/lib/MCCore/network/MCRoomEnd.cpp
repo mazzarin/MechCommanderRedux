@@ -19,7 +19,6 @@
 #include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
-#include "mission/MCMissionResultsScreen.h"
 #include "network/MCInternetGame.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMultiPlayer.h"
@@ -503,9 +502,7 @@ auto MCRoomEnd::ShowGames(MCGames games, std::string_view line, std::function<vo
     MCScreenFlow::Change("games",
                          [games, line = std::string(line), then = std::move(then)]
                          {
-                             MCLogistics& shown = *GlobalLog();
-                             shown.HideScreen();
-                             DropMessage(shown);
+                             DropMessage(*GlobalLog());
 
                              if (games == MCGames::Internet)
                              {
@@ -817,8 +814,7 @@ auto MCRoomEnd::LeaveToGames() -> void
         GlobalLog()->ClearChat();
     }
 
-    GlobalLog()->HideScreen();
-
+    // The room hides as the games show (MCLogistics::NoteTop).
     if (fromInternetGame)
     {
         ShowInternetScreen();

@@ -60,7 +60,6 @@
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCGameStrings.h"
-#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "network/MCLobbyUpdate.h"
@@ -724,8 +723,9 @@ auto MCMission::Run() -> int32_t
         }
         case MCMissionState::Logistics:
         {
-            // Port-only (SPEC-menus.md, the remade screens): not while a remade screen shows over it (ui/MCRmlFlow).
-            if (Logistics != nullptr && Logistics->CurrentScreen()->IsShowing() == 0 && !MCRmlFlow::Showing())
+            // Port-only (SPEC-menus.md, the remade screens): logistics' screen shown again while no remade screen shows
+            // (ui/MCRmlFlow), as the original showed its screen again while it was hidden.
+            if (Logistics != nullptr && !MCRmlFlow::Showing())
             {
                 Logistics->ShowLogScreen(true, false);
             }
@@ -1111,7 +1111,6 @@ auto MCMission::LoadScenario(std::string_view name) -> void
     // Port-only (SPEC-menus.md's stage 9): the remade results' names for the mission, read while logistics is here,
     // and the menus' RmlUi started if it isn't (a game segment's), so the results find it at the end.
     MCResultsMenu::BeforeMission();
-    ResultsScreen.reset();
     MCRmlFlow::Menus();
 
     if (GlobalGameSegment == 0)
@@ -1226,13 +1225,6 @@ auto MCMission::StartInterface() -> void
     MCLogistics::ReadTexturesAhead(MCHdArt::ReadAs::Load);
     MCHdArt::WaitForLoadReads();
     MCHdArt::KeepReadAhead();
-
-    // Port-only (SPEC-memory.md's cache budget): the results screen's pictures, which it first draws the frame the
-    // mission's end is decided, kept from here (the load's reads kept) until the hold lets go.
-    if (const std::shared_ptr<MCMission> mission = Mission(); mission != nullptr && mission->ResultsScreen != nullptr)
-    {
-        mission->ResultsScreen->KeepPicturesForEnd();
-    }
 
     // Port-only (SPEC-first-use.md: HD craters and footprints): theirs, read at the load, kept from here too.
     if (MCGameContext::Current().HasCraterManager())
@@ -1395,12 +1387,12 @@ auto MCMission::WayBackAhead(bool hold) const -> std::vector<MCScreenChange::MCP
 
 auto MCMission::ResultsUp() const -> bool
 {
-    return ResultsScreen != nullptr || MCResultsMenu::Up();
+    return MCResultsMenu::Up();
 }
 
 auto MCMission::ResultsFinished() const -> bool
 {
-    return ResultsScreen != nullptr ? ResultsScreen->Finished() : MCResultsMenu::Finished();
+    return MCResultsMenu::Finished();
 }
 
 auto MCMission::ShowResults() -> void
@@ -1411,13 +1403,6 @@ auto MCMission::ShowResults() -> void
 auto MCMission::TakeDownResults() -> void
 {
     MCResultsMenu::Close();
-
-    if (ResultsScreen != nullptr)
-    {
-        CloseGuiObject(ResultsScreen);
-        ResultsScreen.reset();
-    }
-
     GuiSystem().CursorHidden = false;
 }
 
@@ -1631,16 +1616,10 @@ auto MCMission::ShowLoadingScreen() -> void
     GuiSystem().PaletteCycle = 1;
     GuiSystem().SetCursorVisible(false);
 
-    // The briefing hidden (the menus' teardown comes behind the loading screen, with the save), the loading screen drawn
-    // in its place, in the menus' frame.
-    if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
-    {
-        logistics->HideScreen();
-    }
-
-    // Port-only (SPEC-menus.md's stage 8): the remade BRIEFING and DEPLOY too, and the loading screen as designed shown
-    // in their place, read from the briefing while logistics is still there (the 1998 one is drawn under it).
-    MCRmlFlow::OldScreenShown();
+    // Port-only (SPEC-menus.md's stage 8): the remade BRIEFING and DEPLOY hidden (the menus' teardown comes behind the
+    // loading screen, with the save), and the loading screen as designed shown in their place, read from the briefing
+    // while logistics is still there.
+    MCRmlFlow::HideScreens();
     // Port-only (SPEC-menus.md's stage 9): a dialog said over the briefing goes with it, as the original's box went with
     // logistics: never over the loading screen or the battlefield.
     MCRmlDialogs::Drop(MCRmlFlow::MCOn::Menus);

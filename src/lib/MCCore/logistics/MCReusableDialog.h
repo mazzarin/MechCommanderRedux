@@ -46,8 +46,6 @@ public:
     /// </summary>
     virtual void Lay();
 
-    /// <summary>Shown the old way: grabbing the screen, centred on what the window shows.</summary>
-    void ShowOld();
     /// <summary>Hidden, the screen let go when <paramref name="release"/>.</summary>
     void HideOld(bool release);
     /// <summary>Shown the old way.</summary>

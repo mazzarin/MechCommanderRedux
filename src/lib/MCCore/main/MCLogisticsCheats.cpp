@@ -1,12 +1,8 @@
 #include "stdafx.h"
 #include "main/MCLogistics.h"
 #include "gui/MCGuiGlobals.h"
-#include "logistics/MCBriefingScreen.h"
+#include "logistics/MCDeploy.h"
 #include "logistics/MCMechBay.h"
-#include "logistics/MCMechRepairBlock.h"
-#include "logistics/MCMenuScreens.h"
-#include "logistics/MCPurchaseScreen.h"
-#include "logistics/MCRepairScreen.h"
 #include "logistics/MCUnitLimits.h"
 #include "network/MCMultiPlayer.h"
 #include "sound/MCSoundSystem.h"
@@ -125,11 +121,6 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
                 // The three knobs at the mech's state (the block's Set*Slider(-1)), then the row works out what it
                 // shows.
                 MCMechBay::PlaceKnobs(*mech);
-
-                if (const std::shared_ptr<MCMechRepairBlock> row = RepairScreen->RowOf(*mech); row != nullptr)
-                {
-                    row->DrawBackground(mech->SlotIndex, std::nullopt);
-                }
             }
 
             break;
@@ -144,13 +135,8 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
                 item->Count++;
             }
 
-            const std::shared_ptr<MCLogInvScreen> screen =
-                MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::MechBay)
-                    ? std::static_pointer_cast<MCLogInvScreen>(RepairScreen.Lock())
-                    : PurchaseScreen.Lock();
-            // The rows numbered again; the 1998 screen's component tab shows them (each row refreshed).
+            // The rows numbered again (the 1998 screen's component tab showed them, each row refreshed).
             ReIndexInventory();
-            screen->SetUpCompInv(true, true);
             break;
         }
         case MCLogCheat::MillionPoints:
@@ -165,7 +151,7 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
             // ROCKANDROLLPEOPLE: no drop tonnage limit.
             PlayCheatSound();
             HammerDown = true;
-            BriefingScreen->CalcTonnages();
+            MCDeploy::CountTons();
             break;
         }
         default:

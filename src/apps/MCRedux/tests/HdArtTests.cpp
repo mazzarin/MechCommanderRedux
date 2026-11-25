@@ -156,7 +156,7 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCSessionScreen.h"
-#include "logistics/MCSplashScreen.h"
+#include "logistics/MCGenericScreen.h"
 #include "main/MCLogMech.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
@@ -13795,9 +13795,19 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
                        }
                    });
 
-    // The main menu's UPDATE button.
+    // The main menu's UPDATE button, from the 1998 main menu's palette (its background's, mainScreen.fit's first
+    // element's: no 1998 screen is made since SPEC-menus.md's stage 9).
     REQUIRE(cinemaColors.has_value());
-    const MCMenuButtonPictures update = UpdateButtonPictures(GlobalLog()->MainScreen->Palette);
+    MCFitIniFile mainScreenFit;
+    REQUIRE_EQ(mainScreenFit.Open(GamePath(ArtPath, "mainScreen", ".fit")), 0);
+    REQUIRE_EQ(mainScreenFit.SeekBlock("Element0"), 0);
+    const MCFitResult<std::string> mainScreenArt = mainScreenFit.Read<std::string>("NormalArt");
+    REQUIRE(mainScreenArt.has_value());
+    const std::vector<uint8_t> mainScreenPalette = mainScreenFit.Read<bool>("UseBackPalette").value_or(false)
+                                                       ? MCGenericScreen::PaletteFromArt(*mainScreenArt)
+                                                       : std::vector<uint8_t>();
+    mainScreenFit.Close();
+    const MCMenuButtonPictures update = UpdateButtonPictures(mainScreenPalette);
 
     for (const auto& [state, picture] :
          {std::pair{'h', update.Up}, std::pair{'g', update.Down}, std::pair{'n', update.Gray}})
@@ -13857,8 +13867,9 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
     ++pictures;
 
 #if MC_AUDIT_CONTROLS
-    // Every word the port's text buttons show, in the preferences' colours (ACCEPT's, whose pictures they're made of).
-    ShowPreferences();
+    // Every word the port's text buttons show, in the preferences' colours (ACCEPT's, whose pictures they're made of):
+    // the 1998 preferences kept the palette shown, logistics' (MCGenericScreen::ShowGuiWindow), and none is made since
+    // SPEC-menus.md's stage 9.
     MCTestGame::RunFrame(FrameSeconds);
     MCInput::Display()->GetShownColors(colors);
 
@@ -13877,7 +13888,6 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
         }
     }
 
-    CancelPrefs();
 #endif
 
     std::cout << std::format("  {} pictures ({} distinct) in {}, {} skipped\n", pictures, written.size(),

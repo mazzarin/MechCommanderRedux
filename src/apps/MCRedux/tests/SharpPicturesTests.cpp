@@ -9,14 +9,12 @@
 #include "iface/MCMechBar.h"
 #include "iface/MCMechIcon.h"
 #include "iface/MCTacticalInterface.h"
-#include "logistics/MCBriefingScreen.h"
+#include "logistics/MCCampaignMenu.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "lib/MCFilesAhead.h"
 #include "lib/MCFnvHash.h"
 #include "logistics/MCLogPort.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCPurchaseScreen.h"
-#include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
@@ -33,6 +31,7 @@
 #include "sprite/MCHdArt.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
+#include "ui/MCRmlArt.h"
 #include "vfx/MCVfxFunctions.h"
 
 #include <algorithm>
@@ -85,48 +84,9 @@ namespace
         }
     }
 
-    /// <summary>
-    /// The soft benchmark's bar for a screen's frames as shown: the most a frame's sharp pictures should take of the
-    /// renderer (a 240 Hz frame is 4.2 ms, shared with the rest of the frame). Printed every run, never failed: the
-    /// suite's parallel runs stretch it (you, 19 Nov: "why not have the 1ms soft benchmark?").
-    /// </summary>
-    constexpr std::chrono::microseconds MostSharpFrameTime{1000};
-
     double Milliseconds(std::chrono::nanoseconds time)
     {
         return std::chrono::duration<double, std::milli>(time).count();
-    }
-
-    /// <summary>
-    /// The renderer's sharp counts once the frame running is done (a frame may run on the presenter's thread, which
-    /// puts its pictures).
-    /// </summary>
-    MCVulkanRenderer::SharpCounts SharpCountsNow(MCVulkanRenderer& renderer)
-    {
-        if (renderer.WaitForRun)
-        {
-            renderer.WaitForRun();
-        }
-
-        return renderer.SharpPictures();
-    }
-
-    /// <summary>
-    /// NEW CAMPAIGN clicked as a player clicks it, waiting for nothing: its fade sets the briefing up, then rehearses
-    /// it and the screens a slide brings in, at its darkest steps, where a redraw of line art the maker hasn't reached
-    /// yet only holds the black longer (the fade keeps its pace): printed, never checked.
-    /// </summary>
-    void ClickNewCampaign(MCVulkanRenderer& renderer)
-    {
-        const MCVulkanRenderer::SharpCounts clicked = SharpCountsNow(renderer);
-        NewCampaign();
-        MCTestGame::FinishChanges();
-        const MCVulkanRenderer::SharpCounts faded = SharpCountsNow(renderer);
-        std::cout << std::format(
-            "  the click's fade: {} sharp pictures taken made ahead, {} redrawn ({:.3f} ms of it), "
-            "{:.3f} ms in all, at its darkest steps\n",
-            faded.TakenAhead - clicked.TakenAhead, faded.Redrawn - clicked.Redrawn,
-            Milliseconds(faded.RedrawnTime - clicked.RedrawnTime), Milliseconds(faded.PutTime - clicked.PutTime));
     }
 }
 
@@ -243,6 +203,7 @@ TEST_CASE_ISOLATED("sharp pictures: line art made ahead is what its draw redraws
     }
 
     REQUIRE(MCTestGame::StartLogistics());
+    const MCTestGame::RepairShapes repairs;
     GHdArt = 1;
     GlobalLog()->AttachHdArt();
     // The Atlas (its eyes drawn by hand) and another mech.
@@ -252,8 +213,8 @@ TEST_CASE_ISOLATED("sharp pictures: line art made ahead is what its draw redraws
 
     for (const size_t mech : Mechs)
     {
-        REQUIRE(!GlobalLog()->MechRepShapes[mech].Empty());
-        const std::span<const uint8_t> table = GlobalLog()->MechRepShapes[mech].Bytes();
+        REQUIRE(!repairs.Mechs[mech].Empty());
+        const std::span<const uint8_t> table = repairs.Mechs[mech].Bytes();
 
         for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
         {
@@ -268,7 +229,7 @@ TEST_CASE_ISOLATED("sharp pictures: line art made ahead is what its draw redraws
 
     for (const size_t mech : Mechs)
     {
-        const std::span<const uint8_t> table = GlobalLog()->MechRepShapes[mech].Bytes();
+        const std::span<const uint8_t> table = repairs.Mechs[mech].Bytes();
 
         for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
         {
@@ -298,92 +259,6 @@ TEST_CASE_ISOLATED("sharp pictures: line art made ahead is what its draw redraws
     CHECK_EQ(drawnByHand, 1);
     CHECK(compared > 30);
     CHECK_EQ(MCSharpPictures::Tally().Drawings, static_cast<size_t>(compared));
-}
-
-/// <summary>
-/// On a sharp screen, as a player sees it, waiting for nothing: after NEW CAMPAIGN the briefing and the purchase screen
-/// put their text and line art with none redrawn on the frames shown (the fonts' made ahead at logistics' start, the
-/// units' line art as the briefing is set up, both put on the GPU by the click's fade as it rehearses the screens). A
-/// soft benchmark prints each screen's worst frame for them against MostSharpFrameTime, and what the fade redrew: unseen,
-/// at its darkest steps, where the fade keeps its pace and the work only holds the black longer. The pictures stay on
-/// the GPU while away from the screen, unused for longer than the renderer keeps other pictures, so the next visit
-/// makes nothing again.
-/// </summary>
-TEST_CASE_ISOLATED("game: a sharp screen's text and line art are made ahead, and its next visit makes none again")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartLogistics());
-    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
-    REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), SharpWidth, SharpHeight));
-    SDL_SyncWindow(&MCInput::Display()->Window());
-    const std::shared_ptr<MCVulkanRenderer> renderer =
-        std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
-    REQUIRE(renderer != nullptr);
-
-    // HD art on, as the game turns it on (AttachHdArtToLoaded's logistics part): the fonts' glyphs made ahead.
-    GHdArt = 1;
-    GlobalLog()->AttachHdArt();
-    GlobalLog()->MakeAhead();
-    MCSharpPictures::WaitForMade();
-    Settle();
-    REQUIRE(MCInput::Display()->SharpScreen());
-
-    ClickNewCampaign(*renderer);
-
-    // A screen shown after <paramref name="click"/>, frame by frame: what its frames redrew, its worst frame printed.
-    const auto shows = [&renderer](std::string_view which, const std::function<void()>& click) -> size_t
-    {
-        const MCVulkanRenderer::SharpCounts start = SharpCountsNow(*renderer);
-        click();
-        MCVulkanRenderer::SharpCounts last = start;
-        std::chrono::nanoseconds worst{0};
-
-        for (int32_t frame = 0; frame < SettleFrames; ++frame)
-        {
-            MCTestGame::RunFrame(FrameSeconds);
-            const MCVulkanRenderer::SharpCounts now = SharpCountsNow(*renderer);
-            worst = std::max(worst, now.PutTime - last.PutTime);
-            last = now;
-        }
-
-        std::cout << std::format("  soft benchmark, {}: {} sharp pictures taken made ahead on its frames, {} redrawn; "
-                                 "its worst frame {:.3f} ms for them (bar {:.0f} ms){}\n",
-                                 which, last.TakenAhead - start.TakenAhead, last.Redrawn - start.Redrawn,
-                                 Milliseconds(worst), Milliseconds(MostSharpFrameTime),
-                                 worst < MostSharpFrameTime ? "" : ": over the bar");
-        return last.Redrawn - start.Redrawn;
-    };
-
-    CHECK_EQ(shows("the briefing", [] {}), 0u);
-    CHECK_EQ(shows("the purchase screen", [] { GlobalLog()->SetUpPurchaseScreen(false); }), 0u);
-
-    const MCVulkanRenderer::SharpCounts shown = SharpCountsNow(*renderer);
-    const MCSharpPictures::MCMadeTally tally = MCSharpPictures::Tally();
-    CHECK(tally.Glyphs > 0);
-    CHECK(tally.Drawings > 0);
-    CHECK(shown.TakenAhead > 0);
-
-    // Away for longer than an unused picture is kept (300 frames), then back.
-    constexpr int32_t AwayFrames = 400;
-    GlobalLog()->SetUpRepairScreen(false);
-
-    for (int32_t frame = 0; frame < AwayFrames; ++frame)
-    {
-        MCTestGame::RunFrame(FrameSeconds);
-    }
-
-    const MCVulkanRenderer::SharpCounts away = SharpCountsNow(*renderer);
-    GlobalLog()->SetUpPurchaseScreen(false);
-    Settle();
-    const MCVulkanRenderer::SharpCounts back = SharpCountsNow(*renderer);
-    CHECK_EQ(back.Redrawn, away.Redrawn);
-    CHECK_EQ(back.TakenAhead, away.TakenAhead);
-    GHdArt = 0;
 }
 
 namespace
@@ -477,8 +352,8 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
         bool Back = false;
     };
 
-    // The briefing the way back shows: the next mission's on a win, this one's again otherwise; its map as the
-    // briefing's set-up then loads it (read ahead as the fade begins: MCLogistics::ReadBriefingMapAhead).
+    // The briefing the way back shows: the next mission's on a win, this one's again otherwise; its map, which the
+    // remade briefing shows (read ahead as the fade begins: MCLogistics::ReadBriefingMapAhead).
     const auto briefedFor = [](uint32_t result)
     {
         const uint32_t was = ScenarioResult;
@@ -519,12 +394,9 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
     REQUIRE(GlobalLog() != nullptr);
     CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     CHECK(!GuiSystem().CanFade());
-    REQUIRE(GlobalLog()->BriefingScreen->MapPicture != nullptr);
-    const std::shared_ptr<MCTexture> briefingMap = GlobalLog()->BriefingScreen->MapPicture->Bitmap().Texture.lock();
-    REQUIRE(briefingMap != nullptr);
-    CHECK_EQ(briefingMap->Width, map->Width);
-    CHECK_EQ(briefingMap->Height, map->Height);
-    CHECK(std::ranges::equal(briefingMap->Pixels, map->Pixels));
+    REQUIRE(MCCampaignMenu::Screen().has_value());
+    CHECK_EQ(MCCampaignMenu::Screen()->get().MapSource(),
+             std::string(MCRmlArt::MapScheme) + Mission()->Scenarios[current + 1]);
 
     // The screens were made of files read ahead from the click (those logistics looked for in the archives before),
     // most of what it looked for there (555 of 585, 14 Nov); none is held past the fade.
@@ -541,58 +413,8 @@ TEST_CASE_ISOLATED("game: the way back from a mission's results is made in its f
 }
 
 /// <summary>
-/// Port-only (SPEC-menus.md's stage 2): NEW CAMPAIGN's click is a change of screen through the flow: the main menu fades
-/// out live from the click while the campaign loads, a step a frame; the briefing is set up once the screen is black,
-/// then what a fade into the briefing does, and the briefing fades in; its next frame does none of it again.
-/// </summary>
-TEST_CASE_ISOLATED("game: NEW CAMPAIGN starts the campaign in the fade from its click, once the screen is black")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    StartSharpLogistics();
-    REQUIRE(MCMainMenuScreens::Shown(MCMainPanel::Main));
-
-    // At each present of the change, how far the fade had gone and whether the campaign had started (the main menu
-    // hidden: the work's last step).
-    struct MCShown
-    {
-        int Fade = 0;
-        bool Started = false;
-    };
-
-    std::vector<MCShown> shown;
-    const size_t rehearsed = RehearsalsRun();
-    MCTestGame::OnPresent = [&]
-    { shown.push_back({.Fade = MCInput::Display()->Fade(), .Started = !MCMainMenuScreens::Shown(MCMainPanel::Main)}); };
-
-    NewCampaign();
-    REQUIRE(MCTestGame::FinishChanges());
-    MCTestGame::OnPresent = {};
-    REQUIRE(!shown.empty());
-    REQUIRE(!shown.front().Started);
-    const auto firstStarted = std::ranges::find_if(shown, &MCShown::Started);
-    REQUIRE(firstStarted != shown.end());
-    REQUIRE(firstStarted != shown.begin());
-    // The main menu shown fading before the briefing's set-up, which waited for black.
-    CHECK(std::ranges::any_of(shown.begin(), firstStarted,
-                              [](const MCShown& at) { return at.Fade > 0 && at.Fade < MCScreenChange::Black; }));
-    CHECK_EQ(std::prev(firstStarted)->Fade, MCScreenChange::Black);
-    CHECK_EQ(shown.back().Fade, 0);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->BriefingScreen);
-    CHECK_EQ(RehearsalsRun() - rehearsed, RemadeBriefingRehearsals);
-    const size_t started = RehearsalsRun();
-    MCTestGame::RunFrame(FrameSeconds);
-    CHECK_EQ(RehearsalsRun(), started);
-    GHdArt = 0;
-}
-
-/// <summary>
-/// Port-only: a fade into a screen (a new palette for the next frame, as a campaign's load sets) rehearses it and
-/// readies the screens a slide from it brings in (none from the remade briefing) once the screen is nearly black, where
-/// a piece's longer step can't be seen.
+/// Port-only: a fade into a screen (a new palette for the next frame, as a campaign's load sets) rehearses it once the
+/// screen is nearly black, where a piece's longer step can't be seen.
 /// </summary>
 TEST_CASE_ISOLATED("game: a fade into a screen rehearses it once the screen is nearly black")
 {
@@ -680,8 +502,9 @@ TEST_CASE_ISOLATED("sharp pictures: a frame whose rows end with its table is no 
 
     constexpr size_t Vehicle = 34;
     REQUIRE(MCTestGame::StartLogistics());
-    REQUIRE(!GlobalLog()->VehicleRepShapes[Vehicle].Empty());
-    const std::span<const uint8_t> table = GlobalLog()->VehicleRepShapes[Vehicle].Bytes();
+    const MCTestGame::RepairShapes repairs;
+    REQUIRE(!repairs.Vehicles[Vehicle].Empty());
+    const std::span<const uint8_t> table = repairs.Vehicles[Vehicle].Bytes();
     REQUIRE(VfxShapeCount(table) > MCLogistics::VehicleSoldOutShape);
     CHECK_EQ(MCShapeOffset(table, MCLogistics::VehicleSoldOutShape) + MCShapeRows::RowsAt, table.size());
     CHECK(!MCSharpPictures::CutLineArt(table, MCLogistics::VehicleSoldOutShape, {}).has_value());
@@ -707,6 +530,7 @@ TEST_CASE_ISOLATED("sharp pictures: the redraws are this version's, as the pack'
     // Recorded 14 Nov (RedrawVersion 1).
     constexpr uint64_t Pinned = 0x5fde55b9d0c33e5f;
     REQUIRE(MCTestGame::StartLogistics());
+    const MCTestGame::RepairShapes repairs;
     GHdArt = 1;
     GlobalLog()->AttachHdArt();
     uint64_t hash = MCFnvHash::Basis;
@@ -750,8 +574,7 @@ TEST_CASE_ISOLATED("sharp pictures: the redraws are this version's, as the pack'
         }
     }
 
-    for (const std::span<const uint8_t> table :
-         {GlobalLog()->MechRepShapes[0].Bytes(), GlobalLog()->VehicleRepShapes[0].Bytes()})
+    for (const std::span<const uint8_t> table : {repairs.Mechs[0].Bytes(), repairs.Vehicles[0].Bytes()})
     {
         for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
         {
@@ -791,6 +614,7 @@ TEST_CASE_ISOLATED("tool: --hd-make-sharp writes the sharp screens' text and lin
     }
 
     REQUIRE(MCTestGame::StartLogistics());
+    const MCTestGame::RepairShapes repairs;
     GHdArt = 1;
     GlobalLog()->AttachHdArt();
     const std::filesystem::path folder(*out);
@@ -868,13 +692,11 @@ TEST_CASE_ISOLATED("tool: --hd-make-sharp writes the sharp screens' text and lin
     const size_t glyphPictures = written.size();
     const size_t glyphBytes = bytes;
 
-    // Every frame of the units' repair shapes drawn as line art (MCLogistics::AttachHdArt).
-    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    // Every frame of the units' repair shapes drawn as line art (MCTestGame::RepairShapes).
     size_t drawings = 0;
 
     for (const std::span<const MCRegisteredBlock> shapes :
-         {std::span<const MCRegisteredBlock>(logistics->MechRepShapes),
-          std::span<const MCRegisteredBlock>(logistics->VehicleRepShapes)})
+         {std::span<const MCRegisteredBlock>(repairs.Mechs), std::span<const MCRegisteredBlock>(repairs.Vehicles)})
     {
         for (const MCRegisteredBlock& shape : shapes)
         {

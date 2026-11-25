@@ -1,5 +1,7 @@
 #pragma once
 
+#include "main/MCLogistics.h"
+
 /// <summary>
 /// The retail install the <c>game:</c> tests read: the runner's <c>--game &lt;folder&gt;</c>, else the current folder.
 /// Without one those tests note that they were skipped and pass.
@@ -120,8 +122,12 @@ namespace MCTestGame
     /// <summary>The tests' user folder (under the temporary folder): the game writes its saves and settings there.</summary>
     std::filesystem::path UserFolder();
 
-    /// <summary>The main menu's LOAD MISSION button (its element 3, which MCGenericScreen::ShowGuiWindow enables).</summary>
-    inline constexpr int32_t MainMenuLoadButton = 3;
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): what of the 1998 menus is made, if anything: a 1998 screen, window or control
+    /// under the screen window, one logistics holds (its screens, dialogs' views, chat windows, ticker), or their art
+    /// loaded (logistics', or what a mission keeps of it); none otherwise. Every frame checks it (RunFrame).
+    /// </summary>
+    std::optional<std::string> OldMenusMade();
 
     /// <summary>
     /// While it lives, the game's save folder (SavePath, and the folder logistics' file panes list) is a folder of the
@@ -164,6 +170,27 @@ namespace MCTestGame
 
         std::filesystem::path _Folder;
         std::set<std::filesystem::path> _Before;
+    };
+
+    /// <summary>
+    /// The units' repair shapes (mechrep##.shp, vr1##.shp) loaded as 1998's logistics loaded them, their diagrams' and
+    /// sold-out outlines' frames tied as line art while it lives (MCHdArt::LineArtSet::Logistics, the Atlas's eyes drawn
+    /// by hand), as its AttachHdArt tied them: what the HD art pack's sharp.hda holds of them (the tactical map's DATA
+    /// page draws the same files). Port-only (SPEC-menus.md's stage 9): logistics loads none, as no 1998 screen is made.
+    /// </summary>
+    class RepairShapes
+    {
+    public:
+        RepairShapes();
+        ~RepairShapes();
+
+        RepairShapes(const RepairShapes&) = delete;
+        RepairShapes& operator=(const RepairShapes&) = delete;
+
+        /// <summary>By mech name index.</summary>
+        decltype(MCLogisticsArtFiles::MechRepShapes) Mechs;
+        /// <summary>By vehicle icon; none where the file is missing.</summary>
+        decltype(MCLogisticsArtFiles::VehicleRepShapes) Vehicles;
     };
 
     /// <summary>

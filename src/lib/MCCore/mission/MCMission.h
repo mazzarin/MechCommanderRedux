@@ -11,7 +11,6 @@ class MCFitIniFile;
 class MCGuiCallback;
 class MCLogistics;
 struct MCLogisticsArt;
-class MCMissionResultsScreen;
 
 /// <summary>
 /// The states of <see cref="MCMission::Run"/>. They are also read from the mission FIT (<c>GameState</c>,
@@ -186,11 +185,6 @@ public:
     MCMissionState State = MCMissionState::Start;
     /// <summary>The state to go to after the current one (<c>NextGameState</c> in the mission FIT).</summary>
     MCMissionState NextState = MCMissionState::Start;
-    /// <summary>
-    /// The 1998 results screen shown after a scenario (created in <see cref="StartScenario"/>). Port-only (stage 9): none,
-    /// the remade results (mission/MCResultsMenu) showing in its place.
-    /// </summary>
-    MCGuiHandle<MCMissionResultsScreen> ResultsScreen;
     /// <summary>Index into <see cref="Movies"/> of the movie to play next (<c>SmackerMovieId</c>); -1 = none.</summary>
     int32_t CurrentMovie = 0;
     /// <summary>The Smacker movie names (<c>Movie%d</c>).</summary>

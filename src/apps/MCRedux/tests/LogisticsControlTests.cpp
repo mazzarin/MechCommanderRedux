@@ -13,23 +13,14 @@
 #include "gui/MCGuiTimerManager.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
-#include "logistics/MCFileScrollPane.h"
-#include "logistics/MCGameList.h"
-#include "logistics/MCLogButton.h"
-#include "logistics/MCLogScrollTextObject.h"
-#include "logistics/MCLogSlider.h"
-#include "logistics/MCLogTextObject.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCRepairScreen.h"
-#include "logistics/MCReusableDialog.h"
 #include "logistics/MCSmuti.h"
 #include "logistics/MCStore.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameStrings.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
@@ -130,67 +121,6 @@ namespace
         std::string SavedArtPath;
     };
 
-    /// <summary>An object that keeps the focus notices (<see cref="MCLogNotice"/>) its children send it.</summary>
-    class MCNoticeRecorder : public MCLogObject
-    {
-    public:
-        void HandleEvent(MCGuiEvent& event) override
-        {
-            if (event.Type == MCGuiEventType::Focus)
-            {
-                Notices.push_back(event.Data);
-            }
-        }
-
-        std::vector<int32_t> Notices;
-    };
-
-    /// <summary>A logistics object that counts the ones destroyed (deleted).</summary>
-    class MCCountedObject : public MCLogObject
-    {
-    public:
-        ~MCCountedObject() override { Deleted++; }
-
-        static inline int32_t Deleted = 0;
-    };
-
-    /// <summary>Gives <paramref name="object"/> an event of <paramref name="type"/>.</summary>
-    void Send(MCGuiObject& object, int32_t type, int32_t x = 0, int32_t y = 0, uint8_t key = 0, int32_t data = 0)
-    {
-        MCGuiEvent event;
-        event.Type = type;
-        event.X = x;
-        event.Y = y;
-        event.Key = key;
-        event.Data = data;
-        object.HandleEvent(event);
-    }
-
-    /// <summary>Types <paramref name="text"/> into <paramref name="field"/>, a character event each.</summary>
-    void Type(MCGuiObject& field, std::string_view text)
-    {
-        for (const char c : text)
-        {
-            Send(field, MCGuiEventType::Character, 0, 0, static_cast<uint8_t>(c));
-        }
-    }
-
-    /// <summary>Sets <paramref name="field"/> up at (10, 10), taking <paramref name="size"/> - 1 characters of <paramref name="type"/>.</summary>
-    void SetUpField(MCLogTextObject& field, int32_t size, MCLogInputType type)
-    {
-        field.MCLogObject::Init(10, 10, 100, 12);
-        field.Font = WhiteFont;
-        field.InitBuffer(size, type);
-    }
-
-    /// <summary>A text field at (10, 10) taking <paramref name="size"/> - 1 characters of <paramref name="type"/>.</summary>
-    MCGuiRef<MCLogTextObject> MakeField(int32_t size, MCLogInputType type)
-    {
-        MCGuiRef<MCLogTextObject> field = MCGuiTree::NewRoot<MCLogTextObject>();
-        SetUpField(*field, size, type);
-        return field;
-    }
-
     /// <summary>The columns of <paramref name="port"/>'s pixels that aren't 0, as (first, last); (-1, -1) for none.</summary>
     std::pair<int32_t, int32_t> InkedColumns(const MCGuiPort& port)
     {
@@ -230,7 +160,7 @@ TEST_CASE("logistics: a port makes a new zeroed bitmap on every Init")
     CHECK_EQ(port.Frame().Y1, 2);
 }
 
-TEST_CASE("logistics: an object made without a port has none; with one, a picture, or a view when it draws itself")
+TEST_CASE("logistics: an object made without a port has none; with one, a picture")
 {
     LogisticsScreen screen;
     MCGuiRef<MCLogObject> bare = MCGuiTree::NewRoot<MCLogObject>();
@@ -244,12 +174,6 @@ TEST_CASE("logistics: an object made without a port has none; with one, a pictur
     REQUIRE(plain->Lport() != nullptr);
     CHECK(!plain->Lport()->IsView());
     CHECK_EQ(plain->Lport()->Width(), 8);
-
-    // A button draws itself each frame: its port is a view of its size.
-    MCGuiRef<MCLogButton> button = MCGuiTree::NewRoot<MCLogButton>();
-    REQUIRE_EQ(button->Init(0, 0, 20, 10, {}), 0);
-    REQUIRE(button->Lport() != nullptr);
-    CHECK(button->Lport()->IsView());
 
     // Destroyed, it frees its port (the pin keeps its memory to look).
     const std::shared_ptr<MCLogObject> destroyed = plain.Pin();
@@ -319,212 +243,6 @@ TEST_CASE("game: a colour code at the end of a text writes the line before it ag
     // The second write starts where the first ended.
     CHECK(InkedColumns(once).second < textWidth);
     CHECK(InkedColumns(twice).second >= textWidth);
-}
-
-// Text fields
-
-TEST_CASE("logistics: a text field takes the characters its type allows, one less than its buffer holds")
-{
-    LogisticsScreen screen;
-    MCGuiRef<MCLogTextObject> digits = MakeField(5, MCLogInputType::Digits);
-    Type(*digits, "1a2b34567");
-    CHECK_EQ(digits->Text(), std::string_view("1234"));
-    CHECK_EQ(digits->TextLength, 4);
-
-    MCGuiRef<MCLogTextObject> port = MakeField(8, MCLogInputType::Port);
-    Type(*port, "1234567");
-    CHECK_EQ(port->Text(), std::string_view("23456"));
-
-    MCGuiRef<MCLogTextObject> text = MakeField(8, MCLogInputType::Text);
-    Type(*text, std::string_view("a\tb~\x7f", 5));
-    CHECK_EQ(text->Text(), std::string_view("ab~"));
-
-    MCGuiRef<MCLogTextObject> none = MakeField(8, MCLogInputType::None);
-    Type(*none, "abc");
-    CHECK(none->Text().empty());
-}
-
-TEST_CASE("logistics: Enter in a text field tells its parent, and the focus clears a save slot's empty name")
-{
-    LogisticsScreen screen;
-    const std::string savedEmpty = EmptyFile;
-    EmptyFile = "<empty>";
-    MCGuiRef<MCNoticeRecorder> parent = MCGuiTree::NewRoot<MCNoticeRecorder>();
-    parent->Init(0, 0, 200, 200);
-    const MCGuiHandle<MCLogTextObject> field =
-        parent->CreateChild<MCLogTextObject>([](MCLogTextObject& made) { SetUpField(made, 16, MCLogInputType::Any); });
-    field->SetStringBuffer("<empty>");
-
-    // Without ClearEmptyOnFocus the name stays.
-    Send(*field, MCGuiEventType::Focus, 0, 0, 0, MCLogNotice::FocusGained);
-    CHECK_EQ(field->Text(), std::string_view("<empty>"));
-    field->ClearEmptyOnFocus = true;
-    Send(*field, MCGuiEventType::Focus, 0, 0, 0, MCLogNotice::FocusGained);
-    CHECK(field->Text().empty());
-    CHECK_EQ(field->CursorPos, 0);
-
-    // The blink timer flips the cursor; losing the focus lights it.
-    Send(*field, MCGuiEventType::Timer, 0, 0, 0, 0);
-    CHECK(!field->CursorLit);
-    Send(*field, MCGuiEventType::Focus, 0, 0, 0, MCLogNotice::FocusLost);
-    CHECK(field->CursorLit);
-
-    Send(*field, MCGuiEventType::Character, 0, 0, 0x0d);
-    REQUIRE_EQ(parent->Notices.size(), 1u);
-    CHECK_EQ(parent->Notices[0], MCLogNotice::EntryDone);
-    EmptyFile = savedEmpty;
-}
-
-// Scrolling text
-
-TEST_CASE("logistics: scrolling text keeps every line (no 4 KB limit); lines 0 and 1 are both the first")
-{
-    LogisticsScreen screen;
-    MCGuiRef<MCLogScrollTextObject> text = MCGuiTree::NewRoot<MCLogScrollTextObject>();
-    REQUIRE_EQ(text->Init(0, 0, 100, 60, {}), 0);
-    CHECK(!text->Scrolling);
-
-    for (int32_t i = 0; i < 500; i++)
-    {
-        text->Print(std::format("line {:03}", i), 0x1f);
-    }
-
-    CHECK_EQ(text->NumLines, 500);
-    CHECK(text->Text.size() > 0x1000);
-    CHECK(text->GetTextLine(0) == std::optional<std::string>("line 000"));
-    CHECK(text->GetTextLine(1) == std::optional<std::string>("line 000"));
-    CHECK(text->GetTextLine(2) == std::optional<std::string>("line 001"));
-    CHECK(text->GetTextLine(500) == std::optional<std::string>("line 499"));
-    CHECK(!text->GetTextLine(501).has_value());
-    CHECK(!text->GetTextLine(-1).has_value());
-
-    text->Clear();
-    CHECK_EQ(text->NumLines, 0);
-    CHECK(!text->GetTextLine(1).has_value());
-    CHECK_EQ(text->HighlightLine[0], -1);
-}
-
-TEST_CASE("logistics: a scrolling text line in colour 0 ends the text, and a blank line is just its colour")
-{
-    LogisticsScreen screen;
-    MCGuiRef<MCLogScrollTextObject> text = MCGuiTree::NewRoot<MCLogScrollTextObject>();
-    REQUIRE_EQ(text->Init(0, 0, 100, 60, "first"), 0);
-    CHECK(text->Scrolling);
-    text->PrintBlank(0x1f);
-    CHECK(text->GetTextLine(2) == std::optional<std::string>(""));
-    text->Print("hidden", 0);
-    text->Print("after", 0x1f);
-    CHECK_EQ(text->NumLines, 4);
-    CHECK(text->GetTextLine(1) == std::optional<std::string>("first"));
-    CHECK(!text->GetTextLine(3).has_value());
-    CHECK(!text->GetTextLine(4).has_value());
-}
-
-TEST_CASE("game: wrapped logistics text breaks at the last space that fits; a first word too wide takes the rest")
-{
-    LogisticsScreen screen;
-
-    if (!screen.LoadRetail())
-    {
-        return;
-    }
-
-    MCGuiRef<MCLogScrollTextObject> text = MCGuiTree::NewRoot<MCLogScrollTextObject>();
-    REQUIRE_EQ(text->Init(0, 0, 100, 60, {}), 0);
-    const int32_t width = Fonts[0][0]->Width(std::string_view("aaa aaa")) + 6;
-    text->PrintWrapped("aaa aaa aaa aaa", 0x1f, width);
-    CHECK_EQ(text->NumLines, 2);
-    CHECK(text->GetTextLine(1) == std::optional<std::string>("aaa aaa"));
-    CHECK(text->GetTextLine(2) == std::optional<std::string>("aaa aaa"));
-
-    text->Clear();
-    text->PrintWrapped("wwwwwwwwwwwwwwwwwwww xx", 0x1f, width);
-    CHECK_EQ(text->NumLines, 1);
-    CHECK(text->GetTextLine(1) == std::optional<std::string>("wwwwwwwwwwwwwwwwwwww xx"));
-}
-
-// The game list
-
-TEST_CASE("logistics: the game list is unlisted until refreshed, and a selection past it asks for a refresh")
-{
-    LogisticsScreen screen;
-    MCGuiRef<MCGameList> games = MCGuiTree::NewRoot<MCGameList>();
-    REQUIRE_EQ(games->Init(0, 0, 200, 100, {}), 0);
-    CHECK_EQ(games->NumSessions(), -1);
-    CHECK_EQ(games->TabColumn, 0x73);
-    games->SelectedGuid.Data1 = 7;
-
-    // Before the first refresh, clearing the selection leaves it.
-    games->ClearSelection();
-    CHECK(games->SelectedGuid.Data1 == 7);
-
-    // No selection, nothing listed: -1 is past the (unlisted) end, so the list is refreshed.
-    CHECK(!games->GetSelectedGame().has_value());
-    CHECK_EQ(games->NumSessions(), 0);
-    games->ClearSelection();
-    CHECK(games->SelectedGuid.Data1 == 0);
-    CHECK(!games->GetSelectedGame().has_value());
-}
-
-// The slider
-
-TEST_CASE("game: a slider's value is the mouse's share of the thumb's travel, clamped, the minimum winning")
-{
-    LogisticsScreen screen;
-
-    if (!screen.LoadRetail())
-    {
-        return;
-    }
-
-    MCGuiRef<MCLogSlider> slider = MCGuiTree::NewRoot<MCLogSlider>();
-    REQUIRE_EQ(slider->Init(20, 0, 120, 10, {}), 0);
-    slider->MinValue = 0;
-    slider->MaxValue = 100;
-    const int32_t travel = 120 - slider->ThumbPort->Width();
-    CHECK_EQ(slider->ValueAt(20), 0);
-    CHECK_EQ(slider->ValueAt(20 + travel), 100);
-    CHECK_EQ(slider->ValueAt(20 + travel / 2), static_cast<int32_t>(static_cast<double>(travel / 2) / travel * 100));
-    slider->SetCurrentValue(100);
-    CHECK_EQ(slider->ThumbX(), travel);
-    slider->SetCurrentValue(250);
-    CHECK_EQ(slider->CurrentValue, 100);
-    slider->SetCurrentValue(-5);
-    CHECK_EQ(slider->CurrentValue, 0);
-
-    slider->MinValue = 10;
-    slider->MaxValue = 0;
-    slider->SetCurrentValue(5);
-    CHECK_EQ(slider->CurrentValue, 10);
-}
-
-// The save list
-
-TEST_CASE("logistics: the save list sorts by name as the original's exchange sort, the selection following its file")
-{
-    using File = MCFileScrollPane::File;
-    std::vector<File> files = {{"b", 1}, {"c", 2}, {"a", 3}};
-    int32_t selected = 0;
-    MCFileScrollPane::SortByName(files, selected);
-    REQUIRE_EQ(files.size(), 3u);
-    CHECK_EQ(files[0].Name, std::string("a"));
-    CHECK_EQ(files[1].Name, std::string("b"));
-    CHECK_EQ(files[2].Name, std::string("c"));
-    CHECK_EQ(selected, 1);
-    CHECK_EQ(files[1].Operation, 1);
-
-    // Equal names: the exchange sort isn't stable; the selection goes to the first of the name.
-    files = {{"b", 1}, {"b", 2}, {"a", 3}};
-    selected = 0;
-    MCFileScrollPane::SortByName(files, selected);
-    CHECK_EQ(files[0].Operation, 3);
-    CHECK_EQ(files[1].Operation, 2);
-    CHECK_EQ(files[2].Operation, 1);
-    CHECK_EQ(selected, 1);
-
-    selected = -1;
-    MCFileScrollPane::SortByName(files, selected);
-    CHECK_EQ(selected, -1);
 }
 
 // The purchase dialog
@@ -698,73 +416,6 @@ TEST_CASE_ISOLATED("game: the deal window counts up to what the resource points 
 }
 
 // The message dialogs
-
-TEST_CASE("game: the message dialog grows a middle piece for every two lines, and its keys answer (Escape is a "
-          "question's CANCEL, OB-074)")
-{
-    LogisticsScreen screen;
-
-    if (!screen.LoadRetail())
-    {
-        return;
-    }
-
-    MCGuiRef<MCReusableDialog> view = MCGuiTree::NewRoot<MCReusableDialog>();
-    REQUIRE_EQ(view->Init(0, 0, 4, 4, {}), 0);
-    const auto dialog = std::make_shared<MCMenuDialog>();
-    dialog->SetView(view.Handle());
-    dialog->SetText("Short.");
-    CHECK_EQ(view->NumMiddlePieces, 1);
-    const int32_t pieces = view->TopPiece->Height() + view->BottomPiece->Height();
-    CHECK_EQ(view->Height(), pieces + view->MiddlePiece->Height());
-
-    std::string longText;
-
-    for (int32_t i = 0; i < 40; i++)
-    {
-        longText += "word ";
-    }
-
-    dialog->SetText(longText);
-    const int32_t wrap = view->Width() - 0x14;
-    int32_t lines = 1;
-
-    for (std::string_view rest = dialog->Text;;)
-    {
-        const auto fit = static_cast<size_t>(MedBlueFont->CharactersToWidth(rest, wrap, true));
-
-        if (fit < 1 || fit >= rest.size())
-        {
-            break;
-        }
-
-        rest = rest.substr(fit + 1);
-        lines++;
-    }
-
-    REQUIRE(lines > 2);
-    CHECK_EQ(view->NumMiddlePieces, (lines + 1) / 2);
-
-    std::vector<int32_t> results;
-    int32_t okRuns = 0;
-    int32_t cancelRuns = 0;
-    dialog->SetTwoButton(true);
-    dialog->Callback = [&](int32_t result) { results.push_back(result); };
-    dialog->Ok.Exec = [&] { okRuns++; };
-    dialog->Cancel.Exec = [&] { cancelRuns++; };
-    dialog->KeepCallbacks = true;
-    Send(*view, MCGuiEventType::KeyDown, 0, 0, 0x0d);
-    Send(*view, MCGuiEventType::KeyDown, 0, 0, 0x1b);
-    // OB-074 (fixed): Escape on a question is its CANCEL (the original ran OK).
-    CHECK_EQ(okRuns, 1);
-    CHECK_EQ(cancelRuns, 1);
-    REQUIRE_EQ(results.size(), 2u);
-    CHECK_EQ(results[0], -1);
-    CHECK_EQ(results[1], 0);
-    // The second answer cleared the callbacks (KeepCallbacks kept them for one).
-    CHECK(!dialog->Callback);
-    CHECK(!dialog->Ok.Exec);
-}
 
 /// <summary>
 /// A message dialog with a timeout (a launcher's leave, the room's countdown) closes after its time with its result:

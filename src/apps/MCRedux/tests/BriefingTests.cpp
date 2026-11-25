@@ -9,37 +9,25 @@
 #include "TestGame.h"
 #include "fakes/MCMemoryFileSource.h"
 #include "gui/MCGuiSmackerWindow.h"
-#include "gui/MCScrollPane.h"
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
-#include "logistics/MCBriefingBox.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCDeploy.h"
-#include "logistics/MCFileScrollPane.h"
-#include "logistics/MCGenericScreen.h"
-#include "logistics/MCLogTextButton.h"
-#include "logistics/MCLogOptionList.h"
 #include "logistics/MCHdOptionsPanel.h"
 #include "logistics/MCLoadSaveMenu.h"
-#include "logistics/MCLogButton.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
-#include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCSavesMenu.h"
-#include "logistics/MCRepairScreen.h"
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCRegistrySettings.h"
-#include "logistics/MCMenuDialog.h"
-#include "logistics/MCReusableDialog.h"
-#include "logistics/MCSplashScreen.h"
 #include "main/MCArtModes.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
@@ -209,160 +197,6 @@ namespace
             MCTestGame::RunFrame(1.0f / 15.0f);
         }
     }
-
-    /// <summary>Runs the game for <paramref name="seconds"/> in frames of a fifteenth of a second.</summary>
-    void RunFor(float seconds)
-    {
-        for (float run = 0.0f; run < seconds; run += 1.0f / 15.0f)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    }
-}
-
-TEST_CASE_ISOLATED("game: the main menu opens its screens in their states, and cancel comes back")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    REQUIRE(MCTestGame::StartLogistics());
-    Settle();
-    std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    REQUIRE(logistics->CurrentScreen() == logistics->MainScreen);
-
-    // The load screen: campaign saves, then single missions.
-    LoadScreen();
-    Settle();
-    CHECK(logistics->CurrentScreen() == logistics->LoadScreen);
-    CHECK_EQ(logistics->LogisticsState, 5);
-    CHECK(!LoadingSolo);
-    CHECK(logistics->LoadScreen->FilePane->SelectedFile == -1);
-    Cancel();
-    Settle();
-    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
-    CHECK(WhackTimer);
-    SoloLoadScreen();
-    Settle();
-    CHECK(logistics->CurrentScreen() == logistics->LoadScreen);
-    CHECK(LoadingSolo);
-    Cancel();
-    Settle();
-    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
-    CHECK(!LoadingSolo);
-
-    // No campaign yet: nothing to save.
-    if (logistics->CurrentMission == -1)
-    {
-        SaveScreen();
-        Settle();
-        CHECK(logistics->CurrentScreen() == logistics->MainScreen);
-    }
-
-    // The preferences: cancel brings back the settings they opened with.
-    const int32_t difficulty = GameDifficulty;
-    const uint8_t music = SoundSystem()->MusicLevel;
-    ShowPreferences();
-    Settle();
-    CHECK(logistics->CurrentScreen() == logistics->PrefScreen);
-    CHECK_EQ(logistics->LogisticsState, 9);
-    GameDifficulty = difficulty == 2 ? 0 : 2;
-    SoundSystem()->MusicLevel = static_cast<uint8_t>(music == 10 ? 20 : 10);
-    HardToggle();
-    CHECK_EQ(GameDifficulty, 2);
-    EasyToggle();
-    CHECK_EQ(GameDifficulty, 0);
-    CancelPrefs();
-    Settle();
-    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
-    CHECK_EQ(GameDifficulty, difficulty);
-    CHECK_EQ(SoundSystem()->MusicLevel, music);
-
-    // The multiplayer menu (remade: the main menu's panel, the main screen logistics' under it).
-    ShowMultiPlayer();
-    Settle();
-    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Multiplayer));
-    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
-    CHECK_EQ(logistics->LogisticsState, 10);
-    CHECK(!Solo);
-    MCTestGuest::ClickOn(MCMainPanel::Multiplayer, "back");
-    Settle();
-    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
-    CHECK(MCMainMenuScreens::Shown(MCMainPanel::Main));
-    CHECK_EQ(logistics->LogisticsState, 1);
-
-    // A new campaign opens on the briefing screen, and the menu's return goes back there.
-    NewCampaign();
-    Settle();
-    CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
-    CHECK(logistics->CurrentMission != -1);
-}
-
-namespace
-{
-    /// <summary>The middle of drop slot <paramref name="slot"/>.</summary>
-    POINT SlotMiddle(size_t slot)
-    {
-        const RECT& area = GlobalLog()->BriefingScreen->SlotRects[slot];
-        return {(area.left + area.right) / 2, (area.top + area.bottom) / 2};
-    }
-
-    /// <summary>Drags <paramref name="mech"/>'s block (wherever it is) to (<paramref name="x"/>, <paramref name="y"/>).</summary>
-    void DragMech(MCLogMech& mech, int32_t x, int32_t y)
-    {
-        const std::shared_ptr<MCMechBriefBlock> block = GlobalLog()->BriefingScreen->BlockOf(mech);
-        REQUIRE(block != nullptr);
-        const POINT from{block->GlobalX() + block->Width() / 2, block->GlobalY() + block->Height() / 2};
-        Drag(from.x, from.y, x, y);
-        Settle();
-    }
-
-    /// <summary>The first unit the deploy pane lists, as a mech (null when it is a vehicle or the pane is empty).</summary>
-    std::shared_ptr<MCLogMech> FirstDeployMech(const MCBriefingScreen& briefing)
-    {
-        if (briefing.DeployUnits.empty() || briefing.DeployUnits.front()->PartType != 1)
-        {
-            return nullptr;
-        }
-
-        return std::static_pointer_cast<MCLogMech>(briefing.DeployUnits.front());
-    }
-
-    /// <summary>The briefing screen's launch button, its middle.</summary>
-    constexpr POINT LaunchButton{0x230, 0x152};
-
-    /// <summary>On the briefing screen, the first mech the deploy pane lists dragged into the first drop slot.</summary>
-    void DeployFirstMech()
-    {
-        // Pinned only for the set-up: the launch takes logistics down.
-        const std::shared_ptr<MCLogistics> pinned = GlobalLog();
-        REQUIRE(pinned->CurrentScreen() == pinned->BriefingScreen);
-        std::shared_ptr<MCLogMech> mech = FirstDeployMech(*pinned->BriefingScreen);
-        REQUIRE(mech != nullptr);
-        MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
-        DragMech(*mech, SlotMiddle(0).x, SlotMiddle(0).y);
-        REQUIRE(mech->Deployed != 0);
-    }
-
-    /// <summary>The launch button, then frames until the scenario is up.</summary>
-    /// <returns>Whether the scenario is up.</returns>
-    bool Launch()
-    {
-        constexpr int32_t mostFrames = 300;
-        RealClick(LaunchButton.x, LaunchButton.y);
-        // Port-only (SPEC-menus.md's stage 1): the scenario loads behind the loading screen, and plays once it has
-        // faded out (MCMission's changes of screen, gui/MCScreenChange.h).
-        const auto playing = [] { return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario; };
-
-        for (int32_t frame = 0; frame < mostFrames && !playing(); frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-
-        return playing();
-    }
-
 }
 
 namespace
@@ -756,27 +590,25 @@ TEST_CASE_ISOLATED("game: the way back from a mission takes the menus' art kept 
 
     REQUIRE(MCTestGame::StartLogistics());
     constexpr uint32_t Won = 4;
-    const std::span<const uint8_t> shapes = GlobalLog()->MechRepShapes[0].Bytes();
-    const std::shared_ptr<MCLogPort> button = GlobalLog()->ScreenButtonPorts[0][0];
+    const std::span<const uint8_t> shapes = GlobalLog()->MechIconShapes[0].Bytes();
     REQUIRE(!shapes.empty());
-    REQUIRE(button != nullptr);
 
     REQUIRE(MCTestGame::StartCampaignMission());
     REQUIRE(Mission()->KeptLogisticsArt != nullptr);
-    CHECK(Mission()->KeptLogisticsArt->Files.MechRepShapes[0].Bytes().data() == shapes.data());
-    CHECK(Mission()->KeptLogisticsArt->Files.ScreenButtonPorts[0][0] == button);
+    CHECK(Mission()->KeptLogisticsArt->Files.MechIconShapes[0].Bytes().data() == shapes.data());
     EndToResultsAndBack(Won, false);
     CHECK(Mission()->KeptLogisticsArt == nullptr);
-    CHECK(GlobalLog()->MechRepShapes[0].Bytes().data() == shapes.data());
-    CHECK(GlobalLog()->ScreenButtonPorts[0][0] == button);
+    CHECK(GlobalLog()->MechIconShapes[0].Bytes().data() == shapes.data());
 
-    // Kept from other files: loaded again (the old picture, still held here, isn't the new one).
+    // Kept from other files: loaded again (the old shapes, still held here, aren't the new ones).
     REQUIRE(MCTestGame::StartCampaignMission());
-    REQUIRE(Mission()->KeptLogisticsArt != nullptr);
-    Mission()->KeptLogisticsArt->Key.Switches++;
+    const std::shared_ptr<MCLogisticsArt> kept = Mission()->KeptLogisticsArt;
+    REQUIRE(kept != nullptr);
+    kept->Key.Switches++;
+    const std::span<const uint8_t> keptShapes = kept->Files.MechIconShapes[0].Bytes();
     EndToResultsAndBack(Won, false);
-    REQUIRE(GlobalLog()->ScreenButtonPorts[0][0] != nullptr);
-    CHECK(GlobalLog()->ScreenButtonPorts[0][0] != button);
+    REQUIRE(!GlobalLog()->MechIconShapes[0].Bytes().empty());
+    CHECK(GlobalLog()->MechIconShapes[0].Bytes().data() != keptShapes.data());
 }
 
 /// <summary>
@@ -984,45 +816,6 @@ TEST_CASE_ISOLATED("game: HD LIGHTING set to NIGHT on the HD OPTIONS page darken
 
     GamePaused = false;
     std::filesystem::remove(prefsPath);
-}
-
-TEST_CASE_ISOLATED("game: the operation tab starts the briefing movie half a second later")
-{
-    if (!MCTestGame::Available())
-    {
-        return;
-    }
-
-    REQUIRE(MCTestGame::StartLogistics());
-    Settle();
-    NewCampaign();
-    Settle();
-    MCBriefingScreen& briefing = *GlobalLog()->BriefingScreen;
-    REQUIRE(GlobalLog()->CurrentScreen().get() == &briefing);
-    briefing.SetUpMission();
-    CHECK_EQ(briefing.CurrentTab, MCBriefingScreen::MissionTab);
-    CHECK(briefing.SmackerWindow == nullptr);
-
-    // The tab: the operation art at once, the movie after its timer (500 ms).
-    briefing.SetUpOperation();
-    CHECK_EQ(briefing.CurrentTab, MCBriefingScreen::OperationTab);
-    CHECK(briefing.OperationShown);
-    CHECK(!briefing.PlayMovie);
-    RunFor(0.3f);
-    CHECK(!briefing.PlayMovie);
-    CHECK(briefing.SmackerWindow == nullptr);
-    RunFor(0.4f);
-    CHECK(briefing.PlayMovie);
-
-    if (!GlobalLog()->OperationCinema.empty())
-    {
-        CHECK(briefing.SmackerWindow != nullptr);
-
-        // The mission tab stops it.
-        briefing.SetUpMission();
-        CHECK(briefing.SmackerWindow == nullptr);
-        CHECK(!briefing.PlayMovie);
-    }
 }
 
 namespace
@@ -1277,8 +1070,6 @@ TEST_CASE_ISOLATED("game: a save asking for more copies of a spare mech than a c
 
 namespace
 {
-    /// <summary>The logistics state of the repair screen, where the main menu's RETURN TO GAME goes back to.</summary>
-    constexpr int32_t RepairScreenState = 4;
     /// <summary>
     /// Loads save <paramref name="name"/> as a player does: the main menu's LOAD GAME (stage 5's), the save picked,
     /// LOAD pressed.
@@ -1339,13 +1130,12 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         logistics->CurrentMission = mission;
         REQUIRE_EQ(logistics->SaveCampaign("p3refused"), 0);
         logistics->CurrentMission = goodMission;
-        logistics->SetUpRepairScreen(true);
-        Settle();
+        MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::MechBay);
 
         // The main menu, and the save refused: the load screen stays up, saying so, with no campaign behind it.
         logistics->SetUpMainScreen(false);
         Settle();
-        REQUIRE_EQ(logistics->PreviousState, RepairScreenState);
+        REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Main());
         LoadFromScreen("p3refused");
         REQUIRE(MCSavesMenu::Screen().has_value());
         MCSavesScreen& loadGame = MCSavesMenu::Screen()->get();
@@ -1359,14 +1149,13 @@ TEST_CASE_ISOLATED("game: a refused save leaves no campaign: RETURN TO GAME and 
         CHECK(!loadGame.Dialog()->Shown());
         CHECK(loadGame.Shown());
 
-        // Back on the main menu, neither goes anywhere.
+        // Back on the main menu, neither shows, and RETURN TO GAME's way goes nowhere.
         MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
         Settle();
         REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Main());
+        CHECK(!MCRemadeTest::Visible(MCTestGuest::Panel(MCMainPanel::Main), "return"));
+        CHECK(!MCRemadeTest::Visible(MCTestGuest::Panel(MCMainPanel::Main), "save"));
         ReturnToGame();
-        Settle();
-        CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
-        SaveScreen();
         Settle();
         CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
 
@@ -1514,30 +1303,6 @@ TEST_CASE_ISOLATED(
     REQUIRE_EQ(logistics->SaveCampaign("Damaged, the campaign's end"), 0);
     damaged.emplace_back("Damaged, the campaign's end");
     logistics->CurrentMission = goodMission;
-
-    // 1998's load and save screens, as each start makes them (the leftover refused save tripped their asserts in every
-    // later test of its worker, 24 Nov): every save in their lists, the damaged ones by name alone.
-    for (const std::shared_ptr<MCSplashScreen>& screen : {logistics->LoadScreen.Lock(), logistics->SaveScreen.Lock()})
-    {
-        REQUIRE(screen != nullptr);
-        REQUIRE(screen->FilePane != nullptr);
-        screen->FilePane->SetStartDirectory(SavePath);
-        std::vector<MCFileScrollPane::File>& files = screen->FilePane->Files;
-
-        for (const std::string& name : damaged)
-        {
-            MCTest::Scope entry(std::format("1998's list, {}", name));
-            const auto file = std::ranges::find(files, name, &MCFileScrollPane::File::Name);
-            REQUIRE(file != files.end());
-            CHECK_EQ(file->Operation, 0);
-        }
-
-        const auto good = std::ranges::find(files, std::string(GoodSave), &MCFileScrollPane::File::Name);
-        REQUIRE(good != files.end());
-        CHECK_EQ(good->Operation, 1);
-        CHECK_EQ(good->Mission, 1);
-        CHECK_EQ(good->ResourcePoints, static_cast<uint32_t>(ResourcePoints));
-    }
 
     // The main menu as a start finds it (no campaign loaded): CONTINUE the good save.
     logistics->SetUpMainScreen(false);

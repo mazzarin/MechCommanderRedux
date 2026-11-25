@@ -5,7 +5,6 @@
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
-#include "gui/MCGuiMessageBox.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "lib/MCFatal.h"
@@ -161,7 +160,6 @@ TEST_CASE_ISOLATED("game: a message with no remade screen under it is the remade
     RunFrames(SettleFrames);
     REQUIRE(MCRmlDialogs::Shown());
     CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text, std::string(SaidMessage));
-    CHECK(!GlobalLog()->MessageDialog->ShowWindow);
     CHECK(GlobalLog()->Message->IsShowing());
     CheckLaidOut(Menus().Menus(), "dialog_alone");
 
@@ -201,7 +199,6 @@ TEST_CASE_ISOLATED("game: the version box over the battlefield is the remade dia
     REQUIRE(dialog->Shown());
     CHECK(dialog->Said().Text.starts_with(VersionWords));
     CHECK(dialog->Said().Text.size() > VersionWords.size());
-    CHECK(GuiSystem().VersionDialog == nullptr);
     CHECK(!Menus().Menus().Showing());
     CheckLaidOut(Menus().Mission(), "dialog_version");
 

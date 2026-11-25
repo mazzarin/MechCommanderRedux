@@ -5,9 +5,7 @@
 #include "lib/MCPacketFile.h"
 #include "logistics/MCMechBay.h"
 #include "logistics/MCMechInventoryBlock.h"
-#include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCMissionLogisticsBridge.h"
-#include "logistics/MCRepairScreen.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
@@ -29,14 +27,6 @@ auto MCLogMechList::Position(int32_t index) const -> size_t
 
 auto MCLogMechList::Delete(size_t position) -> void
 {
-    const std::shared_ptr<MCLogMech> mech = Mechs[position];
-
-    // Its repair row takes no more clicks (the original took the block out of the pane).
-    if (GlobalLog() != nullptr && GlobalLog()->RepairScreen != nullptr)
-    {
-        GlobalLog()->RepairScreen->HideUnitRow(*mech);
-    }
-
     Mechs.erase(Mechs.begin() + static_cast<ptrdiff_t>(position));
 }
 

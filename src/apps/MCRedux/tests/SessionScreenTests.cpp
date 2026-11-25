@@ -18,26 +18,13 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCFileScrollPane.h"
-#include "logistics/MCGameList.h"
-#include "logistics/MCLogButton.h"
-#include "logistics/MCLogComboBox.h"
-#include "logistics/MCLogMenus.h"
-#include "logistics/MCLogOptionList.h"
-#include "logistics/MCLogSlider.h"
 #include "logistics/MCMatchOptionRows.h"
-#include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCRoomScreen.h"
 #include "main/MCWeaponBans.h"
-#include "logistics/MCSplashScreen.h"
-#include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogChat.h"
-#include "logistics/MCLogChatWindow.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCReusableDialog.h"
-#include "logistics/MCSessionScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameStrings.h"
@@ -637,17 +624,11 @@ namespace
         return value;
     }
 
-    /// <summary>Clicks <paramref name="dialog"/>'s OK (the remade dialog's, over the remade room).</summary>
-    void ClickOk(MCMenuDialog& dialog)
+    /// <summary>Clicks the dialog's OK (the remade dialog's, over the remade room).</summary>
+    void ClickOk()
     {
-        if (MCRmlDialogs::Shown())
-        {
-            MCRmlDialogs::Dialog()->PressMain();
-            return;
-        }
-
-        MCLogDialogButton& ok = *dialog.View()->OkButton;
-        Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
+        REQUIRE(MCRmlDialogs::Shown());
+        MCRmlDialogs::Dialog()->PressMain();
     }
 }
 
@@ -706,7 +687,7 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     CHECK(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string("These players' game data differs from yours: Guest"));
     SaveShot("data check 0 differs", ScreenHash());
-    ClickOk(dialog);
+    ClickOk();
     Settle();
     CHECK(!dialog.IsShowing());
     CHECK_EQ(guest.MissionsLoaded(), 1);
@@ -721,7 +702,7 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     CHECK_EQ(dialog.Text, std::string("Can't check these players' game data: Guest. Tell them to upgrade."));
     SaveShot("data check 1 unchecked", ScreenHash());
     CHECK_EQ(guest.MissionsLoaded(), 1);
-    ClickOk(dialog);
+    ClickOk();
     CHECK(SettleUntil([&] { return guest.MissionsLoaded() == 2; }));
     CHECK(!dialog.IsShowing());
 
@@ -732,7 +713,7 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     GlobalLog()->Room.LoadMission(Mission);
     CHECK(SettleUntil([&] { return dialog.Text != LoadGameString(0xac, 0xfe); }));
     CHECK_EQ(dialog.Text, LoadGameString(0xab, 0xfe) + "Guest");
-    ClickOk(dialog);
+    ClickOk();
     Settle();
     CHECK_EQ(guest.MissionsLoaded(), 2);
 }
@@ -748,12 +729,6 @@ namespace
     /// <summary>The room's messages' test's.</summary>
     constexpr std::string_view MessagesHostAddress = "127.0.0.1:28929";
 
-    /// <summary>Clicks the middle of <paramref name="button"/>, as a player does, and lets the game settle.</summary>
-    void ClickButton(MCGuiObject& button)
-    {
-        Click(button.GlobalX() + button.Width() / 2, button.GlobalY() + button.Height() / 2);
-        Settle();
-    }
 }
 
 /// <summary>
@@ -794,9 +769,8 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     MCTestGuest::HostOnLan("Commander", "Menu game", 2);
     Settle();
     REQUIRE(manager.CurrentSession() != nullptr);
-    MCSessionScreen& room = *GlobalLog()->SessionScreen;
     REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Room());
-    CHECK(!GlobalLog()->ConnectScreen->IsShowing());
+    CHECK(RoomScreenShown());
     CHECK(MCTestGuest::RoomShows(manager.MyPlayer()->Id));
     CHECK(!GlobalLog()->Room.CanStart);
     CHECK(GlobalLog()->Room.HostControls);
@@ -807,7 +781,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     CHECK(GlobalLog()->Room.HostControls);
     MCTestGuest::PressInRoom("leave");
     CHECK(MCTestGuest::OnLan());
-    CHECK(!room.IsShowing());
+    CHECK(!RoomScreenShown());
     CHECK(manager.CurrentSession() == nullptr);
     CHECK(manager.CurrentConnection == MCNetProtocol::TcpIp);
     CHECK_EQ(lanScreen.PlayerName(), "Commander");

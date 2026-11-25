@@ -10,18 +10,14 @@
 #include "linkup/MCFidpMessage.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCBriefingBox.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
+#include "logistics/MCDeploy.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCChatView.h"
-#include "logistics/MCLogChatWindow.h"
+#include "logistics/MCLogChat.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMissionLogisticsBridge.h"
-#include "logistics/MCPurchaseScreen.h"
-#include "logistics/MCRepairScreen.h"
 #include "logistics/MCMenuDialog.h"
-#include "logistics/MCSessionScreen.h"
 #include "gui/MCGuiRef.h"
 #include "main/MCMPPlayerLights.h"
 #include "main/MCForceMessages.h"
@@ -358,7 +354,6 @@ auto MCLogistics::HandleDeployForceMessage(uint32_t playerID, std::span<const ui
     const bool teammate = homeGroup == SideGroupID(force);
     Assert(homeGroup == MultiPlayer()->InnerSphereGroupID || homeGroup == MultiPlayer()->ClanGroupID, 0,
            "Local player is not on a team!");
-    MCBriefingScreen& briefing = *BriefingScreen;
     std::shared_ptr<MCLogPart> part;
     const int32_t commander = sender->PlayerNumber;
     const MCOptionalRef<MCLogMechList> mechList = FindMPMechList(playerID, teammate);
@@ -405,9 +400,9 @@ auto MCLogistics::HandleDeployForceMessage(uint32_t playerID, std::span<const ui
 
     if (teammate)
     {
-        // A teammate's unit shows in its slot (the original made the unit's block there).
-        briefing.ShowSlots();
-        briefing.MpCalcTonnages();
+        // A teammate's unit counts in its lance's tons (the original also made the unit's block in its slot; DEPLOY
+        // shows the slots as they are).
+        MCDeploy::CountTons();
     }
 }
 
@@ -441,30 +436,10 @@ auto MCLogistics::HandleRemoveForceMessage(uint32_t playerID, std::span<const ui
 
 auto MCLogistics::HandleChatMessage(uint32_t playerID, std::span<const uint8_t> message) -> void
 {
-    // Blink the chat button of the screen being shown (unless the briefing is on its operation tab, where the chat
-    // is open), and play the chat sound.
-    using MCMenuScreens::MCCampaignPage;
-    MCBriefingScreen& briefing = *BriefingScreen;
-    const bool onBriefing = MCMenuScreens::CampaignOn(MCCampaignPage::Briefing);
-
-    if (!onBriefing || briefing.CurrentTab != 1)
+    // The chat's unseen mark and its sound, unless a match's briefing shows, its chat open (1998's operation tab, a
+    // match's briefing's chat, the one shown there; the original also blinked the chat button of the screen shown).
+    if (!MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing))
     {
-        if (onBriefing && briefing.ChatTimerOn == 0)
-        {
-            GuiSystem().AddTimer(briefing.weak_from_this(), 5, 0xfa, 0, 0, false);
-            briefing.ChatTimerOn = true;
-        }
-        else if (MCMenuScreens::CampaignOn(MCCampaignPage::Purchasing) && PurchaseScreen->ChatBlinking == 0)
-        {
-            GuiSystem().AddTimer(PurchaseScreen, 7, 0xfa, 0, 0, false);
-            PurchaseScreen->ChatBlinking = true;
-        }
-        else if (MCMenuScreens::CampaignOn(MCCampaignPage::MechBay) && RepairScreen->ChatBlinking == 0)
-        {
-            GuiSystem().AddTimer(RepairScreen, 8, 0xfa, 0, 0, false);
-            RepairScreen->ChatBlinking = true;
-        }
-
         MCChatView::SetUnread(true);
         SoundSystem()->PlayInterfaceSample(0x14);
     }
@@ -1037,11 +1012,8 @@ auto MCLogistics::RemoveForceAtDropSlot(int32_t slotIndex, uint32_t playerID, bo
 
     if (teamTable)
     {
-        MCBriefingScreen& briefing = *BriefingScreen;
-        // Its slot shows empty (the original's block went with the unit).
-        briefing.ShowSlots();
-        briefing.MpCalcTonnages();
-        briefing.HideBriefing();
+        // Its lance's tons without it (the original's block went with the unit; DEPLOY shows the slot empty).
+        MCDeploy::CountTons();
     }
 
     if (part->PartType != 1)

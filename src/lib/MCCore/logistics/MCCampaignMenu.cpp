@@ -408,7 +408,7 @@ void MCCampaignScreen::OnShow()
 
 void MCCampaignScreen::OnHide()
 {
-    // However it hides (a 1998 screen showing hides the remade ones), the way back comes to this tab.
+    // However it hides (logistics' screen changing hides the remade ones), the way back comes to this tab.
     LeftOn = Tab();
     // The operation's video goes with the briefing (a mission begun, the main menu); a deal or a drag with its tab.
     MCVideoMenu::Close();
@@ -1822,22 +1822,21 @@ MCCampaignMenu::MCZoneMap MCCampaignMenu::ZoneTags()
 {
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
-    if (logistics == nullptr || MultiPlayer() == nullptr || logistics->BriefingScreen == nullptr)
+    if (logistics == nullptr || MultiPlayer() == nullptr)
     {
         return {};
     }
 
-    // 1998's marks, set as its briefing read the match's mission (MCBriefingScreen::DrawBackground): the team's first
-    // zone (the Clans' the last three), the world units to a map pixel, the map's picture.
-    const MCBriefingScreen& briefing = *logistics->BriefingScreen;
+    // 1998's marks, worked out as logistics read the match's mission (MCLogistics::ZoneMarks): the team's first zone
+    // (the Clans' the last three), the world units to a map pixel, the map picture's size.
+    const MCLogistics::MCZoneMarks& marks = logistics->ZoneMarks;
 
-    if (briefing.MarkedZone < 0 || !(briefing.MarkerScale > 0) || briefing.MapPicture == nullptr)
+    if (marks.Zone < 0 || !(marks.Scale > 0))
     {
         return {};
     }
 
-    const MCWindow& picture = briefing.MapPicture->Bitmap();
-    MCZoneMap map{.Width = static_cast<float>(picture.XMax + 1), .Height = static_cast<float>(picture.YMax + 1)};
+    MCZoneMap map{.Width = static_cast<float>(marks.MapWidth), .Height = static_cast<float>(marks.MapHeight)};
 
     if (map.Width <= 0 || map.Height <= 0)
     {
@@ -1846,7 +1845,7 @@ MCCampaignMenu::MCZoneMap MCCampaignMenu::ZoneTags()
 
     for (int group = 1; group <= ZoneGroups; ++group)
     {
-        const auto zone = static_cast<size_t>(briefing.MarkedZone + group - 1);
+        const auto zone = static_cast<size_t>(marks.Zone + group - 1);
 
         if (zone >= logistics->DropZonePositions.size())
         {
@@ -1855,7 +1854,7 @@ MCCampaignMenu::MCZoneMap MCCampaignMenu::ZoneTags()
 
         // Where 1998 marked it on its screen, in the picture it stretched over the map area.
         const MCLogistics::DropZonePosition& at = logistics->DropZonePositions[zone];
-        const SDL_FPoint marked = MCBriefingScreen::MapPointOf(at.X, at.Y, briefing.MarkerScale);
+        const SDL_FPoint marked = MCBriefingScreen::MapPointOf(at.X, at.Y, marks.Scale);
         const float x = (marked.x - static_cast<float>(MCBriefingScreen::MapLeft)) / MapAreaWidth * map.Width;
         const float y = (marked.y - static_cast<float>(MCBriefingScreen::MapTop)) / MapAreaHeight * map.Height;
         map.Tags.push_back(ZoneTag(group, x, y, map.Width, map.Height));

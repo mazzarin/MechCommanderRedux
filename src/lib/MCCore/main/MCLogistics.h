@@ -6,9 +6,11 @@
 
 #include "gui/MCGuiRef.h"
 #include "gui/MCScreenChange.h"
+#include "gui/MCScreenFlow.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogObject.h"
 #include "logistics/MCLogPort.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCRoomModel.h"
 #include "main/MCDropSlot.h"
 #include "main/MCInventoryList.h"
@@ -200,6 +202,12 @@ public:
     static std::optional<MCPicturePixels> BriefingMapOf(std::string_view scenario);
 
     /// <summary>
+    /// Port-only: the map picture at game path <paramref name="path"/> (a map's <c>.log.tga</c>); none when it can't
+    /// be read.
+    /// </summary>
+    static std::optional<MCPicturePixels> MapPictureAt(const std::string& path);
+
+    /// <summary>
     /// Port-only: the game path of the map <see cref="BriefingMapOf"/> reads for <paramref name="scenario"/>
     /// (<c>TerrainPath</c>'s <c>&lt;MapFile&gt;.log.tga</c>); none when the mission file names none.
     /// </summary>
@@ -211,35 +219,6 @@ public:
     /// fade begins, so the briefing made near black finds it read.
     /// </summary>
     static void ReadBriefingMapAhead(std::string_view scenario);
-
-    /// <summary>
-    /// Port-only: on a sharp screen, the line art of the units the screens list (the shop's and the player's mechs and
-    /// vehicles: their diagrams and sold-out outlines) made ahead, off the game's thread (platform/MCSharpPictures).
-    /// The briefing, purchase and repair screens ask as they're set up; what's made is never made again.
-    /// </summary>
-    void MakeLineArtAhead() const;
-
-    /// <summary>
-    /// Port-only: the screens a slide from the one shown may bring in, readied hidden in the fade into it
-    /// (<see cref="ReadyForSlide"/>, RehearseHidden), so the slide neither waits for them nor draws them first: from
-    /// the briefing, the purchase screen (its store the most to make) then the repair screen; none from any other (they
-    /// were readied on the way, and readying one while the other shows would scroll the inventory list shown: each tab
-    /// fills both screens'), nor from the remade campaign screen over the briefing (its tabs are its own). At most <see cref="MostScreensSlidIn"/>. Each is readied at every inventory tab, the one
-    /// shown first, so a tab's first click finds its art loaded and its pictures on the GPU too.
-    /// </summary>
-    std::vector<MCGuiHandle<MCLogInvScreen>> ScreensSlidIn() const;
-    /// <summary>Port-only: how many screens <see cref="ScreensSlidIn"/> gives at most.</summary>
-    static constexpr size_t MostScreensSlidIn = 2;
-    /// <summary>Port-only: the inventory tabs, <see cref="CurrentInvTab"/>'s values: mechs, pilots, components, vehicles.</summary>
-    static constexpr int32_t InventoryTabs = 4;
-
-    /// <summary>
-    /// Port-only: hidden <paramref name="screen"/> (the purchase or repair screen) filled as its set-up will fill it for
-    /// inventory tab <paramref name="tab"/> (<see cref="SetUpPurchaseScreen"/>, <see cref="SetUpRepairScreen"/>, a tab's
-    /// click): its background and lists, the purchase screen's store too. Its set-up does it all again as it's shown,
-    /// and nothing is selected. <see cref="CurrentInvTab"/> becomes <paramref name="tab"/>, as a tab's click makes it.
-    /// </summary>
-    void ReadyForSlide(MCLogInvScreen& screen, int32_t tab) const;
 
     /// <summary>
     /// The frames of a mech's repair shapes its diagram is drawn with, a frame a location: the armor (from 0) over the
@@ -561,6 +540,18 @@ public:
     void NumberVehicles() const;
 
     /// <summary>
+    /// Numbers the force's units (their <c>SlotIndex</c>: the mechs in order, then the vehicles), as the 1998 'MECH BAY's
+    /// force list did as it showed them.
+    /// </summary>
+    void NumberForce();
+
+    /// <summary>
+    /// Readies the store's descriptions (each mech's variant shown, the vehicles', the components', the pilots' for
+    /// hire) as the 1998 store's panes did as the shop was read (PrepareInfoDescription).
+    /// </summary>
+    void ReadyStoreDescriptions() const;
+
+    /// <summary>
     /// Numbers the spare MechWarriors' rows (their <c>ListIndex</c>: the order of the pilot list), which a MechWarrior's
     /// assignment and dismissal move the others' by.
     /// </summary>
@@ -720,6 +711,23 @@ public:
     std::array<bool, NumDropSlots> LocalDropSlot{};
     /// <summary>A world position per drop zone: three for side 0, then three for side 1 (MultiPlayer homeTeam 1).</summary>
     std::array<DropZonePosition, MaxDropZones> DropZonePositions{};
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): where a match's briefing marks its team's drop zones
+    /// (MCCampaignMenu::ZoneTags), as 1998's briefing worked it out from the mission's map (<see cref="GetCurrentMission"/>).
+    /// </summary>
+    struct MCZoneMarks
+    {
+        /// <summary>The team's first drop zone (the Clans' the last three); -1 in single player.</summary>
+        int32_t Zone = -1;
+        /// <summary>The world units to a map pixel (MCBriefingScreen::MapPointOf's scale).</summary>
+        float Scale = 0.0f;
+        /// <summary>The briefing map picture's size; 0 when it can't be read.</summary>
+        int32_t MapWidth = 0;
+        int32_t MapHeight = 0;
+    };
+
+    MCZoneMarks ZoneMarks;
     /// <summary>The local player's drop zone: per lance and slot, the mech or vehicle placed there.</summary>
     std::array<std::array<DeploySlot, LanceSlots>, NumLances> DeploySlots{};
     /// <summary>
@@ -745,25 +753,22 @@ public:
     std::array<int32_t, 4> PilotCosts{};
     /// <summary>The price factor of clan technology.</summary>
     float ClanCostFactor = 0;
-    /// <summary>The screen being shown (one of the screens below; null before the first).</summary>
+    /// <summary>
+    /// Port-only (SPEC-menus.md's stage 9): <paramref name="id"/> (on <paramref name="page"/>) the screen logistics is
+    /// on, the flow's top for the game's logistics (MCMenuScreens::Top); another than before hides the remade screens
+    /// shown (its own shows), as a 1998 screen coming up did. A change of screen made outside a change of the flow's,
+    /// with the menus up, is counted (MCScreenFlow::Unrouted).
+    /// </summary>
+    void NoteTop(MCScreenFlow::MCScreenId id,
+                 MCMenuScreens::MCCampaignPage page = MCMenuScreens::MCCampaignPage::Briefing);
+
+    /// <summary>
+    /// The 1998 screens' own (their callbacks and set-ups), which none of the game's code reaches: since SPEC-menus.md's
+    /// stage 9 none of those screens is made, and these go with their classes. The 1998 screen being shown (none).
+    /// </summary>
     std::shared_ptr<MCLogObject> CurrentScreen() const { return _CurrentScreen.lock(); }
-
-    /// <summary>
-    /// Makes <paramref name="screen"/> the screen being shown (empty: none). Port-only (SPEC-menus.md's stage 2): a
-    /// change of screen made outside a change of the flow's, with the menus up, is counted (MCScreenFlow::Unrouted).
-    /// </summary>
     void SetCurrentScreen(std::weak_ptr<MCLogObject> screen);
-
-    /// <summary>Makes <paramref name="screen"/> the screen being shown.</summary>
     void SetCurrentScreen(MCLogObject& screen) { SetCurrentScreen(screen.WeakAs<MCLogObject>()); }
-
-    /// <summary>Port-only (stage 9, step 2): the 1998 screen being shown hidden (under the remade ones), if any.</summary>
-    void HideScreen() const;
-
-    /// <summary>
-    /// Port-only (stage 9, step 2): the 1998 screens' part of a set-up: the screen shown hidden and
-    /// <paramref name="screen"/> made the screen being shown; the one shown before.
-    /// </summary>
     std::shared_ptr<MCLogObject> ShowInPlace(std::weak_ptr<MCLogObject> screen);
     MCGuiHandle<MCSessionScreen> SessionScreen;
     /// <summary>Port-only (SPEC-menus.md's stage 4): the multiplayer room's state, which the room's screens view.</summary>
@@ -917,8 +922,10 @@ private:
     MCLogisticsArtKey _ArtKey;
     /// <summary>Port-only: set while <see cref="Start"/> makes the screens (its screen changes are the menus' first).</summary>
     bool _Starting = false;
-    /// <summary>The screen being shown (one of the screens it owns).</summary>
+    /// <summary>The 1998 screen being shown (none is made: <see cref="CurrentScreen"/>).</summary>
     std::weak_ptr<MCLogObject> _CurrentScreen;
+    /// <summary>The screen logistics is on (<see cref="NoteTop"/>).</summary>
+    MCScreenFlow::MCScreenId _Top = MCScreenFlow::NoScreen;
 };
 
 /// <summary>

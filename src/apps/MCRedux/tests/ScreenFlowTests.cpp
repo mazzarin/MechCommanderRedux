@@ -10,7 +10,6 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "linkup/MCSessionManager.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCLoadSaveMenu.h"
@@ -257,8 +256,6 @@ TEST_CASE_ISOLATED("screen flow: Escape goes back one screen, and on the main me
 
     PressAndCheck("NEW CAMPAIGN", NewCampaign, {main, MCMenuScreens::Campaign()});
     CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
-    // The operation's movie (none in the test's game) would take the first Escape, as the original's did.
-    GlobalLog()->BriefingScreen->StopSmackerMovies();
     PressAndCheck("Escape from the briefing", PressEscape, {main});
     CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     PressAndCheck("RETURN TO GAME", MCScreenFlow::Via("return to game", ReturnToGame),
@@ -609,7 +606,6 @@ TEST_CASE_ISOLATED("screen flow: NEXT MISSION lands on the briefing with the mai
     CHECK(StackNow() == landed);
     CHECK_EQ(MCScreenFlow::Unrouted(), 0u);
 
-    GlobalLog()->BriefingScreen->StopSmackerMovies();
     PressAndCheck("Escape from the next briefing", PressEscape, {MCMenuScreens::Main()});
     CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
 }

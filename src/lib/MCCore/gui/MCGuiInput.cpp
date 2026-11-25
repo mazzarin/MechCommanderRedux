@@ -4,7 +4,6 @@
 #include "camera/MCMainWindow.h"
 #include "camera/MCViewWindow.h"
 #include "gui/MCGuiConsole.h"
-#include "gui/MCGuiMessageBox.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "gui/MCScreenChange.h"
@@ -15,7 +14,6 @@
 #include "main/MCGameStrings.h"
 #include "main/MCErrorReport.h"
 #include "mission/MCMission.h"
-#include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCIdleCheck.h"
@@ -371,10 +369,6 @@ namespace
         {
             target = grabbed;
         }
-        else if (EventsToMissionResultsScreen != 0 && Mission() != nullptr && Mission()->ResultsScreen != nullptr)
-        {
-            target = Mission()->ResultsScreen->FindObject(cursor.x, cursor.y);
-        }
         else
         {
             target = ScreenWindow()->FindObject(cursor.x, cursor.y);
@@ -515,12 +509,6 @@ auto DispatchGuiEvent(MCGuiEvent& event) -> void
     else if (gui.GrabbedObject() != nullptr)
     {
         target = gui.GrabbedObject();
-    }
-    else if (EventsToMissionResultsScreen != 0 && Mission()->ResultsScreen != nullptr)
-    {
-        const std::shared_ptr<MCGuiObject> results = Mission()->ResultsScreen.Lock();
-        target = type == MCGuiEventType::Character && event.Key == VK_ESCAPE ? results
-                                                                             : results->FindObject(event.X, event.Y);
     }
     else
     {

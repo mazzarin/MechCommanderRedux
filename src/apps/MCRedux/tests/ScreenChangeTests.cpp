@@ -409,8 +409,7 @@ TEST_CASE_ISOLATED("game: a mission's results sit in the middle of the battlefie
     const int32_t height = GuiSystem().Height();
     REQUIRE(width > MenuFrameWidth);
     REQUIRE(height > MenuFrameHeight);
-    // The remade results over the battlefield, their panel in the window's middle (no 1998 screen made).
-    CHECK(Mission()->ResultsScreen == nullptr);
+    // The remade results over the battlefield, their panel in the window's middle.
     const MCOptionalRef<MCResultsScreen> results = MCResultsMenu::Screen();
     REQUIRE(results.has_value());
     Rml::Element* panel = MCRemadeTest::Find(results->get(), ResultsPanel);

@@ -770,7 +770,6 @@ TEST_CASE_ISOLATED("game: INTERNET hosts a game into its room, its EXIT comes ba
     CHECK(service.Room()->at("public") == true);
 
     // A mission picked: the list shows it.
-    MCSessionScreen& roomScreen = *GlobalLog()->SessionScreen;
     // (The host is alone, so the file check is done at once, its message closing itself.)
     GlobalLog()->Room.LoadMission("ARENA");
     REQUIRE(SettleUntil([] { return DialogText().empty(); }));
@@ -783,7 +782,7 @@ TEST_CASE_ISOLATED("game: INTERNET hosts a game into its room, its EXIT comes ba
     // The room's EXIT: the internet games again, the game and its socket gone, the player's name kept.
     MCTestGuest::PressInRoom("leave");
     REQUIRE(SettleUntil([] { return OnInternet(); }));
-    CHECK(!roomScreen.IsShowing());
+    CHECK(!RoomScreenShown());
     REQUIRE(MultiPlayer() != nullptr);
     CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
     CHECK(MultiPlayer()->SessionManager->CurrentSession() == nullptr);

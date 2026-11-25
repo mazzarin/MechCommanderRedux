@@ -3,7 +3,6 @@
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
-#include "logistics/MCBriefingScreen.h"
 #include "logistics/MCMissionNames.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGamePaths.h"
@@ -793,7 +792,6 @@ MCSavedGameLoad MCSaves::LoadSavedGameAhead(std::string_view name, bool campaign
     MCSavedGameLoad load{.Result = std::make_shared<int32_t>(NotLoaded)};
     load.Job.push_back({.Run = [campaign]
                         {
-                            GlobalLog()->BriefingScreen->HideBriefing();
                             Solo = !campaign;
                             LastLogisticsMissionState = 0;
                         }});
@@ -811,8 +809,6 @@ bool MCSaves::ShowSavedGame(int32_t result)
         return false;
     }
 
-    // Original behaviour: the save screen is the one hidden, not the load screen shown.
-    GlobalLog()->SaveScreen->ShowGuiWindow(false);
     GlobalLog()->SetUpBriefingScreen(false);
     SoundSystem()->PlayDigitalMusic(BriefingMusic, true);
     return true;

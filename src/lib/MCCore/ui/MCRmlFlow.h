@@ -68,8 +68,11 @@ namespace MCRmlFlow
     /// <summary>The game's frame for the remade screens shown (MCGuiSystem::RunFrameCallbacks): each's OnFrame.</summary>
     void Tend();
 
-    /// <summary>An old screen came up (MCLogistics::SetCurrentScreen): the menus' remade screens hide.</summary>
-    void OldScreenShown();
+    /// <summary>
+    /// Logistics' screen changed (MCLogistics::NoteTop) or the loading screen comes up: the menus' remade screens hide
+    /// (the new one shows just after).
+    /// </summary>
+    void HideScreens();
 
     /// <summary>Whether a remade screen shows on the menus' layer (an old dialog would show under it).</summary>
     bool Showing();

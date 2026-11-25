@@ -193,8 +193,6 @@ namespace
 
         REQUIRE(Mission()->State == MCMissionState::Results);
         REQUIRE(Mission()->ResultsUp());
-        // The remade results, never 1998's.
-        CHECK(Mission()->ResultsScreen == nullptr);
     }
 
     /// <summary>The count run to its end, the test's ticks a frame; the frames it took.</summary>
@@ -282,9 +280,6 @@ namespace
         REQUIRE(logistics != nullptr);
         CHECK_EQ(logistics->CurrentMission, mission);
         CHECK(MCCampaignMenu::Shown());
-        // The 1998 briefing stays hidden under the remade one.
-        REQUIRE(logistics->BriefingScreen != nullptr);
-        CHECK(logistics->BriefingScreen->ShowWindow == 0);
         const std::vector<MCScreenId> landed = {MCMenuScreens::Main(), MCMenuScreens::Campaign()};
         CHECK(StackNow() == landed);
         CHECK_EQ(MCScreenFlow::Unrouted(), 0u);

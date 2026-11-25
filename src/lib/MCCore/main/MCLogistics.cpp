@@ -106,6 +106,14 @@ namespace
 
     /// <summary>Port (Redux HD): the room's chat line telling an internet game's host the code its players join by.</summary>
     constexpr std::string_view InternetCodeFormat = "FRIENDS CAN JOIN WITH CODE {}.";
+
+    /// <summary>The chat's history, in pixels (its lines' wrapped heights times the width), as the original's.</summary>
+    constexpr int32_t ChatHistorySize = 100000;
+    /// <summary>
+    /// The chat's history's width: the 1998 chat windows' history pane's content (0xb8 wide, less its slider), which set
+    /// the history's area (MCLogChatWindow::Init).
+    /// </summary>
+    constexpr int32_t ChatHistoryWidth = 0xb8 - MCScrollPane::SliderWidth;
 }
 
 auto GlobalLog() -> std::shared_ptr<MCLogistics>
@@ -137,25 +145,11 @@ MCLogistics::MCLogistics()
 
 namespace
 {
-    /// <summary>Screen element <paramref name="index"/> of <paramref name="screen"/> as a <typeparamref name="T"/>.</summary>
-    template <typename T> std::shared_ptr<T> ScreenElement(MCGenericScreen& screen, int32_t index)
-    {
-        return screen.Element<T>(index);
-    }
-
     /// <summary>A new <paramref name="width"/> x <paramref name="height"/> port with its own bitmap.</summary>
     std::shared_ptr<MCLogPort> NewPort(int32_t width, int32_t height)
     {
         auto port = std::make_shared<MCLogPort>();
         port->Init(width, height);
-        return port;
-    }
-
-    /// <summary>A new port loaded from the art file <paramref name="name"/> under <c>ArtPath</c>.</summary>
-    std::shared_ptr<MCLogPort> NewArtPort(std::string_view name)
-    {
-        auto port = std::make_shared<MCLogPort>();
-        port->Load(ArtPath + std::string(name));
         return port;
     }
 
@@ -180,40 +174,6 @@ namespace
         const int32_t result = file.Open(fileName);
         Assert(result == 0, static_cast<uint32_t>(result), openError);
         return ReadShapeFile(file, sizeError);
-    }
-
-    /// <summary>
-    /// Makes <paramref name="screen"/> on the screen window, with its elements from screen ini
-    /// <paramref name="name"/><c>.fit</c> under <c>ArtPath</c>; <paramref name="then"/> runs after, the file still
-    /// open.
-    /// </summary>
-    void MakeScreen(MCGuiHandle<MCSplashScreen>& screen, std::string_view name, std::string_view missingError,
-                    std::string_view startError, const std::function<void(MCFitIniFile& file)>& then = nullptr)
-    {
-        MCFitIniFile file;
-        const int32_t opened = file.Open(GamePath(ArtPath, name, ".fit"));
-        Assert(opened == 0, static_cast<uint32_t>(opened), missingError);
-        screen = ScreenWindow()->CreateChild<MCSplashScreen>(
-            [&](MCSplashScreen& made)
-            {
-                screen = made.WeakAs<MCSplashScreen>();
-                const int32_t result = made.Init(file);
-                Assert(result == 0, static_cast<uint32_t>(result), startError);
-            });
-
-        if (then)
-        {
-            then(file);
-        }
-    }
-
-    /// <summary>Sets up a multiplayer screen's text field: the white font and the background.</summary>
-    std::shared_ptr<MCLogTextObject> SetUpTextField(MCGenericScreen& screen, int32_t index)
-    {
-        auto field = ScreenElement<MCLogTextObject>(screen, index);
-        field->Font = MedWhiteFont;
-        field->SetBackColor(0x10);
-        return field;
     }
 }
 
@@ -313,7 +273,7 @@ auto MCLogistics::Start() -> void
     // made again (MCMission::CloseResultsScreen).
     MCFilesAhead::StartNoting();
     AutoPlayMovie = false;
-    SetCurrentScreen({});
+    NoteTop(MCScreenFlow::NoScreen);
     DragIcon = nullptr;
     CurrentInvTab = 0;
     CurrentMission = -1;
@@ -346,59 +306,25 @@ auto MCLogistics::Start() -> void
     DefaultPlanningTime = 0xf0;
     PlanningTime = 0xf0;
 
-    if (!artReused)
-    {
-        InventoryIconPorts[0] = NewArtPort("logart\\lsciim.tga");
-        InventoryIconPorts[1] = NewArtPort("logart\\lsciip.tga");
-        InventoryIconPorts[2] = NewArtPort("logart\\lsciic.tga");
-        InventoryIconPorts[3] = NewArtPort("logart\\lsciiv.tga");
-    }
-
     if (InDemo == 0)
     {
-        // The chat; its windows are made with the screens that show it.
-        Chat = std::make_shared<MCLogChat>(100000);
+        // The chat (the remade screens' chat views show it), its history the 1998 chat windows' (which kept the lines
+        // that fit it, wrapped to its width).
+        Chat = std::make_shared<MCLogChat>(ChatHistorySize);
+        Chat->SetHistoryArea(ChatHistoryWidth, ChatHistorySize / ChatHistoryWidth);
         ChatShown = false;
     }
 
     // Port-only: the frame log's parts of the menus' start (the screens, then the art), as the way back times them.
     std::optional<MCFrameLog::Scope> part(std::in_place, "menus.screens");
-    // The screens are the screen window's children for good, hidden until shown; each is made where the original
-    // initialised it (and so added it to the screen), so they keep the original's order there.
-    // (Each handle is stored before the screen's Init, as the original stored the pointer first.)
-    ScreenWindow()->CreateChild<MCRepairScreen>(
-        [this](MCRepairScreen& screen)
-        {
-            RepairScreen = screen.WeakAs<MCRepairScreen>();
-            screen.Init();
-        });
-    // The chat's unseen mark starts clear, as the 1998 briefing's, made here, did.
+    // Port-only (SPEC-menus.md's stage 9): none of the 1998 screens, windows or their ticker is made: the remade screens
+    // (the flow's kinds) show every menu, over the models logistics keeps. The chat's unseen mark starts clear, and
+    // DEPLOY's drop at no tons and open, as the 1998 briefing, made here, set them.
     MCChatView::SetUnread(false);
-    ScreenWindow()->CreateChild<MCBriefingScreen>(
-        [this](MCBriefingScreen& screen)
-        {
-            BriefingScreen = screen.WeakAs<MCBriefingScreen>();
-            screen.Init();
-        });
-    ScreenWindow()->CreateChild<MCPurchaseScreen>(
-        [this](MCPurchaseScreen& screen)
-        {
-            PurchaseScreen = screen.WeakAs<MCPurchaseScreen>();
-            screen.Init();
-        });
+    CurDeployTonnage = 0;
+    MCDeploy::SetLocked(false);
     LogisticsState = 1;
-    MakeScreen(MainScreen, "mainScreen", " No Splash Screen FIT File ", " Unable to start splash screen ");
-    SetCurrentScreen(MainScreen);
-
-    // Port (personal): a build that updates itself has UPDATE in ORIGINAL CINEMA's place, and looks for a newer
-    // version once a run (main/MCUpdater.h).
-    if (MCUpdater::Available())
-    {
-        AddUpdatePage(*MainScreen);
-    }
-
-    // Port (Redux HD): the version running, under the menu's window.
-    AddVersionLine(*MainScreen);
+    NoteTop(MCMenuScreens::Main());
     MCUpdater::CheckAtStart();
     // Port (personal): the reports start once a run (main/MCTelemetry.h); the main menu shows their notice or
     // question when due (MCMission::Run).
@@ -406,44 +332,14 @@ auto MCLogistics::Start() -> void
 
     if (InDemo == 0)
     {
-        // Port-only (SPEC-menus.md's stage 7): MULTIPLAYER remade in the main menu's panel (logistics/MCMainMenuScreen.h):
-        // 1998's MULTIPLAYER ACCESS (mpscreen.fit) and its modem and serial screens aren't made. Stage 3: the LAN and
-        // INTERNET screens are remade (logistics/MCGamesScreen); the 1998 LAN screen (lanscreen.fit) isn't made.
-        {
-            MakeScreen(ConnectScreen, "readyroom", " No Ready Room Screen FIT File ",
-                       " Unable to start readyRoomScreen screen ");
-            MCSplashScreen& screen = *ConnectScreen;
-            auto players = ScreenElement<MCLogScrollTextObject>(screen, 3);
-            players->SetEventRoutine(ReadyRoomPlayerListHandleEvent);
-            players->FontIndex = 1;
-            ScreenElement<MCLogButton>(screen, 2)->Disabled = true;
-        }
+        // The room's logic runs in any logistics with menus; it starts as the 1998 room's set-up, made here, started
+        // it: team 1 Inner Sphere, team 2 Clan, no one seated or waiting.
+        Room.Team1TechBase = MCRoomModel::InnerSphere;
+        Room.Team2TechBase = MCRoomModel::Clan;
+        Room.Seats.fill({});
+        Room.NumUnassigned = 0;
+        Room.SetMade(true);
     }
-
-    MakeScreen(LoadScreen, "loadScreen", " No Load Screen FIT File ", " Unable to start load screen ");
-    LoadScreen->SetEventRoutine(LoadSaveScreenHandleEvent);
-    MakeScreen(SaveScreen, "saveScreen", " No Save Screen FIT File ", " Unable to start save screen ");
-    SaveScreen->SetEventRoutine(LoadSaveScreenHandleEvent);
-
-    if (InDemo == 0)
-    {
-        // The preferences screen reuses the save screen's messages.
-        MakeScreen(PrefScreen, "prefScreen", " No Save Screen FIT File ", " Unable to start save screen ",
-                   [this](MCFitIniFile& file)
-                   {
-                       PrefScreen->SetEventRoutine(PrefScreenHandleEvent);
-                       // Port: the difficulty and renderer choices as drop-downs.
-                       AddPreferencesPanel(*PrefScreen, file);
-                   });
-        ScreenWindow()->CreateChild<MCSessionScreen>(
-            [this](MCSessionScreen& screen)
-            {
-                SessionScreen = screen.WeakAs<MCSessionScreen>();
-                screen.Init(0, 0, 0x280, 0x1e0, {});
-            });
-    }
-
-    ShowLogScreen(false, false);
 
     // Under the process ID, as aSystem::init sets it: copies of the game on one machine share the user folder.
     SaveTempPath = std::format("{}temp\\{}\\", SavePath, MCPort::ProcessId());
@@ -452,88 +348,14 @@ auto MCLogistics::Start() -> void
 
     KeptTablesSwitches = MCReleaseData::Switches();
     ReadSortTables();
-    MCFile file;
-    InvBlockPort = NewArtPort("logart\\invblock.tga");
 
-    // The ticker, and a line for it on each screen that shows it; it starts on the screen shown now.
-    Ticker = std::make_shared<MCTicker>(0xcd, MedWhiteFont);
-    {
-        const std::shared_ptr<MCLogPort> tickerBack = NewPort(0xcd, MedWhiteFont->Height());
-        VfxPaneWipe(tickerBack->Frame(), 0xed);
-        TickerLines.clear();
-
-        const std::array<std::shared_ptr<MCLogObject>, 5> screens = {
-            CurrentScreen(), PurchaseScreen.Lock(), BriefingScreen.Lock(), RepairScreen.Lock(), SessionScreen.Lock()};
-
-        for (const std::shared_ptr<MCLogObject>& screen : screens)
-        {
-            if (screen == nullptr)
-            {
-                continue;
-            }
-
-            TickerLines.push_back(screen->CreateChild<MCTickerLine>(
-                [&](MCTickerLine& line)
-                {
-                    line.Init(3, 3, 0xcd, 1, Ticker);
-                    line.SetBackPane(*tickerBack);
-                }));
-        }
-    }
-
-    // The first line is the screen's shown now; it runs the scroll timer from the start, as the original's ticker did.
-    TickerLines.front()->StartScrolling();
-    ShowTickerOn(*CurrentScreen(), true);
-
-    // The chat's windows, hidden until the chat is put on their screen.
-    ChatWindows.clear();
-    ChatWindow.reset();
-
-    if (Chat != nullptr)
-    {
-        const std::array<std::shared_ptr<MCLogObject>, 2> chatScreens = {SessionScreen.Lock(), BriefingScreen.Lock()};
-
-        for (const std::shared_ptr<MCLogObject>& screen : chatScreens)
-        {
-            ChatWindows.push_back(screen->CreateChild<MCLogChatWindow>(
-                [&](MCLogChatWindow& window)
-                {
-                    window.Init(7, 0x44, 0xbf, 0x101, Chat);
-                    window.ShowGuiWindow(false);
-                }));
-        }
-    }
-
-    ScreenWindow()->CreateChild<MCPurchaseDlg>(
-        [this](MCPurchaseDlg& dialog)
-        {
-            PurchaseDialog = dialog.WeakAs<MCPurchaseDlg>();
-            dialog.MCLogDialogBox::Init(0xe5, 0xa2, 0xb5, 0x9c);
-        });
-    // Port-only (SPEC-menus.md's stage 9, step 2): each dialog a model, its 1998 box its view.
-    const auto makeDialog = [](std::shared_ptr<MCMenuDialog>& model, auto& handle)
-    {
-        using Dialog = std::remove_cvref_t<decltype(*handle.Lock())>;
-        ScreenWindow()->CreateChild<Dialog>(
-            [&handle](Dialog& dialog)
-            {
-                handle = dialog.template WeakAs<Dialog>();
-                dialog.Init(0, 0, 4, 4, {});
-            });
-        model = std::make_shared<MCMenuDialog>();
-        model->SetView(handle);
-    };
-
-    makeDialog(Message, MessageDialog);
-    makeDialog(Question, QuestionDialog);
-    makeDialog(Refit, RefitDialog);
+    // Port-only (SPEC-menus.md's stage 9, step 2): each dialog a model, said by the remade dialog.
+    Message = std::make_shared<MCMenuDialog>();
+    Question = std::make_shared<MCMenuDialog>();
+    Refit = std::make_shared<MCMenuDialog>();
 
     part.reset();
     part.emplace("menus.art");
-    ResourceBackPort = NewPort(0x3d, 0xc);
-    VfxPaneWipe(ResourceBackPort->Frame(), 0x10);
-    ClockBackPort = NewPort(0x32, 0xc);
-    VfxPaneWipe(ClockBackPort->Frame(), 0x10);
 
     if (!artReused)
     {
@@ -568,18 +390,17 @@ auto MCLogistics::Start() -> void
     if (LaunchedFromLobby == 0 || MultiPlayer() == nullptr || Turn != 0)
     {
         LogisticsState = 1;
-        SetCurrentScreen(MainScreen);
+        NoteTop(MCMenuScreens::Main());
     }
     else
     {
-        // Started from a lobby: straight to the ready room, whose cancel button quits the game. Port-only (the personal
-        // build): it shows while the lobby's join goes on; joined (or hosting), the session screen opens (MCMission).
-        SetCurrentScreen(ConnectScreen);
+        // Started from a lobby: straight to the ready room, whose CANCEL ends the game (the remade launcher's join,
+        // logistics/MCRoomScreen). Port-only (the personal build): it shows while the lobby's join goes on; joined (or
+        // hosting), the room opens (MCMission).
+        NoteTop(MCMenuScreens::ReadyRoom());
         LogisticsState = 0xe;
-        ScreenElement<MCLogButton>(*ConnectScreen, 1)->Callback().SetExec([] { KillTheGame(); });
     }
 
-    ShowLogScreen(false, false);
     MakeAhead();
     _Starting = false;
 
@@ -593,54 +414,29 @@ auto MCLogistics::Start() -> void
 
 auto MCLogistics::LoadArtFiles() -> void
 {
-    RepairBackPort = NewArtPort("logart\\lsrupm00.tga");
-
+    // Port-only (SPEC-menus.md's stage 9): the units' icon shapes alone, which the remade screens draw their outlines
+    // from (ui/MCRmlArt's unit: pictures); the 1998 screens' repair shapes, frames, tabs, buttons and backs aren't read.
     MCShapeFile shapeFile;
 
-    for (size_t i = 0; i < MechRepShapes.size(); ++i)
+    for (size_t i = 0; i < MechIconShapes.size(); ++i)
     {
-        MechRepShapes[i] = LoadShapeFile(shapeFile, std::format("{}mechrep{:02}.shp", ArtPath, i),
-                                         "could not open mechrep shape file", "unexpected mechrep size");
         MechIconShapes[i] = LoadShapeFile(shapeFile, std::format("{}mi{:02}.shp", ArtPath, i),
                                           "could not open mechicon shape file", "unexpected mechicon size");
     }
 
     // A vehicle without a repair picture has no icon either.
-    for (size_t i = 0; i < VehicleRepShapes.size(); ++i)
+    for (size_t i = 0; i < VehicleIconShapes.size(); ++i)
     {
         if (shapeFile.Open(std::format("{}vr1{:02}.shp", ArtPath, i)) != 0)
         {
             continue;
         }
 
-        VehicleRepShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
+        shapeFile.Close();
 
         if (shapeFile.Open(std::format("{}vi1{:02}.shp", ArtPath, i)) == 0)
         {
             VehicleIconShapes[i] = ReadShapeFile(shapeFile, "unexpected vhclrep size");
-        }
-    }
-
-    RepairPorts[0] = NewArtPort("logart\\lsrupm03.tga");
-    RepairPorts[1] = NewArtPort("logart\\lsrupm01.tga");
-    RepairPorts[2] = NewArtPort("logart\\lsrupm04.tga");
-    RepairPorts[3] = NewArtPort("logart\\lsrupm02.tga");
-    RepairPorts[4] = NewArtPort("logart\\lsrupm06.tga");
-    RepairPorts[5] = NewArtPort("logart\\lsrupm07.tga");
-    PurchasePorts[0] = NewArtPort("logart\\lspcb05.tga");
-    PurchasePorts[1] = NewArtPort("logart\\lspcb07.tga");
-    PurchasePorts[2] = NewArtPort("logart\\lspcb06.tga");
-    PurchasePorts[3] = NewArtPort("logart\\lspcb09.tga");
-    static constexpr std::array<std::string_view, 5> buttonNames = {
-        "logart\\lscb{}00.tga", "b{}_exit.tga", "logart\\lscb{}01.tga", "logart\\lscb{}02.tga", "logart\\lscb{}03.tga"};
-    static constexpr std::array<char, 3> buttonStates = {'n', 'h', 'g'};
-
-    for (size_t button = 0; button < ScreenButtonPorts.size(); ++button)
-    {
-        for (size_t state = 0; state < buttonStates.size(); ++state)
-        {
-            ScreenButtonPorts[button][state] =
-                NewArtPort(std::vformat(buttonNames[button], std::make_format_args(buttonStates[state])));
         }
     }
 }
@@ -678,103 +474,44 @@ auto MCLogistics::ReuseArt(std::shared_ptr<MCLogisticsArt> art) -> void
     _ReusedArt = std::move(art);
 }
 
-namespace
-{
-    /// <summary>
-    /// Port-only (SPEC-menus.md's stage 9, step 2): the flow's top screen (MCMenuScreens::Top) for the 1998 screen
-    /// <paramref name="shown"/> made <paramref name="logistics"/>' screen; none for a screen the flow has no place for.
-    /// </summary>
-    void NoteTopOf(const MCLogistics& logistics, const std::shared_ptr<MCLogObject>& shown)
-    {
-        using MCMenuScreens::MCCampaignPage;
-
-        if (shown == nullptr)
-        {
-            MCMenuScreens::NoteTop(MCScreenFlow::NoScreen);
-        }
-        else if (logistics.MainScreen.Is(*shown))
-        {
-            MCMenuScreens::NoteTop(MCMenuScreens::Main());
-        }
-        else if (logistics.ConnectScreen.Is(*shown))
-        {
-            MCMenuScreens::NoteTop(MCMenuScreens::ReadyRoom());
-        }
-        else if (logistics.LoadScreen.Is(*shown))
-        {
-            const MCSplashScreen& load = *logistics.LoadScreen;
-            const bool picksMission = load.FilePane != nullptr && load.FilePane->Multiplayer;
-            MCMenuScreens::NoteTop(picksMission ? MCMenuScreens::MissionPick() : MCMenuScreens::Load());
-        }
-        else if (logistics.SaveScreen.Is(*shown))
-        {
-            MCMenuScreens::NoteTop(MCMenuScreens::Save());
-        }
-        else if (logistics.PrefScreen.Is(*shown))
-        {
-            MCMenuScreens::NoteTop(MCMenuScreens::Preferences());
-        }
-        else if (logistics.SessionScreen.Is(*shown))
-        {
-            MCMenuScreens::NoteTop(MCMenuScreens::Room());
-        }
-        else if (logistics.BriefingScreen.Is(*shown))
-        {
-            MCMenuScreens::NoteTop(MCMenuScreens::Campaign(), MCCampaignPage::Briefing);
-        }
-        else if (logistics.PurchaseScreen.Is(*shown))
-        {
-            MCMenuScreens::NoteTop(MCMenuScreens::Campaign(), MCCampaignPage::Purchasing);
-        }
-        else if (logistics.RepairScreen.Is(*shown))
-        {
-            MCMenuScreens::NoteTop(MCMenuScreens::Campaign(), MCCampaignPage::MechBay);
-        }
-        else
-        {
-            MCMenuScreens::NoteTop(MCScreenFlow::NoScreen);
-        }
-    }
-}
-
-auto MCLogistics::HideScreen() const -> void
-{
-    if (const std::shared_ptr<MCLogObject> shown = CurrentScreen(); shown != nullptr)
-    {
-        shown->ShowGuiWindow(false);
-    }
-}
-
 auto MCLogistics::SetCurrentScreen(std::weak_ptr<MCLogObject> screen) -> void
 {
-    const std::shared_ptr<MCLogObject> before = _CurrentScreen.lock();
-    const std::shared_ptr<MCLogObject> after = screen.lock();
     _CurrentScreen = std::move(screen);
+}
 
-    // Port-only (SPEC-menus.md's stage 9, step 2): the flow's top follows the 1998 screen shown, until they go.
+auto MCLogistics::ShowInPlace(std::weak_ptr<MCLogObject> screen) -> std::shared_ptr<MCLogObject>
+{
+    std::shared_ptr<MCLogObject> previous = CurrentScreen();
+
+    if (previous != nullptr)
+    {
+        previous->ShowGuiWindow(false);
+    }
+
+    SetCurrentScreen(std::move(screen));
+    return previous;
+}
+
+auto MCLogistics::NoteTop(MCScreenFlow::MCScreenId id, MCMenuScreens::MCCampaignPage page) -> void
+{
+    const MCScreenFlow::MCScreenId before = std::exchange(_Top, id);
+
     if (GlobalLog().get() == this)
     {
-        NoteTopOf(*this, after);
+        MCMenuScreens::NoteTop(id, page);
     }
 
-    // Port-only (SPEC-menus.md, the remade screens): an old screen come up goes over the remade ones, which hide (one
-    // made logistics' screen is shown just after).
-    if (after != nullptr && (after->ShowWindow || after != before))
-    {
-        MCRmlFlow::OldScreenShown();
-    }
-
-    if (_Starting || before == nullptr || after == nullptr || before == after || MCScreenChange::InPiece() ||
-        MCScreenChange::Dark() || !HasGuiSystem() || !GuiSystem().CanChangeScreen())
+    if (id == MCScreenFlow::NoScreen || id == before)
     {
         return;
     }
 
-    // The campaign's screens slide between each other.
-    const auto campaign = [this](const std::shared_ptr<MCLogObject>& shown)
-    { return BriefingScreen.Is(*shown) || PurchaseScreen.Is(*shown) || RepairScreen.Is(*shown); };
+    // Another screen of logistics' comes: the remade ones shown hide (it shows its own), as a 1998 screen coming up hid
+    // them.
+    MCRmlFlow::HideScreens();
 
-    if (campaign(before) && campaign(after))
+    if (_Starting || before == MCScreenFlow::NoScreen || MCScreenChange::InPiece() || MCScreenChange::Dark() ||
+        !HasGuiSystem() || !GuiSystem().CanChangeScreen())
     {
         return;
     }
@@ -818,61 +555,22 @@ auto MCLogistics::AttachHdArt() -> void
 {
     // A new owner: ties made before go with the old one.
     HdArtOwner = std::make_shared<const int>(0);
-    std::vector<MCHdArt::LineArtFrame> lineArt;
 
-    // Each unit's icons tied to the pack's (named as their files are), and its repair shapes' diagram (runs of frames
-    // from each first) and sold-out outline as line art.
-    const auto attach = [&](std::span<const MCRegisteredBlock> repairs, std::span<const MCRegisteredBlock> icons,
-                            std::string_view prefix, std::initializer_list<int32_t> diagram, int32_t locations,
-                            int32_t soldOut)
+    // Each unit's icons tied to the pack's (named as their files are). Port-only (SPEC-menus.md's stage 9): the repair
+    // shapes, the 1998 screens' diagrams and sold-out outlines, aren't loaded.
+    const auto attach = [this](std::span<const MCRegisteredBlock> icons, std::string_view prefix)
     {
-        for (size_t i = 0; i < repairs.size(); ++i)
+        for (size_t i = 0; i < icons.size(); ++i)
         {
             if (!icons[i].Empty())
             {
-                const MCHdArt::IconShapeKey key{std::format("{}{:02}", prefix, i)};
-                MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, key);
+                MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, MCHdArt::IconShapeKey{std::format("{}{:02}", prefix, i)});
             }
-
-            if (repairs[i].Empty())
-            {
-                continue;
-            }
-
-            const MCAddressKey table = MCAddressKey::OfData(repairs[i].Bytes());
-
-            for (const int32_t first : diagram)
-            {
-                for (int32_t location = 0; location < locations; ++location)
-                {
-                    lineArt.push_back({table, first + location});
-                }
-            }
-
-            lineArt.push_back({table, soldOut});
         }
     };
 
-    attach(MechRepShapes, MechIconShapes, "mi", {MechArmorShapes, MechInternalShapes}, MechDiagramLocations,
-           MechSoldOutShape);
-    attach(VehicleRepShapes, VehicleIconShapes, "vi1", {VehicleArmorShapes}, VehicleDiagramLocations,
-           VehicleSoldOutShape);
-
-    // The Atlas's skull: its eyes drawn by hand.
-    if (AtlasMech < MechRepShapes.size() && !MechRepShapes[AtlasMech].Empty())
-    {
-        const MCAddressKey atlas = MCAddressKey::OfData(MechRepShapes[AtlasMech].Bytes());
-
-        for (MCHdArt::LineArtFrame& frame : lineArt)
-        {
-            if (frame.Table == atlas)
-            {
-                frame.Drawn = RepairShapesDrawn(AtlasMech, frame.Frame);
-            }
-        }
-    }
-
-    MCHdArt::SetLineArtFrames(lineArt, MCHdArt::LineArtSet::Logistics);
+    attach(MechIconShapes, "mi");
+    attach(VehicleIconShapes, "vi1");
 }
 
 namespace
@@ -941,9 +639,14 @@ auto MCLogistics::BriefingMapFile(std::string_view scenario) -> std::optional<st
 auto MCLogistics::BriefingMapOf(std::string_view scenario) -> std::optional<MCPicturePixels>
 {
     const std::optional<std::string> path = BriefingMapFile(scenario);
+    return path.has_value() ? MapPictureAt(*path) : std::nullopt;
+}
+
+auto MCLogistics::MapPictureAt(const std::string& path) -> std::optional<MCPicturePixels>
+{
     MCFile file;
 
-    if (!path.has_value() || file.Open(*path) != 0 || file.FileSize() == 0)
+    if (file.Open(path) != 0 || file.FileSize() == 0)
     {
         return std::nullopt;
     }
@@ -975,83 +678,6 @@ auto MCLogistics::ReadBriefingMapAhead(std::string_view scenario) -> void
     }
 }
 
-auto MCLogistics::MakeLineArtAhead() const -> void
-{
-    if (!DrawsSharp())
-    {
-        return;
-    }
-
-    // The units' repair shapes, the shop's first (the purchase screen's mechs show first), each once.
-    std::vector<std::span<const uint8_t>> tables;
-    const auto add = [&tables](std::span<const MCRegisteredBlock> shapes, int32_t index)
-    {
-        if (index >= 0 && static_cast<size_t>(index) < shapes.size() && !shapes[static_cast<size_t>(index)].Empty())
-        {
-            const std::span<const uint8_t> table = shapes[static_cast<size_t>(index)].Bytes();
-
-            if (std::ranges::none_of(tables,
-                                     [&](std::span<const uint8_t> kept) { return kept.data() == table.data(); }))
-            {
-                tables.push_back(table);
-            }
-        }
-    };
-
-    if (PurMechList != nullptr)
-    {
-        for (const std::shared_ptr<MCPurMech>& mech : PurMechList->Mechs)
-        {
-            for (const std::unique_ptr<MCPurMechData>& variant : mech->Variants)
-            {
-                if (variant != nullptr)
-                {
-                    add(MechRepShapes, variant->NameIndex);
-                }
-            }
-        }
-    }
-
-    if (MechList != nullptr)
-    {
-        for (const std::shared_ptr<MCLogMech>& mech : MechList->Mechs)
-        {
-            add(MechRepShapes, mech->NameIndex);
-        }
-    }
-
-    if (PurVehicleList != nullptr)
-    {
-        for (const std::shared_ptr<MCPurVehicle>& vehicle : PurVehicleList->Vehicles)
-        {
-            if (vehicle->Data != nullptr)
-            {
-                add(VehicleRepShapes, vehicle->Data->NameIndex);
-            }
-        }
-    }
-
-    if (VehicleList != nullptr)
-    {
-        for (const std::shared_ptr<MCLogVehicle>& vehicle : VehicleList->Vehicles)
-        {
-            add(VehicleRepShapes, vehicle->NameIndex);
-        }
-    }
-
-    // Each one's frames marked as line art (AttachHdArt).
-    for (const std::span<const uint8_t> table : tables)
-    {
-        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
-        {
-            if (MCHdArt::LineArt(table, frame))
-            {
-                MCSharpPictures::MakeLineArt(table, frame, MCHdArt::LineArtDrawn(table, frame));
-            }
-        }
-    }
-}
-
 MCLogistics::~MCLogistics()
 {
     if (!_Started)
@@ -1079,59 +705,21 @@ MCLogistics::~MCLogistics()
 
     CampaignBriefingName.clear();
     OperationCinema.clear();
-    RepairBackPort.reset();
 
-    for (std::shared_ptr<MCLogPort>& port : RepairPorts)
+    for (MCRegisteredBlock& shapes : MechIconShapes)
     {
-        port.reset();
+        shapes = {};
     }
 
-    for (std::shared_ptr<MCLogPort>& port : PurchasePorts)
+    for (MCRegisteredBlock& shapes : VehicleIconShapes)
     {
-        port.reset();
+        shapes = {};
     }
 
-    for (auto& ports : ScreenButtonPorts)
-    {
-        for (std::shared_ptr<MCLogPort>& port : ports)
-        {
-            port.reset();
-        }
-    }
-
-    for (std::shared_ptr<MCLogPort>& port : InventoryIconPorts)
-    {
-        port.reset();
-    }
-
-    for (size_t i = 0; i < MechRepShapes.size(); ++i)
-    {
-        MechRepShapes[i] = {};
-        MechIconShapes[i] = {};
-    }
-
-    for (size_t i = 0; i < VehicleRepShapes.size(); ++i)
-    {
-        VehicleRepShapes[i] = {};
-        VehicleIconShapes[i] = {};
-    }
-
-    ResourceBackPort.reset();
-    ClockBackPort.reset();
-
-    CloseGuiObject(PurchaseDialog);
-    PurchaseDialog.reset();
-    CloseGuiObject(MessageDialog);
-    MessageDialog.reset();
-    CloseGuiObject(QuestionDialog);
-    QuestionDialog.reset();
-    CloseGuiObject(RefitDialog);
-    RefitDialog.reset();
     Message.reset();
     Question.reset();
     Refit.reset();
-    InvBlockPort.reset();
-    SetCurrentScreen({});
+    NoteTop(MCScreenFlow::NoScreen);
     VehicleList.reset();
     // The force lists last until the object goes (the original left them for the mission in multiplayer).
     ForceVehicleList->Clear();
@@ -1145,30 +733,7 @@ MCLogistics::~MCLogistics()
     MechList.reset();
     AssignedWarriorList.reset();
     ForceMechList->Clear();
-    CloseGuiObject(BriefingScreen);
-    BriefingScreen.reset();
-    CloseGuiObject(PurchaseScreen);
-    PurchaseScreen.reset();
-    CloseGuiObject(RepairScreen);
-    RepairScreen.reset();
-    CloseGuiObject(MainScreen);
-    MainScreen.reset();
-    CloseGuiObject(MultiplayerScreen);
-    MultiplayerScreen.reset();
-    CloseGuiObject(ModemScreen);
-    ModemScreen.reset();
-    CloseGuiObject(SerialScreen);
-    SerialScreen.reset();
-    CloseGuiObject(ConnectScreen);
-    ConnectScreen.reset();
-    CloseGuiObject(SessionScreen);
-    SessionScreen.reset();
-    CloseGuiObject(PrefScreen);
-    PrefScreen.reset();
-    CloseGuiObject(LoadScreen);
-    LoadScreen.reset();
-    CloseGuiObject(SaveScreen);
-    SaveScreen.reset();
+    Room.SetMade(false);
     GuiSystem().SetCurrentObject({});
     ClearLogArt();
     EmptyFile.clear();
@@ -1181,44 +746,32 @@ auto MCLogistics::ShowLogScreen(bool show, bool redraw) const -> void
         GuiSystem().ActivatePaletteFromTga(ArtPath + "logart\\lsrupm05.tga");
     }
 
-    // Port-only (SPEC-menus.md's stage 7): the main menu remade shows in the 1998 one's place, which stays logistics'
-    // screen, hidden (logistics/MCMainMenuScreen.h). Port-only (stage 4): a launcher's join shows on the painting
-    // (logistics/MCRoomScreen), the 1998 ready room hidden in its place.
-    const bool onMain = MainScreen.Is(*CurrentScreen());
-
-    if (show && (onMain || (ConnectScreen && ConnectScreen.Is(*CurrentScreen()))))
+    // Port-only (SPEC-menus.md's stage 7): the main menu remade; port-only (stage 4): the room remade, and a launcher's
+    // join on the painting (logistics/MCRoomScreen). Port-only (stage 9): no 1998 screen is made; the campaign's
+    // screens show through their own set-up (MCCampaignMenu).
+    if (!show)
     {
-        if (onMain)
-        {
-            MCMainMenuScreens::ShowMain();
-        }
-        else
-        {
-            ShowLauncherScreen();
-        }
-
-        CurrentScreen()->ShowGuiWindow(false);
         return;
     }
 
-    // Port-only (SPEC-menus.md's stage 8): the 1998 briefing stays hidden under the remade one (the way back from a
-    // mission shows logistics' screen once its briefing is set up).
-    const bool underRemade = CurrentScreen() == BriefingScreen && MCCampaignMenu::Shown();
-    CurrentScreen()->ShowGuiWindow(show && !underRemade);
-}
-
-auto MCLogistics::ShowInPlace(std::weak_ptr<MCLogObject> screen) -> std::shared_ptr<MCLogObject>
-{
-    std::shared_ptr<MCLogObject> previous = CurrentScreen();
-    HideScreen();
-    SetCurrentScreen(std::move(screen));
-    return previous;
+    if (_Top == MCMenuScreens::Main())
+    {
+        MCMainMenuScreens::ShowMain();
+    }
+    else if (_Top == MCMenuScreens::Room())
+    {
+        ShowRoomScreen();
+    }
+    else if (_Top == MCMenuScreens::ReadyRoom())
+    {
+        ShowLauncherScreen();
+    }
 }
 
 auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
 {
     NoteScreen("main");
-    ShowInPlace(MainScreen);
+    NoteTop(MCMenuScreens::Main());
 
     if (!fromMenu)
     {
@@ -1242,30 +795,7 @@ auto MCLogistics::LeaveMatchAtMainMenu() -> void
         }
 
         MCGameContext::Current().SetMultiPlayer(nullptr);
-        MCBriefingScreen& briefing = *BriefingScreen;
         MCChatView::SetUnread(false);
-
-        if (briefing.ChatTimerOn != 0)
-        {
-            GuiSystem().RemoveTimer(briefing, 5);
-        }
-
-        if (PurchaseScreen->ChatBlinking != 0)
-        {
-            GuiSystem().RemoveTimer(*PurchaseScreen, 7);
-        }
-
-        if (RepairScreen->ChatBlinking != 0)
-        {
-            GuiSystem().RemoveTimer(*RepairScreen, 8);
-        }
-
-        // (The original forgot the box shown here, which still showed; the box stays until the screen shows another.)
-
-        if (PurchaseDialog != nullptr)
-        {
-            PurchaseDialog->ShowGuiWindow(false);
-        }
     }
 }
 
@@ -1277,14 +807,6 @@ auto MCLogistics::ClearChat() -> void
     }
 
     Chat->Clear();
-
-    for (const MCGuiHandle<MCLogChatWindow>& handle : ChatWindows)
-    {
-        if (const std::shared_ptr<MCLogChatWindow> window = handle.Lock(); window != nullptr)
-        {
-            window->ResetHistoryPane();
-        }
-    }
 }
 
 namespace
@@ -1342,7 +864,7 @@ namespace
 {
     /// <summary>
     /// The purchase screen's inventory list and store set up for inventory tab <paramref name="tab"/>, the store
-    /// filled though the screen is hidden when <paramref name="ahead"/> (MCLogistics::ReadyForSlide).
+    /// filled though the screen is hidden when <paramref name="ahead"/>.
     /// </summary>
     void SetUpPurchaseLists(MCPurchaseScreen& screen, int32_t tab, bool ahead)
     {
@@ -1396,43 +918,9 @@ namespace
     }
 }
 
-auto MCLogistics::ScreensSlidIn() const -> std::vector<MCGuiHandle<MCLogInvScreen>>
-{
-    // Port-only (SPEC-menus.md's stage 8): none under the remade campaign screen, whose PURCHASING and 'MECH BAY are its
-    // own tabs (logistics/MCLogisticsTabs): the 1998 screens never slide in from it.
-    if (CurrentScreen() == nullptr || CurrentScreen() != BriefingScreen || MCCampaignMenu::Shown())
-    {
-        return {};
-    }
-
-    return {PurchaseScreen, RepairScreen};
-}
-
-auto MCLogistics::ReadyForSlide(MCLogInvScreen& screen, int32_t tab) const -> void
-{
-    // The lists the set-ups read (gone with logistics' end).
-    if (MechList == nullptr || WarriorList == nullptr || VehicleList == nullptr || ComponentInventory == nullptr ||
-        PurMechList == nullptr || PurPilotList == nullptr || PurVehicleList == nullptr || PurchaseComponents == nullptr)
-    {
-        return;
-    }
-
-    if (const std::shared_ptr<MCPurchaseScreen> purchase = PurchaseScreen.Lock(); purchase.get() == &screen)
-    {
-        purchase->DrawBackground();
-        SetUpPurchaseLists(*purchase, tab, true);
-    }
-    else if (const std::shared_ptr<MCRepairScreen> repair = RepairScreen.Lock(); repair.get() == &screen)
-    {
-        repair->DrawBackground();
-        SetUpRepairLists(*repair, tab);
-    }
-}
-
 auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
 {
     NoteScreen("purchase");
-    MakeLineArtAhead();
     MCBriefingScreen& briefing = *BriefingScreen;
     briefing.StopSmackerMovies();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
@@ -1581,18 +1069,8 @@ auto MCLogistics::DrawScreenChrome(MCLogObject& screen, const MCPane& target) ->
 
 auto MCLogistics::MakePlayerLights() -> void
 {
+    // Port-only (SPEC-menus.md's stage 9): the model alone; the remade room, campaign and loading screens view it.
     PlayerLights = std::make_shared<MCMPPlayerLights>();
-    const std::array<std::shared_ptr<MCLogObject>, 4> screens = {SessionScreen.Lock(), PurchaseScreen.Lock(),
-                                                                 BriefingScreen.Lock(), RepairScreen.Lock()};
-
-    for (const std::shared_ptr<MCLogObject>& screen : screens)
-    {
-        if (screen != nullptr)
-        {
-            PlayerLights->Views.push_back(screen->CreateChild<MCMPPlayerLightsView>([&](MCMPPlayerLightsView& view)
-                                                                                    { view.Init(PlayerLights); }));
-        }
-    }
 }
 
 auto MCLogistics::ShowLightsOn(MCLogObject& screen, std::optional<int32_t> depth) -> void
@@ -1741,68 +1219,24 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
     }
 
     NoteScreen("briefing");
-    MakeLineArtAhead();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
-    const std::shared_ptr<MCLogObject> previous = ShowInPlace(BriefingScreen);
-    MCBriefingScreen& briefing = *BriefingScreen;
-    ShowTickerOn(briefing);
-
-    // The original blanked the local player's empty drop slots here (the screen draws them each frame), then the box
-    // area under them (the box is shown again below).
+    NoteTop(MCMenuScreens::Campaign());
     LogisticsState = 3;
-    ShowLogScreen(true, previous != RepairScreen && previous != PurchaseScreen);
-    briefing.MovieStarted = false;
-    briefing.SetUpMission();
+    ShowLogScreen(true, true);
     MCDeploy::CountTons();
 
-    if (MultiPlayer() == nullptr)
+    // A match's briefing opens on its chat, as 1998's opened on its operation tab, the chat: the chat's unseen mark
+    // cleared (MCBriefingScreen::SetUpOperation's).
+    if (MultiPlayer() != nullptr)
     {
-        ShowChat(false);
+        MCChatView::SetUnread(false);
     }
-    else
-    {
-        const std::shared_ptr<MCLogChatWindow> chat = ChatWindowOn(briefing);
-
-        if (chat != ChatWindow.Lock())
-        {
-            chat->Resize(0xe7);
-            ShowChatOn(briefing);
-            chat->MoveTo(2, 0x65, false);
-        }
-
-        ShowLightsOn(briefing, 100);
-
-        if (MCChatView::Unread() && briefing.ChatTimerOn == 0)
-        {
-            GuiSystem().AddTimer(briefing.weak_from_this(), 5, 500, 0, 0, false);
-            briefing.ChatTimerOn = true;
-        }
-
-        briefing.SetUpOperation();
-    }
-
-    briefing.ShowGuiWindow(false);
 
     // Port-only: in a change's piece, the remade screen set up, laid out and shown in pieces of their own, after this
     // one.
     if (MCScreenChange::InPiece() && !animate)
     {
-        std::vector<MCScreenChange::MCPiece> pieces = MCCampaignMenu::ShowPieces();
-
-        // The 1998 briefing hidden again once the remade one shows: the way back from a mission shows logistics' screen
-        // (ShowLogScreen) as this returns, before the remade screen's pieces have run.
-        pieces.back().Run = [show = std::move(pieces.back().Run), logistics = weak_from_this()]
-        {
-            show();
-
-            if (const std::shared_ptr<MCLogistics> shown = logistics.lock();
-                shown != nullptr && shown->BriefingScreen && MCCampaignMenu::Shown())
-            {
-                shown->BriefingScreen->ShowGuiWindow(false);
-            }
-        };
-
-        MCScreenChange::RunNext(std::move(pieces));
+        MCScreenChange::RunNext(MCCampaignMenu::ShowPieces());
         return 0;
     }
 
@@ -1841,7 +1275,7 @@ auto MCLogistics::ReadySessionScreen() -> void
 auto MCLogistics::ShowSessionScreen() -> void
 {
     NoteScreen("session");
-    ShowInPlace(SessionScreen);
+    NoteTop(MCMenuScreens::Room());
     ShowLogScreen(true, true);
     LogisticsState = 8;
 }
@@ -1849,7 +1283,6 @@ auto MCLogistics::ShowSessionScreen() -> void
 auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
 {
     NoteScreen("repair");
-    MakeLineArtAhead();
     MCBriefingScreen& briefing = *BriefingScreen;
     briefing.StopSmackerMovies();
     GuiSystem().SetCurrentCursor(static_cast<MCCursorType>(0));
@@ -2025,8 +1458,6 @@ auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& t
         });
     wipe->ShowGuiWindow(true);
     wipe->SetDepth(100);
-    // Port-only: the screen arriving was readied at every tab in the fade into the briefing (ScreensSlidIn), so the
-    // slide's steps find what it shows loaded and sent up.
     SoundSystem()->PlayInterfaceSample(0x36);
     const int64_t frequency = MCPort::PerformanceFrequency();
     float elapsed = 0.0f;

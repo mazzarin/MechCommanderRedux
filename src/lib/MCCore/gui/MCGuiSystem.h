@@ -12,7 +12,6 @@
 class MCDisplay;
 class MCFont;
 class MCGuiFont;
-class MCGuiMessageBox;
 class MCGuiConsole;
 class MCGameSession;
 class MCGuiSmackerWindow;
@@ -286,8 +285,6 @@ public:
     std::unique_ptr<MCPacketFile> ArtFile;
     /// <summary>The engine font used for lines of text drawn in the world (<see cref="LineFont"/>).</summary>
     std::shared_ptr<MCFont> EngineFont;
-    /// <summary>The version box (Ctrl+Alt+V with cheats on), a child of the screen.</summary>
-    MCGuiHandle<MCGuiMessageBox> VersionDialog;
     /// <summary>Port: the debug console, a child of the screen, while it is open (<see cref="OpenConsole"/>).</summary>
     MCGuiHandle<MCGuiConsole> Console;
     /// <summary>The frame callback that sends the mouse's moves and clicks (<see cref="CheckMouse"/>).</summary>
@@ -370,5 +367,3 @@ void APostMessage(MCGuiObject& obj, int32_t message);
 /// <summary>Sends an event of type <paramref name="message"/> to <paramref name="obj"/> at once; nothing for none (the
 /// original skipped unreadable pointers).</summary>
 void APostMessage(std::weak_ptr<MCGuiObject> obj, int32_t message);
-/// <summary>The version box's OK button: takes the box away.</summary>
-void DestroyVersion();

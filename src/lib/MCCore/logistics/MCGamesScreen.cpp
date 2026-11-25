@@ -1118,13 +1118,11 @@ void ShowGamesNow(MCGamesWhere where)
 
     if (const std::shared_ptr<MCLogistics> logistics = GlobalLog(); logistics != nullptr)
     {
-        logistics->HideScreen();
-
-        // The remade screens stand over the main menu, hidden: logistics' screen, so that an old one shown from them
-        // (the room) is a change of screen, which hides them (MCLogistics::SetCurrentScreen).
-        if (logistics->MainScreen && MCMenuScreens::Top() != MCMenuScreens::Main())
+        // The remade screens stand over the main menu, logistics' screen, so that the room shown from them is a change
+        // of screen, which hides them (MCLogistics::NoteTop); the room left for them hides so too.
+        if (MCMenuScreens::Top() != MCMenuScreens::Main())
         {
-            logistics->SetCurrentScreen(logistics->MainScreen);
+            logistics->NoteTop(MCMenuScreens::Main());
         }
 
         logistics->LogisticsState = where == MCGamesWhere::Internet ? InternetState : LanState;

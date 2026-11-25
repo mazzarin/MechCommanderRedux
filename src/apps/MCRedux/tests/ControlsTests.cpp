@@ -16,6 +16,7 @@
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
+#include "main/MCPrefs.h"
 #include "main/MCSystemConfig.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
@@ -386,14 +387,15 @@ TEST_CASE_ISOLATED("game: PREFS keeps the changed keys and reads them back")
     const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
     std::filesystem::remove(prefsPath);
 
-    // The preferences' ACCEPT writes the keys the CONTROLS panel edited.
-    ShowPreferences();
-    MCKeyTable& keys = EditedKeys();
+    // PREFS keeps the player's keys, as the preferences' ACCEPT makes them the player's and writes it
+    // (MCPrefsScreen::Accept).
+    MCKeyTable keys = MCKeyBindings::Player();
     MCKeyBindings::Bind(keys, MCKeyCommand::Jump, 0x25 | KeyCtrl);
     MCKeyBindings::Bind(keys, MCKeyCommand::AimHead, 0x10 | KeyShift);
     keys[static_cast<size_t>(MCKeyCommand::Eject)] = MCKeyBindings::NoKey;
     const MCKeyTable written = keys;
-    WritePrefs();
+    MCKeyBindings::SetPlayer(keys);
+    SavePrefs();
     Frames();
 
     {

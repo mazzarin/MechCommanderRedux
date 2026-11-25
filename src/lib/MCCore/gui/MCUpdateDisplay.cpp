@@ -10,7 +10,6 @@
 #include "gui/MCScreenChange.h"
 #include "lib/MCDice.h"
 #include "lib/MCFirstUse.h"
-#include "logistics/MCLogInvScreen.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
@@ -416,64 +415,10 @@ namespace
     }
 }
 
-namespace
-{
-    /// <summary>
-    /// The inventory tab a screen slid in is readied at in piece <paramref name="step"/> of its readying, with tab
-    /// <paramref name="shown"/> shown: that one first, then the others in order.
-    /// </summary>
-    int32_t TabReadied(int32_t step, int32_t shown)
-    {
-        if (step == 0)
-        {
-            return shown;
-        }
-
-        return step <= shown ? step - 1 : step;
-    }
-}
-
 std::vector<std::function<void()>> IntoScreenPieces()
 {
-    std::vector<std::function<void()>> pieces = {[] { RehearseScreen(); }};
-
-    for (size_t slid = 0; slid < MCLogistics::MostScreensSlidIn; slid++)
-    {
-        for (int32_t step = 0; step < MCLogistics::InventoryTabs; step++)
-        {
-            pieces.emplace_back(
-                [slid, step]
-                {
-                    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-
-                    if (logistics == nullptr)
-                    {
-                        return;
-                    }
-
-                    const std::vector<MCGuiHandle<MCLogInvScreen>> screens = logistics->ScreensSlidIn();
-                    const int32_t shown = logistics->CurrentInvTab;
-
-                    // With a tab shown that isn't one of the four (none is), only it is readied.
-                    if (slid >= screens.size() || ((shown < 0 || shown >= MCLogistics::InventoryTabs) && step > 0))
-                    {
-                        return;
-                    }
-
-                    if (const std::shared_ptr<MCLogInvScreen> screen = screens[slid].Lock(); screen != nullptr)
-                    {
-                        const int32_t tab = TabReadied(step, shown);
-
-                        if (RehearseHidden(*screen, [&] { logistics->ReadyForSlide(*screen, tab); }) && tab != shown)
-                        {
-                            logistics->ReadyForSlide(*screen, shown);
-                        }
-                    }
-                });
-        }
-    }
-
-    return pieces;
+    // Port-only (SPEC-menus.md's stage 9): the screen rehearsed; no 1998 screen slides in from it to ready hidden.
+    return {[] { RehearseScreen(); }};
 }
 
 size_t RehearsalsRun()
@@ -487,25 +432,6 @@ void RehearseScreen()
     {
         Rehearse(DrawScreenWindow);
     }
-}
-
-bool RehearseHidden(MCGuiObject& screen, const std::function<void()>& setUp)
-{
-    // A screen shown is the screen window's (RehearseScreen).
-    if (!CanRehearse() || screen.IsShowing())
-    {
-        return false;
-    }
-
-    setUp();
-    Rehearse(
-        [&screen]
-        {
-            screen.ShowGuiWindow(true);
-            screen.Display();
-            screen.ShowGuiWindow(false);
-        });
-    return true;
 }
 
 void ActivatePaletteNow()
@@ -552,9 +478,9 @@ int32_t UpdateDisplay(bool screenShot, bool staticNoise, int32_t noiseChance, bo
         display->ShowFinished();
     }
 
-    // Port-only: the screen the palette is for, set up already, rehearsed once the fade is nearly black, then the
-    // screens a slide from it may bring in, a step each (IntoScreenPieces): there a piece's step, darkened by its time,
-    // can't be seen, where at the fade's start each held the bright screen (up to 35 ms on the A10). A fade of
+    // Port-only: the screen the palette is for, set up already, rehearsed once the fade is nearly black
+    // (IntoScreenPieces): there its step, darkened by its time, can't be seen, where at the fade's start it held the
+    // bright screen (up to 35 ms on the A10). A fade of
     // FadeOutWhile's did them already. Port-only (SPEC-menus.md's stage 1): in a change of screen's fade
     // (gui/MCScreenChange.h) there's no palette fade: the palette goes in once the screen is dark, before the frame is
     // drawn, and the frame fades in from there.

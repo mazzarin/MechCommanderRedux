@@ -362,9 +362,12 @@ namespace
     /// <summary>The pilot switch button's event routine: shows the multiplayer pilot list for the button's state.</summary>
     void PilotSwitchHandleEvent(MCGuiObject& object, MCGuiEvent& event)
     {
-        if (event.Type == MouseDownEvent)
+        // The button is the screen's own child (the mission no longer holds a 1998 results screen).
+        if (const std::shared_ptr<MCMissionResultsScreen> screen =
+                std::dynamic_pointer_cast<MCMissionResultsScreen>(object.ParentObject());
+            event.Type == MouseDownEvent && screen != nullptr)
         {
-            Mission()->ResultsScreen->ShowMPPilots(static_cast<MCGuiToolButton&>(object).Pushed == 0);
+            screen->ShowMPPilots(static_cast<MCGuiToolButton&>(object).Pushed == 0);
         }
     }
 }

@@ -22,6 +22,8 @@ namespace
     /// <summary>A switch Q and E step as tabs (a screen's groups: LOAD GAME's campaigns).</summary>
     constexpr const char* TabsSwitchAttribute = "data-tabs";
     constexpr const char* OnClass = "on";
+    /// <summary>A switch's choice held (the room's TEAM while the player is on no team): it can't be chosen.</summary>
+    constexpr const char* HeldClass = "held";
     constexpr const char* StepperClass = "stepper";
     constexpr const char* ArrowClass = "arrow";
     constexpr const char* StepValueClass = "step-value";
@@ -340,6 +342,13 @@ bool MCRmlKit::Step(Rml::Element& control, int step)
         return false;
     }
 
+    if (control.IsClassSet(SwitchClass) && control.GetChild(next) != nullptr &&
+        control.GetChild(next)->IsClassSet(HeldClass))
+    {
+        // A choice held: nothing moves onto it.
+        return false;
+    }
+
     // 1998's button press, on or back.
     Play(PressSound);
     Choose(control, next, true);
@@ -439,6 +448,14 @@ void MCRmlKit::OnClick(Rml::Event& event)
         {
             if (choice->GetParentNode() == control)
             {
+                // A choice held refuses the click, as a held switch does (its screen never sees it).
+                if (choice->IsClassSet(HeldClass))
+                {
+                    Play(OffClickSound);
+                    event.StopPropagation();
+                    break;
+                }
+
                 Step(*control, IndexOf(*choice) - Choice(*control));
                 break;
             }

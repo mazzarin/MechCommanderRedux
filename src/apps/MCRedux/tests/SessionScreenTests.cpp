@@ -2020,3 +2020,101 @@ TEST_CASE_ISOLATED("game: a locked map holds the host's points boxes at its own 
     Settle();
     CHECK_EQ(model.Team1Points, 3'000'001);
 }
+
+namespace
+{
+    /// <summary>The held TEAM test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view HeldTeamHostAddress = "127.0.0.1:28935";
+    /// <summary>The chat's switch's choices (room.rml's #to): TEAM, then ALL.</summary>
+    constexpr int TeamChoice = 0;
+    constexpr int AllChoice = 1;
+
+    /// <summary>The room's last chat line shown (RmlUi keeps the list's hidden template after the lines).</summary>
+    Rml::Element* LastChatLine(const MCRoomScreen& room)
+    {
+        Rml::ElementList lines;
+        room.Document()->get().QuerySelectorAll(lines, "#talk .chat-line");
+        std::erase_if(lines, [](const Rml::Element* line) { return !line->IsVisible(); });
+        return lines.empty() ? nullptr : lines.back();
+    }
+}
+
+/// <summary>
+/// The room's chat with the player on no team: its TEAM, dim, is held as the spec's held controls are (a click on it,
+/// or Left onto it, refused with the sound of something off, the switch staying on ALL), and a line goes to all.
+/// On a team TEAM is chosen with the button press and a line goes to the team; off it again, the switch back on ALL.
+/// </summary>
+TEST_CASE_ISOLATED("game: the room's chat refuses TEAM to a player on no team, whose line goes to all")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(HeldTeamHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Held team", 6);
+    // The room shown and its change of screen over: a player's clicks are held while it fades.
+    REQUIRE(SettleUntil([] { return RoomScreenShown() && !MCScreenChange::Running(); }));
+    MCRoomScreen& room = *RoomScreen();
+    const std::shared_ptr<MCFidpPlayer> host = MultiPlayer()->SessionManager->MyPlayer();
+    REQUIRE(host != nullptr);
+    const MCRmlKit& kit = KitKeepingSounds();
+    size_t heard = kit.Played().size();
+    Rml::Element* to = MCTestGuest::ElementOf(room, "to");
+    Rml::Element* say = MCTestGuest::ElementOf(room, "say");
+    REQUIRE(to != nullptr);
+    REQUIRE(say != nullptr);
+    REQUIRE(to->GetNumChildren() == 2);
+    Rml::Element& team = *to->GetChild(TeamChoice);
+    const auto sayLine = [say](std::string_view line)
+    {
+        MCTestGuest::RealClickOn(*say);
+        MCTestGuest::RealType(line);
+        MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+        Settle();
+    };
+
+    const auto lastToTeam = [&room](std::string_view line)
+    {
+        Rml::Element* last = LastChatLine(room);
+        REQUIRE(last != nullptr);
+        REQUIRE(last->GetInnerRML().find(line) != std::string::npos);
+        return last->IsClassSet("team");
+    };
+
+    // On no team: TEAM held, the switch on ALL; its click and Left onto it refused.
+    CHECK(team.IsClassSet("held"));
+    CHECK(team.IsClassSet("off"));
+    CHECK_EQ(MCRmlKit::Choice(*to), AllChoice);
+    MCTestGuest::RealClickOn(team);
+    CHECK_EQ(MCRmlKit::Choice(*to), AllChoice);
+    CHECK(SoundsSince(kit, heard) == std::vector<uint32_t>{MCRmlKit::OffClickSound});
+    to->Focus(true);
+    MCScreenInput::RealKey(SDL_SCANCODE_LEFT);
+    CHECK_EQ(MCRmlKit::Choice(*to), AllChoice);
+    CHECK(SoundsSince(kit, heard) == std::vector<uint32_t>{MCRmlKit::OffClickSound});
+    sayLine("Anyone here?");
+    CHECK(!lastToTeam("Anyone here?"));
+
+    // On team 1: TEAM chosen with the button press, the line to the team.
+    room.PressJoin(host->Id, MCRoomModel::Team1);
+    Settle();
+    CHECK(!team.IsClassSet("held"));
+    SoundsSince(kit, heard);
+    MCTestGuest::RealClickOn(team);
+    CHECK_EQ(MCRmlKit::Choice(*to), TeamChoice);
+    CHECK(SoundsSince(kit, heard) == std::vector<uint32_t>{MCRmlKit::PressSound});
+    sayLine("Flank left.");
+    CHECK(lastToTeam("Flank left."));
+
+    // Off the team again: the switch back on ALL, TEAM held, the line to all.
+    room.Drop(host->Id, MCRoomModel::NoTeam, 0);
+    Settle();
+    CHECK(team.IsClassSet("held"));
+    CHECK_EQ(MCRmlKit::Choice(*to), AllChoice);
+    sayLine("Regroup.");
+    CHECK(!lastToTeam("Regroup."));
+}

@@ -562,6 +562,13 @@ void MCRoomScreen::ShowControls()
             points->SetAttribute(ValueAttribute, shown);
         }
     }
+
+    // Off a team the chat goes to all (its TEAM held): the switch says so, though it was on TEAM before.
+    if (Rml::Element* to = document->get().GetElementById(ToId);
+        to != nullptr && !_CanTeamChat && MCRmlKit::Choice(*to) == TeamChoice)
+    {
+        MCRmlKit::SetChoice(*to, AllChoice);
+    }
 }
 
 MCRoomScreen::MCSeen MCRoomScreen::Seen() const

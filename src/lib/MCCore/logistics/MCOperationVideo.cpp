@@ -391,12 +391,8 @@ void MCOperationVideoWindow::OnFrame()
 
 bool MCVideoMenu::Open(std::string_view cinema, std::string eyebrow)
 {
-    const MCOptionalRef<MCOperationVideoWindow> made = MCRmlFlow::MadeNow(TheWindow(), "the operation's video");
-
-    if (!made.has_value())
-    {
-        return false;
-    }
+    // Port-only (stage 9): no 1998 operation tab plays it in its place.
+    MCOperationVideoWindow& made = MCRmlFlow::Needed(TheWindow(), "the operation's video");
 
     // 1998's operation tab: Betty's "incoming transmission" over the operation's picture, when the mission names an
     // operation, then the movie.
@@ -419,9 +415,8 @@ bool MCVideoMenu::Open(std::string_view cinema, std::string eyebrow)
                             operation);
     }
 
-    MCOperationVideoWindow& window = made->get();
-    window.Play(std::move(*video), std::move(eyebrow), std::move(still));
-    window.Show();
+    made.Play(std::move(*video), std::move(eyebrow), std::move(still));
+    made.Show();
     return true;
 }
 

@@ -15527,11 +15527,9 @@ namespace
         shoot("mp_session");
 
         // The room's MATCH OPTIONS window, as its VIEW OPTIONS opens it, and its DONE.
-        if (ShowMatchOptionsWindow())
-        {
-            shoot("mp_session_match_options");
-            MatchOptionsWindow()->PressDone();
-        }
+        ShowMatchOptionsWindow();
+        shoot("mp_session_match_options");
+        MatchOptionsWindow()->PressDone();
 
         DoExit();
         shoot("main_menu_after_mp");

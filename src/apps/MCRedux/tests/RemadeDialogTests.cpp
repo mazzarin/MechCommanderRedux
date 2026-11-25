@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "RemadeScreens.h"
 #include "ScreenInput.h"
@@ -10,6 +11,7 @@
 #include "lib/MCFatal.h"
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCMenuDialog.h"
+#include "logistics/MCMenuScreens.h"
 #include "logistics/MCReusableDialog.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
@@ -22,6 +24,7 @@
 #include "ui/MCRmlFlow.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
+#include "ui/MCRmlSystem.h"
 
 // Port-only (SPEC-menus.md's stage 9): every dialog the game said in the 1998 box says itself in the remade one
 // (ui/dialog.rml): with no remade screen under it, and over the battlefield at the mission's INTERFACE SIZE. The 1998
@@ -106,6 +109,31 @@ namespace
             CHECK_EQ(where + Problems(layer), where);
             MCScreenInput::SaveWindowShot(std::format("{}_{}x{}", name, window.Width, window.Height));
         }
+    }
+
+    /// <summary>The report the game stopped with, thrown by the fatal hook to end the game in the test, not the process.</summary>
+    struct MCStopped
+    {
+        std::string Report;
+    };
+
+    /// <summary>The report the game stops with while <paramref name="run"/> runs (MCFatal's hook); none if it goes on.</summary>
+    std::optional<std::string> StoppedBy(const std::function<void()>& run)
+    {
+        MCFatalHook = [](std::string_view report) { throw MCStopped{std::string(report)}; };
+        std::optional<std::string> stopped;
+
+        try
+        {
+            run();
+        }
+        catch (const MCStopped& stop)
+        {
+            stopped = stop.Report;
+        }
+
+        MCFatalHook = nullptr;
+        return stopped;
     }
 }
 
@@ -196,35 +224,65 @@ TEST_CASE_ISOLATED("game: the menus failing once the game is going stop it with 
         return;
     }
 
-    // The report the game stopped with, thrown by the fatal hook to end the game here instead of the process.
-    struct MCStopped
-    {
-        std::string Report;
-    };
-
-    MCFatalHook = [](std::string_view report) { throw MCStopped{std::string(report)}; };
     std::unique_ptr<MCRmlMenus> held;
-    std::optional<std::string> stopped;
+    // The game's own RmlUi stopped and another started in its place (RmlUi is one per program): the main menu's screen
+    // finds the game's can't start.
+    const std::optional<std::string> stopped = StoppedBy(
+        [&held]
+        {
+            static_cast<void>(MCTestGame::StartLogistics(
+                [&held]
+                {
+                    MCRmlFlow::Stop();
+                    auto made = MCRmlMenus::Create(MCRmlMenus::MCOptions{});
+                    REQUIRE(made.has_value());
+                    held = std::move(*made);
+                }));
+        });
+    REQUIRE(stopped.has_value());
+    CHECK_EQ(*stopped, MCWithRepair(MCRmlFlow::FilesMissing));
+    CHECK_EQ(MCRmlDialogs::OldBoxes(), 0u);
+}
 
-    try
+/// <summary>
+/// Port-only (SPEC-menus.md's stage 9, menus-design's answer on commit 9): a remade screen with no other in its place
+/// whose document can't be read stops the game as the start's check does, never showing nothing: here LOAD GAME (a
+/// flow's kind, as SAVE GAME, Preferences, UPDATE, LAN and INTERNET are), its saves.rml gone from the menus' folder after
+/// the start's check passed.
+/// </summary>
+TEST_CASE_ISOLATED("game: a remade screen that can't be read stops the game with the start check's words")
+{
+    if (!MCTestGame::Available())
     {
-        // The game's own RmlUi stopped and another started in its place (RmlUi is one per program): the main menu's
-        // screen finds the game's can't start.
-        static_cast<void>(MCTestGame::StartLogistics(
-            [&held]
-            {
-                MCRmlFlow::Stop();
-                auto made = MCRmlMenus::Create(MCRmlMenus::MCOptions{});
-                REQUIRE(made.has_value());
-                held = std::move(*made);
-            }));
-    }
-    catch (const MCStopped& stop)
-    {
-        stopped = stop.Report;
+        return;
     }
 
-    MCFatalHook = nullptr;
+    constexpr std::string_view SavesDocument = "saves.rml";
+    const MCScratchFolder folder("mc_remade_dialog_tests", "no saves");
+    std::filesystem::copy(MCRmlFiles::AppFolder(), folder.Path(), std::filesystem::copy_options::recursive);
+    REQUIRE(std::filesystem::remove(folder.Path() / SavesDocument));
+
+    // The game's menus started from that folder in its own one's place, at its window (MCRmlFlow::Menus finds them).
+    REQUIRE(MCTestGame::StartLogistics(
+        [&folder]
+        {
+            MCRmlFlow::Stop();
+            int width = 0;
+            int height = 0;
+            SDL_GetWindowSizeInPixels(&MCInput::Display()->Window(), &width, &height);
+            const auto started =
+                MCRmlMenus::Start(MCRmlMenus::MCOptions{.Width = width, .Height = height, .Folder = folder.Path()});
+            REQUIRE_EQ(started.has_value() ? std::string() : started.error(), "");
+        }));
+    RunWhileChanging();
+    REQUIRE(MCRmlFlow::Showing());
+
+    const std::optional<std::string> stopped = StoppedBy(
+        []
+        {
+            REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+            RunWhileChanging();
+        });
     REQUIRE(stopped.has_value());
     CHECK_EQ(*stopped, MCWithRepair(MCRmlFlow::FilesMissing));
     CHECK_EQ(MCRmlDialogs::OldBoxes(), 0u);

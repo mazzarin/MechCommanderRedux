@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCQuestionWindow.h"
+#include "ui/MCRmlFlow.h"
 #include "ui/MCRmlLayer.h"
 
 #include <RmlUi/Core/Element.h>
@@ -39,11 +40,10 @@ MCGuiHandle<MCQuestionWindow> MCQuestionWindow::Ask(MCRmlScreen& over, std::stri
         },
         std::move(heading), std::move(act), std::move(yes));
 
+    // Port-only (stage 9): no 1998 box asks it in its place.
     if (const std::expected<void, std::string> opened = window->Open(); !opened)
     {
-        SDL_Log("MCQuestionWindow: cannot open %s: %s", AskDocument, opened.error().c_str());
-        window->Close();
-        return {};
+        MCRmlFlow::Broken(std::format("the question {} can't open: {}", AskDocument, opened.error()));
     }
 
     return window;

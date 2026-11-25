@@ -222,9 +222,10 @@ void MCSavesDialog::Ask(MCSay say)
 
     if (!Document().has_value())
     {
+        // Port-only (stage 9): no 1998 question in its place.
         if (const auto opened = Open(); !opened)
         {
-            SDL_Log("Menus: the saves' window can't open (%s): %s", _Say.Question.c_str(), opened.error().c_str());
+            MCRmlFlow::Broken(std::format("the saves' window can't open ({}): {}", _Say.Question, opened.error()));
         }
     }
     else

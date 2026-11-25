@@ -150,26 +150,32 @@ MCScreenFlow::MCScreenKind MCRmlFlow::Kind(std::string name, MCMake make, MCKeep
                 return made ? made->Prepare() : std::vector<MCScreenChange::MCPiece>{};
             },
             .Show =
-                [screen]
+                [name, screen]
             {
-                if (const MCGuiHandle<MCRmlScreen> made = screen(); made)
+                const MCGuiHandle<MCRmlScreen> made = screen();
+
+                // Port-only (stage 9): no 1998 screen shows in its place, so one that can't be made or read stops the
+                // game.
+                if (!made)
                 {
-                    // Read now if the change had no time to (a change made at once, with nothing shown).
-                    if (!made->Document().has_value())
-                    {
-                        for (const MCScreenChange::MCPiece& piece : made->Prepare())
-                        {
-                            piece.Run();
-                        }
-                    }
-
-                    if (!made->Error().empty())
-                    {
-                        SDL_Log("Menus: %s can't show: %s", made->DocumentPath().c_str(), made->Error().c_str());
-                    }
-
-                    made->Show();
+                    Broken(std::format("the {} screen can't be made", name));
                 }
+
+                // Read now if the change had no time to (a change made at once, with nothing shown).
+                if (!made->Document().has_value())
+                {
+                    for (const MCScreenChange::MCPiece& piece : made->Prepare())
+                    {
+                        piece.Run();
+                    }
+                }
+
+                if (!made->Error().empty())
+                {
+                    Broken(std::format("the {} screen can't show: {}", name, made->Error()));
+                }
+
+                made->Show();
             },
             .Hide =
                 [name, keep]
@@ -183,7 +189,7 @@ MCScreenFlow::MCScreenKind MCRmlFlow::Kind(std::string name, MCMake make, MCKeep
                     made->Hide();
                 }
             },
-            // A screen that couldn't be made or read holds nothing up (its error is logged as it shows).
+            // A screen that couldn't be made or read holds nothing up (it stops the game as it shows).
             .Ready =
                 [name]
             {

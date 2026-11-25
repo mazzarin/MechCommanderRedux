@@ -255,7 +255,6 @@ void MCSettingsScreen::OnRowPress(const MCSetting& setting)
 void MCSettingsScreen::Ask(MCSettingsModel::MCQuestion question)
 {
     const std::weak_ptr<MCSettingsScreen> self = std::static_pointer_cast<MCSettingsScreen>(shared_from_this());
-    const std::string heading = question.Heading;
     std::function<void()> yes = [self, act = std::move(question.Yes)]
     {
         if (act)
@@ -277,11 +276,8 @@ void MCSettingsScreen::Ask(MCSettingsModel::MCQuestion question)
         }
     };
 
-    if (!MCQuestionWindow::Ask(*this, std::move(question.Heading), std::move(question.Act), std::move(yes),
-                               std::move(closed)))
-    {
-        SDL_Log("MCSettingsScreen: the question \"%s\" couldn't be asked; nothing changed", heading.c_str());
-    }
+    static_cast<void>(MCQuestionWindow::Ask(*this, std::move(question.Heading), std::move(question.Act), std::move(yes),
+                                            std::move(closed)));
 }
 
 void MCSettingsScreen::Preview(const MCSetting& setting) const

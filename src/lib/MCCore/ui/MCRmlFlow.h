@@ -57,7 +57,8 @@ namespace MCRmlFlow
     /// <summary>
     /// The remade screen <paramref name="make"/> makes, as the flow's kind named <paramref name="name"/>, kept or made
     /// afresh by <paramref name="keep"/>; it shows while its document does. Its Leave: the screen's own, then the
-    /// screen below (a caller may set its own).
+    /// screen below (a caller may set its own). Port-only (stage 9): where it can't be made or read as it shows, the game
+    /// stops (<see cref="Broken"/>).
     /// </summary>
     MCScreenFlow::MCScreenKind Kind(std::string name, MCMake make, MCKeep keep);
 

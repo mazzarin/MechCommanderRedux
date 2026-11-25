@@ -162,9 +162,10 @@ void MCMatchOptionsWindow::OpenOver()
 
     if (!Document().has_value())
     {
+        // Port-only (stage 9): no 1998 MATCH OPTIONS tab in its place.
         if (const auto opened = Open(); !opened)
         {
-            SDL_Log("Menus: MATCH OPTIONS' window can't open: %s", opened.error().c_str());
+            MCRmlFlow::Broken(std::format("MATCH OPTIONS' window can't open: {}", opened.error()));
         }
 
         return;
@@ -487,7 +488,7 @@ void MCMatchOptionsWindow::PressDone()
     }
 }
 
-bool ShowMatchOptionsWindow()
+void ShowMatchOptionsWindow()
 {
     if (!Made())
     {
@@ -495,14 +496,6 @@ bool ShowMatchOptionsWindow()
     }
 
     Made()->OpenOver();
-
-    if (!Made()->Error().empty())
-    {
-        SDL_Log("MATCH OPTIONS: the window can't show: %s", Made()->Error().c_str());
-        return false;
-    }
-
-    return true;
 }
 
 MCGuiHandle<MCMatchOptionsWindow> MatchOptionsWindow()

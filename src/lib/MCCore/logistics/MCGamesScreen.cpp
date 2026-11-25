@@ -158,10 +158,10 @@ void MCHostWindow::OpenWith(std::string gameName)
 
     if (!Document().has_value())
     {
+        // Port-only (stage 9): no 1998 host screen in its place.
         if (const auto opened = Open(); !opened)
         {
-            SDL_Log("Menus: HOST GAME's window can't open: %s", opened.error().c_str());
-            return;
+            MCRmlFlow::Broken(std::format("HOST GAME's window can't open: {}", opened.error()));
         }
     }
     else

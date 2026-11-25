@@ -135,7 +135,8 @@ namespace MCVideoMenu
 
     /// <summary>
     /// Opens the window over the briefing playing the operation's video <paramref name="cinema"/>, named by
-    /// <paramref name="eyebrow"/>; false (the log says why) when it can't be read or the menus can't show it.
+    /// <paramref name="eyebrow"/>; false (the log says why) when the movie can't be read. Port-only (stage 9): where the
+    /// window can't be read, the game stops (MCRmlFlow::Broken).
     /// </summary>
     bool Open(std::string_view cinema, std::string eyebrow);
 

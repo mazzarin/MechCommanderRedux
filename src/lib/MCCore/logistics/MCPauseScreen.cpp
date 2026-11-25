@@ -265,11 +265,10 @@ void MCPauseScreen::AllPreferences()
         },
         MCPrefsScreen::MCPlace::Mission);
 
+    // Port-only (stage 9): no 1998 preferences in its place.
     if (const std::expected<void, std::string> opened = prefs->Open(); !opened)
     {
-        SDL_Log("MCPauseScreen: cannot open Preferences over the battlefield: %s", opened.error().c_str());
-        prefs->Close();
-        return;
+        MCRmlFlow::Broken(std::format("Preferences over the battlefield can't open: {}", opened.error()));
     }
 
     _Prefs = prefs;

@@ -33,7 +33,10 @@ namespace MCRmlChecks
         bool OnPicture = false;
         /// <summary>Shown inside the window.</summary>
         bool Inside = true;
-        /// <summary>No line of it cut off at the side of the box that clips it (a word cut at a column's edge).</summary>
+        /// <summary>
+        /// No line of it cut off at the side of the box that clips it (a word cut at a column's edge), but a row whose
+        /// design cuts it there (class <c>cut</c>: a map description's banner row longer than the line).
+        /// </summary>
         bool Whole = true;
 
         /// <summary>Whether it passes at <paramref name="unit"/> pixels a unit (the floor to the half pixel).</summary>
@@ -47,7 +50,8 @@ namespace MCRmlChecks
     /// What's wrong with the context's shown documents' boxes: an element shown outside the window or spilling from a
     /// parent that doesn't clip it, two siblings in the flow overlapping inside their borders (placed ones, an overlay,
     /// may; a shared border is no overlap), a text's line spilling from its element's content box (a wrapped line may
-    /// take the pixel RmlUi rounds its room up by, where the element keeps it as padding). Empty: nothing.
+    /// take the pixel RmlUi rounds its room up by, where the element keeps it as padding; a row whose design cuts it at
+    /// its edge, class <c>cut</c>, may run past it). Empty: nothing.
     /// </summary>
     std::string BoxProblems(Rml::Context& context);
 

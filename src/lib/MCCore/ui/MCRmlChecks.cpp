@@ -23,6 +23,8 @@ namespace
     constexpr const char* OffClass = "off";
     /// <summary>A decorator that is a flat colour or a fade, not a picture, under text.</summary>
     constexpr const char* GroundOkClass = "ground-ok";
+    /// <summary>A row its design cuts at its box's edge (a map description's banner row longer than the line).</summary>
+    constexpr const char* CutClass = "cut";
     constexpr float ByteMax = 255.0f;
 
     struct MCArea
@@ -77,6 +79,12 @@ namespace
                values.overflow_y() != Rml::Style::Overflow::Visible;
     }
 
+    /// <summary>Whether <paramref name="element"/> is a row cut at its edge by design (it clips its line).</summary>
+    bool CutByDesign(Rml::Element& element)
+    {
+        return element.IsClassSet(CutClass) && Clips(element);
+    }
+
     /// <summary>Whether <paramref name="element"/>'s words wrap to its box (its white-space breaks lines).</summary>
     bool Wraps(Rml::Element& element)
     {
@@ -109,6 +117,11 @@ namespace
 
             if (auto* text = dynamic_cast<Rml::ElementText*>(&child); text != nullptr)
             {
+                if (CutByDesign(element))
+                {
+                    continue;
+                }
+
                 const MCArea content = AreaOf(element, Rml::BoxArea::Content);
                 // A wrapped line may take the pixel RmlUi rounds its room up by, where the box keeps it as padding.
                 const float right = Wraps(element) ? std::max(content.Right + Slack,
@@ -291,11 +304,13 @@ namespace
                 shown.Inside = box.Meet(clip).Within(window);
                 const Rml::Vector2f origin = text->GetAbsoluteOffset(Rml::BoxArea::Border);
 
+                // A row cut at its edge by design is read as far as it shows.
                 for (const Rml::ElementText::Line& line : text->GetLines())
                 {
                     const float left = origin.x + line.position.x;
 
-                    if (left < clip.Left - Slack || left + static_cast<float>(line.width) > clip.Right + Slack)
+                    if (!CutByDesign(parent) &&
+                        (left < clip.Left - Slack || left + static_cast<float>(line.width) > clip.Right + Slack))
                     {
                         shown.Whole = false;
                     }

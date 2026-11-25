@@ -365,6 +365,10 @@ span, em, strong { display: inline; }
    A list: rows <div class="list-row"> in a <div class="scroller"> (the wheel, the rail, a row at a time by the
    arrows), followed by <div class="fade"/> while more lies below; the picked row .picked; Enter on a row picks it
    and presses the screen's .button.main.
+   A text to read (a map's description): <div class="scroll-box"><div class="scroller reading">...</div>
+   <div class="fade"/></div>; longer than its room (the kit sets .long), the rail and the fade show and the keys reach
+   it: Up and Down a line, Page Up and Page Down a page, an arrow at its end on to what lies that way; Left or Right
+   between it and a list beside it (its picked row).
    Tabs: <div class="tabs"><div class="tab now">A</div><div class="tab">B</div></div>; Q and E, or a click.
    A switch: <div class="switch"><div class="on">ON</div><div>OFF</div></div>; Left and Right, or a click; one that
    is a screen's groups (LOAD GAME's campaigns) marked data-tabs, and Q and E step it as tabs.
@@ -386,6 +390,7 @@ span, em, strong { display: inline; }
    The first focus: the element with data-first. */
 
 .button, .list-row, .switch, .stepper, input.range, input.text { tab-index: auto; nav: auto; focus: auto; }
+.scroller.reading.long { tab-index: auto; nav: auto; focus: auto; }
 .button { cursor: pointer; }
 
 /* A list's room: rows scroll inside it under a 2-unit rail, 4 under the pointer (its hit area wider). */

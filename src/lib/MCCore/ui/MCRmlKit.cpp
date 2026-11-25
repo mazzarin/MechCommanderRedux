@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "ui/MCRmlKit.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -39,6 +40,12 @@ namespace
     constexpr const char* ScrollBoxClass = "scroll-box";
     constexpr const char* ListHeadClass = "list-head";
     constexpr const char* RailRoomClass = "rail-room";
+    /// <summary>
+    /// A text to read in a list's room (a map's description), and the class it has while longer than its room: the keys
+    /// reach it then (look.rcss), and scroll it.
+    /// </summary>
+    constexpr const char* ReadingClass = "reading";
+    constexpr const char* LongClass = "long";
     constexpr const char* HintsClass = "mouse-hints";
     /// <summary>The hint a hint line shows now.</summary>
     constexpr const char* ShownHintAttribute = "data-shown-hint";
@@ -133,6 +140,98 @@ namespace
         {
             element.SetProperty(id, Rml::Property(value, Rml::Unit::PX));
         }
+    }
+
+    /// <summary>Whether <paramref name="list"/> holds more than its room shows.</summary>
+    bool Longer(Rml::Element& list)
+    {
+        return list.GetScrollHeight() > list.GetClientHeight() + ScrollSlack;
+    }
+
+    /// <summary>
+    /// <paramref name="key"/> on a text to read with the keys' focus: Up and Down scroll it a line, Page Up and Page Down
+    /// a page. Whether it took the key: an arrow at its end leaves it to the focus's move that way.
+    /// </summary>
+    bool ScrollText(Rml::Element& text, Rml::Input::KeyIdentifier key)
+    {
+        const float line = text.GetComputedValues().line_height().value;
+        const float page = std::max(text.GetClientHeight() - line, line);
+        float step = 0.0f;
+
+        switch (key)
+        {
+            case Rml::Input::KI_UP:
+                step = -line;
+                break;
+            case Rml::Input::KI_DOWN:
+                step = line;
+                break;
+            case Rml::Input::KI_PRIOR:
+                step = -page;
+                break;
+            case Rml::Input::KI_NEXT:
+                step = page;
+                break;
+            default:
+                return false;
+        }
+
+        const float now = text.GetScrollTop();
+        const float next =
+            std::clamp(now + step, 0.0f, std::max(text.GetScrollHeight() - text.GetClientHeight(), 0.0f));
+
+        if (std::abs(next - now) <= ScrollSlack)
+        {
+            return key == Rml::Input::KI_PRIOR || key == Rml::Input::KI_NEXT;
+        }
+
+        text.SetScrollTop(next);
+        return true;
+    }
+
+    /// <summary>
+    /// What the arrow Left (<paramref name="right"/> false) or Right takes the keys' focus to from
+    /// <paramref name="from"/>, across the edge of a list RmlUi's own moves don't cross (they search a list's rows only
+    /// inside the list): from a list's row a text to read beside the list that the keys reach (its .long), from such a
+    /// text the picked row of a list beside it; the nearest that way, none when there's none.
+    /// </summary>
+    Rml::Element* Beside(Rml::Element& from, bool right)
+    {
+        Rml::ElementDocument* document = from.GetOwnerDocument();
+
+        if (document == nullptr)
+        {
+            return nullptr;
+        }
+
+        Rml::ElementList candidates;
+        document->QuerySelectorAll(candidates, from.IsClassSet(RowClass)
+                                                   ? std::format(".scroller.{}.{}", ReadingClass, LongClass)
+                                                   : std::format(".{}.{}", RowClass, PickedClass));
+        const float left = from.GetAbsoluteLeft();
+        const float width = from.GetBox().GetSize(Rml::BoxArea::Border).x;
+        Rml::Element* nearest = nullptr;
+        float nearestGap = 0.0f;
+
+        for (Rml::Element* candidate : candidates)
+        {
+            if (!candidate->IsVisible(true))
+            {
+                continue;
+            }
+
+            const float candidateLeft = candidate->GetAbsoluteLeft();
+            const float candidateWidth = candidate->GetBox().GetSize(Rml::BoxArea::Border).x;
+            const float gap = right ? candidateLeft - (left + width) : left - (candidateLeft + candidateWidth);
+
+            if (gap >= -ScrollSlack && (nearest == nullptr || gap < nearestGap))
+            {
+                nearest = candidate;
+                nearestGap = gap;
+            }
+        }
+
+        return nearest;
     }
 
     void SetShown(Rml::Element& element, bool shown)
@@ -505,6 +604,25 @@ void MCRmlKit::OnKeyDown(Rml::Event& event)
         return;
     }
 
+    // Left and Right between a list and a text to read beside it.
+    if ((key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT) &&
+        (target->IsClassSet(RowClass) || target->IsClassSet(ReadingClass)))
+    {
+        if (Rml::Element* beside = Beside(*target, key == Rml::Input::KI_RIGHT); beside != nullptr)
+        {
+            beside->Focus(true);
+            event.StopPropagation();
+            return;
+        }
+    }
+
+    // A text to read with the focus takes Up, Down, Page Up and Page Down, but an arrow at its end.
+    if (target->IsClassSet(ReadingClass) && target->IsClassSet(LongClass) && ScrollText(*target, key))
+    {
+        event.StopPropagation();
+        return;
+    }
+
     // A switch or stepper with the focus takes Left and Right.
     if ((key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT) &&
         (target->IsClassSet(SwitchClass) || target->IsClassSet(StepperClass)))
@@ -607,7 +725,13 @@ void MCRmlKit::Update(Rml::Context& context)
 
             if (head != nullptr && list != nullptr && head->IsClassSet(ListHeadClass))
             {
-                head->SetClass(RailRoomClass, list->GetScrollHeight() > list->GetClientHeight() + ScrollSlack);
+                head->SetClass(RailRoomClass, Longer(*list));
+            }
+
+            // A text to read longer than its room: the keys reach it (look.rcss).
+            if (list != nullptr && list->IsClassSet(ReadingClass))
+            {
+                list->SetClass(LongClass, Longer(*list));
             }
         }
 

@@ -14,7 +14,7 @@ namespace Rml
 /// Port-only (SPEC-menus.md, "The look" and "Without a mouse"): the controls' behaviour, for every remade screen, over
 /// the look's one style sheet (<c>ui/look.rcss</c>, which says each control's markup). Attached to a document, it
 /// listens to its controls: buttons, list rows, tabs, switches, steppers, sliders (RmlUi's range input), text boxes,
-/// windows, scrolled lists, the hint line, each with 1998's interface sound. It draws the keys' focus as one ring over
+/// windows, scrolled lists and texts, the hint line, each with 1998's interface sound. It draws the keys' focus as one ring over
 /// the edge of what has it, so nothing moves, shown after a key and gone when the mouse moves.
 /// </summary>
 /// <remarks>
@@ -52,7 +52,10 @@ public:
     /// <summary>Q and E: <paramref name="document"/>'s tabs moved by <paramref name="step"/>; whether it has any.</summary>
     bool StepTab(Rml::ElementDocument& document, int step);
 
-    /// <summary>The frame: each attached document's focus ring, its lists' fades and its hint line kept up.</summary>
+    /// <summary>
+    /// The frame: each attached document's focus ring, its lists' fades, its texts' reach by the keys and its hint line
+    /// kept up.
+    /// </summary>
     void Update(Rml::Context& context);
 
     /// <summary>The mouse moved: the focus's ring goes until the next key (RmlUi's <c>:focus-visible</c>).</summary>

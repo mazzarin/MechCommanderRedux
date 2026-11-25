@@ -29,7 +29,8 @@ namespace
     }
 }
 
-MCRmlSystem::MCRmlSystem(MCOptionalRef<SDL_Window> window) : _Window(window)
+MCRmlSystem::MCRmlSystem(MCOptionalRef<SDL_Window> window)
+    : _Window(window.has_value() ? std::optional(SDL_GetWindowID(&window->get())) : std::nullopt)
 {
 }
 
@@ -76,7 +77,7 @@ MCOptionalRef<SDL_Window> MCRmlSystem::TextWindow() const
 {
     if (_Window.has_value())
     {
-        return _Window;
+        return MCOptionalOf(SDL_GetWindowFromID(*_Window));
     }
 
     const std::shared_ptr<MCDisplay> display = MCInput::Display();

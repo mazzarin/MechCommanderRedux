@@ -43,7 +43,8 @@ private:
     void SetTextInput(SDL_Window& window, bool on);
 
     MCClock _Clock;
-    MCOptionalRef<SDL_Window> _Window;
+    /// <summary>The window asked for, by SDL's id, which never outlives it (none: the game's display's).</summary>
+    std::optional<SDL_WindowID> _Window;
     bool _Typing = false;
 };
 

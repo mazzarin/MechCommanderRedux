@@ -52,7 +52,9 @@ public:
         MCRmlLayer::MCUnit MissionUnit;
         /// <summary>What plays the controls' sounds (none: the game's interface sounds).</summary>
         MCRmlKit::MCSound Sound;
-        /// <summary>The window SDL's text input is started on (none: the game's display's).</summary>
+        /// <summary>
+        /// The window SDL's text input is started on (none: the game's display's), kept by its id (MCRmlSystem).
+        /// </summary>
         MCOptionalRef<SDL_Window> Window;
     };
 

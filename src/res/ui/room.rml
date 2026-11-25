@@ -25,7 +25,7 @@
                             <div class="team-name">Team 1</div><div class="grow"></div>
                             <div class="switch small" id="tech1" data-if="hosting" data-class-off="!can_forces" data-hint="Tech base"><div>Inner Sphere</div><div>Clan</div></div>
                             <div class="rp-label" data-if="hosting">RP</div>
-                            <input type="text" class="field small rp-box" id="points1" data-if="hosting" maxlength="9"/>
+                            <input type="text" class="field small rp-box" id="points1" data-if="hosting" data-class-off="!can_forces" data-attrif-disabled="!can_forces" maxlength="9"/>
                             <div class="team-what" data-if="!hosting">{{tech1_name}}</div>
                             <div class="team-what" data-if="!hosting"><span class="cream">{{points1}}</span> RP</div>
                         </div>
@@ -45,7 +45,7 @@
                             <div class="team-name">Team 2</div><div class="grow"></div>
                             <div class="switch small" id="tech2" data-if="hosting" data-class-off="!can_forces" data-hint="Tech base"><div>Inner Sphere</div><div>Clan</div></div>
                             <div class="rp-label" data-if="hosting">RP</div>
-                            <input type="text" class="field small rp-box" id="points2" data-if="hosting" maxlength="9"/>
+                            <input type="text" class="field small rp-box" id="points2" data-if="hosting" data-class-off="!can_forces" data-attrif-disabled="!can_forces" maxlength="9"/>
                             <div class="team-what" data-if="!hosting">{{tech2_name}}</div>
                             <div class="team-what" data-if="!hosting"><span class="cream">{{points2}}</span> RP</div>
                         </div>

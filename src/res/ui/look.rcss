@@ -373,7 +373,8 @@ span, em, strong { display: inline; }
    A switch or stepper held (.off on it) refuses Left, Right and clicks with the refusal's sound, as a dim button does.
    A slider: <input type="range" class="slider" min="0" max="100" step="5" value="50"/>, its number the screen's.
    A text box: <input type="text" class="field" value="..."/>; Enter leaves it, or with data-enter="save" presses
-   the button of that id (SAVE GAME's NAME and SAVE).
+   the button of that id (SAVE GAME's NAME and SAVE). One held (.off and RmlUi's disabled on it: the room's points on
+   a locked map) takes no focus and no typing, and a click on it plays the refusal's sound, as a held switch's.
    A window: its own document, shown over the screen: <body class="window-body"><div class="veil"/>
    <div class="window-place"><div class="panel window">...</div></div></body>; Escape is its CANCEL, Enter its main.
    The hint line: <div class="hints row"><div class="mouse-hints grow"/><div class="keys"/></div>: the left what the

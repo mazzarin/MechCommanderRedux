@@ -52,6 +52,9 @@
 #include "platform/MCInput.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
+#include "ui/MCRmlFlow.h"
+#include "ui/MCRmlKit.h"
+#include "ui/MCRmlMenus.h"
 
 #include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
@@ -1829,6 +1832,26 @@ namespace
     constexpr int32_t TeamTextCode = 4;
     constexpr int32_t AllTextCode = 6;
 
+    /// <summary>The game's menus' kit, keeping the sounds it plays from now on.</summary>
+    MCRmlKit& KitKeepingSounds()
+    {
+        const MCOptionalRef<MCRmlMenus> menus = MCRmlFlow::Menus();
+        REQUIRE(menus.has_value());
+        MCRmlKit& kit = menus->get().Kit();
+        kit.KeepPlayed(true);
+        return kit;
+    }
+
+    /// <summary>The sounds <paramref name="kit"/> played since <paramref name="heard"/> of them, which it moves past.</summary>
+    std::vector<uint32_t> SoundsSince(const MCRmlKit& kit, size_t& heard)
+    {
+        const std::vector<uint32_t>& played = kit.Played();
+        std::vector<uint32_t> since(played.begin() + static_cast<std::ptrdiff_t>(std::min(heard, played.size())),
+                                    played.end());
+        heard = played.size();
+        return since;
+    }
+
     /// <summary>The colour <paramref name="element"/>'s letters are drawn in, as 0xRRGGBB.</summary>
     uint32_t InkOf(Rml::Element& element)
     {
@@ -1900,4 +1923,100 @@ TEST_CASE_ISOLATED("game: the room's chat shows a line to the team in 1998's tea
         CHECK(names.front()->IsClassSet(MCChatView::ColourOf(at < HostLines ? host->PlayerNumber : AnnNumber)));
         CHECK(InkOf(*names.front()) != TeamLineInk);
     }
+}
+
+namespace
+{
+    /// <summary>The locked map test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view LockedHostAddress = "127.0.0.1:28949";
+    /// <summary>A disabled form control's attribute (RmlUi's: no focus, no typing).</summary>
+    constexpr const char* DisabledAttribute = "disabled";
+}
+
+/// <summary>
+/// A locked map (1998's [Lock]: CPTRLOCK, team 1 Inner Sphere with 360,000 RP against team 2 Clan with 300,000) holds
+/// the host's points boxes as it holds the tech base switches: each shows the map's points, grouped, takes no focus
+/// and no typing, and a click on it plays the refusal of something off; its plain map's boxes take the host's typing.
+/// </summary>
+TEST_CASE_ISOLATED("game: a locked map holds the host's points boxes at its own points, as its tech bases")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MultiPlayer()->SessionManager->ConnectTcp(LockedHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Locked map", 6);
+    REQUIRE(SettleUntil([] { return RoomScreenShown(); }));
+    MCRoomScreen& room = *RoomScreen();
+    MCRoomModel& model = GlobalLog()->Room;
+    const MCRmlKit& kit = KitKeepingSounds();
+    size_t heard = kit.Played().size();
+    const auto load = [](std::string_view mission)
+    {
+        GlobalLog()->Room.LoadMission(mission);
+        REQUIRE(SettleUntil([] { return !GlobalLog()->Message->IsShowing(); }));
+        Settle();
+    };
+
+    Rml::Element* points1 = MCTestGuest::ElementOf(room, "points1");
+    Rml::Element* points2 = MCTestGuest::ElementOf(room, "points2");
+    REQUIRE(points1 != nullptr);
+    REQUIRE(points2 != nullptr);
+    Rml::Context* context = points1->GetContext();
+    REQUIRE(context != nullptr);
+
+    // The locked map: both boxes held at its points, as the tech base switches are.
+    load("CPTRLOCK");
+    REQUIRE(model.Locked);
+    constexpr std::array<std::string_view, 2> LockedPoints = {"360,000", "300,000"};
+    const std::array<Rml::Element*, 2> boxes = {points1, points2};
+    const std::array<const char*, 2> techIds = {"tech1", "tech2"};
+
+    for (size_t at = 0; at < boxes.size(); ++at)
+    {
+        const MCTest::Scope scope{boxes[at]->GetId()};
+        CHECK(boxes[at]->IsClassSet("off"));
+        CHECK(boxes[at]->HasAttribute(DisabledAttribute));
+        CHECK_EQ(boxes[at]->GetAttribute<Rml::String>("value", ""), std::string(LockedPoints[at]));
+        Rml::Element* tech = MCTestGuest::ElementOf(room, techIds[at]);
+        REQUIRE(tech != nullptr);
+        CHECK(tech->IsClassSet("off"));
+    }
+
+    CHECK_EQ(room.Seen().Points1, std::string(LockedPoints[0]));
+    CHECK_EQ(room.Seen().Points2, std::string(LockedPoints[1]));
+
+    // Clicked and typed in: refused, the keys not in it, the points as they were.
+    MCTestGuest::RealClickOn(*points1);
+    CHECK(context->GetFocusElement() != points1);
+    CHECK(SoundsSince(kit, heard) == std::vector<uint32_t>{MCRmlKit::OffClickSound});
+    MCTestGuest::RealType("5");
+    Settle();
+    CHECK_EQ(model.Team1Points, 360'000);
+    CHECK_EQ(points1->GetAttribute<Rml::String>("value", ""), std::string(LockedPoints[0]));
+    CHECK_EQ(room.Seen().Points1, std::string(LockedPoints[0]));
+
+    // Its plain map: the boxes free, the host's typing its points.
+    load("CPTRBASE");
+    REQUIRE(!model.Locked);
+
+    for (Rml::Element* box : boxes)
+    {
+        const MCTest::Scope scope{box->GetId()};
+        CHECK(!box->IsClassSet("off"));
+        CHECK(!box->HasAttribute(DisabledAttribute));
+        CHECK_EQ(box->GetAttribute<Rml::String>("value", ""), std::string("300,000"));
+    }
+
+    MCTestGuest::RealClickOn(*points1);
+    CHECK(context->GetFocusElement() == points1);
+    CHECK(SoundsSince(kit, heard).empty());
+    MCScreenInput::RealKey(SDL_SCANCODE_END);
+    MCTestGuest::RealType("1");
+    Settle();
+    CHECK_EQ(model.Team1Points, 3'000'001);
 }

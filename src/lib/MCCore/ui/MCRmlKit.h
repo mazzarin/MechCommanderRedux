@@ -78,9 +78,10 @@ private:
     friend class MCListener;
 
     void Play(uint32_t sample);
-    /// <summary>A click in an attached document; a keydown on its way up to the document.</summary>
+    /// <summary>A click or a press in an attached document, on its way down; a keydown, on its way up.</summary>
     void OnClick(Rml::Event& event);
     void OnKeyDown(Rml::Event& event);
+    void OnMouseDown(Rml::Event& event);
     /// <summary>Moves a switch's or stepper's choice by <paramref name="step"/>, with its sound; whether it moved.</summary>
     bool Step(Rml::Element& control, int step);
     /// <summary>Makes <paramref name="choice"/> the choice of <paramref name="control"/>, its look and its change event.</summary>

@@ -911,18 +911,19 @@ void MCTerrainReadOverlaysAhead(std::span<const int32_t> slots, std::string_view
         for (const int32_t slot : slots)
         {
             const MCGroundSlotNames names = known->get().At(slot);
-            std::vector<int32_t>* const rebuilt = OverlayKnown(*known, slot) ? &overlaysLeft.Slots
-                                                  : names.Tile.has_value() && known->get().ShapeAt(slot).has_value()
-                                                      ? &overlaysLeft.GroundSlots
-                                                      : nullptr;
+            const MCOptionalRef<std::vector<int32_t>> rebuilt =
+                OverlayKnown(*known, slot) ? MCOptionalRef<std::vector<int32_t>>(overlaysLeft.Slots)
+                : names.Tile.has_value() && known->get().ShapeAt(slot).has_value()
+                    ? MCOptionalRef<std::vector<int32_t>>(overlaysLeft.GroundSlots)
+                    : std::nullopt;
 
-            if (rebuilt != nullptr)
+            if (rebuilt.has_value())
             {
                 ++left;
 
-                if (!std::ranges::contains(*rebuilt, slot))
+                if (!std::ranges::contains(rebuilt->get(), slot))
                 {
-                    rebuilt->push_back(slot);
+                    rebuilt->get().push_back(slot);
                 }
 
                 continue;

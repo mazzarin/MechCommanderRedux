@@ -212,13 +212,14 @@ namespace
 
 std::vector<MCFile> MCContentList::ForSets(const MCList& list, const std::set<std::string, std::less<>>& sets)
 {
-    std::map<std::string, const MCFile*, std::less<>> variants;
+    // The sets' variants, by folded path, borrowed from the list for the call.
+    std::map<std::string, std::reference_wrapper<const MCFile>, std::less<>> variants;
 
     for (const MCFile& variant : list.Variants)
     {
         if (sets.contains(variant.Set))
         {
-            variants.emplace(FoldedPath(variant.Path), &variant);
+            variants.emplace(FoldedPath(variant.Path), variant);
         }
     }
 
@@ -229,7 +230,7 @@ std::vector<MCFile> MCContentList::ForSets(const MCList& list, const std::set<st
     {
         if (const auto variant = variants.find(FoldedPath(file.Path)); variant != variants.end())
         {
-            files.push_back(*variant->second);
+            files.push_back(variant->second.get());
             variants.erase(variant);
         }
         else if (sets.contains(file.Set))

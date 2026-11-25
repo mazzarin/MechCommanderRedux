@@ -601,7 +601,8 @@ void MCFilesAhead::ReadPiecesAhead(std::vector<MCFilePiece> pieces)
             {
                 std::vector<uint8_t> buffer(MCDiskFile::RunMostBytes);
                 std::optional<MCDiskFile> file;
-                const std::string* open = nullptr;
+                // The file open: the piece's name, in the pieces this job keeps.
+                MCOptionalRef<const std::string> open;
 
                 for (const MCFilePiece& piece : pieces)
                 {
@@ -610,9 +611,9 @@ void MCFilesAhead::ReadPiecesAhead(std::vector<MCFilePiece> pieces)
                         return;
                     }
 
-                    if (open == nullptr || *open != piece.File)
+                    if (!open.has_value() || open->get() != piece.File)
                     {
-                        open = &piece.File;
+                        open = piece.File;
                         file = MCDiskFile::Open(root / MCFileSystem::FromUtf8(piece.File), MCDiskFileMode::Read,
                                                 MCDiskFileReads::Direct);
                     }

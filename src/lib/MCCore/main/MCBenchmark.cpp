@@ -991,21 +991,26 @@ namespace MCBenchmark
                 continue;
             }
 
-            bool* given = nullptr;
+            // Whether a word of its kind was given before, and the kind's name.
+            MCOptionalRef<bool> given;
+            std::string_view kind;
 
             if (std::ranges::find(Weathers, word) != Weathers.end())
             {
-                given = &weatherGiven;
+                given = weatherGiven;
+                kind = "weather";
                 variant.Weather = word;
             }
             else if (std::ranges::find(Times, word) != Times.end())
             {
-                given = &timeGiven;
+                given = timeGiven;
+                kind = "time of day";
                 variant.Time = word;
             }
             else if (word == HdWord || word == OriginalWord)
             {
-                given = &lookGiven;
+                given = lookGiven;
+                kind = "look";
                 variant.Hd = word == HdWord;
             }
             else
@@ -1016,12 +1021,9 @@ namespace MCBenchmark
                     word));
             }
 
-            if (std::exchange(*given, true))
+            if (std::exchange(given->get(), true))
             {
-                return std::unexpected(std::format("-benchmark: \"{}\" names a second {}", word,
-                                                   given == &weatherGiven ? "weather"
-                                                   : given == &timeGiven  ? "time of day"
-                                                                          : "look"));
+                return std::unexpected(std::format("-benchmark: \"{}\" names a second {}", word, kind));
             }
         }
 

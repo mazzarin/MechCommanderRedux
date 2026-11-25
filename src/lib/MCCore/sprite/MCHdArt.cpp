@@ -1486,9 +1486,10 @@ namespace
         auto archive = std::make_shared<MCHdArchive>();
         archive->File = std::move(*file);
         archive->Path = path;
-        // The last numbered entry's folder and its count: a folder's entries come together.
+        // The last numbered entry's folder and its count (in FrameCounts, whose values stay put): a folder's entries
+        // come together.
         std::string_view lastFolder;
-        int32_t* lastFrames = nullptr;
+        MCOptionalRef<int32_t> lastFrames;
 
         for (const MCFileEntry& entry : archive->File->GetEntries())
         {
@@ -1506,13 +1507,13 @@ namespace
             if (error == std::errc() && end != leaf.data() && frame >= 0 && frame < MostArchivedFrames &&
                 IsHdfExtension(leaf.substr(static_cast<size_t>(end - leaf.data()))))
             {
-                if (lastFrames == nullptr || folder != lastFolder)
+                if (!lastFrames.has_value() || folder != lastFolder)
                 {
                     lastFolder = folder;
-                    lastFrames = &archive->FrameCounts[Upper(folder)];
+                    lastFrames = archive->FrameCounts[Upper(folder)];
                 }
 
-                *lastFrames = std::max(*lastFrames, frame + 1);
+                lastFrames->get() = std::max(lastFrames->get(), frame + 1);
             }
         }
 

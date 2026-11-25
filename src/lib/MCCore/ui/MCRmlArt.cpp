@@ -6,6 +6,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
+#include "platform/MCSdlHandle.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCShapeFile.h"
@@ -255,10 +256,12 @@ namespace
     std::expected<std::shared_ptr<const MCUiTexture>, std::string> DecodePng(const std::vector<char>& bytes,
                                                                              std::string_view path)
     {
+        // The stream is the load's to close (SDL's closeio).
         SDL_IOStream* stream = SDL_IOFromConstMem(bytes.data(), bytes.size());
-        SDL_Surface* loaded = stream != nullptr ? SDL_LoadPNG_IO(stream, true) : nullptr;
-        SDL_Surface* rgba = loaded != nullptr ? SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32) : nullptr;
-        SDL_DestroySurface(loaded);
+        MCSdlHandle<SDL_Surface> loaded(stream != nullptr ? SDL_LoadPNG_IO(stream, true) : nullptr);
+        MCSdlHandle<SDL_Surface> rgba(loaded != nullptr ? SDL_ConvertSurface(loaded.get(), SDL_PIXELFORMAT_RGBA32)
+                                                        : nullptr);
+        loaded.reset();
 
         if (rgba == nullptr)
         {
@@ -288,7 +291,7 @@ namespace
 
         const int width = rgba->w;
         const int height = rgba->h;
-        SDL_DestroySurface(rgba);
+        rgba.reset();
         return MCRmlRecorder::MakeTexture(width, height, std::move(pixels), true);
     }
 

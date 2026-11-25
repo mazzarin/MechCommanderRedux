@@ -93,7 +93,12 @@ MCRmlLayer& MCRmlScreen::Layer() const
 
 MCOptionalRef<Rml::ElementDocument> MCRmlScreen::Document() const
 {
-    return _Document != nullptr ? MCOptionalRef<Rml::ElementDocument>(*_Document) : std::nullopt;
+    return MCOptionalOf(_Document);
+}
+
+MCOptionalRef<Rml::Element> MCRmlScreen::ElementById(const std::string& id) const
+{
+    return _Document != nullptr ? MCOptionalOf(_Document->GetElementById(id)) : std::nullopt;
 }
 
 void MCRmlScreen::ReadStyle()
@@ -324,18 +329,18 @@ void MCRmlScreen::FocusBelow()
 
 bool MCRmlScreen::Listen(const std::string& id, Rml::EventId event, std::function<void(Rml::Event&)> act)
 {
-    Rml::Element* element = _Document != nullptr ? _Document->GetElementById(id) : nullptr;
+    const MCOptionalRef<Rml::Element> element = ElementById(id);
 
-    if (element == nullptr)
+    if (!element.has_value())
     {
         SDL_Log("Menus: %s has no element '%s' to listen to", _Path.c_str(), id.c_str());
         return false;
     }
 
     auto action = std::make_shared<MCAction>(weak_from_this(), std::move(act));
-    element->AddEventListener(event, action.get());
+    element->get().AddEventListener(event, action.get());
     _Listening.push_back(MCListening{
-        .Element = element->GetObserverPtr(), .Event = static_cast<int>(event), .Action = std::move(action)});
+        .Element = element->get().GetObserverPtr(), .Event = static_cast<int>(event), .Action = std::move(action)});
     return true;
 }
 
@@ -352,9 +357,9 @@ bool MCRmlScreen::OnChange(const std::string& id, std::function<void(int value)>
 
 bool MCRmlScreen::OnText(const std::string& id, std::function<void(const std::string& text, bool enter)> act)
 {
-    Rml::Element* element = _Document != nullptr ? _Document->GetElementById(id) : nullptr;
+    const MCOptionalRef<Rml::Element> element = ElementById(id);
 
-    if (element == nullptr)
+    if (!element.has_value())
     {
         SDL_Log("Menus: %s has no text box '%s'", _Path.c_str(), id.c_str());
         return false;
@@ -364,8 +369,8 @@ bool MCRmlScreen::OnText(const std::string& id, std::function<void(const std::st
     auto action = std::make_shared<MCAction>(
         weak_from_this(), [act = std::move(act)](Rml::Event& event)
         { act(event.GetParameter<Rml::String>("value", ""), event.GetParameter<bool>("linebreak", false)); });
-    element->AddEventListener(Rml::EventId::Change, action.get());
-    _Listening.push_back(MCListening{.Element = element->GetObserverPtr(),
+    element->get().AddEventListener(Rml::EventId::Change, action.get());
+    _Listening.push_back(MCListening{.Element = element->get().GetObserverPtr(),
                                      .Event = static_cast<int>(Rml::EventId::Change),
                                      .Action = std::move(action)});
     return true;
@@ -373,9 +378,9 @@ bool MCRmlScreen::OnText(const std::string& id, std::function<void(const std::st
 
 bool MCRmlScreen::OnChangeIn(const std::string& id, std::function<void(const std::string& control, int value)> act)
 {
-    Rml::Element* element = _Document != nullptr ? _Document->GetElementById(id) : nullptr;
+    const MCOptionalRef<Rml::Element> element = ElementById(id);
 
-    if (element == nullptr)
+    if (!element.has_value())
     {
         SDL_Log("Menus: %s has no element '%s' to change in", _Path.c_str(), id.c_str());
         return false;
@@ -389,8 +394,8 @@ bool MCRmlScreen::OnChangeIn(const std::string& id, std::function<void(const std
                                                  act(target != nullptr ? target->GetId() : Rml::String(),
                                                      event.GetParameter<int>("value", 0));
                                              });
-    element->AddEventListener(Rml::EventId::Change, action.get());
-    _Listening.push_back(MCListening{.Element = element->GetObserverPtr(),
+    element->get().AddEventListener(Rml::EventId::Change, action.get());
+    _Listening.push_back(MCListening{.Element = element->get().GetObserverPtr(),
                                      .Event = static_cast<int>(Rml::EventId::Change),
                                      .Action = std::move(action)});
     return true;

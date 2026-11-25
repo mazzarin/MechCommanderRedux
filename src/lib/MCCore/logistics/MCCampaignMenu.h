@@ -307,7 +307,7 @@ private:
     /// </summary>
     static std::optional<size_t> SlotToward(std::optional<size_t> from, int key);
     /// <summary>The card the element <paramref name="element"/> is in: a READY AREA card's index, or a slot's.</summary>
-    static std::optional<std::pair<bool, size_t>> CardOf(const Rml::Element* element);
+    static std::optional<std::pair<bool, size_t>> CardOf(MCOptionalRef<const Rml::Element> element);
     /// <summary>The carried card's place over the drop (pixels from its corner).</summary>
     void PlaceCarried();
     /// <summary>

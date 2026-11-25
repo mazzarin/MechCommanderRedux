@@ -197,12 +197,13 @@ namespace
         return available < 0 ? std::string() : std::format(LeftFormat, available);
     }
 
-    const MCPurMechData* ShownVariant(const MCPurMech& purMech)
+    /// <summary>The variant <paramref name="purMech"/> shows; none when it shows none, or one it lacks.</summary>
+    MCOptionalRef<const MCPurMechData> ShownVariant(const MCPurMech& purMech)
     {
         const int32_t variant = purMech.CurVariant;
         return variant >= 0 && static_cast<size_t>(variant) < purMech.Variants.size()
-                   ? purMech.Variants[static_cast<size_t>(variant)].get()
-                   : nullptr;
+                   ? MCOptionalOf<const MCPurMechData>(purMech.Variants[static_cast<size_t>(variant)].get())
+                   : std::nullopt;
     }
 
     /// <summary>A payload's rows: each weapon and piece of equipment, how many.</summary>
@@ -482,9 +483,9 @@ uint64_t MCLogisticsTabs::Fingerprint() const
 
     for (const std::shared_ptr<MCPurMech>& purMech : logistics->PurMechList->Mechs)
     {
-        const MCPurMechData* data = ShownVariant(*purMech);
+        const MCOptionalRef<const MCPurMechData> data = ShownVariant(*purMech);
         hash = Mixed(hash, static_cast<uint64_t>(purMech->CurVariant + 1) * 4096 +
-                               static_cast<uint64_t>(data != nullptr ? data->NumAvailable + 1 : 0));
+                               static_cast<uint64_t>(data.has_value() ? data->get().NumAvailable + 1 : 0));
     }
 
     for (const std::shared_ptr<MCPurPilotData>& pilot : logistics->PurPilotList->Pilots)
@@ -676,19 +677,20 @@ void MCLogisticsTabs::FillStore()
         {
             for (const std::shared_ptr<MCPurMech>& purMech : logistics.PurMechList->Mechs)
             {
-                const MCPurMechData* data = ShownVariant(*purMech);
+                const MCOptionalRef<const MCPurMechData> shownData = ShownVariant(*purMech);
 
-                if (data == nullptr)
+                if (!shownData.has_value())
                 {
                     continue;
                 }
 
-                add(MCGood{.Picture = MCCampaignMenu::Pictured(MCRmlArt::WholeUnitSource(true, data->NameIndex)),
-                           .Who = data->Name,
-                           .What = TonsAndClass(data->CurTonnage),
-                           .Price = Points(data->Cost),
-                           .Note = data->NumAvailable == 0 ? std::string(SoldOutNote) : LeftNote(data->NumAvailable),
-                           .Off = data->NumAvailable == 0},
+                const MCPurMechData& data = *shownData;
+                add(MCGood{.Picture = MCCampaignMenu::Pictured(MCRmlArt::WholeUnitSource(true, data.NameIndex)),
+                           .Who = data.Name,
+                           .What = TonsAndClass(data.CurTonnage),
+                           .Price = Points(data.Cost),
+                           .Note = data.NumAvailable == 0 ? std::string(SoldOutNote) : LeftNote(data.NumAvailable),
+                           .Off = data.NumAvailable == 0},
                     MCThing{.StoreMech = purMech});
             }
 
@@ -869,44 +871,46 @@ void MCLogisticsTabs::FillDetails()
 
     if (const std::shared_ptr<MCPurMech> purMech = thing.StoreMech.lock(); purMech != nullptr)
     {
-        const MCPurMechData* data = ShownVariant(*purMech);
+        const MCOptionalRef<const MCPurMechData> shownData = ShownVariant(*purMech);
 
-        if (data == nullptr)
+        if (!shownData.has_value())
         {
             _InfoShown = false;
             return;
         }
 
-        _InfoName = data->Name;
-        _InfoWhat = TonsAndClass(data->CurTonnage);
-        _InfoPicture = MCCampaignMenu::Pictured(MCRmlArt::WholeUnitSource(true, data->NameIndex));
-        const std::array<bool*, MCPurMech::NumVariants> offs = {&_VariantOff0, &_VariantOff1, &_VariantOff2};
+        const MCPurMechData& data = *shownData;
+        _InfoName = data.Name;
+        _InfoWhat = TonsAndClass(data.CurTonnage);
+        _InfoPicture = MCCampaignMenu::Pictured(MCRmlArt::WholeUnitSource(true, data.NameIndex));
+        const std::array<std::reference_wrapper<bool>, MCPurMech::NumVariants> offs = {_VariantOff0, _VariantOff1,
+                                                                                       _VariantOff2};
 
         for (size_t variant = 0; variant < purMech->Variants.size(); ++variant)
         {
             const MCPurMechData* shown = purMech->Variants[variant].get();
-            *offs[variant] = shown == nullptr || shown->NumAvailable == 0;
+            offs[variant].get() = shown == nullptr || shown->NumAvailable == 0;
             _Variants += shown != nullptr ? 1 : 0;
         }
 
         _Variant = std::max(purMech->CurVariant, 0);
-        const int32_t internals = std::ranges::fold_left(data->CurInternalStructure, 0, std::plus<>());
-        _Stats = {{"Tons", MCCampaignMenu::TonsText(static_cast<int32_t>(std::lround(data->CurTonnage)))},
-                  {"Class", ClassWord(data->CurTonnage)},
-                  {"Speed", std::format(SpeedFormat, data->MaxRunSpeed)},
-                  {"Armor", GameWord(ArmorClassString(data->ArmorTonnage))},
+        const int32_t internals = std::ranges::fold_left(data.CurInternalStructure, 0, std::plus<>());
+        _Stats = {{"Tons", MCCampaignMenu::TonsText(static_cast<int32_t>(std::lround(data.CurTonnage)))},
+                  {"Class", ClassWord(data.CurTonnage)},
+                  {"Speed", std::format(SpeedFormat, data.MaxRunSpeed)},
+                  {"Armor", GameWord(ArmorClassString(data.ArmorTonnage))},
                   {"Structure", GameWord(InternalClassString(internals))}};
         _Rated = true;
-        _Rating = RatingPercent(data->BattleRating);
+        _Rating = RatingPercent(data.BattleRating);
 
-        if (data->Inventory != nullptr)
+        if (data.Inventory != nullptr)
         {
-            _Kit = KitOf(*data->Inventory);
+            _Kit = KitOf(*data.Inventory);
         }
 
-        _Description = MCBriefingText::Plain(data->Description);
-        _InfoCost = MCGroupedPoints(data->Cost);
-        _InfoNote = data->NumAvailable < 0 ? std::string() : std::format(InStoreFormat, data->NumAvailable);
+        _Description = MCBriefingText::Plain(data.Description);
+        _InfoCost = MCGroupedPoints(data.Cost);
+        _InfoNote = data.NumAvailable < 0 ? std::string() : std::format(InStoreFormat, data.NumAvailable);
         _CanDeal = MCStore::WhyNotBuy(*purMech) == MCStore::MCRefusal::None;
     }
     else if (const std::shared_ptr<MCPurPilotData> pilot = thing.StorePilot.lock(); pilot != nullptr)
@@ -1193,9 +1197,11 @@ void MCLogisticsTabs::FillDeal()
 
 // The cards under the mouse and the keys
 
-std::optional<std::pair<MCPlace, size_t>> MCLogisticsTabs::CardOf(const Rml::Element* element)
+std::optional<std::pair<MCPlace, size_t>> MCLogisticsTabs::CardOf(MCOptionalRef<const Rml::Element> element)
 {
-    for (const Rml::Element* at = element; at != nullptr; at = at->GetParentNode())
+    // Up RmlUi's tree from the element.
+    for (const Rml::Element* at = element.has_value() ? &element->get() : nullptr; at != nullptr;
+         at = at->GetParentNode())
     {
         const std::string& id = at->GetId();
 
@@ -1231,7 +1237,7 @@ std::optional<MCPlace> MCLogisticsTabs::ColumnAt(float x, float y) const
     // The cards first: a unit card is its group; then the columns' boxes.
     Rml::Element* under = _Screen.Layer().Context().GetElementAtPoint(Rml::Vector2f(x, y));
 
-    if (const std::optional<std::pair<MCPlace, size_t>> card = CardOf(under); card.has_value())
+    if (const std::optional<std::pair<MCPlace, size_t>> card = CardOf(MCOptionalOf(under)); card.has_value())
     {
         return card->first == MCPlace::Pilot ? MCPlace::Fitted : card->first;
     }
@@ -1311,14 +1317,15 @@ void MCLogisticsTabs::OnMouse(Rml::Event& event)
                 {
                     _Hold->Dragging = true;
                     PlayLogSound(PickedSound);
-                    const std::vector<MCGood>* goods = _Hold->From == MCPlace::Store   ? &_Store
-                                                       : _Hold->From == MCPlace::Stock ? &_StockGoods
-                                                                                       : nullptr;
+                    using MCGoods = MCOptionalRef<const std::vector<MCGood>>;
+                    const MCGoods goods = _Hold->From == MCPlace::Store   ? MCGoods(_Store)
+                                          : _Hold->From == MCPlace::Stock ? MCGoods(_StockGoods)
+                                                                          : std::nullopt;
                     MCGood lifted;
 
-                    if (goods != nullptr && _Hold->Index < goods->size())
+                    if (goods.has_value() && _Hold->Index < goods->get().size())
                     {
-                        lifted = (*goods)[_Hold->Index];
+                        lifted = goods->get()[_Hold->Index];
                     }
                     else if (const std::vector<MCCampaignScreen::MCCard>& cards =
                                  _Hold->From == MCPlace::Force ? _Force : _Spare;
@@ -1361,7 +1368,7 @@ void MCLogisticsTabs::OnMouse(Rml::Event& event)
                 return;
             }
 
-            const std::optional<std::pair<MCPlace, size_t>> card = CardOf(event.GetTargetElement());
+            const std::optional<std::pair<MCPlace, size_t>> card = CardOf(MCOptionalOf(event.GetTargetElement()));
             const std::optional<MCThing> over = card.has_value() ? ThingAt(card->first, card->second) : std::nullopt;
 
             if (over.has_value() != _Hovered.has_value() || (over.has_value() && !over->Same(*_Hovered)))
@@ -1398,7 +1405,7 @@ void MCLogisticsTabs::OnMouse(Rml::Event& event)
         }
         case Rml::EventId::Mousedown:
         {
-            const std::optional<std::pair<MCPlace, size_t>> card = CardOf(event.GetTargetElement());
+            const std::optional<std::pair<MCPlace, size_t>> card = CardOf(MCOptionalOf(event.GetTargetElement()));
 
             if (!card.has_value())
             {
@@ -1421,7 +1428,7 @@ void MCLogisticsTabs::OnMouse(Rml::Event& event)
     }
 }
 
-bool MCLogisticsTabs::OnKey(int key, const Rml::Element* focus)
+bool MCLogisticsTabs::OnKey(int key, MCOptionalRef<const Rml::Element> focus)
 {
     if (_Deal.has_value())
     {
@@ -1455,7 +1462,7 @@ bool MCLogisticsTabs::OnKey(int key, const Rml::Element* focus)
             case Rml::Input::KI_RETURN:
             case Rml::Input::KI_NUMPADENTER:
             {
-                if (focus != nullptr && focus->GetId() == DealCancelId)
+                if (focus.has_value() && focus->get().GetId() == DealCancelId)
                 {
                     DealCancel();
                 }
@@ -1476,7 +1483,7 @@ bool MCLogisticsTabs::OnKey(int key, const Rml::Element* focus)
     }
 
     const std::optional<std::pair<MCPlace, size_t>> card = CardOf(focus);
-    const std::string focusId = focus != nullptr ? focus->GetId() : std::string();
+    const std::string focusId = focus.has_value() ? focus->get().GetId() : std::string();
 
     // A repair slider with the focus: Left and Right move it a step, as 1998's knob a pixel.
     for (const auto& [id, knob] :
@@ -1975,18 +1982,19 @@ void MCLogisticsTabs::OfferDeal(const MCThing& thing)
 
     if (const std::shared_ptr<MCPurMech> purMech = thing.StoreMech.lock(); purMech != nullptr)
     {
-        const MCPurMechData* data = ShownVariant(*purMech);
+        const MCOptionalRef<const MCPurMechData> shownData = ShownVariant(*purMech);
 
         // 1998's pick-up refuses with the force at its size; its drop refuses when the points don't pay.
-        if (data == nullptr || Refused(MCStore::WhyNotBuy(*purMech)) || CheckMaxUnits())
+        if (!shownData.has_value() || Refused(MCStore::WhyNotBuy(*purMech)) || CheckMaxUnits())
         {
             return;
         }
 
-        deal = {.Thing = thing, .Each = data->Cost, .Most = MaxPurchase(data->NumAvailable), .Type = BuyMechType};
-        _DealName = data->Name;
-        what = TonsAndClass(data->CurTonnage);
-        picture = MCCampaignMenu::Pictured(MCRmlArt::WholeUnitSource(true, data->NameIndex));
+        const MCPurMechData& data = *shownData;
+        deal = {.Thing = thing, .Each = data.Cost, .Most = MaxPurchase(data.NumAvailable), .Type = BuyMechType};
+        _DealName = data.Name;
+        what = TonsAndClass(data.CurTonnage);
+        picture = MCCampaignMenu::Pictured(MCRmlArt::WholeUnitSource(true, data.NameIndex));
     }
     else if (const std::shared_ptr<MCPurPilotData> pilot = thing.StorePilot.lock(); pilot != nullptr)
     {

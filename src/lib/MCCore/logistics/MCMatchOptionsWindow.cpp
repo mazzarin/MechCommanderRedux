@@ -119,11 +119,6 @@ namespace
     {
         return std::format("{}{}", ControlPrefix, row);
     }
-
-    Rml::Element* ElementIn(MCOptionalRef<Rml::ElementDocument> document, const char* id)
-    {
-        return document.has_value() ? document->get().GetElementById(id) : nullptr;
-    }
 }
 
 MCMatchOptionsWindow::MCMatchOptionsWindow()
@@ -180,7 +175,7 @@ void MCMatchOptionsWindow::OnShow()
     SDL_Log("MATCH OPTIONS: shown, %s", host ? "the host's" : "a guest's");
     Keys = {{"ESC", std::string(host ? DoneWord : CloseWord)}};
 
-    if (Rml::Element* tabs = ElementIn(Document(), TabsId); tabs != nullptr)
+    if (const MCOptionalRef<Rml::Element> tabs = ElementById(TabsId); tabs.has_value())
     {
         MCRmlKit::SetChoice(*tabs, static_cast<int>(_Tab));
     }
@@ -282,8 +277,8 @@ void MCMatchOptionsWindow::ShowTab(MCTab tab)
 
     _Tab = tab;
 
-    if (Rml::Element* tabs = ElementIn(Document(), TabsId);
-        tabs != nullptr && MCRmlKit::Choice(*tabs) != static_cast<int>(tab))
+    if (const MCOptionalRef<Rml::Element> tabs = ElementById(TabsId);
+        tabs.has_value() && MCRmlKit::Choice(*tabs) != static_cast<int>(tab))
     {
         MCRmlKit::SetChoice(*tabs, static_cast<int>(tab));
     }
@@ -294,9 +289,9 @@ void MCMatchOptionsWindow::ShowTab(MCTab tab)
 
 void MCMatchOptionsWindow::Build()
 {
-    Rml::Element* rowsElement = ElementIn(Document(), RowsId);
+    const MCOptionalRef<Rml::Element> rowsElement = ElementById(RowsId);
 
-    if (rowsElement == nullptr)
+    if (!rowsElement.has_value())
     {
         return;
     }
@@ -356,13 +351,14 @@ void MCMatchOptionsWindow::Build()
         built.push_back(std::move(now));
     }
 
-    rowsElement->SetInnerRML(markup);
+    rowsElement->get().SetInnerRML(markup);
 
     // The controls' choices as the match plays them (no sound, no change event: the window set them).
     for (const MCRowNow& now : built)
     {
-        if (Rml::Element* control = ElementIn(Document(), IdOf(now.Row).c_str());
-            control != nullptr && now.Choice >= 0 && (control->IsClassSet("switch") || control->IsClassSet("stepper")))
+        if (const MCOptionalRef<Rml::Element> control = ElementById(IdOf(now.Row));
+            control.has_value() && now.Choice >= 0 &&
+            (control->get().IsClassSet("switch") || control->get().IsClassSet("stepper")))
         {
             MCRmlKit::SetChoice(*control, now.Choice);
         }
@@ -372,14 +368,14 @@ void MCMatchOptionsWindow::Build()
     _BuiltHosting = host;
 
     // The foot: DONE for the host; a guest's CLOSE, saying who sets them.
-    if (Rml::Element* done = ElementIn(Document(), DoneId); done != nullptr)
+    if (const MCOptionalRef<Rml::Element> done = ElementById(DoneId); done.has_value())
     {
-        done->SetInnerRML(std::string(host ? DoneWord : CloseWord));
+        done->get().SetInnerRML(std::string(host ? DoneWord : CloseWord));
     }
 
-    if (Rml::Element* note = ElementIn(Document(), NoteId); note != nullptr)
+    if (const MCOptionalRef<Rml::Element> note = ElementById(NoteId); note.has_value())
     {
-        note->SetInnerRML(host ? std::string() : std::string(HostSetsThese));
+        note->get().SetInnerRML(host ? std::string() : std::string(HostSetsThese));
     }
 }
 
@@ -412,9 +408,9 @@ void MCMatchOptionsWindow::Refresh()
             continue;
         }
 
-        if (Rml::Element* control = ElementIn(Document(), IdOf(now[at].Row).c_str()); control != nullptr)
+        if (const MCOptionalRef<Rml::Element> control = ElementById(IdOf(now[at].Row)); control.has_value())
         {
-            if (control->IsClassSet("switch") || control->IsClassSet("stepper"))
+            if (control->get().IsClassSet("switch") || control->get().IsClassSet("stepper"))
             {
                 if (now[at].Choice >= 0)
                 {
@@ -423,8 +419,8 @@ void MCMatchOptionsWindow::Refresh()
             }
             else
             {
-                control->SetInnerRML(MCRmlDialog::Escape(now[at].Value));
-                control->SetClass("grey", now[at].Value == OffWord || !now[at].HeldBy.empty());
+                control->get().SetInnerRML(MCRmlDialog::Escape(now[at].Value));
+                control->get().SetClass("grey", now[at].Value == OffWord || !now[at].HeldBy.empty());
             }
         }
 

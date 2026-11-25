@@ -98,6 +98,8 @@ public:
 
     /// <summary>The screen's document (none before it is read, or once the screen is destroyed).</summary>
     MCOptionalRef<Rml::ElementDocument> Document() const;
+    /// <summary>The element <paramref name="id"/> of the screen's document; none without one.</summary>
+    MCOptionalRef<Rml::Element> ElementById(const std::string& id) const;
 
     /// <summary>The layer the screen is on.</summary>
     MCRmlLayer& Layer() const;

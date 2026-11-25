@@ -223,12 +223,6 @@ namespace
 
         return false;
     }
-
-    /// <summary>The element <paramref name="id"/> of the screen's document; null with none.</summary>
-    Rml::Element* ElementOf(const MCOptionalRef<Rml::ElementDocument>& document, const std::string& id)
-    {
-        return document.has_value() ? document->get().GetElementById(id) : nullptr;
-    }
 }
 
 /// <summary>The document's mouse: presses, releases and moves over DEPLOY's cards.</summary>
@@ -460,7 +454,8 @@ void MCCampaignScreen::SetUp(MCTab tab)
 
 void MCCampaignScreen::MarkTab()
 {
-    if (Rml::Element* tabs = ElementOf(Document(), TabsId); tabs != nullptr && MCRmlKit::Choice(*tabs) != _Tab)
+    if (const MCOptionalRef<Rml::Element> tabs = ElementById(TabsId);
+        tabs.has_value() && MCRmlKit::Choice(*tabs) != _Tab)
     {
         MCRmlKit::SetChoice(*tabs, _Tab);
     }
@@ -503,15 +498,15 @@ void MCCampaignScreen::ReadBriefing()
                         ? std::format(MCCampaignMenu::VideoEyebrowFormat, mission.Operation, mission.OperationName)
                         : mission.OperationName;
 
-    if (Rml::Element* map = ElementOf(Document(), MapId); map != nullptr)
+    if (const MCOptionalRef<Rml::Element> map = ElementById(MapId); map.has_value())
     {
         if (_MapSource.empty())
         {
-            map->RemoveProperty("decorator");
+            map->get().RemoveProperty("decorator");
         }
         else
         {
-            map->SetProperty("decorator", std::format("image({} contain left top)", _MapSource));
+            map->get().SetProperty("decorator", std::format("image({} contain left top)", _MapSource));
         }
     }
 
@@ -524,8 +519,9 @@ void MCCampaignScreen::ReadBriefing()
 
 bool MCCampaignScreen::PlaceZoneTags()
 {
-    Rml::Element* map = ElementOf(Document(), MapId);
-    const Rml::Vector2f box = map != nullptr ? map->GetBox().GetSize(Rml::BoxArea::Content) : Rml::Vector2f(0, 0);
+    const MCOptionalRef<Rml::Element> map = ElementById(MapId);
+    const Rml::Vector2f box =
+        map.has_value() ? map->get().GetBox().GetSize(Rml::BoxArea::Content) : Rml::Vector2f(0, 0);
 
     // The map not laid out (another tab shows): the tags stay as they were placed; nor moved, they stay.
     if (box.x <= 0 || box.y <= 0 || (box.x == _ZoneBox.x && box.y == _ZoneBox.y))
@@ -619,7 +615,7 @@ void MCCampaignScreen::ChooseWhoReads(bool toTeam)
     // One place of the chat shows at a time (a tab's, or its column at 21:9): the others follow it.
     for (const char* id : ToIds)
     {
-        if (Rml::Element* to = ElementOf(Document(), id); to != nullptr && MCRmlKit::Choice(*to) != choice)
+        if (const MCOptionalRef<Rml::Element> to = ElementById(id); to.has_value() && MCRmlKit::Choice(*to) != choice)
         {
             MCRmlKit::SetChoice(*to, choice);
         }
@@ -1195,9 +1191,11 @@ void MCCampaignScreen::PressBegin()
     }
 }
 
-std::optional<std::pair<bool, size_t>> MCCampaignScreen::CardOf(const Rml::Element* element)
+std::optional<std::pair<bool, size_t>> MCCampaignScreen::CardOf(MCOptionalRef<const Rml::Element> element)
 {
-    for (const Rml::Element* at = element; at != nullptr; at = at->GetParentNode())
+    // Up RmlUi's tree from the element.
+    for (const Rml::Element* at = element.has_value() ? &element->get() : nullptr; at != nullptr;
+         at = at->GetParentNode())
     {
         const std::string& id = at->GetId();
 
@@ -1219,8 +1217,8 @@ std::optional<size_t> MCCampaignScreen::SlotAt(float x, float y) const
 {
     for (size_t slot = 0; slot < MCDeploy::Slots; ++slot)
     {
-        if (const Rml::Element* card = ElementOf(Document(), std::format("{}{}", SlotPrefix, slot));
-            card != nullptr && const_cast<Rml::Element*>(card)->IsPointWithinElement(Rml::Vector2f(x, y)))
+        if (const MCOptionalRef<Rml::Element> card = ElementById(std::format("{}{}", SlotPrefix, slot));
+            card.has_value() && card->get().IsPointWithinElement(Rml::Vector2f(x, y)))
         {
             return slot;
         }
@@ -1231,7 +1229,7 @@ std::optional<size_t> MCCampaignScreen::SlotAt(float x, float y) const
 
 std::optional<size_t> MCCampaignScreen::FocusedSlot() const
 {
-    const std::optional<std::pair<bool, size_t>> card = CardOf(Layer().Context().GetFocusElement());
+    const std::optional<std::pair<bool, size_t>> card = CardOf(MCOptionalOf(Layer().Context().GetFocusElement()));
     return card.has_value() && !card->first ? std::optional(card->second) : std::nullopt;
 }
 
@@ -1294,14 +1292,14 @@ std::optional<size_t> MCCampaignScreen::SlotToward(std::optional<size_t> from, i
 
 void MCCampaignScreen::PlaceCarried()
 {
-    Rml::Element* drop = ElementOf(Document(), DropId);
+    const MCOptionalRef<Rml::Element> drop = ElementById(DropId);
 
-    if (!_Carry.has_value() || drop == nullptr)
+    if (!_Carry.has_value() || !drop.has_value())
     {
         return;
     }
 
-    const Rml::Vector2f corner = drop->GetAbsoluteOffset(Rml::BoxArea::Border);
+    const Rml::Vector2f corner = drop->get().GetAbsoluteOffset(Rml::BoxArea::Border);
     Rml::Vector2f at(_Carry->MouseX - _Carry->GrabX, _Carry->MouseY - _Carry->GrabY);
 
     // By the keys: over the slot (or the card) with the focus.
@@ -1383,7 +1381,7 @@ void MCCampaignScreen::OnMouse(Rml::Event& event)
     }
 
     Rml::Element* target = event.GetTargetElement();
-    const std::optional<std::pair<bool, size_t>> card = CardOf(target);
+    const std::optional<std::pair<bool, size_t>> card = CardOf(MCOptionalOf(target));
 
     if (!card.has_value())
     {
@@ -1416,7 +1414,7 @@ void MCCampaignScreen::OnMouse(Rml::Event& event)
 
     for (Rml::Element* at = target; at != nullptr; at = at->GetParentNode())
     {
-        if (CardOf(at) == card && at->GetId().starts_with(ready ? ReadyPrefix : SlotPrefix))
+        if (CardOf(*at) == card && at->GetId().starts_with(ready ? ReadyPrefix : SlotPrefix))
         {
             corner = at->GetAbsoluteOffset(Rml::BoxArea::Border);
             break;
@@ -1471,7 +1469,7 @@ bool MCCampaignScreen::OnKey(int key, int /*modifiers*/)
 
     if (Tab() == MCTab::Purchasing || Tab() == MCTab::MechBay)
     {
-        return _Logistics->OnKey(key, Layer().Context().GetFocusElement());
+        return _Logistics->OnKey(key, MCOptionalOf(Layer().Context().GetFocusElement()));
     }
 
     if (Tab() != MCTab::Deploy)
@@ -1479,7 +1477,7 @@ bool MCCampaignScreen::OnKey(int key, int /*modifiers*/)
         return false;
     }
 
-    const std::optional<std::pair<bool, size_t>> card = CardOf(Layer().Context().GetFocusElement());
+    const std::optional<std::pair<bool, size_t>> card = CardOf(MCOptionalOf(Layer().Context().GetFocusElement()));
 
     switch (key)
     {
@@ -1524,9 +1522,10 @@ bool MCCampaignScreen::OnKey(int key, int /*modifiers*/)
             // The carry's arrows are the screen's, the focus following the unit over the slots.
             if (const std::optional<size_t> next = SlotToward(_Carry->Over, key); next.has_value())
             {
-                if (Rml::Element* slot = ElementOf(Document(), std::format("{}{}", SlotPrefix, *next)); slot != nullptr)
+                if (const MCOptionalRef<Rml::Element> slot = ElementById(std::format("{}{}", SlotPrefix, *next));
+                    slot.has_value())
                 {
-                    slot->Focus(true);
+                    slot->get().Focus(true);
                 }
 
                 HoldOver(next);

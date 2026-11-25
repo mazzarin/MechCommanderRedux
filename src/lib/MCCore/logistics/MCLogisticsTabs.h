@@ -127,7 +127,7 @@ public:
     /// <summary>A press, release or move of the mouse over the document.</summary>
     void OnMouse(Rml::Event& event);
     /// <summary>A key before RmlUi's: whether it was taken (<paramref name="focus"/> the keys' focus).</summary>
-    bool OnKey(int key, const Rml::Element* focus);
+    bool OnKey(int key, MCOptionalRef<const Rml::Element> focus);
     /// <summary>Escape: the deal window closed, or a drag put back; false with neither.</summary>
     bool Back();
     /// <summary>The hint line's keys as the tab stands.</summary>
@@ -238,7 +238,7 @@ private:
     /// <summary>The thing a card at <paramref name="place"/> <paramref name="index"/> stands for.</summary>
     std::optional<MCThing> ThingAt(MCPlace place, size_t index) const;
     /// <summary>The card the element is in (its id: force3, store0), if any.</summary>
-    static std::optional<std::pair<MCPlace, size_t>> CardOf(const Rml::Element* element);
+    static std::optional<std::pair<MCPlace, size_t>> CardOf(MCOptionalRef<const Rml::Element> element);
     /// <summary>The column a point (pixels) is over: the force's (Force), SPARE's, the store, the INVENTORY, the lab.</summary>
     std::optional<MCPlace> ColumnAt(float x, float y) const;
     /// <summary>The deal window opened for <paramref name="thing"/>: a buy from the store, else a sale.</summary>

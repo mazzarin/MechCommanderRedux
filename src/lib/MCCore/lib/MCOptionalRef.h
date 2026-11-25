@@ -15,3 +15,12 @@ template <typename T> auto MCOptionalOf(std::shared_ptr<T> pointer) -> MCOptiona
 {
     return pointer != nullptr ? MCOptionalRef<T>(*pointer) : std::nullopt;
 }
+
+/// <summary>
+/// The object an API's <paramref name="pointer"/> points to as an <see cref="MCOptionalRef{T}"/> (absent for null), for
+/// the caller's use now: the API keeps the object.
+/// </summary>
+template <typename T> auto MCOptionalOf(T* pointer) -> MCOptionalRef<T>
+{
+    return pointer != nullptr ? MCOptionalRef<T>(*pointer) : std::nullopt;
+}

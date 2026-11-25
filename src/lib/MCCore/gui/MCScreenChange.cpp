@@ -52,10 +52,33 @@ namespace
     /// <summary>Whether <see cref="MCScreenChange::Tend"/> runs a piece (one that draws frames of its own runs no other).</summary>
     bool Tending = false;
     /// <summary>
-    /// Where <see cref="MCScreenChange::RunNext"/> puts the pieces asked for: the pieces RunPieces runs after the one
-    /// running; none while a change's own piece runs (they go into its list, after it).
+    /// Where <see cref="MCScreenChange::RunNext"/> puts the pieces asked for, the innermost last
+    /// (<see cref="MCRunNextScope"/>): the pieces RunPieces runs after the one running; none (an empty entry) while a
+    /// change's own piece runs (they go into its list, after it). Owned here, so a piece left by an exception leaves no
+    /// list behind that has gone.
     /// </summary>
-    std::vector<MCScreenChange::MCPiece>* RunNextInto = nullptr;
+    std::vector<std::optional<std::vector<MCPiece>>> RunNextLists;
+
+    /// <summary>An entry of <see cref="RunNextLists"/> for as long as this lives (none: an empty entry).</summary>
+    class MCRunNextScope
+    {
+    public:
+        explicit MCRunNextScope(bool kept)
+        {
+            RunNextLists.push_back(kept ? std::make_optional<std::vector<MCPiece>>() : std::nullopt);
+        }
+
+        ~MCRunNextScope() { RunNextLists.pop_back(); }
+        MCRunNextScope(const MCRunNextScope&) = delete;
+        MCRunNextScope& operator=(const MCRunNextScope&) = delete;
+
+        /// <summary>The pieces asked for while this was the innermost entry (empty for none).</summary>
+        std::vector<MCPiece> Take()
+        {
+            return std::exchange(RunNextLists.back(), std::nullopt).value_or(std::vector<MCPiece>());
+        }
+    };
+
     /// <summary>Whether the change's own piece running is one of its job's (else its dark work's).</summary>
     bool RunningJob = false;
     /// <summary>The last change to end: its name and its press (for a change carrying on from it).</summary>
@@ -162,12 +185,14 @@ namespace
         piece.Run = nullptr;
         const std::string_view part = piece.Part;
         const uint64_t generation = Generation;
-        std::vector<MCPiece>* const into = std::exchange(RunNextInto, nullptr);
         RunningJob = job;
         Tending = true;
-        RunInPart(part, run);
+        {
+            const MCRunNextScope intoChange(false);
+            RunInPart(part, run);
+        }
+
         Tending = false;
-        RunNextInto = into;
 
         if (generation != Generation)
         {
@@ -346,22 +371,25 @@ auto MCScreenChange::Tend() -> void
 auto MCScreenChange::RunPieces(std::span<const MCPiece> pieces) -> void
 {
     const bool tending = Tending;
-    std::vector<MCPiece>* const into = RunNextInto;
     Tending = true;
 
     for (const MCPiece& piece : pieces)
     {
         std::vector<MCPiece> next;
-        RunNextInto = &next;
-        RunInPart(piece.Part, piece.Run);
 
-        // A wait done without a change: asked until it's over (nothing else to draw meanwhile).
-        while (piece.Until != nullptr && !piece.Until())
         {
-            SDL_Delay(1);
+            MCRunNextScope after(true);
+            RunInPart(piece.Part, piece.Run);
+
+            // A wait done without a change: asked until it's over (nothing else to draw meanwhile).
+            while (piece.Until != nullptr && !piece.Until())
+            {
+                SDL_Delay(1);
+            }
+
+            next = after.Take();
         }
 
-        RunNextInto = into;
         RunPieces(next);
     }
 
@@ -395,9 +423,9 @@ auto MCScreenChange::InPiece() -> bool
 
 auto MCScreenChange::RunNext(std::vector<MCPiece> pieces) -> void
 {
-    if (RunNextInto != nullptr)
+    if (!RunNextLists.empty() && RunNextLists.back().has_value())
     {
-        std::ranges::move(pieces, std::back_inserter(*RunNextInto));
+        std::ranges::move(pieces, std::back_inserter(*RunNextLists.back()));
         return;
     }
 

@@ -57,9 +57,11 @@ namespace
         std::function<void()> HeldEscape;
         /// <summary>Port-only: the layer over the game that sees the events first (SetEventLayer).</summary>
         std::function<bool(const SDL_Event&)> Layer;
-        /// <summary>Port-only: whether the layer's screens fill the window (SetEventLayer), and its answer last asked.</summary>
-        std::function<bool()> LayerFills;
-        bool LayerFilling = false;
+        /// <summary>Port-only: what the layer shows (SetEventLayer), and its answer as the pump last asked.</summary>
+        std::function<MCInput::MCLayerShows()> LayerShows;
+        MCInput::MCLayerShows LayerShown = MCInput::MCLayerShows::Nothing;
+        /// <summary>Port-only: whether the game draws its cursor into the frame (SetDrawnCursor).</summary>
+        bool DrawnCursor = false;
         /// <summary>Tests: the window taken as full screen and focused (TakeAsFullscreen).</summary>
         bool TakenAsFullscreen = false;
     };
@@ -240,51 +242,29 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: the cursor kept at the place of a mouse event the layer over the game took (SetEventLayer), not made the
-    /// message position (the game handles no message for it).
-    /// </summary>
-    void followTakenMouse(const SDL_Event& event)
-    {
-        MCPoint point;
-
-        switch (event.type)
-        {
-            case SDL_EVENT_MOUSE_MOTION:
-                point = toLogical(event.motion.x, event.motion.y);
-                break;
-            case SDL_EVENT_MOUSE_BUTTON_DOWN:
-            case SDL_EVENT_MOUSE_BUTTON_UP:
-                point = toLogical(event.button.x, event.button.y);
-                break;
-            default:
-                return;
-        }
-
-        MCInputState& input = state();
-        input.CursorX = point.x;
-        input.CursorY = point.y;
-    }
-
-    /// <summary>
-    /// Shows the system arrow while the game's counter says so; else the game's cursor if it gave one; else the
-    /// arrow while the mouse is over the letterbox bars (where the cursor drawn into the frame can't follow it).
+    /// Shows the cursor <see cref="MCInput::ShownCursor"/> picks: the system arrow, the game's cursor, or none.
     /// </summary>
     void updateCursorVisibility()
     {
         MCInputState& input = state();
+        MCInput::MCCursorShowing showing;
+        showing.Counter = input.CursorCounter;
+        showing.GameCursor = input.GameCursor != nullptr;
+        showing.DrawnCursor = input.DrawnCursor;
+        showing.Layer = input.LayerShown;
+        showing.OutsidePicture = input.OutsidePicture;
         SDL_Cursor* cursor = nullptr;
 
-        if (input.CursorCounter >= 0)
+        switch (MCInput::ShownCursor(showing))
         {
-            cursor = SDL_GetDefaultCursor();
-        }
-        else if (input.GameCursor != nullptr)
-        {
-            cursor = input.GameCursor.get();
-        }
-        else if (input.OutsidePicture)
-        {
-            cursor = SDL_GetDefaultCursor();
+            case MCInput::MCShownCursor::Arrow:
+                cursor = SDL_GetDefaultCursor();
+                break;
+            case MCInput::MCShownCursor::Game:
+                cursor = input.GameCursor.get();
+                break;
+            case MCInput::MCShownCursor::None:
+                break;
         }
 
         if (cursor == nullptr)
@@ -302,6 +282,64 @@ namespace
         {
             SDL_ShowCursor();
         }
+    }
+
+    /// <summary>Notes whether the mouse, at window point (x, y), is over the letterbox bars or the picture.</summary>
+    void followPicture(float x, float y)
+    {
+        MCInputState& input = state();
+        const std::shared_ptr<MCDisplay> display = input.Display.lock();
+
+        if (display == nullptr)
+        {
+            return;
+        }
+
+        float logicalX = 0.0f;
+        float logicalY = 0.0f;
+        const bool outside = !display->WindowToLogical(x, y, logicalX, logicalY);
+
+        if (outside != input.OutsidePicture)
+        {
+            input.OutsidePicture = outside;
+            updateCursorVisibility();
+        }
+    }
+
+    /// <summary>
+    /// Port-only: the cursor kept at the place of a mouse event the layer over the game took (SetEventLayer), not made the
+    /// message position (the game handles no message for it), and where the mouse is noted (over the bars or the
+    /// picture), so it's right when the layer goes.
+    /// </summary>
+    void followTakenMouse(const SDL_Event& event)
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+
+        switch (event.type)
+        {
+            case SDL_EVENT_MOUSE_MOTION:
+            {
+                x = event.motion.x;
+                y = event.motion.y;
+                break;
+            }
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+            {
+                x = event.button.x;
+                y = event.button.y;
+                break;
+            }
+            default:
+                return;
+        }
+
+        followPicture(x, y);
+        const MCPoint point = toLogical(x, y);
+        MCInputState& input = state();
+        input.CursorX = point.x;
+        input.CursorY = point.y;
     }
 
     /// <summary>The window points a rectangle of the logical screen covers whole (at least one point each way).</summary>
@@ -349,7 +387,7 @@ namespace
         }
 
         area.FullscreenFocused = input.TakenAsFullscreen || (input.Active && display->IsFullscreen());
-        area.LayerFillsWindow = input.LayerFilling;
+        area.LayerFillsWindow = input.LayerShown == MCInput::MCLayerShows::Window;
         area.Picture = windowArea(*display, screenArea());
 
         if (!SDL_GetWindowSize(window, &area.Window.x, &area.Window.y))
@@ -369,19 +407,29 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: the mouse's area set again when the layer over the game has started or stopped filling the window
-    /// (SetEventLayer), asked once a pump: a screen swapped for another in one frame doesn't pull the mouse in.
+    /// Port-only: what the layer over the game shows (SetEventLayer), asked once a pump: the mouse's area set again when
+    /// it has started or stopped filling the window (a screen swapped for another in one frame doesn't pull the mouse
+    /// in), and the cursor shown again when it has started or stopped showing a screen.
     /// </summary>
-    void followLayerFill()
+    void followLayer()
     {
         MCInputState& input = state();
-        const bool filling = input.LayerFills && input.LayerFills();
+        const MCInput::MCLayerShows shown = input.LayerShows ? input.LayerShows() : MCInput::MCLayerShows::Nothing;
 
-        if (filling != input.LayerFilling)
+        if (shown == input.LayerShown)
         {
-            input.LayerFilling = filling;
+            return;
+        }
+
+        const bool filled = input.LayerShown == MCInput::MCLayerShows::Window;
+        input.LayerShown = shown;
+
+        if ((shown == MCInput::MCLayerShows::Window) != filled)
+        {
             applyMouseRect();
         }
+
+        updateCursorVisibility();
     }
 
     void activate(bool active)
@@ -694,7 +742,7 @@ namespace MCInput
 
         // Between the batches of keys SDL reads (see SetTextInput).
         applyTextInput();
-        followLayerFill();
+        followLayer();
         SDL_Event event;
 
         while (SDL_PollEvent(&event))
@@ -853,6 +901,41 @@ namespace MCInput
 
         input.GameCursor = std::move(cursor);
         updateCursorVisibility();
+    }
+
+    void SetDrawnCursor(bool drawn)
+    {
+        MCInputState& input = state();
+
+        if (input.DrawnCursor == drawn)
+        {
+            return;
+        }
+
+        input.DrawnCursor = drawn;
+        updateCursorVisibility();
+    }
+
+    MCShownCursor ShownCursor(const MCCursorShowing& showing)
+    {
+        if (showing.Counter >= 0)
+        {
+            return MCShownCursor::Arrow;
+        }
+
+        if (showing.GameCursor)
+        {
+            return MCShownCursor::Game;
+        }
+
+        // Port-only: the layer's screens are drawn over the game's frame, bars and all: the arrow stands in for the
+        // cursor drawn into it, which they cover.
+        if (showing.Layer != MCLayerShows::Nothing)
+        {
+            return showing.DrawnCursor ? MCShownCursor::Arrow : MCShownCursor::None;
+        }
+
+        return showing.OutsidePicture ? MCShownCursor::Arrow : MCShownCursor::None;
     }
 
     void ClipCursor(std::optional<MCClipRect> rect)
@@ -1040,19 +1123,7 @@ namespace MCInput
             }
             case SDL_EVENT_MOUSE_MOTION:
             {
-                if (const std::shared_ptr<MCDisplay> display = input.Display.lock())
-                {
-                    float x;
-                    float y;
-                    const bool outside = !display->WindowToLogical(event.motion.x, event.motion.y, x, y);
-
-                    if (outside != input.OutsidePicture)
-                    {
-                        input.OutsidePicture = outside;
-                        updateCursorVisibility();
-                    }
-                }
-
+                followPicture(event.motion.x, event.motion.y);
                 MCPoint point = toLogical(event.motion.x, event.motion.y);
                 setCursor(point);
                 send(WM_MOUSEMOVE, mouseKeyFlags(), MakePointLParam(point.x, point.y));
@@ -1151,17 +1222,23 @@ namespace MCInput
         input.Held = false;
         input.HeldEscape = nullptr;
         input.Layer = nullptr;
-        input.LayerFills = nullptr;
-        input.LayerFilling = false;
+        input.LayerShows = nullptr;
+        input.LayerShown = MCLayerShows::Nothing;
+        input.DrawnCursor = false;
         input.TakenAsFullscreen = false;
     }
 
-    void SetEventLayer(std::function<bool(const SDL_Event&)> layer, std::function<bool()> fillsWindow)
+    void SetEventLayer(std::function<bool(const SDL_Event&)> layer, std::function<MCLayerShows()> shows)
     {
         MCInputState& input = state();
         input.Layer = std::move(layer);
-        input.LayerFills = std::move(fillsWindow);
-        followLayerFill();
+        input.LayerShows = std::move(shows);
+        followLayer();
+    }
+
+    bool LayerHasMouse()
+    {
+        return state().LayerShown != MCLayerShows::Nothing;
     }
 
     void HoldInput(bool held, std::function<void()> escape)

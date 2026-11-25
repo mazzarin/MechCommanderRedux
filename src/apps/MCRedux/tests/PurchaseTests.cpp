@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "fakes/MCMemoryFileSource.h"
@@ -11,6 +12,7 @@
 #include "logistics/MCInventoryBlock.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogRows.h"
+#include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMechInventoryBlock.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCMechRepairBlock.h"
@@ -26,6 +28,7 @@
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCUnitLimits.h"
 #include "logistics/MCVehicleInventoryBlock.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
@@ -882,27 +885,17 @@ namespace
         Settle();
     }
 
-    /// <summary>The inventory's first row dragged onto the store.</summary>
-    void SellFirst()
+    /// <summary>
+    /// PURCHASING's store card <paramref name="card"/> dragged onto the left column (<paramref name="onto"/>: SPARE, or
+    /// the INVENTORY for MechWarriors and parts) and the deal window's CONFIRM pressed, as it opens.
+    /// </summary>
+    void BuyFromStore(MCLogisticsTabs& tabs, MCLogisticsTabs::MCPlace onto = MCLogisticsTabs::MCPlace::Spare,
+                      size_t card = 0)
     {
-        Drag(100, 120, 300, 200);
-        Settle();
-    }
-
-    /// <summary><paramref name="pilot"/>'s row in the shown screen's inventory list, or null.</summary>
-    std::shared_ptr<MCPilotInventoryBlock> PilotRow(const MCLogWarrior& pilot)
-    {
-        const std::shared_ptr<MCLogInvScreen> screen = MCLogInvScreen::Of(*GlobalLog()->CurrentScreen());
-        return screen != nullptr ? screen->InventoryPane->RowOf<MCPilotInventoryBlock>(pilot) : nullptr;
-    }
-
-    /// <summary><paramref name="pilot"/>'s inventory row dragged onto the unit pane's first row.</summary>
-    void DragPilot(MCLogWarrior& pilot)
-    {
-        const std::shared_ptr<MCPilotInventoryBlock> shown = PilotRow(pilot);
-        REQUIRE(shown != nullptr);
-        MCPilotInventoryBlock& row = *shown;
-        Drag(row.GlobalX() + 40, row.GlobalY() + row.Height() / 2, 300, 60);
+        tabs.Drop(MCLogisticsTabs::MCPlace::Store, card, onto);
+        REQUIRE(tabs.DealOpen());
+        tabs.DealConfirm();
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     }
 
     /// <summary>The unit in inventory row 0 of <paramref name="list"/>, if any.</summary>
@@ -930,10 +923,8 @@ TEST_CASE_ISOLATED("game: the purchase screen buys and sells mechs, vehicles, co
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     NewCampaign();
-    Settle();
-    GlobalLog()->SetUpPurchaseScreen(true);
-    Settle();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen);
+    MCLogisticsTabs& tabs = MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::Purchasing).Logistics();
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
     ResourcePoints = 100000;
 
     // A mech: the shown variant's price, one more in the inventory, one less in stock.
@@ -948,21 +939,21 @@ TEST_CASE_ISOLATED("game: the purchase screen buys and sells mechs, vehicles, co
 
         const MCPurMechData& shown = *purMech.Variants[static_cast<size_t>(purMech.CurVariant)];
         const int32_t mechs = GlobalLog()->MechList->GetMechCount();
-        BuyFirst();
-        Accept();
+        BuyFromStore(tabs);
         CHECK_EQ(GlobalLog()->MechList->GetMechCount(), mechs + 1);
         CHECK_EQ(ResourcePoints, 100000 - shown.Cost);
         CHECK_EQ(shown.NumAvailable, 1);
     }
 
-    // Selling the inventory's first mech back returns half its value.
+    // Selling SPARE's first mech back, dragged onto the store, returns half its value.
     {
         MCTest::Scope scope("mech sale");
         // The value as the sale works it out: the mech's price as it is now. (The pin ends before the sale: kept, it
-        // would keep the sold mech alive, and the inventory information would still show it.)
-        const int32_t value = []
+        // would keep the sold mech alive.)
+        const int32_t value = [&tabs]
         {
-            const std::shared_ptr<MCLogMech> sold = FirstInventoryMech(*GlobalLog()->MechList);
+            const std::shared_ptr<MCLogMech> sold =
+                std::dynamic_pointer_cast<MCLogMech>(tabs.UnitAt(MCLogisticsTabs::MCPlace::Spare, 0));
             REQUIRE(sold != nullptr);
             REQUIRE(!sold->Required);
             sold->CalcMechCost(false);
@@ -970,8 +961,10 @@ TEST_CASE_ISOLATED("game: the purchase screen buys and sells mechs, vehicles, co
         }();
         const int32_t points = ResourcePoints;
         const int32_t mechs = GlobalLog()->MechList->GetMechCount();
-        SellFirst();
-        Accept();
+        tabs.Drop(MCLogisticsTabs::MCPlace::Spare, 0, MCLogisticsTabs::MCPlace::Store);
+        REQUIRE(tabs.DealOpen());
+        tabs.DealConfirm();
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
         CHECK_EQ(GlobalLog()->MechList->GetMechCount(), mechs - 1);
         CHECK_EQ(ResourcePoints, points + value / 2);
     }
@@ -979,29 +972,23 @@ TEST_CASE_ISOLATED("game: the purchase screen buys and sells mechs, vehicles, co
     // A vehicle.
     {
         MCTest::Scope scope("vehicle");
-        Click(200, 350);
-        Settle();
+        tabs.ChooseKind(MCLogisticsTabs::MCKind::Vehicles);
         MCPurVehicleData& data = *GlobalLog()->PurVehicleList->Vehicles.front()->Data;
         data.NumAvailable = 2;
         const int32_t vehicles = GlobalLog()->VehicleList->GetVehicleCount();
         const int32_t points = ResourcePoints;
-        BuyFirst();
-        Accept();
+        BuyFromStore(tabs);
         CHECK_EQ(GlobalLog()->VehicleList->GetVehicleCount(), vehicles + 1);
         CHECK_EQ(ResourcePoints, points - data.Cost);
         CHECK_EQ(data.NumAvailable, 1);
     }
 
-    // A component: the store row drawn first (row 0).
+    // A component: the store's first card.
     {
         MCTest::Scope scope("component");
-        Click(200, 280);
-        Settle();
-        REQUIRE(!MCLogInvScreen::StoreList()->Rows().empty());
-        const std::shared_ptr<MCCompPurchaseBlock> row =
-            std::dynamic_pointer_cast<MCCompPurchaseBlock>(MCLogInvScreen::StoreList()->Rows().front().Lock());
-        REQUIRE(row != nullptr);
-        std::shared_ptr<MCLogInventoryItem> stock = row->Item();
+        tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
+        REQUIRE(!MCStore::ListedParts().empty());
+        std::shared_ptr<MCLogInventoryItem> stock = MCStore::ListedParts().front();
         REQUIRE(stock != nullptr);
         stock->Count = 3;
         const uint8_t masterID = stock->MasterID;
@@ -1009,8 +996,7 @@ TEST_CASE_ISOLATED("game: the purchase screen buys and sells mechs, vehicles, co
         const int32_t index = spares.GetIndexFromMasterID(masterID);
         const int32_t before = index < 0 ? 0 : spares.GetItemInfo(index)->Count;
         const int32_t points = ResourcePoints;
-        BuyFirst();
-        Accept();
+        BuyFromStore(tabs, MCLogisticsTabs::MCPlace::Stock);
         std::shared_ptr<MCLogInventoryItem> bought = spares.GetItemInfo(spares.GetIndexFromMasterID(masterID));
         REQUIRE(bought != nullptr);
         CHECK_EQ(bought->Count, before + 1);
@@ -1024,21 +1010,14 @@ TEST_CASE_ISOLATED("game: the purchase screen buys and sells mechs, vehicles, co
         // The campaign starts with no pilot for hire: one goes up for hire, as a later mission's shop puts them.
         REQUIRE(GlobalLog()->PurPilotList->GetPilotCount() > 0);
         GlobalLog()->PurPilotList->Pilots.back()->Status = MCPurPilotData::ForHire;
-        GlobalLog()->PurchaseScreen->CreatePurVehiclePane(true);
-        Click(200, 180);
-        Settle();
-        REQUIRE(!MCLogInvScreen::StoreList()->Rows().empty());
-        const std::shared_ptr<MCPilotPurchaseBlock> row =
-            std::dynamic_pointer_cast<MCPilotPurchaseBlock>(MCLogInvScreen::StoreList()->Rows().front().Lock());
-        REQUIRE(row != nullptr);
-        std::shared_ptr<MCPurPilotData> hired = row->Pilot();
-        REQUIRE(hired != nullptr);
+        tabs.ChooseKind(MCLogisticsTabs::MCKind::MechWarriors);
+        REQUIRE_EQ(tabs.StoreGoods().size(), size_t{1});
+        std::shared_ptr<MCPurPilotData> hired = GlobalLog()->PurPilotList->Pilots.back();
         const int32_t pilots = GlobalLog()->WarriorList->GetWarriorCount();
         const int32_t visible = GlobalLog()->PurPilotList->GetVisiblePilotCount();
         const int32_t points = ResourcePoints;
         const int32_t cost = hired->Cost;
-        BuyFirst();
-        Accept();
+        BuyFromStore(tabs, MCLogisticsTabs::MCPlace::Stock);
         CHECK_EQ(GlobalLog()->WarriorList->GetWarriorCount(), pilots + 1);
         CHECK_EQ(hired->Status, MCPurPilotData::Hired);
         CHECK_EQ(GlobalLog()->PurPilotList->GetVisiblePilotCount(), visible - 1);
@@ -1048,31 +1027,21 @@ TEST_CASE_ISOLATED("game: the purchase screen buys and sells mechs, vehicles, co
     // Not enough points: nothing is bought.
     {
         MCTest::Scope scope("too dear");
-        Click(200, 120);
-        Settle();
+        tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
         ResourcePoints = 10;
         const int32_t mechs = GlobalLog()->MechList->GetMechCount();
-        BuyFirst();
+        tabs.Drop(MCLogisticsTabs::MCPlace::Store, 0, MCLogisticsTabs::MCPlace::Spare);
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
         CHECK_EQ(GlobalLog()->MechList->GetMechCount(), mechs);
         CHECK_EQ(ResourcePoints, 10);
-    }
-}
-
-namespace
-{
-    /// <summary>The menus' message dialog's OK, clicked.</summary>
-    void CloseMessage()
-    {
-        MCLogDialogButton& ok = *GlobalLog()->MessageDialog->OkButton;
-        Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
-        Settle();
     }
 }
 
 /// <summary>
 /// Port-only (MoreUnits): with MoreUnits a campaign's shop sells past the original's 50 units, a mech at a time dragged
 /// from the store onto the inventory: from 50 a purchase goes through with no word; at 160 it warns how many the player
-/// owns of the 200; at 200 it says the inventory is at its maximum, and there it sells no more.
+/// owns of the 200; at 200 it says the inventory is at its maximum, and there it sells no more. On the remade
+/// PURCHASING, a store 'Mech dragged onto SPARE.
 /// </summary>
 TEST_CASE_ISOLATED("game: with MoreUnits the shop sells past 50 units up to 200, warning from 160")
 {
@@ -1081,56 +1050,46 @@ TEST_CASE_ISOLATED("game: with MoreUnits the shop sells past 50 units up to 200,
         return;
     }
 
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
     constexpr int32_t Points = 10'000'000;
     constexpr int32_t Stock = 10;
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     NewCampaign();
-    Settle();
-    GlobalLog()->SetUpPurchaseScreen(true);
-    Settle();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->PurchaseScreen);
+    MCLogisticsTabs& tabs = MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::Purchasing).Logistics();
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
     GMoreUnits = 1;
     ResourcePoints = Points;
     MCTestGame::StockStore(Stock);
-    const MCMenuDialog& message = *GlobalLog()->Message;
 
     // From 50: bought, no word.
     MCTestGame::OwnUnits(50);
-    BuyFirst();
-    Accept();
+    BuyFromStore(tabs);
     CHECK_EQ(NumUnits(), 51);
-    CHECK(!message.View()->ShowWindow);
+    CHECK(!MCRmlDialogs::Shown());
 
     // From 160: bought, with the warning of the 200.
     MCTestGame::OwnUnits(159);
-    BuyFirst();
-    Accept();
+    BuyFromStore(tabs);
     CHECK_EQ(NumUnits(), 160);
-    REQUIRE(message.View()->ShowWindow);
-    CHECK_EQ(message.Text, MCFormatPrintf(LoadGameString(0x372, 0xfe), 160, 200));
-    CloseMessage();
+    MCRemadeTest::CloseDialog(MCFormatPrintf(LoadGameString(0x372, 0xfe), 160, 200));
 
     // The 200th: bought, the inventory at its maximum.
     MCTestGame::OwnUnits(199);
-    BuyFirst();
-    Accept();
+    BuyFromStore(tabs);
     CHECK_EQ(NumUnits(), 200);
-    REQUIRE(message.View()->ShowWindow);
-    CHECK_EQ(message.Text, LoadGameString(0x374, 0xfe));
-    CloseMessage();
+    MCRemadeTest::CloseDialog(LoadGameString(0x374, 0xfe));
 
     // At 200: none sold, the same word.
-    BuyFirst();
+    tabs.Drop(MCLogisticsTabs::MCPlace::Store, 0, MCLogisticsTabs::MCPlace::Spare);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     CHECK_EQ(NumUnits(), 200);
-    REQUIRE(message.View()->ShowWindow);
-    CHECK_EQ(message.Text, LoadGameString(0x374, 0xfe));
-    CloseMessage();
+    MCRemadeTest::CloseDialog(LoadGameString(0x374, 0xfe));
 }
 
+/// <summary>
+/// On the remade 'MECH BAY, as on 1998's repair screen: a mech with a pilot takes no other; its pilot dragged into the
+/// INVENTORY leaves the seat empty; then an INVENTORY MechWarrior dragged onto the lab's mech becomes its pilot.
+/// </summary>
 TEST_CASE_ISOLATED("game: a pilot dragged onto a force mech on the repair screen becomes its pilot")
 {
     if (!MCTestGame::Available())
@@ -1141,60 +1100,43 @@ TEST_CASE_ISOLATED("game: a pilot dragged onto a force mech on the repair screen
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     NewCampaign();
-    Settle();
-    GlobalLog()->SetUpRepairScreen(true);
-    Settle();
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->RepairScreen);
+    MCLogisticsTabs& tabs = MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::MechBay).Logistics();
 
-    // The pilots tab: the inventory's first pilot, and the force's first mech.
-    Click(202, 180);
-    Settle();
-    std::shared_ptr<MCLogWarrior> pilot;
-
-    for (const std::shared_ptr<MCLogWarrior>& warrior : GlobalLog()->WarriorList->Warriors)
+    // The INVENTORY's MechWarriors: its first, and the force's first mech (the lab's).
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    const std::vector<std::shared_ptr<MCLogWarrior>>& warriors = GlobalLog()->WarriorList->Warriors;
+    REQUIRE(!warriors.empty());
+    const std::shared_ptr<MCLogWarrior> pilot = warriors.front();
+    REQUIRE(!GlobalLog()->ForceMechList->Mechs.empty());
+    const std::shared_ptr<MCLogMech> mech = GlobalLog()->ForceMechList->Mechs.front();
+    REQUIRE(tabs.LabUnit() == mech);
+    // The INVENTORY's card of the pilot (its MechWarriors in the list's order).
+    const auto pilotCard = [&warriors, &pilot]
     {
-        if (warrior->ListIndex == 0)
-        {
-            pilot = warrior;
-        }
-    }
+        const auto found = std::ranges::find(warriors, pilot);
+        REQUIRE(found != warriors.end());
+        return static_cast<size_t>(found - warriors.begin());
+    };
 
-    std::shared_ptr<MCLogMech> mech;
-
-    for (const std::shared_ptr<MCLogMech>& forceMech : GlobalLog()->ForceMechList->Mechs)
-    {
-        if (forceMech->ReadWithWidgets && forceMech->SlotIndex == 0)
-        {
-            mech = forceMech;
-        }
-    }
-
-    REQUIRE(pilot != nullptr);
-    REQUIRE(mech != nullptr);
     const int32_t id = pilot->Id;
     std::shared_ptr<MCLogWarrior> previous;
     REQUIRE_EQ(GlobalLog()->AssignedWarriorList->GetWarriorInfo(mech->PilotIndex, previous), 0);
     REQUIRE(previous != nullptr && previous->Id != id);
     const int32_t previousId = previous->Id;
 
-    // A mech with a pilot takes no other: the inventory's pilots are greyed and can't be picked up.
-    Click(300, 60);
-    Settle();
-    REQUIRE(GlobalLog()->RepairScreen->SelectedMech() == mech);
-    Click(202, 180);
-    Settle();
-    CHECK(PilotRow(*pilot)->GreyedOut);
-    DragPilot(*pilot);
-    Settle();
+    // A mech with a pilot takes no other: the INVENTORY's MechWarriors are dimmed, and one dragged onto the lab stays.
+    REQUIRE(pilotCard() < tabs.StockGoods().size());
+    CHECK(tabs.StockGoods()[pilotCard()].Off);
+    tabs.Drop(MCLogisticsTabs::MCPlace::Stock, pilotCard(), MCLogisticsTabs::MCPlace::Fitted);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     std::shared_ptr<MCLogWarrior> flying;
     REQUIRE_EQ(GlobalLog()->AssignedWarriorList->GetWarriorInfo(mech->PilotIndex, flying), 0);
     CHECK_EQ(flying->Id, previousId);
 
-    // The mech's pilot dragged off its portrait into the inventory leaves the seat empty.
-    const std::shared_ptr<MCMechRepairBlock> shown = GlobalLog()->RepairScreen->RowOf(*mech);
-    REQUIRE(shown != nullptr);
-    Drag(shown->GlobalX() + 30, shown->GlobalY() + 0x40, 100, 200);
-    Settle();
+    // The mech's pilot dragged off the lab's MechWarrior into the INVENTORY leaves the seat empty.
+    tabs.Drop(MCLogisticsTabs::MCPlace::Pilot, 0, MCLogisticsTabs::MCPlace::Stock);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     CHECK_EQ(mech->PilotIndex, -1);
     bool unseated = false;
 
@@ -1205,12 +1147,11 @@ TEST_CASE_ISOLATED("game: a pilot dragged onto a force mech on the repair screen
 
     CHECK(unseated);
 
-    // Now the pilot dropped on the selected mech takes the seat.
-    Click(202, 180);
-    Settle();
-    CHECK(!PilotRow(*pilot)->GreyedOut);
-    DragPilot(*pilot);
-    Settle();
+    // Now the pilot dropped on the lab's mech takes the seat.
+    REQUIRE(pilotCard() < tabs.StockGoods().size());
+    CHECK(!tabs.StockGoods()[pilotCard()].Off);
+    tabs.Drop(MCLogisticsTabs::MCPlace::Stock, pilotCard(), MCLogisticsTabs::MCPlace::Fitted);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     REQUIRE_EQ(GlobalLog()->AssignedWarriorList->GetWarriorInfo(mech->PilotIndex, flying), 0);
     REQUIRE(flying != nullptr);
     CHECK_EQ(flying->Id, id);

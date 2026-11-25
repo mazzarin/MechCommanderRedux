@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "GuiTree.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
@@ -12,7 +13,7 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiTimerManager.h"
 #include "lib/MCFatal.h"
-#include "logistics/MCCompPurchaseBlock.h"
+#include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCPurMechList.h"
@@ -441,21 +442,14 @@ namespace
         return mech.CurVariant;
     }
 
-    /// <summary>The store's components by master id, in the order the store lays them out.</summary>
-    std::vector<uint8_t> StoreOrder()
+    /// <summary>The names on PURCHASING's store cards, in the order the store lays them out.</summary>
+    std::vector<std::string> StoreOrder(const MCLogisticsTabs& tabs)
     {
-        std::vector<uint8_t> order;
+        std::vector<std::string> order;
 
-        for (const MCGuiHandle<MCListRow>& handle : MCLogInvScreen::StoreList()->Rows())
+        for (const MCLogisticsTabs::MCGood& good : tabs.StoreGoods())
         {
-            const std::shared_ptr<MCCompPurchaseBlock> row =
-                std::dynamic_pointer_cast<MCCompPurchaseBlock>(handle.Lock());
-            CHECK(row != nullptr);
-
-            if (row != nullptr)
-            {
-                order.push_back(row->Item()->MasterID);
-            }
+            order.push_back(good.Who);
         }
 
         return order;
@@ -541,6 +535,10 @@ TEST_CASE_ISOLATED("game: a variant picked in the store holds until the store is
     CHECK_EQ(PickedVariant(mech), 1);
 }
 
+/// <summary>
+/// PURCHASING's store lists its components in the same order after the campaign screen leaves the tab (for the 'MECH
+/// BAY) and comes back.
+/// </summary>
 TEST_CASE_ISOLATED("game: the store lists its components in the same order after leaving it and coming back")
 {
     if (!MCTestGame::Available())
@@ -548,17 +546,21 @@ TEST_CASE_ISOLATED("game: the store lists its components in the same order after
         return;
     }
 
-    REQUIRE(StartPurchaseScreen());
-    // The components tab.
-    Click(200, 280);
-    Settle();
-    const std::vector<uint8_t> order = StoreOrder();
+    REQUIRE(MCTestGame::StartLogistics());
+    NewCampaign();
+    MCCampaignScreen& screen = MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::Purchasing);
+    MCLogisticsTabs& tabs = screen.Logistics();
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    const std::vector<std::string> order = StoreOrder(tabs);
     REQUIRE(order.size() > 1);
 
-    ToRepairAndBack();
-    Click(200, 280);
-    Settle();
-    CHECK(StoreOrder() == order);
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    CHECK(StoreOrder(tabs) == order);
 }
 
 TEST_CASE("test framework: an expected assert is counted, not a failure")

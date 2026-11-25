@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "GuiTree.h"
+#include "RemadeScreens.h"
+#include "ScreenInput.h"
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
 #include "fakes/MCMemoryFileSource.h"
@@ -18,14 +20,19 @@
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogSlider.h"
 #include "logistics/MCLogTextObject.h"
+#include "logistics/MCLogRows.h"
+#include "logistics/MCLogisticsTabs.h"
+#include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCPurchaseDlg.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSmuti.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCTickerLine.h"
 #include "main/MCGamePaths.h"
+#include "main/MCGameStrings.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
@@ -37,7 +44,9 @@
 #include "logistics/MCUnitLimits.h"
 #include "logistics/MCPurProfile.h"
 #include "main/MCGameContext.h"
+#include "main/MCLogMech.h"
 #include "main/MCLogistics.h"
+#include "object/MCMasterComponent.h"
 
 // The logistics screens' controls (P3-log-1): the ports and the base object, the text formatter, the ticker, text
 // fields, scrolling text, the game list, the slider, the save list's sort, ini-built screens, the purchase dialog and
@@ -678,53 +687,154 @@ TEST_CASE("logistics: a generic screen makes the elements its ini lists, leaving
 
 // The purchase dialog
 
-TEST_CASE("logistics: the purchase spinner counts up to what the resource points pay for, and down to 0")
+namespace
 {
-    LogisticsScreen screen;
-    const int32_t savedPoints = ResourcePoints;
-    ResourcePoints = 350;
-    MCGuiRef<MCPurchaseDlg> dialog = MCGuiTree::NewRoot<MCPurchaseDlg>();
-    dialog->MCLogDialogBox::Init(0xe5, 0xa2, 0xb5, 0x9c);
-    std::vector<std::pair<int32_t, int32_t>> answers;
-    dialog->SetCallback([&](int32_t result, int32_t quantity) { answers.emplace_back(result, quantity); });
-    dialog->Init(0, 100, 5, "Commando", {}, std::nullopt);
-    CHECK(dialog->Spinner);
-    CHECK_EQ(dialog->Quantity, 1);
-
-    const int32_t upX = dialog->GlobalX() + 0x95;
-    const int32_t upY = dialog->GlobalY() + 0x55;
-    const int32_t downY = dialog->GlobalY() + 0x5d;
-
-    for (int32_t i = 0; i < 4; i++)
+    /// <summary>A new campaign's first briefing on the remade screens, on PURCHASING with the store's <paramref name="kind"/>.</summary>
+    MCLogisticsTabs& ShowStore(MCLogisticsTabs::MCKind kind)
     {
-        Send(*dialog, MCGuiEventType::LeftButtonDown, upX, upY);
-        Send(*dialog, MCGuiEventType::LeftButtonUp, upX, upY);
+        REQUIRE(MCTestGame::StartLogistics());
+        NewCampaign();
+        MCLogisticsTabs& tabs = MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::Purchasing).Logistics();
+        tabs.ChooseKind(kind);
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        return tabs;
     }
 
-    CHECK_EQ(dialog->Quantity, 3);
-    // Held, the arrow repeats on its timer, as far as the points go.
-    Send(*dialog, MCGuiEventType::LeftButtonDown, upX, upY);
-    Send(*dialog, MCGuiEventType::Timer, 0, 0, 0, MCPurchaseDlg::RepeatTimer);
-    CHECK_EQ(dialog->Quantity, 3);
-    CHECK(dialog->Pressed == MCLogDialogBox::PressedPart::Up);
-    Send(*dialog, MCGuiEventType::LeftButtonUp, upX, upY);
-    CHECK(dialog->Pressed == MCLogDialogBox::PressedPart::None);
+    /// <summary>The refit question's words before and after its parts (1998's refit dialog's), and their buffer.</summary>
+    constexpr uint32_t RefitHeadString = 0x54;
+    constexpr uint32_t RefitFootString = 0x62;
+    constexpr int32_t StringBuffer = 0xfe;
 
-    for (int32_t i = 0; i < 5; i++)
+    /// <summary>Key <paramref name="key"/> pressed <paramref name="times"/> times on the deal window, a frame after each.</summary>
+    void DealKey(SDL_Scancode key, int32_t times = 1)
     {
-        Send(*dialog, MCGuiEventType::LeftButtonDown, upX, downY);
-        Send(*dialog, MCGuiEventType::LeftButtonUp, upX, downY);
+        for (int32_t press = 0; press < times; press++)
+        {
+            MCScreenInput::RealKey(key);
+            MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        }
     }
 
-    CHECK_EQ(dialog->Quantity, 0);
+    /// <summary><paramref name="place"/>'s card <paramref name="index"/> offered (its right button), the deal window open.</summary>
+    void OpenDeal(MCLogisticsTabs& tabs, MCLogisticsTabs::MCPlace place, size_t index)
+    {
+        tabs.Send(place, index);
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        REQUIRE(tabs.DealOpen());
+        CHECK_EQ(tabs.DealCountShown(), 1);
+    }
+}
 
-    // Enter answers OK (a two-button box), Escape cancel, with the quantity.
-    Send(*dialog, MCGuiEventType::KeyDown, 0, 0, 0x0d);
-    Send(*dialog, MCGuiEventType::KeyDown, 0, 0, 0x1b);
-    REQUIRE_EQ(answers.size(), 2u);
-    CHECK(answers[0] == std::make_pair(-1, 0));
-    CHECK(answers[1] == std::make_pair(0, 0));
-    ResourcePoints = savedPoints;
+/// <summary>
+/// PURCHASING's deal window counts from one as 1998's purchase dialog: Right steps up while the resource points pay for one
+/// more, Left back down to one (1998's spinner went on to 0, which bought nothing), a refusal at each end; ESCAPE cancels
+/// the deal, RETURN buys the count shown. With one in the store it counts no further (1998's dialog had no spinner); a
+/// part's sale counts up to the spares owned, a 'Mech's sale is one (1998's locked spinner).
+/// </summary>
+TEST_CASE_ISOLATED("game: the deal window counts up to what the resource points pay for, and down to one")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCLogisticsTabs& tabs = ShowStore(MCLogisticsTabs::MCKind::Components);
+    const std::vector<std::shared_ptr<MCLogInventoryItem>> store = MCStore::ListedParts();
+    REQUIRE(!store.empty());
+    REQUIRE_EQ(tabs.StoreGoods().size(), store.size());
+    constexpr int32_t InStore = 5;
+    constexpr int32_t PaidFor = 3;
+    const std::shared_ptr<MCLogInventoryItem> part = store.front();
+    part->Count = InStore;
+    const int32_t each = MasterComponentList[part->MasterID].ResourcePoints;
+    REQUIRE(each > 0);
+    // Points for three and a half.
+    const int32_t points = each * PaidFor + each / 2;
+    ResourcePoints = points;
+
+    OpenDeal(tabs, MCLogisticsTabs::MCPlace::Store, 0);
+    DealKey(SDL_SCANCODE_RIGHT, PaidFor + 1);
+    CHECK_EQ(tabs.DealCountShown(), PaidFor);
+    DealKey(SDL_SCANCODE_LEFT, PaidFor + 1);
+    CHECK_EQ(tabs.DealCountShown(), 1);
+    DealKey(SDL_SCANCODE_ESCAPE);
+    CHECK(!tabs.DealOpen());
+    CHECK_EQ(part->Count, InStore);
+    CHECK_EQ(ResourcePoints, points);
+
+    constexpr int32_t Bought = 2;
+    OpenDeal(tabs, MCLogisticsTabs::MCPlace::Store, 0);
+    DealKey(SDL_SCANCODE_RIGHT, Bought - 1);
+    DealKey(SDL_SCANCODE_RETURN);
+    CHECK(!tabs.DealOpen());
+    CHECK_EQ(part->Count, InStore - Bought);
+    CHECK_EQ(ResourcePoints, points - each * Bought);
+
+    // One in the store: no more to count.
+    {
+        MCTest::Scope scope("one in the store");
+        part->Count = 1;
+        ResourcePoints = points;
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        OpenDeal(tabs, MCLogisticsTabs::MCPlace::Store, 0);
+        DealKey(SDL_SCANCODE_RIGHT);
+        CHECK_EQ(tabs.DealCountShown(), 1);
+        DealKey(SDL_SCANCODE_ESCAPE);
+    }
+
+    // A part's sale: up to the spares owned (three), from the INVENTORY's card dragged onto the store.
+    {
+        MCTest::Scope scope("part sale");
+        constexpr int32_t Spares = 3;
+        MCInventoryList& components = *GlobalLog()->ComponentInventory;
+        const std::shared_ptr<MCLogInventoryItem> spare =
+            components.GetItemInfo(components.GetIndexFromMasterID(part->MasterID));
+        REQUIRE(spare != nullptr);
+        spare->Count = Spares;
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        const std::string& name = MasterComponentList[part->MasterID].Name;
+        const auto card = std::ranges::find(tabs.StockGoods(), name, &MCLogisticsTabs::MCGood::Who);
+        REQUIRE(card != tabs.StockGoods().end());
+        tabs.Drop(MCLogisticsTabs::MCPlace::Stock, static_cast<size_t>(card - tabs.StockGoods().begin()),
+                  MCLogisticsTabs::MCPlace::Store);
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        REQUIRE(tabs.DealOpen());
+        CHECK_EQ(tabs.DealTitle(), std::string("Sell"));
+        DealKey(SDL_SCANCODE_RIGHT, Spares);
+        CHECK_EQ(tabs.DealCountShown(), Spares);
+        DealKey(SDL_SCANCODE_ESCAPE);
+        CHECK_EQ(spare->Count, Spares);
+    }
+
+    // A 'Mech's sale: one, whatever the arrows.
+    {
+        MCTest::Scope scope("mech sale");
+        tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
+        const std::shared_ptr<MCPurMech> purMech = GlobalLog()->PurMechList->Mechs.front();
+        MCPurMechData& data = *purMech->Variants[static_cast<size_t>(purMech->CurVariant)];
+        data.NumAvailable = 1;
+        ResourcePoints = points + data.Cost;
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        OpenDeal(tabs, MCLogisticsTabs::MCPlace::Store, 0);
+        DealKey(SDL_SCANCODE_RETURN);
+        const std::shared_ptr<MCLogMech> bought = GlobalLog()->MechList->Mechs.back();
+        size_t spareCard = 0;
+
+        while (spareCard < tabs.SpareCards().size() &&
+               tabs.UnitAt(MCLogisticsTabs::MCPlace::Spare, spareCard) != bought)
+        {
+            spareCard++;
+        }
+
+        REQUIRE(spareCard < tabs.SpareCards().size());
+        tabs.Drop(MCLogisticsTabs::MCPlace::Spare, spareCard, MCLogisticsTabs::MCPlace::Store);
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        REQUIRE(tabs.DealOpen());
+        CHECK_EQ(tabs.DealTitle(), std::string("Sell"));
+        DealKey(SDL_SCANCODE_RIGHT);
+        CHECK_EQ(tabs.DealCountShown(), 1);
+        DealKey(SDL_SCANCODE_ESCAPE);
+    }
 }
 
 TEST_CASE("logistics: a sale's spinner is locked (but a component sale's), one item has none, and no limit means 199")
@@ -895,25 +1005,81 @@ TEST_CASE("game: the message dialog's timeout closes it after its time, with its
     dialog->Deactivate(0);
 }
 
-TEST_CASE("game: the refit dialog has a line per listed item between its six lines of text")
+/// <summary>
+/// The 'MECH BAY's REFIT ALL, with damaged parts it has no spare for, asks whether to strip them: 1998's refit dialog's
+/// words before and after, each part on a line of its own between them (three, then one).
+/// </summary>
+TEST_CASE_ISOLATED("game: REFIT ALL's question has a line per part it has no spare for between its words")
 {
-    LogisticsScreen screen;
-
-    if (!screen.LoadRetail())
+    if (!MCTestGame::Available())
     {
         return;
     }
 
-    MCGuiRef<MCRefitDialog> view = MCGuiTree::NewRoot<MCRefitDialog>();
-    REQUIRE_EQ(view->Init(0, 0, 4, 4, {}), 0);
-    const auto dialog = std::make_shared<MCMenuDialog>();
-    dialog->SetView(view.Handle());
-    dialog->SetText("Laser,Missile,Armor");
-    CHECK_EQ(view->NumItems, 3);
-    CHECK_EQ(view->NumMiddlePieces, 4);
-    dialog->SetText("Laser");
-    CHECK_EQ(view->NumItems, 1);
-    CHECK_EQ(view->NumMiddlePieces, 3);
+    REQUIRE(MCTestGame::StartLogistics());
+    NewCampaign();
+    MCLogisticsTabs& tabs = MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::MechBay).Logistics();
+    const std::shared_ptr<MCLogMech> mech = GlobalLog()->ForceMechList->Mechs.front();
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    REQUIRE(tabs.LabUnit() == mech);
+
+    // Three of its weapons and equipment damaged, with none of their kind in the INVENTORY.
+    constexpr size_t Damaged = 3;
+    MCInventoryList& components = *GlobalLog()->ComponentInventory;
+    std::vector<std::shared_ptr<MCLogInventoryItem>> damaged;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : mech->Inventory->Items)
+    {
+        const MCComponentForm form = ComponentForm(item->MasterID);
+
+        if (damaged.size() < Damaged && (IsWeapon(form) || IsEquipment(form)) && !item->Stats.empty())
+        {
+            item->Stats.front()->Hits = 1;
+            damaged.push_back(item);
+
+            if (const std::shared_ptr<MCLogInventoryItem> spare =
+                    components.GetItemInfo(components.GetIndexFromMasterID(item->MasterID));
+                spare != nullptr)
+            {
+                spare->Count = 0;
+            }
+        }
+    }
+
+    REQUIRE_EQ(damaged.size(), Damaged);
+    const auto question = [](const std::vector<std::shared_ptr<MCLogInventoryItem>>& parts)
+    {
+        std::string text = LoadGameString(RefitHeadString, StringBuffer);
+
+        for (const std::shared_ptr<MCLogInventoryItem>& part : parts)
+        {
+            text += "\n" + part->Name;
+        }
+
+        return text + "\n" + LoadGameString(RefitFootString, StringBuffer);
+    };
+
+    tabs.RefitAll();
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    REQUIRE(MCRmlDialogs::Shown());
+    CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text, question(damaged));
+    // Cancel: the parts stay as they are, still damaged.
+    MCRemadeTest::AnswerDialog(false);
+    CHECK_EQ(damaged.back()->Stats.front()->Hits, 1);
+
+    // One left damaged: one line.
+    for (size_t part = 1; part < Damaged; part++)
+    {
+        damaged[part]->Stats.front()->Hits = 0;
+    }
+
+    tabs.RefitAll();
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    REQUIRE(MCRmlDialogs::Shown());
+    CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text, question({damaged.front()}));
+    MCRemadeTest::AnswerDialog(false);
+    CHECK_EQ(MCRmlDialogs::OldBoxes(), 0u);
 }
 
 // Buttons and the resource figure

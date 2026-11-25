@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "GuiTree.h"
 #include "TestGame.h"
@@ -161,38 +162,6 @@ namespace
 
     constexpr PrefsDropDown DifficultyDropDown{176};
     constexpr PrefsDropDown RendererDropDown{222};
-    constexpr PrefsDropDown ScrollSpeedDropDown{360};
-
-    /// <summary>Runs five frames: a click lands and the screen settles.</summary>
-    void RunFrames()
-    {
-        for (int32_t frame = 0; frame < 5; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    }
-
-    /// <summary>Opens <paramref name="dropDown"/>'s list and chooses its row <paramref name="row"/>.</summary>
-    void ChooseIn(const PrefsDropDown& dropDown, int32_t row)
-    {
-        MCScreenInput::Click(dropDown.FieldX(), dropDown.FieldY());
-        RunFrames();
-        MCScreenInput::Click(dropDown.FieldX(), dropDown.RowY(row));
-        RunFrames();
-    }
-
-    /// <summary>Checks that the menus' message dialog is up, saves its shot as <paramref name="shot"/>, and closes it
-    /// with OK.</summary>
-    void CloseMenuMessage(std::string_view shot)
-    {
-        MCMenuDialog& dialog = *GlobalLog()->Message;
-        CHECK(dialog.View()->ShowWindow != 0);
-        MCScreenInput::SaveShot(std::string(shot), MCScreenInput::ScreenHash());
-        MCLogDialogButton& ok = *dialog.View()->OkButton;
-        MCScreenInput::Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
-        RunFrames();
-        CHECK(dialog.View()->ShowWindow == 0);
-    }
 
     /// <summary>The drop-down under <paramref name="parent"/> (at any depth) whose field lies at <paramref name="dropDown"/>.</summary>
     std::shared_ptr<MCLogComboBox> FindDropDownIn(MCGuiObject& parent, const PrefsDropDown& dropDown)
@@ -248,9 +217,9 @@ namespace
 }
 
 /// <summary>
-/// The preferences screen's RENDERER drop-down: choosing SOFTWARE says it takes effect after a restart, CANCEL puts
-/// the old choice back (and the field shows it), ACCEPT writes it to PREFS "Renderer"; the running game keeps its
-/// renderer.
+/// Preferences' RENDERER: SOFTWARE chosen, its line says it takes a restart (nothing asked); VULKAN back and again
+/// changes it back and then nothing; CANCEL puts the old choice back (and the switch shows it when Preferences opens
+/// again); ACCEPT writes it to PREFS "Renderer"; the running game keeps its renderer.
 /// </summary>
 TEST_CASE_ISOLATED("game: the preferences screen chooses the renderer and saves it in PREFS")
 {
@@ -259,64 +228,55 @@ TEST_CASE_ISOLATED("game: the preferences screen chooses the renderer and saves 
         return;
     }
 
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
     REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::FinishChanges());
     // The tests' user folder overlays the install, so a PREFS written here would be every later test's.
     const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
     std::filesystem::remove(prefsPath);
     const int32_t running = GRenderer;
     const int32_t chosen = GRendererPreference;
     REQUIRE_EQ(chosen, static_cast<int32_t>(MCRendererKind::Vulkan));
+    constexpr std::string_view Restart = "Takes a restart.";
 
-    // Choosing another renderer than the running one says it needs a restart; OK closes the message.
-    MCMenuDialog& dialog = *GlobalLog()->Message;
-
-    ShowPreferences();
-    RunFrames();
-    const uint32_t vulkanShown = MCScreenInput::ScreenHash();
-    MCScreenInput::SaveShot("prefs vulkan", vulkanShown);
-    ChooseIn(RendererDropDown, 1);
+    // Another renderer than the running one: its line says it takes a restart, and nothing is asked.
+    std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Display);
+    REQUIRE(prefs != nullptr);
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "renderer"), "Vulkan");
+    CHECK_EQ(MCRemadeTest::Words(*prefs, "line-renderer"), Restart);
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "renderer", SDL_SCANCODE_RIGHT));
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Software));
-    CloseMenuMessage("prefs restart notice");
-    const uint32_t softwareShown = MCScreenInput::ScreenHash();
-    MCScreenInput::SaveShot("prefs software", softwareShown);
-    CHECK(softwareShown != vulkanShown);
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "renderer"), "Software");
+    CHECK_EQ(MCRemadeTest::Words(*prefs, "line-renderer"), Restart);
+    CHECK(!MCRmlDialogs::Shown());
 
-    // VULKAN back: no message (it's the running renderer); VULKAN again: no change, no message.
-    ChooseIn(RendererDropDown, 0);
-    CHECK(dialog.View()->ShowWindow == 0);
+    // VULKAN back (the running renderer); VULKAN again: no change, nothing asked.
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "renderer", SDL_SCANCODE_LEFT));
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));
-    CHECK_EQ(MCScreenInput::ScreenHash(), vulkanShown);
-    ChooseIn(RendererDropDown, 0);
-    CHECK(dialog.View()->ShowWindow == 0);
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "renderer"), "Vulkan");
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "renderer", SDL_SCANCODE_LEFT));
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));
-    CHECK_EQ(MCScreenInput::ScreenHash(), vulkanShown);
-    ChooseIn(RendererDropDown, 1);
-    CloseMenuMessage("prefs restart notice again");
-    CHECK_EQ(MCScreenInput::ScreenHash(), softwareShown);
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "renderer"), "Vulkan");
+    CHECK(!MCRmlDialogs::Shown());
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "renderer", SDL_SCANCODE_RIGHT));
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "renderer"), "Software");
 
-    // CANCEL puts the choice back, and the field shows it when the screen opens again.
-    CancelPrefs();
-    RunFrames();
+    // CANCEL puts the choice back, and the switch shows it when Preferences opens again.
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "cancel"));
     CHECK_EQ(GRendererPreference, chosen);
-    ShowPreferences();
-    RunFrames();
-    CHECK_EQ(MCScreenInput::ScreenHash(), vulkanShown);
+    prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Display);
+    REQUIRE(prefs != nullptr);
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "renderer"), "Vulkan");
 
-    ChooseIn(RendererDropDown, 1);
-    CloseMenuMessage("prefs restart notice before accept");
-    WritePrefs();
-    RunFrames();
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "renderer", SDL_SCANCODE_RIGHT));
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "accept"));
     CHECK_EQ(GRenderer, running);
 
     char renderer[32] = {};
     {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath).c_str()), 0);
-        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
-        CHECK_EQ(prefs.ReadIdString("Renderer", std::span(renderer).first(sizeof(renderer) - 1)), 0);
+        MCFitIniFile prefsFile;
+        REQUIRE_EQ(prefsFile.Open(MCFileSystem::ToUtf8(prefsPath).c_str()), 0);
+        REQUIRE_EQ(prefsFile.SeekBlock("MechCommander"), 0);
+        CHECK_EQ(prefsFile.ReadIdString("Renderer", std::span(renderer).first(sizeof(renderer) - 1)), 0);
     }
 
     std::filesystem::remove(prefsPath);
@@ -613,8 +573,8 @@ TEST_CASE_ISOLATED("game: the preferences panel keeps the sliders where they wer
 }
 
 /// <summary>
-/// INTERFACE VOLUME shows the interface level when the screen opens; a click on its track sets the level (and only
-/// it: the effects volume stays), and CANCEL puts the level back.
+/// Preferences' INTERFACE volume shows the interface level when Preferences opens; its slider sets the level (and only
+/// it: the effects volume stays) from silence to full, and CANCEL puts the level back.
 /// </summary>
 TEST_CASE_ISOLATED("game: INTERFACE VOLUME sets the interface level, and CANCEL puts it back")
 {
@@ -624,38 +584,40 @@ TEST_CASE_ISOLATED("game: INTERFACE VOLUME sets the interface level, and CANCEL 
     }
 
     REQUIRE(MCTestGame::StartLogistics());
-    MCGenericScreen& screen = *GlobalLog()->PrefScreen;
+    REQUIRE(MCTestGame::FinishChanges());
     MCSoundSystem& sound = *SoundSystem();
     sound.InterfaceLevel = 90;
     sound.DigitalMasterVolume = 40;
-    ShowPreferences();
-    MCScreenInput::RealMove(320, 400);
+    const MCOptionalRef<const MCSettingsModel::MCSetting> found = MCSettingsModel::Find("interface");
+    REQUIRE(found.has_value());
+    const MCSettingsModel::MCSetting& volume = found->get();
+    const std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Sound);
+    REQUIRE(prefs != nullptr);
+    Rml::Element* slider = MCRemadeTest::Find(*prefs, "interface");
+    REQUIRE(slider != nullptr);
+    const auto shown = [slider] { return slider->GetAttribute<int>("value", -1); };
+    CHECK_EQ(shown(), volume.Get());
+    CHECK_EQ(MCRemadeTest::Words(*prefs, "level-interface"),
+             std::to_string(MCSettingsModel::LevelPercent(volume, volume.Get())));
 
-    std::vector<std::shared_ptr<MCLogSlider>> sliders;
-    CollectSliders(screen, sliders);
-    REQUIRE_EQ(sliders.size(), size_t{5});
-    MCLogSlider& slider = *sliders[4];
-    CHECK_EQ(slider.CurrentValue, 90);
-    CHECK_EQ(screen.Element<MCLogSlider>(6)->CurrentValue, 40);
-
-    // The track's ends (the thumb's travel: x 365..456): silence, then full.
-    const int32_t middleY = slider.GlobalY() + slider.Height() / 2;
-    MCScreenInput::RealClick(365, middleY);
-    CHECK_EQ(slider.CurrentValue, 0);
+    // The slider's ends, by its steps: silence, then full.
+    constexpr int32_t Steps = 25;
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "interface", SDL_SCANCODE_LEFT, Steps));
+    CHECK_EQ(shown(), 0);
     CHECK_EQ(sound.InterfaceLevel, 0);
-    MCScreenInput::RealClick(365 + 91, middleY);
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "interface", SDL_SCANCODE_RIGHT, Steps));
     CHECK_EQ(sound.InterfaceLevel, 127);
     CHECK_EQ(sound.DigitalMasterVolume, 40);
 
-    CancelPrefs();
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "cancel"));
     CHECK_EQ(sound.InterfaceLevel, 90);
     CHECK_EQ(sound.DigitalMasterVolume, 40);
 }
 
 /// <summary>
-/// SCROLL SPEED shows the scroll speed when the screen opens (AUTO, the original's pace) and offers 1.5X to 3X in half
-/// steps besides; a choice sets the speed, CANCEL puts it back (and the field shows it), and ACCEPT writes it to PREFS
-/// "ScrollSpeed".
+/// Preferences' SCROLL SPEED shows the scroll speed when Preferences opens (AUTO, the original's pace) and offers 1.5X
+/// to 3X in half steps besides; a choice sets the speed, CANCEL puts it back (and the stepper shows it), and ACCEPT
+/// writes it to PREFS "ScrollSpeed".
 /// </summary>
 TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it back and ACCEPT saves it in PREFS")
 {
@@ -665,79 +627,50 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it bac
     }
 
     REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::FinishChanges());
     // The tests' user folder overlays the install, so a PREFS written here would be every later test's.
     const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
     std::filesystem::remove(prefsPath);
     REQUIRE_EQ(GScrollSpeed, AutoScrollSpeed);
 
-    const auto frames = []
-    {
-        for (int32_t frame = 0; frame < 5; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    };
+    std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Display);
+    REQUIRE(prefs != nullptr);
+    constexpr std::array<std::string_view, 5> Labels = {"Auto", "1.5x", "2x", "2.5x", "3x"};
+    REQUIRE_EQ(Labels.size(), ScrollSpeeds.size());
 
-    const auto choose = [&](int32_t row)
+    // Each choice in turn, its words and its speed; then back to AUTO.
+    for (size_t i = 0; i < Labels.size(); i++)
     {
-        MCScreenInput::Click(ScrollSpeedDropDown.FieldX(), ScrollSpeedDropDown.FieldY());
-        frames();
-        MCScreenInput::Click(ScrollSpeedDropDown.FieldX(), ScrollSpeedDropDown.RowY(row));
-        frames();
-    };
-
-    ShowPreferences();
-    frames();
-    const std::shared_ptr<MCLogComboBox> dropDown = FindDropDown(ScrollSpeedDropDown);
-    REQUIRE(dropDown != nullptr);
-    const std::vector<MCLogComboBox::Item>& items = dropDown->Items();
-    REQUIRE_EQ(items.size(), ScrollSpeeds.size());
-    constexpr std::array<std::string_view, 5> Labels = {"AUTO", "1.5X", "2X", "2.5X", "3X"};
-
-    for (size_t i = 0; i < items.size(); i++)
-    {
-        CHECK(items[i].Label == Labels[i]);
-        CHECK_EQ(items[i].Value, ScrollSpeeds[i]);
+        MCTest::Scope scope(std::string(Labels[i]));
+        CHECK_EQ(MCRemadeTest::StepWords(*prefs, "scroll-speed"), Labels[i]);
+        CHECK_EQ(GScrollSpeed, ScrollSpeeds[i]);
+        REQUIRE(MCRemadeTest::KeyOn(*prefs, "scroll-speed", SDL_SCANCODE_RIGHT));
     }
 
-    CHECK_EQ(dropDown->Selected(), 0);
-    const uint32_t originalShown = MCScreenInput::ScreenHash();
-    MCScreenInput::SaveShot("prefs scroll speed", originalShown);
-
-    // The list open, then closed by a second click on the field.
-    MCScreenInput::Click(ScrollSpeedDropDown.FieldX(), ScrollSpeedDropDown.FieldY());
-    frames();
-    CHECK(dropDown->IsOpen());
-    MCScreenInput::SaveShot("prefs scroll speed choices", MCScreenInput::ScreenHash());
-    MCScreenInput::Click(ScrollSpeedDropDown.FieldX(), ScrollSpeedDropDown.FieldY());
-    frames();
-    CHECK(!dropDown->IsOpen());
-    CHECK_EQ(MCScreenInput::ScreenHash(), originalShown);
-
-    // 2X, then CANCEL: AUTO again, shown when the screen opens.
-    choose(2);
-    CHECK_EQ(GScrollSpeed, 200);
-    MCScreenInput::SaveShot("prefs scroll speed 2x", MCScreenInput::ScreenHash());
-    CHECK(MCScreenInput::ScreenHash() != originalShown);
-    CancelPrefs();
-    frames();
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "scroll-speed", SDL_SCANCODE_LEFT, static_cast<int32_t>(Labels.size())));
     CHECK_EQ(GScrollSpeed, AutoScrollSpeed);
-    ShowPreferences();
-    frames();
-    CHECK_EQ(MCScreenInput::ScreenHash(), originalShown);
+
+    // 2X, then CANCEL: AUTO again, shown when Preferences opens.
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "scroll-speed", SDL_SCANCODE_RIGHT, 2));
+    CHECK_EQ(GScrollSpeed, 200);
+    CHECK_EQ(MCRemadeTest::StepWords(*prefs, "scroll-speed"), "2x");
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "cancel"));
+    CHECK_EQ(GScrollSpeed, AutoScrollSpeed);
+    prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Display);
+    REQUIRE(prefs != nullptr);
+    CHECK_EQ(MCRemadeTest::StepWords(*prefs, "scroll-speed"), "Auto");
 
     // 3X, then ACCEPT: written to PREFS.
-    choose(4);
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "scroll-speed", SDL_SCANCODE_RIGHT, 4));
     CHECK_EQ(GScrollSpeed, 300);
-    WritePrefs();
-    frames();
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "accept"));
     CHECK_EQ(GScrollSpeed, 300);
     int32_t saved = 0;
     {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(prefsPath.string().c_str()), 0);
-        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
-        saved = prefs.Read<int32_t>("ScrollSpeed").value_or(0);
+        MCFitIniFile prefsFile;
+        REQUIRE_EQ(prefsFile.Open(prefsPath.string().c_str()), 0);
+        REQUIRE_EQ(prefsFile.SeekBlock("MechCommander"), 0);
+        saved = prefsFile.Read<int32_t>("ScrollSpeed").value_or(0);
     }
 
     std::filesystem::remove(prefsPath);

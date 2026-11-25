@@ -13,7 +13,6 @@
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
-#include "logistics/MCLogTextButton.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCPlayerNameObject.h"
 #include "logistics/MCMenuDialog.h"
@@ -295,21 +294,6 @@ namespace
     private:
         std::chrono::steady_clock::time_point _Now = std::chrono::steady_clock::now();
     };
-
-    /// <summary>The middle of <paramref name="object"/>, on the screen.</summary>
-    std::pair<int32_t, int32_t> Middle(MCGuiObject& object)
-    {
-        return {object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2};
-    }
-
-    /// <summary>Clicks the middle of <paramref name="object"/> as a player does.</summary>
-    void ClickOn(MCGuiObject& object)
-    {
-        const auto [x, y] = Middle(object);
-        MCScreenInput::RealClick(x, y);
-        Settle();
-    }
-
 }
 
 /// <summary>
@@ -376,6 +360,37 @@ namespace
         Settle();
     }
 
+    /// <summary>UPDATE opened over the room by its line in the room's foot, as a player opens it; the remade page.</summary>
+    std::shared_ptr<MCUpdateScreen> RestartOnPage()
+    {
+        MCTestGuest::PressInRoom("update");
+        REQUIRE(SettleUntil([] { return MCUpdateScreen::Shows() && !MCScreenChange::Running(); }));
+        std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
+        REQUIRE(update != nullptr);
+        Settle();
+        return update;
+    }
+
+    /// <summary>Whether <paramref name="update"/> offers RESTART (its one act).</summary>
+    bool RestartShown(const MCUpdateScreen& update)
+    {
+        return MCRemadeTest::Visible(update, "act") && MCRemadeTest::Words(update, "act") == "Restart";
+    }
+
+    /// <summary>RESTART pressed on <paramref name="update"/>, which must offer it, as a click does.</summary>
+    void PressRestart(const MCUpdateScreen& update)
+    {
+        REQUIRE(RestartShown(update));
+        REQUIRE(MCRemadeTest::Press(update, "act"));
+        Settle();
+    }
+
+    /// <summary>What <paramref name="update"/>'s status line says.</summary>
+    std::string PageStatus(const MCUpdateScreen& update)
+    {
+        return MCRemadeTest::Words(update, "status");
+    }
+
     /// <summary>Whether the room this game hosts takes new players.</summary>
     bool RoomOpen()
     {
@@ -406,16 +421,12 @@ TEST_CASE_ISOLATED(
     const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
     ann.SendRules(hostId, MCMatchRule::Supported);
     cal.SendRules(hostId, MCMatchRule::Supported & ~MCMatchRule::RejoinsHost);
-    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     UpdateReady();
-    screen.ShowUpdateOver();
-    Settle();
-    const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
-    REQUIRE(restart != nullptr);
+    const std::shared_ptr<MCUpdateScreen> update = RestartOnPage();
 
     // CAL's game can't rejoin: no RESTART, and the update goes in as the game exits after the match.
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
-    CHECK(!restart->IsShowing());
+    CHECK_EQ(PageStatus(*update), MCRmlDialogs::AsSentence("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
+    CHECK(!RestartShown(*update));
     CHECK(MCLobbyUpdate::Restart());
     Settle();
     CHECK_EQ(updater.Log->Answers.size(), size_t{1});
@@ -423,15 +434,15 @@ TEST_CASE_ISOLATED(
 
     // Every guest can.
     cal.SendRules(hostId, MCMatchRule::Supported);
-    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. RESTART TO INSTALL IT; EVERYONE WILL REJOIN."));
+    REQUIRE(SettleUntil([&] { return RestartShown(*update); }));
+    CHECK_EQ(PageStatus(*update), MCRmlDialogs::AsSentence("DOWNLOADED. RESTART TO INSTALL IT; EVERYONE WILL REJOIN."));
     MCScreenInput::SaveShot("lobby host 0 ready", MCScreenInput::ScreenHash());
 
     // Once the match is under way, neither: the update goes in as the game exits at its end.
     MultiPlayer()->InLogistics = true;
     Settle();
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
-    CHECK(!restart->IsShowing());
+    CHECK_EQ(PageStatus(*update), MCRmlDialogs::AsSentence("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
+    CHECK(!RestartShown(*update));
     CHECK(MCLobbyUpdate::Restart());
     Settle();
     CHECK_EQ(updater.Log->Answers.size(), size_t{1});
@@ -440,7 +451,7 @@ TEST_CASE_ISOLATED(
     Settle();
 
     // Before it, the game restarts into the update, telling every guest.
-    ClickOn(*restart);
+    PressRestart(*update);
     CHECK(SettleUntil([&] { return ann.Updatings() == 1 && cal.Updatings() == 1; }));
     REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
     CHECK(updater.Log->Answers.back() == MCAnswer::Install);
@@ -811,13 +822,6 @@ namespace
         return MCTestGame::UserFolder() / MCRejoinNote::FileName;
     }
 
-    /// <summary>The UPDATE page over the session screen, its RESTART button (null when the page has none).</summary>
-    std::shared_ptr<MCLogTextButton> RestartOnPage(MCSessionScreen& screen)
-    {
-        screen.ShowUpdateOver();
-        Settle();
-        return MCScreenInput::FindTextButton(screen, "RESTART");
-    }
 }
 
 /// <summary>
@@ -839,27 +843,25 @@ TEST_CASE_ISOLATED("game: a lobby's host's RESTART waits for its guests' games t
     Guest ann("ANN");
     REQUIRE(HostLobbyRoom(Port, {ann}));
     const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
-    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     ann.SendRules(hostId, MCMatchRule::Supported);
 
     // CAL has joined, its rules known from its join card; its game hasn't opened the room yet.
     Guest cal("CAL", MCMatchRule::Supported);
     REQUIRE(cal.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", Port), false));
     UpdateReady();
-    const std::shared_ptr<MCLogTextButton> restart = RestartOnPage(screen);
-    REQUIRE(restart != nullptr);
+    const std::shared_ptr<MCUpdateScreen> update = RestartOnPage();
     CHECK(MultiPlayer()->PlayerRules.contains(cal.Id()));
     CHECK(!MCLobbyUpdate::CanRestart());
-    CHECK(!restart->IsShowing());
+    CHECK(!RestartShown(*update));
     CHECK_EQ(MCLobbyUpdate::ReadyText(), std::string("DOWNLOADED. RESTART TO INSTALL IT; EVERYONE WILL REJOIN."));
 
     // Its game is up: RESTART shows.
     cal.Ping();
-    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
+    REQUIRE(SettleUntil([&] { return RestartShown(*update); }));
     CHECK(MCLobbyUpdate::CanRestart());
 
     // RESTART: the room told, and the update in once both guests have left to wait for the host.
-    ClickOn(*restart);
+    PressRestart(*update);
     REQUIRE(SettleUntil([&] { return ann.Updatings() == 1 && cal.Updatings() == 1; }));
     clock.Pass(MCLobbyUpdate::SendTime);
     CHECK_EQ(updater.Log->Answers.size(), size_t{1});
@@ -885,12 +887,10 @@ TEST_CASE_ISOLATED("game: a lobby's RESTART waits for the match's end when the u
     Guest ann("ANN");
     REQUIRE(HostLobbyRoom("28903", {ann}));
     ann.SendRules(MultiPlayer()->SessionManager->MyPlayer()->Id, MCMatchRule::Supported);
-    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     UpdateReady(VersionWithoutBuild);
-    const std::shared_ptr<MCLogTextButton> restart = RestartOnPage(screen);
-    REQUIRE(restart != nullptr);
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
-    CHECK(!restart->IsShowing());
+    const std::shared_ptr<MCUpdateScreen> update = RestartOnPage();
+    CHECK_EQ(PageStatus(*update), MCRmlDialogs::AsSentence("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
+    CHECK(!RestartShown(*update));
     CHECK(MCLobbyUpdate::Restart());
     Settle();
     CHECK_EQ(updater.Log->Answers.size(), size_t{1});
@@ -900,10 +900,10 @@ TEST_CASE_ISOLATED("game: a lobby's RESTART waits for the match's end when the u
     std::filesystem::remove(GameNotePath());
     std::filesystem::create_directories(GameNotePath());
     UpdateReady();
-    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
-    ClickOn(*restart);
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
-    CHECK(!restart->IsShowing());
+    REQUIRE(SettleUntil([&] { return RestartShown(*update); }));
+    PressRestart(*update);
+    CHECK_EQ(PageStatus(*update), MCRmlDialogs::AsSentence("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
+    CHECK(!RestartShown(*update));
     Settle();
     CHECK_EQ(updater.Log->Answers.size(), size_t{2});
     CHECK_EQ(ann.Updatings(), 0);
@@ -930,7 +930,6 @@ TEST_CASE_ISOLATED("game: a lobby's host whose update fails after RESTART keeps 
     Guest cal("CAL");
     REQUIRE(HostLobbyRoom("28905", {annFirst, cal}));
     const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
-    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
 
     // ANN has updated in this room already: the room has kept its place once.
     annFirst.SendRules(hostId, MCMatchRule::Supported);
@@ -945,10 +944,9 @@ TEST_CASE_ISOLATED("game: a lobby's host whose update fails after RESTART keeps 
     ann.SendRules(hostId, MCMatchRule::Supported);
     cal.SendRules(hostId, MCMatchRule::Supported);
     UpdateReady();
-    const std::shared_ptr<MCLogTextButton> restart = RestartOnPage(screen);
-    REQUIRE(restart != nullptr);
-    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
-    ClickOn(*restart);
+    const std::shared_ptr<MCUpdateScreen> update = RestartOnPage();
+    REQUIRE(SettleUntil([&] { return RestartShown(*update); }));
+    PressRestart(*update);
     REQUIRE(SettleUntil([&] { return ann.Updatings() == 1 && cal.Updatings() == 1; }));
     CHECK(std::filesystem::exists(GameNotePath()));
 
@@ -1182,21 +1180,17 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update tells the ro
 
     // Joined, the guest is in its room.
     REQUIRE(MCMenuScreens::Top() == MCMenuScreens::Room());
-    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     UpdateReady();
-    screen.ShowUpdateOver();
-    Settle();
-    const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
-    REQUIRE(restart != nullptr);
+    const std::shared_ptr<MCUpdateScreen> update = RestartOnPage();
 
     // Until the host's rules come (relayed with every player's), its game isn't known to rejoin.
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
-    CHECK(!restart->IsShowing());
+    CHECK_EQ(PageStatus(*update), MCRmlDialogs::AsSentence("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
+    CHECK(!RestartShown(*update));
     MultiPlayer()->PlayerRules[bob.Id()] = MCMatchRule::Supported;
     Settle();
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. RESTART TO INSTALL IT AND REJOIN THIS ROOM."));
-    REQUIRE(restart->IsShowing());
-    ClickOn(*restart);
+    CHECK_EQ(PageStatus(*update), MCRmlDialogs::AsSentence("DOWNLOADED. RESTART TO INSTALL IT AND REJOIN THIS ROOM."));
+    REQUIRE(RestartShown(*update));
+    PressRestart(*update);
     CHECK(SettleUntil([&] { return bob.Updatings() == 1; }));
     REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
     CHECK(updater.Log->Answers.back() == MCAnswer::Install);
@@ -1244,9 +1238,9 @@ namespace
 {
     /// <summary>
     /// Boots the game as a lobby's guest in the test's room on <paramref name="port"/>, in the room (the session screen)
-    /// from its join, the host's build known to rejoin, the update ready: its UPDATE page's RESTART, showing.
+    /// from its join, the host's build known to rejoin, the update ready: its UPDATE page over the room, offering RESTART.
     /// </summary>
-    std::shared_ptr<MCLogTextButton> GuestReadyToRestart(Host& bob, std::string_view port)
+    std::shared_ptr<MCUpdateScreen> GuestReadyToRestart(Host& bob, std::string_view port)
     {
         if (!bob.Open(port, std::string(HostName), std::string(RoomName)) ||
             !MCTestGame::StartLobby(std::format("-join 127.0.0.1:{} -player ANN -session \"{}\"", port, RoomName)) ||
@@ -1262,8 +1256,8 @@ namespace
 
         MultiPlayer()->PlayerRules[bob.Id()] = MCMatchRule::Supported;
         UpdateReady();
-        std::shared_ptr<MCLogTextButton> restart = RestartOnPage(*GlobalLog()->SessionScreen);
-        return restart != nullptr && SettleUntil([&] { return restart->IsShowing(); }) ? restart : nullptr;
+        std::shared_ptr<MCUpdateScreen> update = RestartOnPage();
+        return SettleUntil([&] { return RestartShown(*update); }) ? update : nullptr;
     }
 }
 
@@ -1283,10 +1277,10 @@ TEST_CASE_ISOLATED("game: a lobby's guest calls its restart off when the match s
     MCLobbyClock clock;
     MCFakeUpdater updater;
     Host bob;
-    const std::shared_ptr<MCLogTextButton> restart = GuestReadyToRestart(bob, "28907");
-    REQUIRE(restart != nullptr);
+    const std::shared_ptr<MCUpdateScreen> update = GuestReadyToRestart(bob, "28907");
+    REQUIRE(update != nullptr);
 
-    ClickOn(*restart);
+    PressRestart(*update);
     REQUIRE(SettleUntil([&] { return bob.Updatings() == 1; }));
     MultiPlayer()->InLogistics = true;
     clock.Pass(MCLobbyUpdate::SendTime);
@@ -1297,8 +1291,8 @@ TEST_CASE_ISOLATED("game: a lobby's guest calls its restart off when the match s
     MultiPlayer()->InLogistics = false;
     Settle();
 
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
-    CHECK(!restart->IsShowing());
+    CHECK_EQ(PageStatus(*update), MCRmlDialogs::AsSentence("DOWNLOADED. IT WILL INSTALL AFTER THE MATCH."));
+    CHECK(!RestartShown(*update));
     CHECK(MCLobbyUpdate::Restart());
     clock.Pass(MCLobbyUpdate::SendTime);
     CHECK_EQ(bob.Updatings(), 1);
@@ -1321,10 +1315,10 @@ TEST_CASE_ISOLATED("game: a lobby's guest calls its restart off when the update 
     MCLobbyClock clock;
     MCFakeUpdater updater;
     Host bob;
-    const std::shared_ptr<MCLogTextButton> restart = GuestReadyToRestart(bob, "28917");
-    REQUIRE(restart != nullptr);
+    const std::shared_ptr<MCUpdateScreen> update = GuestReadyToRestart(bob, "28917");
+    REQUIRE(update != nullptr);
 
-    ClickOn(*restart);
+    PressRestart(*update);
     REQUIRE(SettleUntil([&] { return bob.Updatings() == 1; }));
     clock.Pass(MCLobbyUpdate::SendTime);
     REQUIRE_EQ(updater.Log->Answers.size(), size_t{2});

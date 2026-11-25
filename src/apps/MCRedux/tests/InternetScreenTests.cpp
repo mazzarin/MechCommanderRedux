@@ -29,7 +29,6 @@
 #include "logistics/MCUpdatePage.h"
 #include "logistics/MCUpdateScreen.h"
 #include "gui/MCGuiStartup.h"
-#include "logistics/MCLogTextButton.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCRejoinNote.h"
 #include "network/MCRoomEnd.h"
@@ -88,13 +87,6 @@ namespace
         "Night raid | 2/4 | Asia | In battle for 12 min",
         "Next version | 1/6 | Oceania | Needs version 0.7.0",
     };
-
-    /// <summary>Clicks the middle of <paramref name="button"/> of a 1998 screen, as a player does, and lets the game settle.</summary>
-    void ClickButton(MCGuiObject& button)
-    {
-        Click(button.GlobalX() + button.Width() / 2, button.GlobalY() + button.Height() / 2);
-        Settle();
-    }
 
     /// <summary>INTERNET's screen (made by its first opening).</summary>
     MCGamesScreen& Internet()
@@ -895,22 +887,23 @@ TEST_CASE_ISOLATED("game: an internet room's host restarts into an update, keepi
     REQUIRE(MCTestGame::StartLogistics());
     MCGamesScreen& screen = OpenInternetScreen(list);
     const std::string gameName = HostFrom(screen);
-    MCSessionScreen& room = *GlobalLog()->SessionScreen;
     REQUIRE(SettleUntil([&] { return service.Room().has_value(); }));
 
-    // The update ready: the room's page offers RESTART, which brings the room back.
+    // The update ready: UPDATE, opened by the room's line, offers RESTART, which brings the room back.
     UpdateReady();
     CHECK(MCLobbyUpdate::InRoom());
-    room.ShowUpdateOver();
+    MCTestGuest::PressInRoom("update");
+    REQUIRE(SettleUntil([] { return MCUpdateScreen::Shows() && !MCScreenChange::Running(); }));
+    const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
+    REQUIRE(update != nullptr);
     Settle();
-    const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(room, "RESTART");
-    REQUIRE(restart != nullptr);
-    CHECK(restart->IsShowing());
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED. RESTART TO INSTALL IT; YOUR ROOM WILL REOPEN."));
-    SaveShot("internet 9 restart", ScreenHash());
+    CHECK(MCRemadeTest::Visible(*update, "act"));
+    CHECK_EQ(MCRemadeTest::Words(*update, "act"), "Restart");
+    CHECK_EQ(MCRemadeTest::Words(*update, "status"),
+             MCRmlDialogs::AsSentence("DOWNLOADED. RESTART TO INSTALL IT; YOUR ROOM WILL REOPEN."));
 
     // RESTART: the note to come back by, the update installing, the game's place kept.
-    ClickButton(*restart);
+    REQUIRE(MCRemadeTest::Press(*update, "act"));
     REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
     CHECK(updater.Log->Answers.back() == MCUpdater::MCAnswer::Install);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;

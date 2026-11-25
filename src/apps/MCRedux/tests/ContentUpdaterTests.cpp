@@ -6,26 +6,27 @@
 #include "../MCGameFolder.h"
 #include "../MCHttpGet.h"
 #include "MCTest.h"
+#include "MCTestGuest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCGenericScreen.h"
-#include "logistics/MCHdOptionsPanel.h"
 #include "logistics/MCLogButton.h"
-#include "logistics/MCLogDialogButton.h"
-#include "logistics/MCLogOptionList.h"
-#include "logistics/MCLogTextButton.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
-#include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCPrefsScreen.h"
+#include "logistics/MCQuestionWindow.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
+#include "logistics/MCSettingsModel.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdatePage.h"
+#include "logistics/MCUpdateScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
 #include "network/MCMultiPlayer.h"
@@ -3890,10 +3891,6 @@ TEST_CASE_ISOLATED("recovery screen: the question wraps its text over its button
 
 namespace
 {
-    /// <summary>HD OPTIONS' HD PACK row: first under PACKS; HD ART SIZE under it.</summary>
-    constexpr int32_t HdPackRow = 1;
-    constexpr int32_t HdArtSizeRow = 2;
-
     /// <summary>Runs a few frames, as a player's screen would between inputs.</summary>
     void ScreenFrames()
     {
@@ -3905,46 +3902,56 @@ namespace
         }
     }
 
-    /// <summary>
-    /// The preferences' HD OPTIONS page open, once the main menu's check at the start found nothing newer (until then
-    /// HD PACK waits for it); its list.
-    /// </summary>
-    std::shared_ptr<MCLogOptionList> OpenHdOptions()
+    /// <summary>Preferences' rows of the HD pack (a button) and HD ART SIZE (a switch).</summary>
+    const std::string HdPackRow = "hd-pack";
+    const std::string HdArtSizeRow = "hd-art-size";
+
+    /// <summary>The line under the name of Preferences' row of setting <paramref name="id"/> (why it's held, when it is).</summary>
+    std::string Line(const MCPrefsScreen& prefs, const std::string& id)
     {
-        ShowPreferences();
-        ShowHdOptions();
-        ScreenFrames();
-        const std::shared_ptr<MCLogOptionList> list = HdOptionsList();
-        REQUIRE(list != nullptr);
-        REQUIRE_EQ(list->Label(HdPackRow), std::string_view("HD PACK"));
-        CHECK_EQ(list->HeldReason(HdPackRow), std::string_view("LOOKING FOR AN UPDATE."));
+        return MCRemadeTest::Words(prefs, "line-" + id);
+    }
+
+    /// <summary>Whether Preferences' row of setting <paramref name="id"/> is held (greyed, its line saying why).</summary>
+    bool Held(const MCPrefsScreen& prefs, const std::string& id)
+    {
+        const Rml::Element* row = MCRemadeTest::Find(prefs, "row-" + id);
+        REQUIRE(row != nullptr);
+        return row->IsClassSet("held");
+    }
+
+    /// <summary>The HD pack's button's word; empty when it shows none.</summary>
+    std::string HdPackButton(const MCPrefsScreen& prefs)
+    {
+        return MCRemadeTest::Visible(prefs, HdPackRow) ? MCRemadeTest::Words(prefs, HdPackRow) : std::string();
+    }
+
+    /// <summary>
+    /// Preferences' HD section open from the main menu, once the main menu's check at the start found nothing newer
+    /// (until then the HD pack is held for it).
+    /// </summary>
+    std::shared_ptr<MCPrefsScreen> OpenHdOptions()
+    {
+        std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Hd);
+        REQUIRE(prefs != nullptr);
+        REQUIRE(MCRemadeTest::Find(*prefs, HdPackRow) != nullptr);
+        CHECK(Held(*prefs, HdPackRow));
+        CHECK_EQ(Line(*prefs, HdPackRow), "Looking for an update.");
         REQUIRE(FramesUntilIdle());
         ScreenFrames();
-        CHECK(list->HeldReason(HdPackRow).empty());
-        return list;
+        CHECK(!Held(*prefs, HdPackRow));
+        return prefs;
     }
 
-    /// <summary>Whether the preferences' button <paramref name="label"/> is showing.</summary>
-    bool ButtonShown(std::string_view label)
+    /// <summary>The question asked over Preferences, which must show saying <paramref name="heading"/>, answered: its act or CANCEL.</summary>
+    void Answer(std::string_view heading, bool act)
     {
-        const std::shared_ptr<MCLogTextButton> button = MCScreenInput::FindTextButton(*GlobalLog()->PrefScreen, label);
-        return button != nullptr && button->IsShowing();
-    }
-
-    /// <summary>The preferences' button <paramref name="label"/>, which must be showing.</summary>
-    std::shared_ptr<MCLogTextButton> ShownButton(std::string_view label)
-    {
-        std::shared_ptr<MCLogTextButton> button = MCScreenInput::FindTextButton(*GlobalLog()->PrefScreen, label);
-        REQUIRE(button != nullptr);
-        CHECK(button->IsShowing());
-        return button;
-    }
-
-    /// <summary>Clicks the middle of <paramref name="object"/> as a player does.</summary>
-    void RealClickOn(MCGuiObject& object)
-    {
-        MCScreenInput::RealClick(object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2);
+        const std::shared_ptr<MCQuestionWindow> question = MCRemadeTest::OnTop<MCQuestionWindow>();
+        REQUIRE(question != nullptr);
+        CHECK_EQ(MCRemadeTest::Words(*question, "heading"), heading);
+        REQUIRE(MCRemadeTest::Press(*question, act ? "yes" : "no"));
         ScreenFrames();
+        CHECK(MCRemadeTest::OnTop<MCQuestionWindow>() == nullptr);
     }
 
     /// <summary>Runs the game's frames until the HD pack's change is <paramref name="stage"/>.</summary>
@@ -3971,26 +3978,24 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD PACK button gets HD with its size shown
     ChangeSets(release, WithoutHd);
     MCUpdaterScope scope(release, false);
     REQUIRE(MCTestGame::StartLogistics());
-    const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
-    CHECK_EQ(list->Description(HdPackRow),
-             std::format("THE HD ART, SOUND AND MOVIES: {} TO DOWNLOAD.", MCUpdateWork::SizeText(Terrain().size())));
-    const std::shared_ptr<MCLogTextButton> get = ShownButton("GET");
-    CHECK(!ButtonShown("RESTART"));
-    CHECK_EQ(list->HeldReason(HdArtSizeRow), std::string_view("GET THE HD PACK FIRST."));
-    MCScreenInput::SaveShot("hd options get", MCScreenInput::ScreenHash());
+    const std::shared_ptr<MCPrefsScreen> prefs = OpenHdOptions();
+    CHECK_EQ(Line(*prefs, HdPackRow), std::format("{} to download.", MCUpdateWork::SizeText(Terrain().size())));
+    CHECK_EQ(HdPackButton(*prefs), "Get");
+    CHECK(Held(*prefs, HdArtSizeRow));
+    CHECK_EQ(Line(*prefs, HdArtSizeRow), "Get the HD pack first.");
 
     // GET downloads it at once, while the game goes on; RESTART then. This release's HD art has one size.
-    RealClickOn(*get);
+    REQUIRE(MCRemadeTest::Press(*prefs, HdPackRow));
+    ScreenFrames();
     CHECK(MCUpdater::HdPack().Chosen);
-    CHECK_EQ(list->HeldReason(HdArtSizeRow), std::string_view("THIS RELEASE HAS ONE SIZE OF HD ART."));
+    CHECK_EQ(Line(*prefs, HdArtSizeRow), "This release has one size of HD art.");
     REQUIRE(ScreenFramesUntil(MCStage::Ready));
     ScreenFrames();
     CHECK(release.Armed());
-    CHECK_EQ(list->Description(HdPackRow), std::string("DOWNLOADED. RESTART THE GAME TO SEE IT."));
-    CHECK(!get->IsShowing());
-    const std::shared_ptr<MCLogTextButton> restart = ShownButton("RESTART");
-    MCScreenInput::SaveShot("hd options restart", MCScreenInput::ScreenHash());
-    RealClickOn(*restart);
+    CHECK_EQ(Line(*prefs, HdPackRow), "Downloaded. Restart the game to see it.");
+    REQUIRE_EQ(HdPackButton(*prefs), "Restart");
+    REQUIRE(MCRemadeTest::Press(*prefs, HdPackRow));
+    ScreenFrames();
     CHECK_EQ(*scope.Quits, 1);
     CHECK(MCUpdater::RestartWanted());
 }
@@ -4003,59 +4008,51 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD ART SIZE shows the machine's pick until
         return;
     }
 
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
     MCHostedRelease release("hd-options-art-size");
     AddTwoX(release);
     release.Machine = BigMachine;
     UpdateToRelease2(release);
     MCUpdaterScope scope(release, false);
     REQUIRE(MCTestGame::StartLogistics());
-    const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
-    REQUIRE_EQ(list->Label(HdArtSizeRow), std::string_view("HD ART SIZE"));
-    CHECK(list->HeldReason(HdArtSizeRow).empty());
-    CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("FULL"));
+    const std::shared_ptr<MCPrefsScreen> prefs = OpenHdOptions();
+    CHECK(!Held(*prefs, HdArtSizeRow));
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, HdArtSizeRow), "Full");
     const std::string full = MCUpdateWork::SizeText(Terrain().size() + Palette.size());
     const std::string twoX = MCUpdateWork::SizeText(TerrainAt2x.size() + Palette.size());
-    CHECK_EQ(list->Description(HdArtSizeRow),
-             std::format("PICKED FOR THIS COMPUTER. FULL: {}. 2X: {}, HALF THE MEMORY.", full, twoX));
+    CHECK_EQ(Line(*prefs, HdArtSizeRow),
+             std::format("Picked for this computer. Full {}, 2x {} and half the memory.", full, twoX));
 
-    const std::shared_ptr<MCLogTextButton> remove = ShownButton("REMOVE");
-    const std::optional<std::pair<int32_t, int32_t>> centre = list->SettingCentre(HdArtSizeRow);
-    REQUIRE(centre.has_value());
-    CHECK_EQ(remove->GlobalX() + remove->Width() / 2, centre->first);
-    MCScreenInput::SaveShot("hd options art size", MCScreenInput::ScreenHash());
+    // The HD pack's REMOVE and the size's switch end in one column.
+    CHECK_EQ(HdPackButton(*prefs), "Remove");
+    const auto rightOf = [&prefs](const std::string& id)
+    {
+        Rml::Element* control = MCRemadeTest::Find(*prefs, id);
+        REQUIRE(control != nullptr);
+        return control->GetAbsoluteOffset(Rml::BoxArea::Border).x + control->GetBox().GetSize(Rml::BoxArea::Border).x;
+    };
+
+    CHECK_EQ(std::lround(rightOf(HdPackRow)), std::lround(rightOf(HdArtSizeRow)));
 
     // A click on 2X asks first, saying how much it downloads: CANCEL keeps the full art.
-    MCMenuDialog& question = *GlobalLog()->Question;
-    MCScreenInput::RealClick(centre->first, centre->second);
-    ScreenFrames();
-    REQUIRE(question.IsShowing());
-    CHECK_EQ(question.Text, std::format("Download the 2X HD art ({})?", twoX));
-    MCScreenInput::SaveShot("hd options art size question", MCScreenInput::ScreenHash());
-    RealClickOn(*question.View()->CancelButton);
-    CHECK(!question.IsShowing());
+    const std::string asked = std::format("Download the 2x HD art ({})?", twoX);
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, HdArtSizeRow, 1));
+    Answer(asked, false);
     CHECK(!MCUpdater::HdPack().TwoXChosen);
     CHECK(!MCUpdater::Working());
-    CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("FULL"));
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, HdArtSizeRow), "Full");
 
-    // OK: 2X, the player's pick, downloaded while the game goes on; RESTART then.
-    MCScreenInput::RealClick(centre->first, centre->second);
-    ScreenFrames();
-    REQUIRE(question.IsShowing());
-    RealClickOn(*question.View()->OkButton);
+    // DOWNLOAD: 2X, the player's pick, downloaded while the game goes on; RESTART then.
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, HdArtSizeRow, 1));
+    Answer(asked, true);
     CHECK(MCUpdater::HdPack().TwoXChosen);
     CHECK(MCUpdater::HdPack().PlayerPicked);
-    CHECK_EQ(list->ChoiceName(HdArtSizeRow), std::string_view("2X"));
-    CHECK_EQ(list->Description(HdArtSizeRow),
-             std::format("FULL: {}. 2X: {}, HALF THE MEMORY, A TOUCH SOFTER ZOOMED IN.", full, twoX));
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, HdArtSizeRow), "2x");
+    CHECK_EQ(Line(*prefs, HdArtSizeRow), std::format("Full {}, 2x {} and half the memory.", full, twoX));
     REQUIRE(ScreenFramesUntil(MCStage::Ready));
     ScreenFrames();
     CHECK(release.Armed());
-    CHECK_EQ(list->Description(HdPackRow), std::string("DOWNLOADED. RESTART THE GAME TO SEE IT."));
-    CHECK(ButtonShown("RESTART"));
-    MCScreenInput::SaveShot("hd options art size 2x", MCScreenInput::ScreenHash());
+    CHECK_EQ(Line(*prefs, HdPackRow), "Downloaded. Restart the game to see it.");
+    CHECK_EQ(HdPackButton(*prefs), "Restart");
     const std::optional<MCContentUpdater::MCChoice> choice = MCContentUpdater::Choice(*MakeDisk(), release.Game.Path());
     REQUIRE(choice.has_value());
     CHECK(choice->Picked == MCContentUpdater::MCPicked::Player);
@@ -4072,32 +4069,24 @@ TEST_CASE_ISOLATED("game: HD OPTIONS says a failed HD art download in a player's
         return;
     }
 
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
     MCHostedRelease release("hd-options-art-size-failed");
     AddTwoX(release);
     release.Machine = BigMachine;
     UpdateToRelease2(release);
     MCUpdaterScope scope(release, false);
     REQUIRE(MCTestGame::StartLogistics());
-    const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
-    const std::optional<std::pair<int32_t, int32_t>> centre = list->SettingCentre(HdArtSizeRow);
-    REQUIRE(centre.has_value());
+    const std::shared_ptr<MCPrefsScreen> prefs = OpenHdOptions();
 
     // The 2X art's archive gone from the release's host, as a build's not yet published: 2X, asked and taken, fails.
     std::error_code error;
     REQUIRE(std::filesystem::remove(release.Host.Path() / "hd2x-2.zip", error));
-    MCMenuDialog& question = *GlobalLog()->Question;
-    MCScreenInput::RealClick(centre->first, centre->second);
-    ScreenFrames();
-    REQUIRE(question.IsShowing());
-    RealClickOn(*question.View()->OkButton);
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, HdArtSizeRow, 1));
+    Answer(std::format("Download the 2x HD art ({})?", MCUpdateWork::SizeText(TerrainAt2x.size() + Palette.size())),
+           true);
     REQUIRE(ScreenFramesUntil(MCStage::Failed));
     ScreenFrames();
-    CHECK_EQ(list->Description(HdPackRow), std::string("THE DOWNLOAD FAILED. GET TRIES AGAIN."));
-    CHECK(ButtonShown("GET"));
-    MCScreenInput::SaveShot("hd options art size failed", MCScreenInput::ScreenHash());
+    CHECK_EQ(Line(*prefs, HdPackRow), "The download failed. Get tries again.");
+    CHECK_EQ(HdPackButton(*prefs), "Get");
 }
 
 TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD out")
@@ -4107,47 +4096,47 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD o
         return;
     }
 
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
     MCHostedRelease release("hd-options-remove");
     UpdateToRelease2(release);
     MCUpdaterScope scope(release, false);
     REQUIRE(MCTestGame::StartLogistics());
-    const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
-    CHECK_EQ(list->Description(HdPackRow),
-             std::format("THE HD ART, SOUND AND MOVIES ({}).", MCUpdateWork::SizeText(Terrain().size())));
-    const std::shared_ptr<MCLogTextButton> remove = ShownButton("REMOVE");
+    const std::shared_ptr<MCPrefsScreen> prefs = OpenHdOptions();
+    CHECK_EQ(Line(*prefs, HdPackRow), std::format("{}, installed.", MCUpdateWork::SizeText(Terrain().size())));
+    REQUIRE_EQ(HdPackButton(*prefs), "Remove");
 
     // Asked first: CANCEL keeps it.
-    MCMenuDialog& question = *GlobalLog()->Question;
-    RealClickOn(*remove);
-    REQUIRE(question.IsShowing());
-    MCScreenInput::SaveShot("hd options remove question", MCScreenInput::ScreenHash());
-    RealClickOn(*question.View()->CancelButton);
-    CHECK(!question.IsShowing());
+    REQUIRE(MCRemadeTest::Press(*prefs, HdPackRow));
+    Answer("Remove the HD pack?", false);
     CHECK(MCUpdater::HdPack().Chosen);
     CHECK(!MCUpdater::Working());
 
-    // OK: it goes at the restart.
-    RealClickOn(*remove);
-    REQUIRE(question.IsShowing());
-    RealClickOn(*question.View()->OkButton);
+    // REMOVE: it goes at the restart.
+    REQUIRE(MCRemadeTest::Press(*prefs, HdPackRow));
+    Answer("Remove the HD pack?", true);
     CHECK(!MCUpdater::HdPack().Chosen);
     REQUIRE(ScreenFramesUntil(MCStage::Ready));
     ScreenFrames();
-    CHECK_EQ(list->Description(HdPackRow), std::string("RESTART THE GAME TO REMOVE IT."));
-    CHECK(ButtonShown("RESTART"));
-    CHECK(!ButtonShown("REMOVE"));
+    CHECK_EQ(Line(*prefs, HdPackRow), "Restart the game to remove it.");
+    CHECK_EQ(HdPackButton(*prefs), "Restart");
 }
 
 namespace
 {
-    /// <summary>Whether the main menu's button <paramref name="label"/> (the UPDATE page's) is showing.</summary>
-    bool ButtonOnMainShown(std::string_view label)
+    /// <summary>The words of the first change the remade UPDATE's notes list; empty without one.</summary>
+    std::string FirstNote(const MCUpdateScreen& update)
     {
-        const std::shared_ptr<MCLogTextButton> button = MCScreenInput::FindTextButton(*GlobalLog()->MainScreen, label);
-        return button != nullptr && button->IsShowing();
+        Rml::Element* list = MCRemadeTest::Find(update, "note-list");
+        REQUIRE(list != nullptr);
+        Rml::ElementList notes;
+        list->GetElementsByClassName(notes, "note");
+
+        if (notes.empty() || notes.front()->GetNumChildren() == 0)
+        {
+            return {};
+        }
+
+        const Rml::Element* words = notes.front()->GetChild(notes.front()->GetNumChildren() - 1);
+        return Rml::StringUtilities::DecodeRml(words->GetInnerRML());
     }
 }
 
@@ -4165,7 +4154,6 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
     const auto stall = std::make_shared<MCGate>();
     MCUpdaterScope scope(release, false, [host = release.Host.Path(), stall]
                          { return std::make_unique<MCStallingSource>(host, stall); });
-    const MCTestGame::OldMainMenu oldMenu;
     REQUIRE(MCTestGame::StartLogistics());
     const uint64_t inHand =
         std::filesystem::file_size(release.Host.Path() / "patches" / "terrain-1-2.hdiff") + uint64_t{SendBytes};
@@ -4175,25 +4163,25 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
             MCTestGame::RunFrame(1.0f / 15.0f);
             return stall->Reached && MCUpdater::Status().Received == inHand;
         }));
+    REQUIRE(MCTestGame::FinishChanges());
     ScreenFrames();
 
-    // The main menu's UPDATE lit, its page showing the download under way, nothing to answer.
-    const std::shared_ptr<MCLogButton> update = GlobalLog()->MainScreen->CinemaButton.Lock();
+    // The main menu's UPDATE shows (at its foot); the remade page it opens shows the download under way, nothing to
+    // answer.
+    REQUIRE(MCMainMenuScreens::MainOnTop());
+    MCTestGuest::ClickOn(MCMainPanel::Main, "update");
+    REQUIRE(MCTestGame::FinishChanges());
+    const std::shared_ptr<MCUpdateScreen> update = MCRemadeTest::OnTop<MCUpdateScreen>();
     REQUIRE(update != nullptr);
-    CHECK(!update->Disabled);
-    // The original's page (a lobby's room still shows it; the button opens the remade one: UpdateScreenTests.cpp).
-    ShowUpdatePage();
     ScreenFrames();
-    REQUIRE(UpdatePageShown());
-    CHECK_EQ(UpdatePageStatus(),
-             std::format("DOWNLOADING: {}.", MCUpdateWork::ProgressText(inHand, UpdateBytes(release))));
+    CHECK_EQ(MCRemadeTest::Words(*update, "status"),
+             std::format("Downloading: {} of {}.", MCUpdateWork::SizeText(inHand),
+                         MCUpdateWork::SizeText(UpdateBytes(release))));
     CHECK_EQ(MCUpdater::Status().Version, std::format("{} ({})", ReleaseVersion, RunningBuild));
-    const std::vector<std::string> lines = UpdatePageLines();
-    REQUIRE(!lines.empty());
-    CHECK_EQ(lines.front(), std::string("NEW MISSIONS."));
-    CHECK(!ButtonOnMainShown("INSTALL"));
-    CHECK(!ButtonOnMainShown("SKIP"));
-    MCScreenInput::SaveShot("update forced art", MCScreenInput::ScreenHash());
+    CHECK_EQ(MCRemadeTest::Words(*update, "version"), std::format("Version {}", ReleaseVersion));
+    CHECK_EQ(FirstNote(*update), std::string(ReleaseNotes));
+    CHECK(!MCRemadeTest::Visible(*update, "act"));
+    CHECK(!(MCRemadeTest::Visible(*update, "second") && MCRemadeTest::Words(*update, "second") == "Skip"));
 
     // In and checked: RESTART.
     stall->Open = true;
@@ -4205,10 +4193,10 @@ TEST_CASE_ISOLATED("game: the art a program installed alone came for shows its d
         }));
     ScreenFrames();
     CHECK(release.Armed());
-    CHECK_EQ(UpdatePageStatus(),
-             std::format("VERSION {} ({}) IS IN. RESTART TO PLAY IT.", ReleaseVersion, RunningBuild));
-    CHECK(!ButtonOnMainShown("INSTALL"));
-    CHECK(ButtonOnMainShown("RESTART"));
+    CHECK_EQ(MCRemadeTest::Words(*update, "status"),
+             std::format("Version {} is in. Restart to play it.", ReleaseVersion));
+    CHECK(MCRemadeTest::Visible(*update, "act"));
+    CHECK_EQ(MCRemadeTest::Words(*update, "act"), "Restart");
 }
 
 namespace

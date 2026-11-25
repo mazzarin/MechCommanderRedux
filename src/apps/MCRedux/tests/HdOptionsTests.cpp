@@ -1,26 +1,20 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCKeyBindings.h"
 #include "lib/MCFitIniFile.h"
-#include "logistics/MCGenericScreen.h"
-#include "logistics/MCHdOptionsPanel.h"
-#include "logistics/MCLogComboBox.h"
-#include "logistics/MCLogDialogButton.h"
-#include "logistics/MCLogOptionList.h"
-#include "logistics/MCLogTextButton.h"
-#include "logistics/MCMenuDialog.h"
-#include "logistics/MCPreferencesMenu.h"
-#include "logistics/MCReusableDialog.h"
-#include "logistics/MCSplashScreen.h"
+#include "logistics/MCPrefsScreen.h"
+#include "logistics/MCSettingsModel.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
 #include "main/MCPrefs.h"
 #include "main/MCSystemConfig.h"
+#include "main/MCUpdater.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCPresenter.h"
@@ -30,74 +24,13 @@
 #include "sprite/MCMechStops.h"
 #include "sprite/MCSceneLights.h"
 
-// The HD settings PREFS keeps (main/MCHdSettings) and the preferences' HD OPTIONS page that edits them: every setting is
-// read and written, a click and a right click step a setting through its choices, an option that needs another shows
-// dim until it is on, DEFAULTS and ORIGINAL set them all, CANCEL puts them back and ACCEPT writes them; with the CPU
-// drawing (the GPU failed to start, or SOFTWARE chosen) what only the GPU draws shows dim.
+// The HD settings PREFS keeps (main/MCHdSettings) and Preferences' HD section that edits them: every setting is read
+// and written, a click picks a setting's choice, one that needs another is held until it is on, DEFAULTS and ORIGINAL
+// set them all, CANCEL puts them back and ACCEPT writes them; with the CPU drawing (the GPU failed to start, or SOFTWARE
+// chosen) what only the GPU draws is held.
 
 namespace
 {
-    using MCScreenInput::FindTextButton;
-
-    /// <summary>Runs a few frames, as a player's screen would between inputs.</summary>
-    void Frames()
-    {
-        constexpr int32_t frames = 3;
-
-        for (int32_t frame = 0; frame < frames; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    }
-
-    /// <summary>Clicks the middle of <paramref name="object"/> as a player does.</summary>
-    void RealClickOn(MCGuiObject& object)
-    {
-        MCScreenInput::RealClick(object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2);
-        Frames();
-    }
-
-    /// <summary>The row of the option editing PREFS key <paramref name="key"/>.</summary>
-    int32_t RowOf(const MCLogOptionList& list, std::string_view key)
-    {
-        const std::optional<int32_t> row = list.RowOf(key);
-        REQUIRE(row.has_value());
-        return *row;
-    }
-
-    /// <summary>Scrolls <paramref name="key"/>'s option into the list and clicks its setting (right: a right click).</summary>
-    void RealClickOption(MCLogOptionList& list, std::string_view key, bool right = false)
-    {
-        const int32_t row = RowOf(list, key);
-        list.ScrollTo(row - list.VisibleRows() / 2);
-        const std::optional<std::pair<int32_t, int32_t>> centre = list.SettingCentre(row);
-        REQUIRE(centre.has_value());
-
-        if (right)
-        {
-            MCScreenInput::RealMove(centre->first, centre->second);
-            MCScreenInput::SendMouse(MCGuiEventType::RightButtonDown, centre->first, centre->second, false);
-        }
-        else
-        {
-            MCScreenInput::RealClick(centre->first, centre->second);
-        }
-
-        Frames();
-    }
-
-    /// <summary>Checks that the menus' message dialog is up, saves its shot as <paramref name="shot"/>, and closes it with OK.</summary>
-    void CloseMenuMessage(std::string_view shot)
-    {
-        MCMenuDialog& dialog = *GlobalLog()->Message;
-        CHECK(dialog.View()->ShowWindow != 0);
-        MCScreenInput::SaveShot(std::string(shot), MCScreenInput::ScreenHash());
-        MCLogDialogButton& ok = *dialog.View()->OkButton;
-        MCScreenInput::Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
-        Frames();
-        CHECK(dialog.View()->ShowWindow == 0);
-    }
-
     /// <summary>The HD settings with no row on the HD OPTIONS page yet (PREFS alone sets them).</summary>
     constexpr std::array<std::string_view, 1> Unlisted = {"MoreUnits"};
 
@@ -484,12 +417,64 @@ TEST_CASE_ISOLATED("game: PREFS is written byte for byte as the 1998 preferences
     std::filesystem::remove(prefsPath);
 }
 
+namespace
+{
+    /// <summary>Whether Preferences' row of setting <paramref name="id"/> is held (greyed, its line saying why).</summary>
+    bool Held(const MCPrefsScreen& prefs, const std::string& id)
+    {
+        const Rml::Element* row = MCRemadeTest::Find(prefs, "row-" + id);
+        REQUIRE(row != nullptr);
+        return row->IsClassSet("held");
+    }
+
+    /// <summary>The line under the name of Preferences' row of setting <paramref name="id"/>.</summary>
+    std::string Line(const MCPrefsScreen& prefs, const std::string& id)
+    {
+        return MCRemadeTest::Words(prefs, "line-" + id);
+    }
+
+    /// <summary>How far Preferences' rows are scrolled down.</summary>
+    float RowsScrolled(const MCPrefsScreen& prefs)
+    {
+        Rml::Element* rows = MCRemadeTest::Find(prefs, "rows");
+        REQUIRE(rows != nullptr);
+        return rows->GetScrollTop();
+    }
+
+    /// <summary>
+    /// The settings model's rows whose value follows HD setting <paramref name="setting"/>: those whose shown value moves
+    /// when it moves off the original's.
+    /// </summary>
+    size_t RowsFollowing(const MCHdSettings::MCSetting& setting)
+    {
+        const std::span<const MCSettingsModel::MCSetting> rows = MCSettingsModel::All();
+        std::vector<int> before;
+
+        for (const MCSettingsModel::MCSetting& row : rows)
+        {
+            before.push_back(row.Get ? row.Get() : 0);
+        }
+
+        const int32_t kept = setting.Value.get();
+        setting.Value.get() = setting.Original != setting.Most ? setting.Most : setting.Least;
+        size_t following = 0;
+
+        for (size_t row = 0; row < rows.size(); row++)
+        {
+            following += rows[row].Get && rows[row].Get() != before[row] ? 1 : 0;
+        }
+
+        setting.Value.get() = kept;
+        return following;
+    }
+}
+
 /// <summary>
-/// The HD OPTIONS page with a player's mouse: HD AUDIO's ORCHESTRAL without the pack's shows as ON; OPTIONS in the
-/// preferences' HD box shows the page; a click steps a setting on
-/// through its choices and round to the first, a right click back; HD AUDIO offers no ORCHESTRAL without the pack's;
-/// an option needing another shows dim (and says so) until that one is on; the wheel scrolls; DEFAULTS and ORIGINAL
-/// set every setting and say so; DONE goes back; CANCEL puts every setting back and ACCEPT writes them to PREFS.
+/// Preferences' HD section with a player's mouse: every HD setting has one row, but those with none yet; a click on a
+/// choice of HD LIGHTING picks it (OFF, ON, DUSK, NIGHT and back); RELIEF needs HD LIGHTING: held (greyed, its line
+/// saying so, a click refused) until it's on; HD ART and HD AUDIO on without a pack say what they need on their lines;
+/// the wheel scrolls the rows; ORIGINAL turns every HD option off and DEFAULTS puts the defaults back; CANCEL puts every
+/// setting back, Preferences opening again at the top of its rows; ACCEPT writes the ones off their defaults to PREFS.
 /// </summary>
 TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player's mouse")
 {
@@ -498,12 +483,10 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
         return;
     }
 
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
+    const MCTestGame::KeepPrefs keptPrefs;
     REQUIRE(MCTestGame::StartLogistics());
 
-    // The page as the GPU shows it: on a machine whose GPU couldn't start, the next case's.
+    // The rows as the GPU shows them: on a machine whose GPU couldn't start, the next case's.
     if (GpuFellBack())
     {
         std::cout << "  (skipped: the GPU renderer couldn't start on this machine)\n";
@@ -514,148 +497,120 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
     std::filesystem::remove(prefsPath);
     REQUIRE(MCHdSettings::Now() == OriginalSettings());
     REQUIRE(!MCHdAudio::HasOrchestral());
-    MCGenericScreen& screen = *GlobalLog()->PrefScreen;
 
-    // ORCHESTRAL without the pack's orchestral music shows as ON (it plays the stereo music); CANCEL keeps that.
-    GHdAudio = HdAudioOrchestral;
-    ShowPreferences();
-    Frames();
-    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOn));
-    CancelPrefs();
-    Frames();
-    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOn));
-    GHdAudio = HdAudioOff;
-
-    ShowPreferences();
-    Frames();
-    CHECK(!HdOptionsShown());
-    MCScreenInput::SaveShot("hd options prefs", MCScreenInput::ScreenHash());
-    const std::shared_ptr<MCLogTextButton> options = FindTextButton(screen, "OPTIONS");
-    REQUIRE(options != nullptr);
-    RealClickOn(*options);
-    REQUIRE(HdOptionsShown());
-    const std::shared_ptr<MCLogOptionList> list = HdOptionsList();
-    REQUIRE(list != nullptr);
-    CHECK_EQ(list->FirstRow(), 0);
-    CHECK(list->Status().empty());
-    MCScreenInput::SaveShot("hd options", MCScreenInput::ScreenHash());
-
-    // Every HD setting is listed once, but those with no row yet.
+    // Every HD setting has one row, but those with none yet.
     for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
     {
-        CHECK_EQ(list->RowOf(setting.Key).has_value(), Listed(setting));
+        MCTest::Scope scope(std::string(setting.Key));
+        CHECK_EQ(RowsFollowing(setting), Listed(setting) ? 1u : 0u);
     }
 
-    // HD LIGHTING steps OFF, ON, DUSK, NIGHT and round; a right click goes back.
-    const int32_t lighting = RowOf(*list, "HDLighting");
-    CHECK_EQ(list->ChoiceName(lighting), "OFF");
-    RealClickOption(*list, "HDLighting");
-    CHECK_EQ(GHdLighting, static_cast<int>(HdLightingOn));
-    CHECK_EQ(list->ChoiceName(lighting), "ON");
-    RealClickOption(*list, "HDLighting");
-    RealClickOption(*list, "HDLighting");
-    CHECK_EQ(GHdLighting, static_cast<int>(HdLightingNight));
-    RealClickOption(*list, "HDLighting");
-    CHECK_EQ(GHdLighting, static_cast<int>(HdLightingOff));
-    RealClickOption(*list, "HDLighting", true);
-    CHECK_EQ(GHdLighting, static_cast<int>(HdLightingNight));
-    RealClickOption(*list, "HDLighting", true);
-    RealClickOption(*list, "HDLighting", true);
-    RealClickOption(*list, "HDLighting", true);
-    CHECK_EQ(GHdLighting, static_cast<int>(HdLightingOff));
+    std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Hd);
+    REQUIRE(prefs != nullptr);
 
-    // RELIEF needs HD LIGHTING: dim until it's on, and it can still be set.
-    const int32_t relief = RowOf(*list, "HDRelief");
-    CHECK(!list->CanShow(relief));
-    const uint32_t dimShown = MCScreenInput::ScreenHash();
-    RealClickOption(*list, "HDRelief");
+    // HD LIGHTING: each choice clicked is picked.
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "hd-lighting"), "Off");
+
+    for (const auto& [choice, lighting, words] :
+         {std::tuple{1, HdLightingOn, "On"}, std::tuple{2, HdLightingDusk, "Dusk"},
+          std::tuple{3, HdLightingNight, "Night"}, std::tuple{0, HdLightingOff, "Off"}})
+    {
+        REQUIRE(MCRemadeTest::ClickChoice(*prefs, "hd-lighting", choice));
+        CHECK_EQ(GHdLighting, static_cast<int>(lighting));
+        CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "hd-lighting"), words);
+    }
+
+    // RELIEF needs HD LIGHTING: held until it's on, a click on it refused.
+    CHECK(Held(*prefs, "relief"));
+    CHECK_EQ(Line(*prefs, "relief"), "Needs HD lighting.");
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "relief", 1));
+    CHECK_EQ(GHdRelief, 0);
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "hd-lighting", 1));
+    CHECK(!Held(*prefs, "relief"));
+    CHECK_EQ(Line(*prefs, "relief"), "");
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "relief", 1));
     CHECK_EQ(GHdRelief, 1);
-    RealClickOption(*list, "HDLighting");
-    CHECK(list->CanShow(relief));
-    MCScreenInput::SaveShot("hd options relief shows", MCScreenInput::ScreenHash());
-    CHECK(MCScreenInput::ScreenHash() != dimShown);
 
-    // HD AUDIO, without the pack's orchestral music, steps OFF and ON; ON without a pack says where it goes.
-    RealClickOption(*list, "HDAudio");
-    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOn));
-    CloseMenuMessage("hd options hd audio needs a pack");
-    RealClickOption(*list, "HDAudio");
-    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOff));
-    CHECK(GlobalLog()->MessageDialog->ShowWindow == 0);
-
-    // HD ART on without a pack says where it goes.
+    // HD ART on without a pack says what it needs.
     REQUIRE(!std::filesystem::exists(MCHdArt::PackFolder()));
-    RealClickOption(*list, "HDArt");
+    const auto packNeeded = [](std::string_view pack)
+    {
+        return MCUpdater::HdPack().Managed
+                   ? std::string("Needs the HD pack.")
+                   : std::format("Needs an HD {} pack in the HD folder beside your saved games.", pack);
+    };
+
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "hd-art", 1));
     CHECK_EQ(GHdArt, 1);
-    CloseMenuMessage("hd options hd art needs a pack");
+    CHECK_EQ(Line(*prefs, "hd-art"), packNeeded("art"));
 
-    // The last rows: the wheel scrolls down to them; BRAKING turns on.
-    list->ScrollTo(0);
-    const std::optional<std::pair<int32_t, int32_t>> first = list->SettingCentre(lighting);
-    REQUIRE(first.has_value());
-    MCScreenInput::RealMove(first->first, first->second);
-    constexpr int32_t notchesDown = -3;
-    MCScreenInput::RealWheel(notchesDown);
-    CHECK_EQ(list->FirstRow(), -notchesDown);
-    MCScreenInput::SaveShot("hd options scrolled", MCScreenInput::ScreenHash());
-    RealClickOption(*list, "MechBraking");
-    CHECK_EQ(GMechBraking, 1);
+    // The wheel scrolls the rows down.
+    {
+        Rml::Element* rows = MCRemadeTest::Find(*prefs, "rows");
+        REQUIRE(rows != nullptr);
+        const Rml::Vector2f middle =
+            rows->GetAbsoluteOffset(Rml::BoxArea::Border) + rows->GetBox().GetSize(Rml::BoxArea::Border) / 2.0f;
+        MCScreenInput::PixelMove(middle.x, middle.y, MCRemadeTest::FrameSeconds);
+        constexpr int32_t NotchesDown = -3;
+        CHECK_EQ(RowsScrolled(*prefs), 0.0f);
+        MCScreenInput::RealWheel(NotchesDown);
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        CHECK(RowsScrolled(*prefs) > 0.0f);
+    }
 
-    // ORIGINAL turns everything off, DEFAULTS sets the defaults (the original's, in the tests); each says so.
-    const std::shared_ptr<MCLogTextButton> original = FindTextButton(screen, "ORIGINAL");
-    REQUIRE(original != nullptr);
-    RealClickOn(*original);
+    // ORIGINAL turns everything off; DEFAULTS sets the defaults (the original's, in the tests).
+    REQUIRE(MCRemadeTest::Press(*prefs, "original"));
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     CHECK(MCHdSettings::Now() == OriginalSettings());
-    CHECK_EQ(list->Status(), "EVERY HD OPTION IS OFF: THE ORIGINAL GAME.");
-    RealClickOption(*list, "HDClouds");
-    CHECK(list->Status().empty());
-    const std::shared_ptr<MCLogTextButton> defaults = FindTextButton(screen, "DEFAULTS");
-    REQUIRE(defaults != nullptr);
-    RealClickOn(*defaults);
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "cloud-shadows", 1));
+    CHECK_EQ(GHdClouds, 1);
+    REQUIRE(MCRemadeTest::Press(*prefs, "defaults"));
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     CHECK(MCHdSettings::Now() == OriginalSettings());
-    CHECK_EQ(list->Status(), "THE DEFAULT SETTINGS ARE BACK.");
 
-    // DONE, then CANCEL: every setting is as it was, and the page opens at its top next time.
-    RealClickOption(*list, "HDSunShadows");
-    RealClickOption(*list, "HDTurns");
-    const std::shared_ptr<MCLogTextButton> done = FindTextButton(screen, "DONE");
-    REQUIRE(done != nullptr);
-    RealClickOn(*done);
-    CHECK(!HdOptionsShown());
-    CancelPrefs();
-    Frames();
+    // HD AUDIO (SOUND's) on without a pack says what it needs; off again, nothing.
+    prefs->ShowSection(MCSettingsModel::MCSection::Sound);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "hd-audio", 1));
+    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOn));
+    CHECK_EQ(Line(*prefs, "hd-audio"), packNeeded("audio"));
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "hd-audio", 0));
+    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOff));
+    CHECK_EQ(Line(*prefs, "hd-audio"), "");
+    CHECK(!MCRmlDialogs::Shown());
+
+    // CANCEL: every setting is as it was, and the rows open at their top next time.
+    prefs->ShowSection(MCSettingsModel::MCSection::Hd);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "cloud-shadows", 1));
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "smooth-turns", 1));
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "cancel"));
     CHECK(MCHdSettings::Now() == OriginalSettings());
-    ShowPreferences();
-    Frames();
-    CHECK(!HdOptionsShown());
-    ShowHdOptions();
-    Frames();
-    CHECK_EQ(list->FirstRow(), 0);
+    prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Hd);
+    REQUIRE(prefs != nullptr);
+    CHECK_EQ(RowsScrolled(*prefs), 0.0f);
 
     // Set again, ACCEPT keeps them and writes the ones off their defaults.
-    RealClickOption(*list, "HDSunShadows");
-    RealClickOption(*list, "HDFlecks");
-    RealClickOption(*list, "HDParticles");
-    WritePrefs();
-    Frames();
-    CHECK_EQ(GHdSunShadows, 1);
-    CHECK_EQ(SavedSetting(prefsPath, "HDSunShadows"), std::optional<int32_t>(1));
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "particles", 1));
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "flecks", 1));
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "smooth-turns", 1));
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "accept"));
+    CHECK_EQ(MCHdSettings::Find("HDParticles").Value.get(), 1);
     CHECK_EQ(SavedSetting(prefsPath, "HDParticles"), std::optional<int32_t>(1));
     CHECK_EQ(SavedSetting(prefsPath, "HDFlecks"), std::optional<int32_t>(1));
+    CHECK_EQ(SavedSetting(prefsPath, "HDTurns"), std::optional<int32_t>(1));
     // HD CLOUDS, at its default, isn't written: PREFS without it reads the default.
     CHECK(!SavedSetting(prefsPath, "HDClouds").has_value());
 
-    std::filesystem::remove(prefsPath);
     MCHdSettings::UseOriginal();
 }
 
 /// <summary>
 /// A run that asked for the GPU renderer and draws on the CPU, the GPU having failed to start (the display's
-/// fallback): the preferences' RENDERER says "VULKAN (FAILED)" and keeps VULKAN for the next start; HD OPTIONS shows
-/// the options only the GPU draws dim, each line saying it needs VULKAN, the status line saying VULKAN didn't start;
-/// they can still be set; the options the CPU keeps (HD AUDIO, FOOTPRINTS, the mechs' motion, BRAKING, REPORTS) show.
-/// With SOFTWARE chosen the status line says the software renderer draws none of them; a run on the software renderer
-/// by choice with VULKAN chosen for the next start shows them all.
+/// fallback): Preferences' RENDERER says "Vulkan (failed)" and keeps VULKAN for the next start; the HD settings only the
+/// GPU draws are held, each line saying it needs Vulkan, and refuse a click; the ones the CPU keeps (HD AUDIO,
+/// FOOTPRINTS, the mechs' motion, BRAKING, REPORTS) aren't. With SOFTWARE chosen they stay held; a run on the software
+/// renderer by choice with VULKAN chosen for the next start holds none of them for the GPU.
 /// </summary>
 TEST_CASE_ISOLATED("game: after the GPU fails to start, HD OPTIONS dims what only the GPU draws and RENDERER says so")
 {
@@ -665,6 +620,7 @@ TEST_CASE_ISOLATED("game: after the GPU fails to start, HD OPTIONS dims what onl
     }
 
     // The display opens on the CPU, as it does when the GPU can't start; then the run is one that asked for the GPU.
+    const MCTestGame::KeepPrefs keptPrefs;
     GRenderer = static_cast<int>(MCRendererKind::Software);
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE(GuiSystem().Display() != nullptr);
@@ -677,82 +633,56 @@ TEST_CASE_ISOLATED("game: after the GPU fails to start, HD OPTIONS dims what onl
     REQUIRE(MCHdSettings::Now() == OriginalSettings());
 
     // RENDERER: VULKAN, which failed; still the choice.
-    ShowPreferences();
-    Frames();
-    const std::shared_ptr<MCLogComboBox> renderer = PrefsRendererDropDown();
-    REQUIRE(renderer != nullptr);
-    CHECK_EQ(renderer->Items().front().Label, "VULKAN (FAILED)");
-    CHECK_EQ(renderer->Items().front().Value, static_cast<int32_t>(MCRendererKind::Vulkan));
-    CHECK_EQ(renderer->Selected(), 0);
-    MCScreenInput::SaveShot("prefs gpu failed", MCScreenInput::ScreenHash());
+    std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Display);
+    REQUIRE(prefs != nullptr);
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "renderer"), "Vulkan (failed)");
+    CHECK_EQ(GRendererPreference, static_cast<int>(MCRendererKind::Vulkan));
+    prefs->ShowSection(MCSettingsModel::MCSection::Hd);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
 
-    const std::shared_ptr<MCLogTextButton> options = FindTextButton(*GlobalLog()->PrefScreen, "OPTIONS");
-    REQUIRE(options != nullptr);
-    RealClickOn(*options);
-    REQUIRE(HdOptionsShown());
-    const std::shared_ptr<MCLogOptionList> list = HdOptionsList();
-    REQUIRE(list != nullptr);
-    CHECK_EQ(list->Status(), "VULKAN DIDN'T START ON THIS COMPUTER: THE CPU DRAWS THE GAME.");
-
-    // Every setting on the page is one the GPU alone draws or one the CPU keeps.
-    constexpr std::array<std::string_view, 11> gpuOnly = {"HDArt",    "HDLighting", "HDSunShadows",  "HDRelief",
-                                                          "HDClouds", "HDSway",     "HDParticles",   "HDFlecks",
-                                                          "HDShake",  "HDWeather",  "HDSmoothMotion"};
-    constexpr std::array<std::string_view, 6> cpuKeeps = {"HDAudio", "HDFootprints", "HDTurns",
-                                                          "HDStops", "MechBraking",  "Reports"};
+    // Every setting with a row is one the GPU alone draws or one the CPU keeps (their rows' ids).
+    constexpr std::array<std::string_view, 11> gpuOnly = {"hd-art",        "hd-lighting",   "sun-shadows",  "relief",
+                                                          "cloud-shadows", "swaying-trees", "particles",    "flecks",
+                                                          "screen-shake",  "weather",       "smooth-motion"};
+    constexpr std::array<std::string_view, 6> cpuKeeps = {"hd-audio",     "footprints", "smooth-turns",
+                                                          "held-strides", "braking",    "reports"};
     CHECK_EQ(gpuOnly.size() + cpuKeeps.size() + Unlisted.size(), MCHdSettings::All().size());
 
-    // The settings showing as they shouldn't, named.
+    // The settings held as they shouldn't be, or not held as they should, named.
     std::string wrong;
 
-    for (const std::string_view key : gpuOnly)
+    for (const std::string_view id : gpuOnly)
     {
-        wrong += list->CanShow(RowOf(*list, key)) ? std::format("{} shows; ", key) : "";
+        const std::string row(id);
+        wrong += Held(*prefs, row) && Line(*prefs, row) == "Needs Vulkan." ? "" : std::format("{} not held; ", id);
     }
 
-    for (const std::string_view key : cpuKeeps)
+    for (const std::string_view id : cpuKeeps)
     {
-        wrong += list->CanShow(RowOf(*list, key)) ? "" : std::format("{} dim; ", key);
+        wrong += Held(*prefs, std::string(id)) ? std::format("{} held; ", id) : "";
     }
 
     CHECK_EQ(wrong, "");
 
-    // (The mouse kept off the rows, so no box is lit in the screens compared.)
-    constexpr int32_t awayX = 4;
-    constexpr int32_t awayY = 4;
-    MCScreenInput::RealMove(awayX, awayY);
-    Frames();
-    const uint32_t dimShown = MCScreenInput::ScreenHash();
-    MCScreenInput::SaveShot("hd options gpu failed", dimShown);
-
-    // A dim option can still be set (it shows once VULKAN starts).
-    RealClickOption(*list, "HDClouds");
-    CHECK_EQ(GHdClouds, 1);
-    CHECK(!list->CanShow(RowOf(*list, "HDClouds")));
-    RealClickOption(*list, "HDClouds");
+    // A held setting refuses a click.
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "cloud-shadows", 1));
     CHECK_EQ(GHdClouds, 0);
 
-    // SOFTWARE chosen: the status line says the software renderer draws none of them.
-    GRendererPreference = static_cast<int>(MCRendererKind::Software);
-    CHECK_EQ(list->Status(), "THE SOFTWARE RENDERER DRAWS NO OPTION THAT NEEDS VULKAN.");
-    CHECK(!list->CanShow(RowOf(*list, "HDClouds")));
+    // SOFTWARE chosen: they stay held.
+    prefs->ShowSection(MCSettingsModel::MCSection::Display);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "renderer", 1));
+    CHECK_EQ(GRendererPreference, static_cast<int>(MCRendererKind::Software));
+    CHECK(Held(*prefs, "cloud-shadows"));
+    CHECK_EQ(Line(*prefs, "cloud-shadows"), "Needs Vulkan.");
 
-    // On the software renderer by choice, VULKAN chosen for the next start: nothing dims for the GPU, no status.
+    // On the software renderer by choice, VULKAN chosen for the next start: nothing held for the GPU.
     GRenderer = static_cast<int>(MCRendererKind::Software);
-    GRendererPreference = static_cast<int>(MCRendererKind::Vulkan);
+    REQUIRE(MCRemadeTest::ClickChoice(*prefs, "renderer", 0));
     CHECK(!GpuFellBack());
-    CHECK(list->Status().empty());
-    CHECK(list->CanShow(RowOf(*list, "HDClouds")));
-    CHECK(!list->CanShow(RowOf(*list, "HDRelief")));
-    list->ScrollTo(0);
-    MCScreenInput::RealMove(awayX, awayY);
-    Frames();
-    MCScreenInput::SaveShot("hd options software then vulkan", MCScreenInput::ScreenHash());
-    CHECK(MCScreenInput::ScreenHash() != dimShown);
-
-    HideHdOptions();
-    CancelPrefs();
-    Frames();
+    CHECK(!Held(*prefs, "cloud-shadows"));
+    CHECK(Held(*prefs, "relief"));
+    CHECK_EQ(Line(*prefs, "relief"), "Needs HD lighting.");
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "cancel"));
     CHECK(MCHdSettings::Now() == OriginalSettings());
-    std::filesystem::remove(prefsPath);
 }

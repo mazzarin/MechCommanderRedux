@@ -13,6 +13,9 @@
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCBriefingScreen.h"
 #include "gui/MCUpdateDisplay.h"
+#include "iface/MCFriendlyMechIcon.h"
+#include "iface/MCMechBar.h"
+#include "iface/MCTacticalInterface.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
 #include "logistics/MCPurVehicleList.h"
@@ -22,7 +25,11 @@
 #include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCUnitLimits.h"
 #include "logistics/MCPurProfile.h"
+#include "lib/MCFile.h"
+#include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
+#include "object/MCMechGameSystem.h"
+#include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
 #include "platform/MCDisplay.h"
@@ -30,7 +37,9 @@
 #include "platform/MCSmacker.h"
 #include "platform/MCVulkanPresenter.h"
 #include "platform/MCVulkanRenderer.h"
+#include "sound/MCRadio.h"
 #include "terrain/MCTerrain.h"
+#include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrainWindow.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxFunctions.h"
@@ -124,25 +133,43 @@ namespace
         CHECK(MCInput::Display()->ReadFrame().has_value());
     }
 
+    /// <summary>The part id of the lance's first mech in mission 1.</summary>
+    constexpr int32_t FirstMechPartId = 0x200;
+    /// <summary>The depth the radio shows a pilot's video at, in front of the tactical map (MCSoundSystem).</summary>
+    constexpr int32_t PilotVideoDepth = 0x5a;
+
     /// <summary>
-    /// Every mech of the force with its left arm (5) shot off, no armor and no internals, and its right arm (4) and
-    /// torsos at the other damage states, so its diagrams use every damage table.
+    /// Every mech on the mission's mech bar with its right arm shot off, its left arm without armour and its torsos'
+    /// fronts at one, two and three fifths of their armour, so its icon's diagram uses every damage table.
     /// </summary>
     /// <returns>The mechs damaged.</returns>
-    int32_t DamageEveryMech()
+    int32_t DamageMechBar()
     {
+        constexpr std::array<int32_t, 3> Torsos{MechCenterTorso, MechLeftTorso, MechRightTorso};
+        constexpr int32_t Fifths = 5;
         int32_t mechs = 0;
 
-        for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : TacticalInterface()->MechBar->Buttons())
         {
+            const std::shared_ptr<MCMover> mover = GetMoverFromPartId(button->PartId);
+
+            if (mover == nullptr || mover->ObjectClass != MCObjectClass::BattleMech)
+            {
+                continue;
+            }
+
             mechs++;
-            mech->Armor[5].CurArmor = 0;
-            mech->Internals[5].CurArmor = 0;
-            mech->Armor[4].CurArmor = 0;
-            mech->Armor[1].CurArmor = static_cast<uint8_t>(mech->Armor[1].MaxArmor / 5);
-            mech->Armor[2].CurArmor = static_cast<uint8_t>(mech->Armor[2].MaxArmor * 2 / 5);
-            mech->Armor[3].CurArmor = static_cast<uint8_t>(mech->Armor[3].MaxArmor * 3 / 5);
-            mech->CalcStatus();
+            MCBodyLocation& shotOff = mover->BodyAt(MechRightArm);
+            shotOff.CurInternalStructure = 0.0f;
+            shotOff.DamageState = 2;
+            mover->Armor[MechRightArm].CurArmor = 0.0f;
+            mover->Armor[MechLeftArm].CurArmor = 0.0f;
+
+            for (size_t torso = 0; torso < Torsos.size(); torso++)
+            {
+                auto& armor = mover->Armor[Torsos[torso]];
+                armor.CurArmor = static_cast<float>(armor.MaxArmor * static_cast<int32_t>(torso + 1) / Fifths);
+            }
         }
 
         return mechs;
@@ -1006,10 +1033,9 @@ TEST_CASE_ISOLATED("game: the GPU draws the logistics screens as the software re
 }
 
 /// <summary>
-/// Mirror mode on the small damage diagrams of the briefing's deploy pane, the purchase screen's inventory and the
-/// repair screen, with every mech's left arm shot off and its right arm and torsos damaged: each location is recoloured
-/// for its damage through the diagram's translate tables, which the GPU must take as the software renderer does (it
-/// once drew them as the identity, so a mech showed undamaged).
+/// Mirror mode on the mission's mech bar, with every mech's right arm shot off and its left arm and torsos damaged:
+/// each location of its icon's diagram is recoloured for its damage through a translate table, which the GPU must take
+/// as the software renderer does (it once drew such tables as the identity, so a mech showed undamaged).
 /// </summary>
 TEST_CASE_ISOLATED("game: the GPU draws damaged mechs' diagrams as the software renderer does")
 {
@@ -1019,7 +1045,7 @@ TEST_CASE_ISOLATED("game: the GPU draws damaged mechs' diagrams as the software 
     }
 
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::Mirror);
-    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartMission(1));
     const std::shared_ptr<MCVulkanRenderer> renderer = MirrorRenderer();
 
     if (renderer == nullptr)
@@ -1027,33 +1053,24 @@ TEST_CASE_ISOLATED("game: the GPU draws damaged mechs' diagrams as the software 
         return;
     }
 
-    NewCampaign();
-    REQUIRE(MCTestGame::FinishChanges());
-    REQUIRE(DamageEveryMech() > 0);
-    const auto run = []
-    {
-        for (int32_t frame = 0; frame < 20; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    };
+    REQUIRE(DamageMechBar() > 0);
+    renderer->ResetMirror();
 
-    GlobalLog()->SetUpBriefingScreen(true);
-    run();
-    GlobalLog()->SetUpPurchaseScreen(true);
-    run();
-    GlobalLog()->SetUpRepairScreen(true);
-    run();
+    for (int32_t frame = 0; frame < 20; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
     CheckMirror(*renderer);
 }
 
 /// <summary>
-/// Port-only: the repair screen's damage diagrams and the store's mech rows are drawn again every frame, each piece
-/// through its damage's or shadow's colour table, and once a screen has settled its frames give no table a new row on
-/// the GPU. Each table set as the lookaside used to be registered again, which took its row away: the next draw sent
-/// it up again, and every kept tile was drawn again, every frame (HISTORY.md, 19 Nov, the menus' whole redraws).
+/// Port-only: the mission's mech bar draws each damaged mech's diagram again every frame, each location through its
+/// damage's colour table, and once the mission has settled its frames give no table a new row on the GPU. (The
+/// logistics screens' tables, each set as the lookaside again, were registered again, which took their rows away: the
+/// next draw sent them up again, every frame. HISTORY.md, 19 Nov, the menus' whole redraws.)
 /// </summary>
-TEST_CASE_ISOLATED("game: settled logistics screens send the GPU no colour table again, damage diagrams included")
+TEST_CASE_ISOLATED("game: a settled mission sends the GPU no colour table again, damaged mechs' diagrams included")
 {
     if (!MCTestGame::Available())
     {
@@ -1061,7 +1078,7 @@ TEST_CASE_ISOLATED("game: settled logistics screens send the GPU no colour table
     }
 
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::Mirror);
-    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartMission(1));
     const std::shared_ptr<MCVulkanRenderer> renderer = MirrorRenderer();
 
     if (renderer == nullptr)
@@ -1069,36 +1086,26 @@ TEST_CASE_ISOLATED("game: settled logistics screens send the GPU no colour table
         return;
     }
 
-    NewCampaign();
-    REQUIRE(MCTestGame::FinishChanges());
-    REQUIRE(DamageEveryMech() > 0);
+    REQUIRE(DamageMechBar() > 0);
 
-    // The rows the last 10 of 30 frames gave tables, once the screen's own tables went up.
-    const auto newRows = [renderer]
+    // The rows the last 10 of 30 frames gave tables, once the damaged diagrams' tables went up.
+    constexpr int32_t Frames = 30;
+    constexpr int32_t Settling = 20;
+    int64_t rows = 0;
+
+    for (int32_t frame = 0; frame < Frames; frame++)
     {
-        constexpr int32_t Frames = 30;
-        constexpr int32_t Settling = 20;
-        int64_t rows = 0;
+        MCTestGame::RunFrame(1.0f / 15.0f);
+        rows += frame >= Settling ? renderer->LastFrameUploads().TableRows : 0;
+    }
 
-        for (int32_t frame = 0; frame < Frames; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-            rows += frame >= Settling ? renderer->LastFrameUploads().TableRows : 0;
-        }
-
-        return rows;
-    };
-
-    GlobalLog()->SetUpPurchaseScreen(true);
-    CHECK_EQ(newRows(), 0);
-    GlobalLog()->SetUpRepairScreen(true);
-    CHECK_EQ(newRows(), 0);
+    CHECK_EQ(rows, 0);
 }
 
 /// <summary>
-/// The briefing's operation movie with the GPU drawing alone: each decoded frame is decoded straight into the movie
-/// texture's upload memory and sent up once (its rectangle only), a frame with no new movie frame sends nothing, the
-/// movie's memory on the CPU is never written (nor read), and its pixels are never uploaded whole again.
+/// A pilot's video on the tactical map with the GPU drawing alone: each decoded frame is decoded straight into the
+/// movie texture's upload memory and sent up once (its rectangle only), a frame with no new movie frame sends nothing,
+/// the movie's memory on the CPU is never written (nor read), and its pixels are never uploaded whole again.
 /// </summary>
 TEST_CASE_ISOLATED("game: a movie's frames go straight to the GPU, once each")
 {
@@ -1107,11 +1114,8 @@ TEST_CASE_ISOLATED("game: a movie's frames go straight to the GPU, once each")
         return;
     }
 
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
-
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartMission(1));
     const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
 
     if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
@@ -1120,19 +1124,34 @@ TEST_CASE_ISOLATED("game: a movie's frames go straight to the GPU, once each")
         return;
     }
 
-    // The operation movie starts after a delay.
-    NewCampaign();
-    REQUIRE(MCTestGame::FinishChanges());
-    MCBriefingScreen& briefing = *GlobalLog()->BriefingScreen;
-
-    for (int32_t frame = 0;
-         frame < 300 && (briefing.SmackerWindow == nullptr || briefing.SmackerWindow->Movie == nullptr); frame++)
-    {
-        MCTestGame::RunFrame(1.0f / 30.0f);
-    }
-
-    const std::shared_ptr<MCGuiSmackerWindow> window = briefing.SmackerWindow.Lock();
-    REQUIRE(window != nullptr && window->Movie != nullptr);
+    // The lance's first pilot's video in the tactical map's video window, started as the radio starts it when the
+    // pilot's message plays (the tests' missions run without sound, so no message plays).
+    const std::shared_ptr<MCMover> mover = GetMoverFromPartId(FirstMechPartId);
+    REQUIRE(mover != nullptr);
+    const std::shared_ptr<MCMechWarrior> pilot = mover->GetPilot();
+    REQUIRE(pilot != nullptr);
+    const std::shared_ptr<MCRadio> radio = pilot->Radio.lock();
+    REQUIRE(radio != nullptr);
+    REQUIRE(!radio->Movies.empty());
+    const auto& [code, bytes] = *radio->Movies.begin();
+    std::unique_ptr<MCSmackTag> movie =
+        SmackOpenMemory(GamePath(MoviePath, std::format("{}{}", radio->MovieName, code), ".smk"), bytes);
+    REQUIRE(movie != nullptr);
+    const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+    REQUIRE(map != nullptr);
+    const MCGuiHandle<MCGuiSmackerWindow> shown = ScreenWindow()->CreateChild<MCGuiSmackerWindow>(
+        [area = map->GetVideoRect()](MCGuiSmackerWindow& made)
+        {
+            made.Init(area, {});
+            made.ShowGuiWindow(false);
+        });
+    const std::shared_ptr<MCGuiSmackerWindow> window = shown.Lock();
+    REQUIRE(window != nullptr);
+    REQUIRE(window->StartSmackerMovie(std::move(movie), false) == 0);
+    window->ShowGuiWindow(true);
+    window->SetDepth(PilotVideoDepth);
+    window->Draw();
+    REQUIRE(window->Movie != nullptr);
     const std::shared_ptr<MCTexture> texture = window->MovieWindow->Texture.lock();
     REQUIRE(texture != nullptr);
     CHECK(texture->Use == MCTextureUse::Stream);

@@ -1,12 +1,13 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "RemadeScreens.h"
 #include "TestGame.h"
 #include "ScreenInput.h"
 #include "camera/MCCamera.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFitIniFile.h"
-#include "logistics/MCLogComboBox.h"
-#include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCPrefsScreen.h"
+#include "logistics/MCSettingsModel.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCPrefs.h"
@@ -714,27 +715,6 @@ namespace
     private:
         std::optional<std::string> _Kept;
     };
-
-    /// <summary>The drop-down under <paramref name="parent"/> (at any depth) that offers <paramref name="label"/>.</summary>
-    std::shared_ptr<MCLogComboBox> FindDropDownOffering(MCGuiObject& parent, std::string_view label)
-    {
-        for (const std::shared_ptr<MCGuiObject>& child : parent.Children())
-        {
-            if (auto combo = std::dynamic_pointer_cast<MCLogComboBox>(child);
-                combo != nullptr && std::ranges::contains(combo->Items(), label, [](const MCLogComboBox::Item& item)
-                                                          { return std::string_view(item.Label); }))
-            {
-                return combo;
-            }
-
-            if (std::shared_ptr<MCLogComboBox> found = FindDropDownOffering(*child, label); found != nullptr)
-            {
-                return found;
-            }
-        }
-
-        return nullptr;
-    }
 }
 
 /// <summary>
@@ -888,9 +868,9 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
 }
 
 /// <summary>
-/// The preferences screen's INTERFACE SIZE offers AUTO, labelled with the size it picks at the UI RESOLUTION chosen,
-/// and 100% to 200%: a choice sets the interface size, CANCEL puts it back, and ACCEPT saves it in PREFS. The next
-/// mission draws its interface at it: 150% of 1080P is 720 lines.
+/// Preferences' INTERFACE SIZE offers AUTO, labelled with the size it picks at the UI RESOLUTION chosen, and 100% to
+/// 200%: a choice sets the interface size, CANCEL puts it back, and ACCEPT saves it in PREFS. The next mission draws its
+/// interface at it: 150% of 1080P is 720 lines.
 /// </summary>
 TEST_CASE_ISOLATED("game: INTERFACE SIZE on the preferences screen is saved in PREFS and sizes the next mission")
 {
@@ -903,83 +883,59 @@ TEST_CASE_ISOLATED("game: INTERFACE SIZE on the preferences screen is saved in P
     REQUIRE(MCTestGame::StartLogistics());
     const MCKeptPrefs keptPrefs;
     constexpr int ChosenSize = 150;
-
-    const auto frames = []
-    {
-        for (int32_t frame = 0; frame < 5; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    };
-
-    ShowPreferences();
-    frames();
-    const std::shared_ptr<MCLogComboBox> dropDown =
-        FindDropDownOffering(*GlobalLog()->PrefScreen, std::format("{}%", ChosenSize));
-    REQUIRE(dropDown != nullptr);
-    const std::vector<MCLogComboBox::Item>& items = dropDown->Items();
-    REQUIRE_EQ(items.size(), InterfaceSizes.size() + 1);
-    CHECK_EQ(items[0].Value, AutoInterfaceSize);
-
-    for (size_t i = 0; i < InterfaceSizes.size(); i++)
-    {
-        CHECK(items[i + 1].Label == std::format("{}%", InterfaceSizes[i]));
-        CHECK_EQ(items[i + 1].Value, InterfaceSizes[i]);
-    }
+    const std::string sizeId = "interface-size";
+    const std::string resolutionId = "ui-resolution";
+    const auto sizeSteps = static_cast<int32_t>(InterfaceSizes.size());
 
     // AUTO says the size it picks at the UI RESOLUTION chosen: 200% at 1080P.
     const auto autoLabel = [](int lines)
     {
-        return std::format("AUTO ({}%)", std::lround(MCDisplay::AutoInterfaceScale(lines) *
+        return std::format("Auto ({}%)", std::lround(MCDisplay::AutoInterfaceScale(lines) *
                                                      static_cast<float>(OriginalInterfaceSize)));
     };
 
-    CHECK(items[0].Label == autoLabel(LargeWindowLines));
+    // The stepper shows the size as it is; AUTO comes first, then each size; Left and Right step through them.
+    std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Display);
+    REQUIRE(prefs != nullptr);
+    CHECK_EQ(MCRemadeTest::StepWords(*prefs, sizeId), std::format("{}%", OriginalInterfaceSize));
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, sizeId, SDL_SCANCODE_LEFT));
+    CHECK_EQ(GInterfaceSize, AutoInterfaceSize);
+    CHECK_EQ(MCRemadeTest::StepWords(*prefs, sizeId), autoLabel(LargeWindowLines));
 
-    // The field shows the size as it is; a click on a drop-down's field opens its list, a click on a row chooses it.
-    const auto shown = [&] { return items[static_cast<size_t>(dropDown->Selected())].Value; };
-    CHECK_EQ(shown(), OriginalInterfaceSize);
-    const auto choose = [&](MCLogComboBox& combo, int32_t value)
+    for (const int size : InterfaceSizes)
     {
-        const std::vector<MCLogComboBox::Item>& choices = combo.Items();
-        const auto row = static_cast<int32_t>(
-            std::distance(choices.begin(), std::ranges::find(choices, value, &MCLogComboBox::Item::Value)));
-        REQUIRE(row < std::ssize(choices));
-        const int32_t middleX = combo.GlobalX() + combo.Width() / 2;
-        MCScreenInput::Click(middleX, combo.GlobalY() + MCLogComboBox::FieldHeight / 2);
-        frames();
-        REQUIRE(combo.IsOpen());
-        MCScreenInput::SaveShot(std::format("prefs choosing {}", value), MCScreenInput::ScreenHash());
-        MCScreenInput::Click(middleX, combo.GlobalY() + MCLogComboBox::FieldHeight + row * MCLogComboBox::RowHeight +
-                                          MCLogComboBox::RowHeight / 2);
-        frames();
-        CHECK(!combo.IsOpen());
-    };
+        REQUIRE(MCRemadeTest::KeyOn(*prefs, sizeId, SDL_SCANCODE_RIGHT));
+        CHECK_EQ(GInterfaceSize, size);
+        CHECK_EQ(MCRemadeTest::StepWords(*prefs, sizeId), std::format("{}%", size));
+    }
 
     // UI RESOLUTION 720P: AUTO is 150% there.
     constexpr int OtherLines = 720;
-    const std::shared_ptr<MCLogComboBox> uiResolution =
-        FindDropDownOffering(*GlobalLog()->PrefScreen, std::format("{}P", OtherLines));
-    REQUIRE(uiResolution != nullptr);
-    choose(*uiResolution, OtherLines);
+    const auto resolutionSteps = static_cast<int32_t>(std::ranges::distance(
+        std::ranges::find(UiResolutions, OtherLines), std::ranges::find(UiResolutions, LargeWindowLines)));
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, resolutionId, SDL_SCANCODE_LEFT, resolutionSteps));
     CHECK_EQ(GUiResolution, OtherLines);
-    CHECK(items[0].Label == autoLabel(OtherLines));
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, sizeId, SDL_SCANCODE_LEFT, sizeSteps));
+    CHECK_EQ(MCRemadeTest::StepWords(*prefs, sizeId), autoLabel(OtherLines));
 
-    choose(*dropDown, ChosenSize);
+    // The size chosen, then CANCEL: both as they were.
+    const auto chosenSteps = static_cast<int32_t>(
+        std::ranges::distance(InterfaceSizes.begin(), std::ranges::find(InterfaceSizes, ChosenSize)) + 1);
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, sizeId, SDL_SCANCODE_RIGHT, chosenSteps));
     CHECK_EQ(GInterfaceSize, ChosenSize);
-    CHECK_EQ(shown(), ChosenSize);
-    CancelPrefs();
-    frames();
+    CHECK_EQ(MCRemadeTest::StepWords(*prefs, sizeId), std::format("{}%", ChosenSize));
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "cancel"));
     CHECK_EQ(GInterfaceSize, OriginalInterfaceSize);
     CHECK_EQ(GUiResolution, LargeWindowLines);
 
-    ShowPreferences();
-    frames();
-    CHECK_EQ(shown(), OriginalInterfaceSize);
-    CHECK(items[0].Label == autoLabel(LargeWindowLines));
-    choose(*dropDown, ChosenSize);
-    WritePrefs();
-    frames();
+    // Opened again: as it is; chosen and ACCEPTed, saved.
+    prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Display);
+    REQUIRE(prefs != nullptr);
+    CHECK_EQ(MCRemadeTest::StepWords(*prefs, sizeId), std::format("{}%", OriginalInterfaceSize));
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, sizeId, SDL_SCANCODE_LEFT));
+    CHECK_EQ(MCRemadeTest::StepWords(*prefs, sizeId), autoLabel(LargeWindowLines));
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, sizeId, SDL_SCANCODE_RIGHT, chosenSteps));
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "accept"));
     CHECK_EQ(SavedInterfaceSize(), MCFitResult<int32_t>(ChosenSize));
 
     // The next mission: the screen has that many times fewer lines than UI RESOLUTION's, at the window's aspect.

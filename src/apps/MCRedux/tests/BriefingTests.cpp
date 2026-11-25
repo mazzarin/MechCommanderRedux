@@ -3,6 +3,7 @@
 #include "MCTest.h"
 #include "MCTestGuest.h"
 #include "MCTestArchive.h"
+#include "RemadeScreens.h"
 #include "lib/MCPacketFile.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -16,6 +17,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCConnectMenu.h"
+#include "logistics/MCDeploy.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLogTextButton.h"
@@ -23,6 +25,7 @@
 #include "logistics/MCHdOptionsPanel.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogButton.h"
+#include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCMenuScreens.h"
@@ -408,6 +411,78 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>A unit's part type: a mech's.</summary>
+    constexpr int32_t MechPartType = 1;
+
+    /// <summary>The remade campaign screen on DEPLOY.</summary>
+    MCCampaignScreen& ShowDeploy()
+    {
+        return MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::Deploy);
+    }
+
+    /// <summary>READY AREA's card of <paramref name="part"/>; none when it's in the drop.</summary>
+    std::optional<size_t> ReadyCardOf(const MCLogPart& part)
+    {
+        const std::vector<std::shared_ptr<MCLogPart>> ready = MCDeploy::ReadyUnits();
+        const auto found = std::ranges::find_if(ready, [&part](const auto& unit) { return unit.get() == &part; });
+        return found != ready.end() ? std::optional(static_cast<size_t>(found - ready.begin())) : std::nullopt;
+    }
+
+    /// <summary>DEPLOY's left drag of <paramref name="part"/>'s card from READY AREA onto drop slot <paramref name="slot"/>.</summary>
+    void CarryInto(MCCampaignScreen& screen, const MCLogPart& part, size_t slot)
+    {
+        const std::optional<size_t> card = ReadyCardOf(part);
+        REQUIRE(card.has_value());
+        screen.PickUpReady(*card, false);
+        REQUIRE(screen.Carried().get() == &part);
+        screen.HoldOver(slot);
+        screen.PutDown();
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    }
+
+    /// <summary>DEPLOY's left drag of drop slot <paramref name="slot"/>'s card back onto READY AREA.</summary>
+    void CarryOut(MCCampaignScreen& screen, size_t slot)
+    {
+        screen.PickUpSlot(slot, false);
+        REQUIRE(screen.Carried() != nullptr);
+        screen.HoldOver(std::nullopt);
+        screen.PutDown();
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    }
+
+    /// <summary>
+    /// On DEPLOY, READY AREA's first unit (a mech) carried into the first drop slot, the drop's limit made its tons more.
+    /// </summary>
+    std::shared_ptr<MCLogMech> DeployFirstReady(MCCampaignScreen& screen)
+    {
+        const std::vector<std::shared_ptr<MCLogPart>> ready = MCDeploy::ReadyUnits();
+        REQUIRE(!ready.empty());
+        REQUIRE_EQ(ready.front()->PartType, MechPartType);
+        const std::shared_ptr<MCLogMech> mech = std::static_pointer_cast<MCLogMech>(ready.front());
+        MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
+        CarryInto(screen, *mech, 0);
+        REQUIRE(MCDeploy::SlotUnit(0) == mech);
+        return mech;
+    }
+
+    /// <summary>DEPLOY's BEGIN MISSION, then frames until the scenario is up; whether it is.</summary>
+    bool BeginMission(MCCampaignScreen& screen)
+    {
+        constexpr int32_t mostFrames = 300;
+        REQUIRE(MCRemadeTest::Press(screen, "begin"));
+        const auto playing = [] { return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario; };
+
+        for (int32_t frame = 0; frame < mostFrames && !playing(); frame++)
+        {
+            MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        }
+
+        return playing();
+    }
+}
+
 TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the drop tonnage")
 {
     if (!MCTestGame::Available())
@@ -510,8 +585,8 @@ namespace
 }
 
 /// <summary>
-/// Port-only (SPEC-memory.md's "From the briefing"): a mech put in the lance on the briefing screen, in an empty slot or
-/// dropped on another's, has its HD art read from then on, behind the screen, and held for the mission
+/// Port-only (SPEC-memory.md's "From the briefing"): a mech put in the lance on DEPLOY, in an empty slot or dropped on
+/// another's, has its HD art read from then on, behind the screen, and held for the mission
 /// (MCHdArt::HoldMechAhead); taken out before those reads are made, they're still made, and it stays held.
 /// </summary>
 TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from then, and stays held when taken out")
@@ -520,9 +595,6 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     {
         return;
     }
-
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
 
     const MCScratchFolder pack("mc_briefing_tests", "lance-hold");
     MCTestGame::BootOptions.Started = [folder = pack.Path()]
@@ -537,21 +609,19 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     NewCampaign();
-    Settle();
-    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    MCBriefingScreen& briefing = *logistics->BriefingScreen;
-    REQUIRE(logistics->CurrentScreen().get() == &briefing);
+    MCCampaignScreen& screen = ShowDeploy();
     const std::string mission = Mission()->Scenarios.at(static_cast<size_t>(Mission()->CurrentScenario));
     REQUIRE(MCHdArt::HoldsFor(mission));
 
-    // Two mechs from the deploy pane, standing in for mechs of chassis the mission doesn't list (one bought at the store):
+    // Two mechs from READY AREA, standing in for mechs of chassis the mission doesn't list (one bought at the store):
     // mission 1's own force is in the mission's list, read from the briefing's start.
-    constexpr int32_t MechPartType = 1;
-    const std::shared_ptr<MCLogMech> first = FirstDeployMech(briefing);
-    REQUIRE(first != nullptr);
-    const auto other = std::ranges::find_if(briefing.DeployUnits, [&first](const auto& unit)
+    const std::vector<std::shared_ptr<MCLogPart>> ready = MCDeploy::ReadyUnits();
+    REQUIRE(!ready.empty());
+    REQUIRE_EQ(ready.front()->PartType, MechPartType);
+    const std::shared_ptr<MCLogMech> first = std::static_pointer_cast<MCLogMech>(ready.front());
+    const auto other = std::ranges::find_if(ready, [&first](const auto& unit)
                                             { return unit->PartType == MechPartType && unit != first; });
-    REQUIRE(other != briefing.DeployUnits.end());
+    REQUIRE(other != ready.end());
     const std::shared_ptr<MCLogMech> second = std::static_pointer_cast<MCLogMech>(*other);
 
     // Two chassis with a folder each of their own (in neither the mission's list nor the other's), and in the pack an
@@ -612,14 +682,12 @@ TEST_CASE_ISOLATED("game: a mech put in the lance at the briefing is held from t
     // out), then the second taken out.
     MCHdArt::HoldReads(true);
     MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(first->CurTonnage + second->CurTonnage);
-    const POINT slot = SlotMiddle(0);
-    DragMech(*first, slot.x, slot.y);
+    CarryInto(screen, *first, 0);
     REQUIRE(first->Deployed != 0);
-    DragMech(*second, slot.x, slot.y);
+    CarryInto(screen, *second, 0);
     REQUIRE(second->Deployed != 0);
     REQUIRE(first->Deployed == 0);
-    MCListView& pane = *briefing.DeployPane;
-    DragMech(*second, pane.GlobalX() + pane.Width() / 2, pane.GlobalY() + pane.Height() / 2);
+    CarryOut(screen, 0);
     REQUIRE(second->Deployed == 0);
     CHECK_EQ(MCHdArt::HeldBytes(), before);
 
@@ -841,34 +909,52 @@ TEST_CASE_ISOLATED("game: a deployed unit sold on another screen leaves its drop
         return;
     }
 
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
-
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     NewCampaign();
-    Settle();
-    std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    MCBriefingScreen& briefing = *logistics->BriefingScreen;
-    DeployFirstMech();
-    REQUIRE(briefing.SlotBlocks[0].Lock() != nullptr);
-    std::weak_ptr<MCLogMech> sold = briefing.SlotBlocks[0].Lock()->Mech();
+    MCCampaignScreen& screen = ShowDeploy();
+    std::weak_ptr<MCLogMech> sold = DeployFirstReady(screen);
     REQUIRE(!sold.expired());
 
-    // On the repair screen: the mech leaves the force (off its drop slot) and is sold (gone).
-    logistics->SetUpRepairScreen(false);
-    Settle();
-    logistics->UndeployMech(*sold.lock());
-    REQUIRE_EQ(logistics->ForceMechList->RemoveMech(*sold.lock()), 0);
-    logistics->ReorderMechs();
-    logistics->RepairScreen->ShowForce(false);
-    REQUIRE(sold.expired());
+    // On PURCHASING: the mech leaves the force (off its drop slot) for SPARE, the right button's move, and is sold
+    // there, dragged onto the store (gone).
+    MCLogisticsTabs& tabs = screen.Logistics();
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    const auto cardOf =
+        [&tabs, &sold](MCLogisticsTabs::MCPlace place, const std::vector<MCCampaignScreen::MCCard>& cards)
+    {
+        size_t card = 0;
 
-    // Back to the briefing screen: drawn with the slot empty.
-    logistics->SetUpBriefingScreen(false);
-    Settle();
-    CHECK(logistics->CurrentScreen().get() == &briefing);
-    CHECK(briefing.SlotBlocks[0] == nullptr);
+        while (card < cards.size() && tabs.UnitAt(place, card) != sold.lock())
+        {
+            card++;
+        }
+
+        REQUIRE(card < cards.size());
+        return card;
+    };
+
+    tabs.Send(MCLogisticsTabs::MCPlace::Force, cardOf(MCLogisticsTabs::MCPlace::Force, tabs.ForceCards()));
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    CHECK(MCDeploy::SlotUnit(0) == nullptr);
+    tabs.Drop(MCLogisticsTabs::MCPlace::Spare, cardOf(MCLogisticsTabs::MCPlace::Spare, tabs.SpareCards()),
+              MCLogisticsTabs::MCPlace::Store);
+    REQUIRE(tabs.DealOpen());
+    tabs.DealConfirm();
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    // Owned no more: in neither the force nor SPARE.
+    const auto owned = [&sold](const MCLogMechList& list) { return std::ranges::contains(list.Mechs, sold.lock()); };
+    REQUIRE(!owned(*GlobalLog()->ForceMechList));
+    REQUIRE(!owned(*GlobalLog()->MechList));
+
+    // Back to DEPLOY: shown with the slot empty.
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    CHECK(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
+    CHECK(MCDeploy::SlotUnit(0) == nullptr);
+    REQUIRE(!screen.Groups().empty());
+    CHECK_EQ(screen.Groups()[0].Cards[0].Kind, std::to_underlying(MCCampaignScreen::MCCardKind::Empty));
 }
 
 /// <summary>
@@ -930,26 +1016,26 @@ TEST_CASE_ISOLATED("game: an art mode the debug console showed ends at the prefe
     CHECK_EQ(savedLighting(), MCFitResult<int32_t>(HdLightingNight));
     CHECK_EQ(GHdLighting, static_cast<int>(HdLightingOff));
 
-    ShowPreferences();
-    Settle();
+    // The main menu's PREFERENCES, then ACCEPT.
+    std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Hd);
+    REQUIRE(prefs != nullptr);
     CHECK_EQ(GHdLighting, static_cast<int>(HdLightingNight));
-    WritePrefs();
-    Settle();
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "accept"));
     CHECK_EQ(savedLighting(), MCFitResult<int32_t>(HdLightingNight));
 
     // No mode shown now: the preferences change nothing.
-    ShowPreferences();
-    Settle();
+    prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Hd);
+    REQUIRE(prefs != nullptr);
     CHECK_EQ(GHdLighting, static_cast<int>(HdLightingNight));
-    CancelPrefs();
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "cancel"));
     GHdLighting = HdLightingOff;
     std::filesystem::remove(prefsPath);
 }
 
 /// <summary>
-/// A setting changed on the preferences' HD OPTIONS page reaches the mission launched next: HD LIGHTING clicked from OFF
-/// to NIGHT there and accepted is written to PREFS, and the new campaign's first mission shows at night, its world
-/// much darker than with HD LIGHTING off.
+/// A setting changed on Preferences' HD section reaches the mission launched next: HD LIGHTING stepped from OFF to NIGHT
+/// there and accepted is written to PREFS, and the new campaign's first mission shows at night, its world much darker
+/// than with HD LIGHTING off.
 /// </summary>
 TEST_CASE_ISOLATED("game: HD LIGHTING set to NIGHT on the HD OPTIONS page darkens the mission launched next")
 {
@@ -958,9 +1044,6 @@ TEST_CASE_ISOLATED("game: HD LIGHTING set to NIGHT on the HD OPTIONS page darken
         return;
     }
 
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
-
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
@@ -968,31 +1051,13 @@ TEST_CASE_ISOLATED("game: HD LIGHTING set to NIGHT on the HD OPTIONS page darken
     std::filesystem::remove(prefsPath);
     REQUIRE_EQ(GHdLighting, static_cast<int>(HdLightingOff));
 
-    // The preferences, OPTIONS, three clicks on HD LIGHTING (ON, DUSK, NIGHT), DONE, ACCEPT.
-    ShowPreferences();
-    Settle();
-    const std::shared_ptr<MCLogTextButton> options = FindTextButton(*GlobalLog()->PrefScreen, "OPTIONS");
-    REQUIRE(options != nullptr);
-    RealClick(options->GlobalX() + options->Width() / 2, options->GlobalY() + options->Height() / 2);
-    Settle();
-    REQUIRE(HdOptionsShown());
-    const std::shared_ptr<MCLogOptionList> list = HdOptionsList();
-    REQUIRE(list != nullptr);
-    const std::optional<int32_t> row = list->RowOf("HDLighting");
-    REQUIRE(row.has_value());
-    const std::optional<std::pair<int32_t, int32_t>> setting = list->SettingCentre(*row);
-    REQUIRE(setting.has_value());
-    constexpr int32_t clicksToNight = 3;
-
-    for (int32_t click = 0; click < clicksToNight; click++)
-    {
-        RealClick(setting->first, setting->second);
-    }
-
-    CHECK_EQ(list->ChoiceName(*row), "NIGHT");
-    HideHdOptions();
-    WritePrefs();
-    Settle();
+    // The preferences, HD, three steps of HD LIGHTING's switch (ON, DUSK, NIGHT), ACCEPT.
+    const std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Hd);
+    REQUIRE(prefs != nullptr);
+    constexpr int32_t stepsToNight = 3;
+    REQUIRE(MCRemadeTest::KeyOn(*prefs, "hd-lighting", SDL_SCANCODE_RIGHT, stepsToNight));
+    CHECK_EQ(MCRemadeTest::ChosenWords(*prefs, "hd-lighting"), "Night");
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "accept"));
     CHECK_EQ(GHdLighting, static_cast<int>(HdLightingNight));
 
     {
@@ -1002,6 +1067,9 @@ TEST_CASE_ISOLATED("game: HD LIGHTING set to NIGHT on the HD OPTIONS page darken
         CHECK_EQ(prefs.Read<int32_t>("HDLighting"), MCFitResult<int32_t>(HdLightingNight));
     }
 
+    // Launched from the 1998 briefing (kept until stage 9 removes it): a mission begun from the remade DEPLOY draws its
+    // world blank (one palette index), so the night's light couldn't be compared.
+    MCCampaignMenu::Remade() = false;
     REQUIRE(LaunchFirstMission());
     CHECK(MCSceneLights::TimeOfDay() == MCTimeOfDay::Night);
 
@@ -1783,28 +1851,16 @@ namespace
         REQUIRE(MCMenuScreens::CampaignOn(MCMenuScreens::MCCampaignPage::Briefing));
     }
 
-    /// <summary>The menus' message dialog, showing <paramref name="text"/>, closed with its OK.</summary>
-    void CloseMessage(std::string_view text)
-    {
-        MCMenuDialog& message = *GlobalLog()->Message;
-        REQUIRE(message.IsShowing());
-        CHECK_EQ(message.Text, text);
-        MCGuiObject& ok = *message.View()->OkButton;
-        Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
-        Settle();
-        CHECK(!message.IsShowing());
-    }
-
     /// <summary>
-    /// The launch button, refused with <paramref name="units"/> owned over the limit of <paramref name="most"/>: no
+    /// DEPLOY's BEGIN MISSION, refused with <paramref name="units"/> owned over the limit of <paramref name="most"/>: no
     /// mission, and the message saying how many units to sell first.
     /// </summary>
-    void LaunchRefused(int32_t units, int32_t most)
+    void BeginRefused(MCCampaignScreen& screen, int32_t units, int32_t most)
     {
-        RealClick(LaunchButton.x, LaunchButton.y);
+        REQUIRE(MCRemadeTest::Press(screen, "begin"));
         Settle();
         CHECK(Scenario() == nullptr);
-        CloseMessage(MCFormatPrintf(LoadGameString(0x373, 0xfe), units, most, units - most));
+        MCRemadeTest::CloseDialog(MCFormatPrintf(LoadGameString(0x373, 0xfe), units, most, units - most));
     }
 
     /// <summary>Spare mechs sold off (the inventory's first) until the player owns <paramref name="units"/>.</summary>
@@ -1826,8 +1882,8 @@ namespace
 
 /// <summary>
 /// Port-only (MoreUnits): with MoreUnits a save holding more than the original's 50 units loads whole, the shop has
-/// room for more, and LAUNCH starts the mission; past 200 (a mission's salvage can take it there) LAUNCH asks to sell
-/// down to 200 first.
+/// room for more, and DEPLOY's BEGIN MISSION starts the mission; past 200 (a mission's salvage can take it there) BEGIN
+/// MISSION asks to sell down to 200 first.
 /// </summary>
 TEST_CASE_ISOLATED("game: with MoreUnits a save holding more than 50 units is bought into and launched")
 {
@@ -1836,12 +1892,6 @@ TEST_CASE_ISOLATED("game: with MoreUnits a save holding more than 50 units is bo
         return;
     }
 
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
-
     constexpr std::string_view Save = "p3moreunits";
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
@@ -1849,20 +1899,21 @@ TEST_CASE_ISOLATED("game: with MoreUnits a save holding more than 50 units is bo
     LoadCampaignOwning(Save, 201);
     RemoveSave(Save);
     CHECK_EQ(NumUnits(), 201);
-    DeployFirstMech();
-    LaunchRefused(201, 200);
+    MCCampaignScreen& screen = ShowDeploy();
+    DeployFirstReady(screen);
+    BeginRefused(screen, 201, 200);
 
     // Sold down to 60: room in the shop for 140 more, and the mission starts.
     SellDownTo(60);
     CHECK_EQ(MaxPurchase(-1), 140);
     CHECK(!CheckMaxUnits());
-    CHECK(Launch());
+    CHECK(BeginMission(screen));
 }
 
 /// <summary>
 /// A save holding more units than the original's 50 (60: one made with MoreUnits, loaded without it or by an older
 /// build) loads whole, as the original's did a save taken past its limit by salvage: the shop sells nothing more, and
-/// LAUNCH asks to sell down to 50 first, then starts the mission.
+/// DEPLOY's BEGIN MISSION asks to sell down to 50 first, then starts the mission.
 /// </summary>
 TEST_CASE_ISOLATED("game: without MoreUnits a save holding more than 50 units launches once sold down to 50")
 {
@@ -1870,12 +1921,6 @@ TEST_CASE_ISOLATED("game: without MoreUnits a save holding more than 50 units la
     {
         return;
     }
-
-    // The 1998 screens' own test: their 1998 box with them, as where the menus can't start (until stage 9's step 2).
-    MCReusableDialog::OldBoxOnly() = true;
-
-    // The 1998 campaign screens' own test (kept until stage 9 removes them): the remade screens off.
-    MCCampaignMenu::Remade() = false;
 
     constexpr std::string_view Save = "p3overlimit";
     REQUIRE(MCTestGame::StartLogistics());
@@ -1885,11 +1930,12 @@ TEST_CASE_ISOLATED("game: without MoreUnits a save holding more than 50 units la
     RemoveSave(Save);
     CHECK_EQ(NumUnits(), 60);
     CHECK(CheckMaxUnits());
-    CloseMessage(LoadGameString(0x374, 0xfe));
-    DeployFirstMech();
-    LaunchRefused(60, 50);
+    MCRemadeTest::CloseDialog(LoadGameString(0x374, 0xfe));
+    MCCampaignScreen& screen = ShowDeploy();
+    DeployFirstReady(screen);
+    BeginRefused(screen, 60, 50);
     SellDownTo(50);
-    CHECK(Launch());
+    CHECK(BeginMission(screen));
 }
 
 TEST_CASE_ISOLATED("game: the mission's start file puts the deployed mech and its pilot at the drop zone")

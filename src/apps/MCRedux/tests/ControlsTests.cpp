@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiFont.h"
@@ -7,11 +8,9 @@
 #include "iface/MCKeyBindings.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCControlsPanel.h"
-#include "logistics/MCGenericScreen.h"
-#include "logistics/MCLogKeyList.h"
-#include "logistics/MCLogTextButton.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCMenuScreens.h"
+#include "logistics/MCPrefsScreen.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
@@ -29,14 +28,6 @@
 namespace
 {
     using MCKeyBindings::MCKeyTable;
-
-    /// <summary>The key cell of <paramref name="command"/> (column 0) or its alternate (column 1).</summary>
-    MCLogKeyList::Cell CellOf(MCKeyCommand command)
-    {
-        const std::optional<MCLogKeyList::Cell> cell = MCLogKeyList::CellOf(command);
-        REQUIRE(cell.has_value());
-        return *cell;
-    }
 
     /// <summary>The commands a player can bind: every row's command and alternate, in the list's order.</summary>
     std::vector<MCKeyCommand> ListedCommands()
@@ -60,8 +51,6 @@ namespace
 
         return commands;
     }
-
-    using MCScreenInput::FindTextButton;
 
     /// <summary>What a German keyboard's keys type, for those the layout test names (the rest type nothing here).</summary>
     int GermanLayout(uint16_t code)
@@ -107,23 +96,6 @@ namespace
         {
             MCTestGame::RunFrame(1.0f / 15.0f);
         }
-    }
-
-    /// <summary>Clicks the middle of <paramref name="object"/> as a player does.</summary>
-    void RealClickOn(MCGuiObject& object)
-    {
-        MCScreenInput::RealClick(object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2);
-        Frames();
-    }
-
-    /// <summary>Scrolls <paramref name="cell"/> into the list and clicks it as a player does.</summary>
-    void RealClickCell(MCLogKeyList& list, MCLogKeyList::Cell cell)
-    {
-        list.ScrollTo(cell.Row - list.VisibleRows() / 2);
-        const std::optional<std::pair<int32_t, int32_t>> centre = list.CellCentre(cell);
-        REQUIRE(centre.has_value());
-        MCScreenInput::RealClick(centre->first, centre->second);
-        Frames();
     }
 
     /// <summary>The test user's PREFS.</summary>
@@ -564,11 +536,39 @@ TEST_CASE_ISOLATED("game: a lobby's session screen asks for a LIGHTS key")
     std::filesystem::remove(PrefsPath());
 }
 
+namespace
+{
+    /// <summary>CONTROLS' box for <paramref name="command"/> on the remade Preferences (ui/prefs.rml's <c>key-</c> ids).</summary>
+    std::string BoxId(MCKeyCommand command)
+    {
+        return std::format("key-{}", static_cast<int>(command));
+    }
+
+    /// <summary>
+    /// CONTROLS' box for <paramref name="command"/> scrolled into view and clicked in its middle with
+    /// <paramref name="button"/> (SDL's), as a player does.
+    /// </summary>
+    void ClickBox(const MCPrefsScreen& prefs, MCKeyCommand command, uint8_t button = SDL_BUTTON_LEFT)
+    {
+        Rml::Element* box = MCRemadeTest::Find(prefs, BoxId(command));
+        REQUIRE(box != nullptr);
+        box->ScrollIntoView(false);
+        MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+        const Rml::Vector2f middle =
+            box->GetAbsoluteOffset(Rml::BoxArea::Border) + box->GetBox().GetSize(Rml::BoxArea::Border) / 2.0f;
+        MCScreenInput::PixelMove(middle.x, middle.y, MCRemadeTest::FrameSeconds);
+        MCScreenInput::PixelButton(button, true, middle.x, middle.y, MCRemadeTest::FrameSeconds);
+        MCScreenInput::PixelButton(button, false, middle.x, middle.y, MCRemadeTest::FrameSeconds);
+    }
+}
+
 /// <summary>
-/// The CONTROLS panel with a player's mouse and keys: CONTROLS on the preferences shows it, a click on a key listens, the
-/// next key (with its modifiers) binds, a key another command has moves from it (the status line says so), Escape
-/// stops listening without leaving the screen, alt alone binds when let go, a right click clears a key, DEFAULTS puts
-/// the original's back, DONE goes back to the preferences, CANCEL drops the changes and ACCEPT keeps and writes them.
+/// CONTROLS on the remade Preferences with a player's mouse and keys: a click on a key's box waits for a key (PRESS A
+/// KEY), the next key (with its modifiers) binds, a key another command has moves from it (that command's box empty), a
+/// key the game has no code for (F13) binds nothing and the box waits on, Escape stops the wait without leaving
+/// Preferences, alt alone binds when let go, a right click clears a key, CANCEL drops the changes (Preferences opened
+/// again edits the player's keys afresh), DEFAULTS puts the original's back, LAPTOP the laptop keys, and ACCEPT keeps and
+/// writes them.
 /// </summary>
 TEST_CASE_ISOLATED("game: the CONTROLS panel binds keys with a player's mouse and keyboard")
 {
@@ -577,122 +577,97 @@ TEST_CASE_ISOLATED("game: the CONTROLS panel binds keys with a player's mouse an
         return;
     }
 
+    const MCTestGame::KeepPrefs keptPrefs;
     REQUIRE(MCTestGame::StartLogistics());
-    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
-    std::filesystem::remove(prefsPath);
-    MCGenericScreen& screen = *GlobalLog()->PrefScreen;
-    const auto key = [](MCKeyCommand command) { return EditedKeys()[static_cast<size_t>(command)]; };
+    std::filesystem::remove(PrefsPath());
+    const MCKeyTable before = MCKeyBindings::Player();
+    std::shared_ptr<MCPrefsScreen> prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Controls);
+    REQUIRE(prefs != nullptr);
+    const auto key = [&prefs](MCKeyCommand command) { return prefs->EditedKeys()[static_cast<size_t>(command)]; };
+    const auto boxWords = [&prefs](MCKeyCommand command) { return MCRemadeTest::Words(*prefs, BoxId(command)); };
+    const auto boxEmpty = [&prefs](MCKeyCommand command)
+    {
+        const Rml::Element* box = MCRemadeTest::Find(*prefs, BoxId(command));
+        return box != nullptr && box->IsClassSet("empty");
+    };
 
-    ShowPreferences();
-    Frames();
-    CHECK(!ControlsShown());
-    MCScreenInput::SaveShot("controls prefs", MCScreenInput::ScreenHash());
-    const std::shared_ptr<MCLogTextButton> controlsButton = FindTextButton(screen, "CONTROLS");
-    REQUIRE(controlsButton != nullptr);
-    RealClickOn(*controlsButton);
-    REQUIRE(ControlsShown());
-    const std::shared_ptr<MCLogKeyList> list = ControlsList();
-    REQUIRE(list != nullptr);
-    MCScreenInput::SaveShot("controls", MCScreenInput::ScreenHash());
-
-    // A click on JUMP's key listens; K binds.
-    RealClickCell(*list, CellOf(MCKeyCommand::Jump));
-    CHECK(list->Listening() == CellOf(MCKeyCommand::Jump));
-    CHECK(GuiSystem().HasText(*list));
-    MCScreenInput::SaveShot("controls listening", MCScreenInput::ScreenHash());
+    // A click on JUMP's box waits; K binds.
+    ClickBox(*prefs, MCKeyCommand::Jump);
+    CHECK(prefs->Binding());
+    CHECK_EQ(boxWords(MCKeyCommand::Jump), "Press a key");
     MCScreenInput::RealKey(SDL_SCANCODE_K);
-    CHECK(!list->Listening().has_value());
+    CHECK(!prefs->Binding());
     CHECK_EQ(key(MCKeyCommand::Jump), 0x25u);
-    MCScreenInput::SaveShot("controls jump on k", MCScreenInput::ScreenHash());
+    CHECK_EQ(boxWords(MCKeyCommand::Jump), MCKeyBindings::KeyLabel(0x25u));
 
-    // F1 for GUARD moves it from SELECT LANCE 1, and says so.
-    RealClickCell(*list, CellOf(MCKeyCommand::Guard));
+    // F1 for GUARD moves it from SELECT LANCE 1, whose box empties.
+    ClickBox(*prefs, MCKeyCommand::Guard);
     MCScreenInput::RealKey(SDL_SCANCODE_F1);
     CHECK_EQ(key(MCKeyCommand::Guard), 0x3bu);
     CHECK_EQ(key(MCKeyCommand::SelectLance1), MCKeyBindings::NoKey);
-    CHECK_EQ(list->Status(), "F1 MOVED FROM SELECT LANCE 1.");
-    MCScreenInput::SaveShot("controls moved", MCScreenInput::ScreenHash());
+    CHECK(boxEmpty(MCKeyCommand::SelectLance1));
 
-    // Ctrl+R for RUN's alternate; Escape while listening keeps the key and the screen.
-    RealClickCell(*list, CellOf(MCKeyCommand::RunAlternate));
-    CHECK_EQ(list->Status(), "PRESS THE NEW KEY FOR RUN ALTERNATE. ESC CANCELS.");
+    // Ctrl+R for RUN's alternate.
+    ClickBox(*prefs, MCKeyCommand::RunAlternate);
+    CHECK_EQ(boxWords(MCKeyCommand::RunAlternate), "Press a key");
     MCScreenInput::RealChord(SDL_SCANCODE_LCTRL, SDL_KMOD_LCTRL, SDL_SCANCODE_R);
     CHECK_EQ(key(MCKeyCommand::RunAlternate), 0x13u | KeyCtrl);
-    RealClickCell(*list, CellOf(MCKeyCommand::Stop));
 
-    // A key the game has no code for (F13) binds nothing: it keeps listening.
+    // A key the game has no code for (F13) binds nothing: the box waits on. Escape stops it, Preferences staying.
+    const uint32_t stop = MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Stop)];
+    ClickBox(*prefs, MCKeyCommand::Stop);
     MCScreenInput::RealKey(SDL_SCANCODE_F13);
-    CHECK(list->Listening() == CellOf(MCKeyCommand::Stop));
-    CHECK_EQ(list->Status(), "PRESS THE NEW KEY FOR STOP. ESC CANCELS.");
-    CHECK_EQ(key(MCKeyCommand::Stop), MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Stop)]);
+    CHECK(prefs->Binding());
+    CHECK_EQ(boxWords(MCKeyCommand::Stop), "Press a key");
+    CHECK_EQ(key(MCKeyCommand::Stop), stop);
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
-    CHECK(!list->Listening().has_value());
-    CHECK_EQ(key(MCKeyCommand::Stop), MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Stop)]);
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->PrefScreen);
-    CHECK(ControlsShown());
+    CHECK(!prefs->Binding());
+    CHECK_EQ(key(MCKeyCommand::Stop), stop);
+    CHECK(MCRemadeTest::OnTop<MCPrefsScreen>() == prefs);
+    CHECK(MCScreenFlow::Shown() == MCMenuScreens::Preferences());
 
     // Alt alone, let go, binds alt (moving it from SHOW MAP).
-    RealClickCell(*list, CellOf(MCKeyCommand::MapPage));
+    ClickBox(*prefs, MCKeyCommand::MapPage);
     MCScreenInput::RealKeyEvent(SDL_SCANCODE_LALT, true, SDL_KMOD_LALT);
-    CHECK(list->Listening().has_value());
+    CHECK(prefs->Binding());
     MCScreenInput::RealKeyEvent(SDL_SCANCODE_LALT, false, SDL_KMOD_NONE);
     CHECK_EQ(key(MCKeyCommand::MapPage), 0x38u | KeyAlt);
     CHECK_EQ(key(MCKeyCommand::HoldTacticalMap), MCKeyBindings::NoKey);
 
     // A right click clears a key.
-    const MCLogKeyList::Cell eject = CellOf(MCKeyCommand::Eject);
-    list->ScrollTo(eject.Row);
-    const std::optional<std::pair<int32_t, int32_t>> ejectCentre = list->CellCentre(eject);
-    REQUIRE(ejectCentre.has_value());
-    MCScreenInput::RealMove(ejectCentre->first, ejectCentre->second);
-    MCScreenInput::SendMouse(MCGuiEventType::RightButtonDown, ejectCentre->first, ejectCentre->second, false);
-    Frames();
+    ClickBox(*prefs, MCKeyCommand::Eject, SDL_BUTTON_RIGHT);
     CHECK_EQ(key(MCKeyCommand::Eject), MCKeyBindings::NoKey);
+    CHECK(boxEmpty(MCKeyCommand::Eject));
 
-    // DONE, then CANCEL: the player's keys are as they were, and the panel edits them afresh next time.
-    const std::shared_ptr<MCLogTextButton> done = FindTextButton(screen, "DONE");
-    REQUIRE(done != nullptr);
-    RealClickOn(*done);
-    CHECK(!ControlsShown());
-    CancelPrefs();
-    Frames();
-    CHECK(MCKeyBindings::Player() == MCKeyBindings::Defaults());
-    ShowPreferences();
-    Frames();
-    CHECK(EditedKeys() == MCKeyBindings::Defaults());
+    // CANCEL: the player's keys are as they were, and Preferences edits them afresh next time.
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "cancel"));
+    CHECK(MCKeyBindings::Player() == before);
+    prefs = MCRemadeTest::OpenPreferences(MCSettingsModel::MCSection::Controls);
+    REQUIRE(prefs != nullptr);
+    CHECK(prefs->EditedKeys() == before);
 
-    // Changed again, DEFAULTS puts the original's back; changed once more, ACCEPT keeps and writes it.
-    ShowControls();
-    Frames();
-    RealClickCell(*list, CellOf(MCKeyCommand::Jump));
+    // Changed again, DEFAULTS puts the original's back; LAPTOP takes the keys every laptop has, DEFAULTS the original's
+    // again; changed once more, ACCEPT keeps and writes it.
+    ClickBox(*prefs, MCKeyCommand::Jump);
     MCScreenInput::RealKey(SDL_SCANCODE_K);
-    const std::shared_ptr<MCLogTextButton> defaults = FindTextButton(screen, "DEFAULTS");
-    REQUIRE(defaults != nullptr);
-    RealClickOn(*defaults);
-    CHECK(EditedKeys() == MCKeyBindings::Defaults());
-    CHECK_EQ(list->Status(), "THE ORIGINAL KEYS ARE BACK.");
-
-    // LAPTOP takes the keys every laptop has, and says so; DEFAULTS brings the original's back.
-    const std::shared_ptr<MCLogTextButton> laptop = FindTextButton(screen, "LAPTOP");
-    REQUIRE(laptop != nullptr);
-    RealClickOn(*laptop);
-    CHECK(EditedKeys() == MCKeyBindings::Laptop());
-    CHECK_EQ(list->Status(), "LAPTOP KEYS: NO KEYPAD, F-KEYS OR PAGE KEYS NEEDED.");
-    MCScreenInput::SaveShot("controls laptop", MCScreenInput::ScreenHash());
-    RealClickOn(*defaults);
-    CHECK(EditedKeys() == MCKeyBindings::Defaults());
-    RealClickCell(*list, CellOf(MCKeyCommand::Jump));
+    REQUIRE(MCRemadeTest::Press(*prefs, "defaults"));
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    CHECK(prefs->EditedKeys() == MCKeyBindings::Defaults());
+    REQUIRE(MCRemadeTest::Press(*prefs, "laptop"));
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    CHECK(prefs->EditedKeys() == MCKeyBindings::Laptop());
+    REQUIRE(MCRemadeTest::Press(*prefs, "defaults"));
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    CHECK(prefs->EditedKeys() == MCKeyBindings::Defaults());
+    ClickBox(*prefs, MCKeyCommand::Jump);
     MCScreenInput::RealKey(SDL_SCANCODE_K);
-    WritePrefs();
-    Frames();
+    REQUIRE(MCRemadeTest::LeavePreferences(*prefs, "accept"));
     CHECK_EQ(MCKeyBindings::Player()[static_cast<size_t>(MCKeyCommand::Jump)], 0x25u);
 
     {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
-        REQUIRE_EQ(prefs.SeekBlock("Controls"), 0);
-        CHECK_EQ(prefs.Read<std::string>("Jump"), MCFitResult<std::string>("K"));
+        MCFitIniFile file;
+        REQUIRE_EQ(file.Open(MCFileSystem::ToUtf8(PrefsPath())), 0);
+        REQUIRE_EQ(file.SeekBlock("Controls"), 0);
+        CHECK_EQ(file.Read<std::string>("Jump"), MCFitResult<std::string>("K"));
     }
-
-    std::filesystem::remove(prefsPath);
 }

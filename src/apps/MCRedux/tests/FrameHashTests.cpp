@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "MCMenusPictures.h"
+#include "RemadeScreens.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "camera/MCCamera.h"
@@ -471,10 +473,10 @@ TEST_CASE_ISOLATED("game: the info page's views switch on the next frame")
 }
 
 /// <summary>
-/// Mission 1 won (every objective succeeded): the results screen counts the resource points up and lists the
-/// statistics, the objectives and the pilots a step at a time, then the debriefing. Every frame of that, and the
-/// finished screen, is pixel for pixel what the screen drew when it still painted each step into its picture (before
-/// renderer phase 3 step 3).
+/// Mission 1 won (every objective succeeded): the remade results over the battlefield count the resource points up and
+/// list the statistics, the objectives and the pilots a step at a time, in 56 frames (1998's took 55). Every frame of
+/// that, the battlefield's screen under it and the whole window, and the finished results at the recorded frames'
+/// windows, are pixel for pixel the recorded frames.
 /// </summary>
 TEST_CASE_ISOLATED("game: the mission results screen matches the recorded frames")
 {
@@ -484,7 +486,10 @@ TEST_CASE_ISOLATED("game: the mission results screen matches the recorded frames
     }
 }
 
-/// <summary>The mission results screen's recorded frames, drawn by the GPU alone.</summary>
+/// <summary>
+/// The mission results' count drawn by the GPU alone: the battlefield's screen under it is the recorded frames (the
+/// window's pictures, the menus' RmlUi among them, differ by driver: the software renderer's are recorded).
+/// </summary>
 TEST_CASE_ISOLATED("game: the GPU alone draws the mission results screen's recorded frames")
 {
     if (MCTestGame::Available())
@@ -520,8 +525,6 @@ namespace
 {
     void ResultsScreenFrames(bool gpu)
     {
-        // The 1998 results screen's frames (the remade results' are ResultsMenuTests'), kept until step 2 of stage 9.
-        MCResultsMenu::Remade() = false;
         RequestDrawing(gpu);
         REQUIRE(MCTestGame::StartMission(1));
 
@@ -529,6 +532,13 @@ namespace
         {
             return;
         }
+
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        REQUIRE(display != nullptr);
+        // The count's frames at the first of the recorded windows, the mouse in its corner over no button.
+        const MCMenusPictures::MCWindowSize& counted = MCMenusPictures::FrameWindows.front();
+        REQUIRE(MCMenusPictures::SetWindowPixels(*display, counted.Width, counted.Height));
+        MCScreenInput::RealMove(0, 0);
 
         // The screen's steps are timed in MouseTicks, which the mouse timer's thread counts in real time; the test counts
         // them itself.
@@ -547,40 +557,64 @@ namespace
         }
 
         REQUIRE(Mission()->State == MCMissionState::Results);
-        REQUIRE(Mission()->ResultsScreen != nullptr);
+        REQUIRE(Mission()->ResultsUp());
+        // The remade results over the battlefield, never 1998's.
+        CHECK(Mission()->ResultsScreen == nullptr);
+        REQUIRE(MCRemadeTest::OnTop<MCResultsScreen>(MCRemadeTest::MCLayer::Mission) != nullptr);
 
-        // Five ticks a frame: a resource point step takes one tick, the others resultsStepTicks (20).
+        // Five ticks a frame: a resource point step takes one tick, the others resultsStepTicks (20). The battlefield's
+        // screen under the results is hashed each frame, and on the software renderer the whole window too (the GPU's
+        // pictures of the menus' RmlUi differ by driver).
         uint32_t frames = 0x811c9dc5;
-        uint32_t last = 0;
+        uint32_t windows = 0x811c9dc5;
         int32_t frame = 0;
 
-        for (; frame < 3000 && Mission()->ResultsScreen != nullptr && !Mission()->ResultsScreen->Finished(); frame++)
+        for (; frame < 3000 && !Mission()->ResultsFinished(); frame++)
         {
             MouseTicks += 5;
             MCTestGame::RunFrame(1.0f / 15.0f);
-            last = ScreenHash();
-            frames = (frames ^ last) * 0x01000193;
+            frames = (frames ^ ScreenHash()) * 0x01000193;
+
+            if (!gpu)
+            {
+                const auto window = display->ReadWindow();
+                REQUIRE(window.has_value());
+                windows = (windows ^ MCMenusPictures::PictureHash(*window)) * 0x01000193;
+            }
 
             if (frame % 40 == 0)
             {
-                SaveShot(std::format("results {:04}", frame), last);
+                MCScreenInput::SaveWindowShot(std::format("results {:04}", frame));
             }
         }
 
-        for (int32_t settle = 0; settle < 10; settle++)
+        const auto settle = []
         {
-            MouseTicks += 5;
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
+            for (int32_t step = 0; step < 10; step++)
+            {
+                MouseTicks += 5;
+                MCTestGame::RunFrame(1.0f / 15.0f);
+            }
+        };
 
+        settle();
         const uint32_t finished = ScreenHash();
         SaveShot("results finished", finished);
-        CHECK_EQ(frame, 55);
-        // The screen dims the world behind it: the software renderer maps those indices through tables, the GPU blends
-        // the colours and keeps the indices, which are what is hashed here.
-        CHECK_EQ(frames, gpu ? 0xcf555b41u : 0xa17463bcu);
-        CHECK_EQ(finished, gpu ? 0xab264123u : 0xea82833au);
-        CheckGpuAlone(gpu);
+        // The remade count shows its last step a frame after 1998's screen did (its 55).
+        CHECK_EQ(frame, 56);
+        // The battlefield under the results: the same indices on the software renderer and the GPU.
+        CHECK_EQ(frames, 0x223bf1a5u);
+        CHECK_EQ(finished, 0xe0da7160u);
+
+        if (gpu)
+        {
+            CheckGpuAlone(gpu);
+            return;
+        }
+
+        CHECK_EQ(windows, 0x3f575714u);
+        MCMenusPictures::CheckWindowFrames(*display, "results finished", {0xa932861au, 0x3e44da72u, 0x560d8a5fu},
+                                           settle);
     }
 
     /// <summary>

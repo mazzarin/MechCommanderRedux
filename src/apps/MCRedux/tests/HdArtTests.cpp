@@ -33,6 +33,7 @@
 #include "gui/MCGuiButton.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCHardwareCursor.h"
+#include "iface/MCFriendlyMechIcon.h"
 #include "iface/MCMechBar.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCDice.h"
@@ -14129,25 +14130,26 @@ TEST_CASE_ISOLATED("tool: --hd-plate-names writes the items the store's and inve
 }
 
 /// <summary>
-/// With HD art on, the menus' screen is drawn at the window's resolution (a sharp screen, two drawn pixels a screen
-/// pixel in a 1280x960 window), and what it shows in palette indices (what the tests, the fog test and mirror mode
-/// read) is what the screen shows without.
+/// With HD art on, a mission's screen is drawn at the window's resolution (a sharp screen: INTERFACE SIZE 200% at UI
+/// RESOLUTION 1080P in a 1600x1200 window shows a 540-line screen, 1200 drawn pixels a 540 screen pixels), and what it
+/// shows in palette indices (what the tests, the fog test and mirror mode read) is what the screen shows without.
 /// </summary>
-TEST_CASE_ISOLATED("game: a sharp screen draws the menus at the window's resolution and keeps their indices")
+TEST_CASE_ISOLATED("game: a sharp screen draws a mission at the window's resolution and keeps its indices")
 {
     if (!MCTestGame::Available())
     {
         return;
     }
 
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartLogistics());
-    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
-    constexpr int32_t Width = 1280;
-    constexpr int32_t Height = 960;
+    constexpr int UiResolution = 1080;
+    constexpr int InterfaceSize = 200;
+    constexpr int Lines = 540;
     constexpr int32_t SettleFrames = 30;
-    REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
-    SDL_SyncWindow(&MCInput::Display()->Window());
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    MCTestGame::BootInLargeWindow(UiResolution, InterfaceSize);
+    REQUIRE(MCTestGame::StartMission(1));
+    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+    REQUIRE_EQ(MCInput::Display()->Height(), Lines);
 
     const auto settle = []
     {
@@ -14171,8 +14173,9 @@ TEST_CASE_ISOLATED("game: a sharp screen draws the menus at the window's resolut
     GHdArt = 0;
 
     constexpr float Tolerance = 0.01f;
-    CHECK(std::abs(scaleX - 2.0f) < Tolerance);
-    CHECK(std::abs(scaleY - 2.0f) < Tolerance);
+    constexpr float Scale = static_cast<float>(MCTestGame::LargeWindowHeight) / static_cast<float>(Lines);
+    CHECK(std::abs(scaleX - Scale) < Tolerance);
+    CHECK(std::abs(scaleY - Scale) < Tolerance);
     REQUIRE_EQ(sharp.size(), plain.size());
     CHECK(sharp == plain);
 }
@@ -19242,154 +19245,118 @@ namespace
 }
 
 /// <summary>
-/// The store and the mech bay on a sharp screen with HD art on: the mechs' and vehicles' diagrams (the stocked rows'
-/// pictures, drawn in place from each unit's repair shapes; the mech bay's) and the sold-out rows' outlines are line art,
-/// redrawn as smooth strokes though the pack has a copy of each picture; the body diagrams (the mech icons, tied to the
-/// pack's icons) come from the pack; every such draw is sharp, and the screens keep the indices they have with HD art
-/// off.
+/// The tactical map's DATA page on a sharp screen with HD art on (a player's 1920x1080 window, INTERFACE SIZE AUTO): the
+/// shown unit's part diagram (mechrep##.shp, the store's diagrams' file, drawn in place from the unit's shapes) is line
+/// art, redrawn as smooth strokes though the pack has a copy of each picture; the mech bar's body diagrams (the mech
+/// icons, tied to the pack's icons) come from the pack; every such draw is sharp, and the screen keeps the indices it
+/// has with HD art off.
 /// </summary>
 TEST_CASE_ISOLATED(
-    "game: HD art draws the store's and mech bay's diagrams and outlines as sharp line art and keeps their indices")
+    "game: HD art draws the DATA page's diagram as sharp line art, the mech bar's from the pack, keeping indices")
 {
     if (!MCTestGame::Available())
     {
         return;
     }
 
-    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
-    REQUIRE(renderer != nullptr);
-    GlobalLog()->SetUpPurchaseScreen(false);
+    constexpr int32_t PlayerWidth = 1920;
+    constexpr int32_t PlayerHeight = 1080;
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    MCTestGame::BootOptions.WindowWidth = PlayerWidth;
+    MCTestGame::BootOptions.WindowHeight = PlayerHeight;
+    MCTestGame::BootOptions.Started = []
+    {
+        GInterfaceSize = AutoInterfaceSize;
+        GHdArt = 1;
+    };
 
-    // A pack of the mechs' and vehicles' repair shapes (under their bytes' hashes) but their sold-out outlines, and the
-    // icons: the diagrams are line art all the same.
+    REQUIRE(MCTestGame::StartMission(1));
+    REQUIRE(MCInput::Display()->SharpScreen());
+    const std::shared_ptr<MCVulkanRenderer> renderer =
+        std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    REQUIRE(renderer != nullptr);
+    const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+    REQUIRE(map != nullptr);
+    const std::vector<std::shared_ptr<MCFriendlyMechIcon>> icons = TacticalInterface()->MechBar->Buttons();
+    REQUIRE(!icons.empty());
+
+    // The DATA page on the unit the interface chose at the mission's start, then the screen with HD art off.
+    map->SetDisplayType(MCTacmapPage::Info);
+    SettleLogistics();
+    const auto shown = std::dynamic_pointer_cast<MCMover>(ObjectList()->FindObjectFromPart(icons.front()->PartId));
+    REQUIRE(shown != nullptr);
+    const std::span<const uint8_t> parts = map->PartShapes.Bytes();
+    REQUIRE(!parts.empty());
+    const int32_t silhouette = MCTacticalMap::PartSilhouette(*shown);
+    GHdArt = 0;
+    SettleLogistics();
+    const std::vector<uint8_t> plain = MCInput::Display()->ComposeScreen();
+
+    // A pack of the part diagram (under its bytes' hash) and the icons: the diagram is line art all the same.
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     std::vector<Sequence> sequences;
-    const auto addRepairs = [&](std::span<const MCRegisteredBlock> repairs, int32_t soldOut)
-    {
-        for (const MCRegisteredBlock& shapes : repairs)
-        {
-            if (shapes.Empty())
-            {
-                continue;
-            }
-
-            std::optional<LooseTable> table = MakeLooseTable(shapes.Bytes(), "repair shapes");
-            REQUIRE(table.has_value());
-
-            if (table->Frames.Frames.size() > static_cast<size_t>(soldOut))
-            {
-                table->Frames.Frames[static_cast<size_t>(soldOut)] = DecodedFrame{};
-            }
-
-            sequences.push_back(std::move(table->Frames));
-        }
-    };
-
-    addRepairs(GlobalLog()->MechRepShapes, MCLogistics::MechSoldOutShape);
-    addRepairs(GlobalLog()->VehicleRepShapes, MCLogistics::VehicleSoldOutShape);
+    std::optional<LooseTable> table = MakeLooseTable(parts, "part shapes");
+    REQUIRE(table.has_value());
+    sequences.push_back(std::move(table->Frames));
     size_t translucent = 0;
     std::ranges::move(IconSequences(translucent), std::back_inserter(sequences));
-    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_store";
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_data_page";
     std::filesystem::remove_all(scratch);
     const std::filesystem::path pack = scratch / "pack";
     WritePack(pack, sequences, colors, TestPackScale, Inverted);
     WritePaletteRgb(pack, colors);
 
-    const auto kindOf = [](const uint8_t* table, int32_t frame) -> std::optional<MCStoreShape>
+    const auto kindOf = [&](const uint8_t* drawn, int32_t frame) -> std::optional<MCStoreShape>
     {
-        const MCLogistics& log = *GlobalLog();
-        const auto repairs = [&](std::span<const MCRegisteredBlock> shapes,
-                                 int32_t soldOut) -> std::optional<MCStoreShape>
+        if (drawn == parts.data())
         {
-            for (const MCRegisteredBlock& block : shapes)
-            {
-                if (!block.Empty() && block.Bytes().data() == table)
-                {
-                    return frame == soldOut ? MCStoreShape::Outline : MCStoreShape::Picture;
-                }
-            }
-
-            return std::nullopt;
-        };
-
-        if (std::optional<MCStoreShape> kind = repairs(log.MechRepShapes, MCLogistics::MechSoldOutShape);
-            kind.has_value())
-        {
-            return kind;
+            // The dark silhouette under the outlines is a shape (SharpPicturesTests' DATA page test).
+            return frame == silhouette ? std::nullopt : std::optional(MCStoreShape::Picture);
         }
 
-        if (std::optional<MCStoreShape> kind = repairs(log.VehicleRepShapes, MCLogistics::VehicleSoldOutShape);
-            kind.has_value())
-        {
-            return kind;
-        }
-
-        for (const MCRegisteredBlock& icons : log.MechIconShapes)
-        {
-            if (!icons.Empty() && icons.Bytes().data() == table)
-            {
-                return MCStoreShape::Diagram;
-            }
-        }
-
-        return std::nullopt;
+        const bool icon = std::ranges::any_of(
+            icons, [drawn](const std::shared_ptr<MCFriendlyMechIcon>& button)
+            { return !button->DamageShapes.Empty() && button->DamageShapes.Bytes().data() == drawn; });
+        return icon ? std::optional(MCStoreShape::Diagram) : std::nullopt;
     };
 
-    // A screen with HD art off, then on (its draws audited), and whether they show the same indices: every draw sharp,
-    // the pictures and outlines all line art, the body diagrams none.
-    const auto compare = [&](std::string_view what)
+    // HD art on (its draws audited): every draw sharp, the diagram's outlines all line art, the body diagrams none.
+    MCStoreDraws draws;
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    // The screen is drawn at the window's size from the frame after HD art comes on.
+    MCTestGame::RunFrame(FrameSeconds);
+    renderer->Audit = [&](const MCVulkanRenderer::AuditedDraw& draw)
     {
-        MCTest::Scope scope{std::string(what)};
-        MCStoreDraws draws;
-        CheckSharpKeepsIndices(pack, *renderer,
-                               [&](const MCVulkanRenderer::AuditedDraw& draw)
-                               {
-                                   if (draw.Command != "Shape")
-                                   {
-                                       return;
-                                   }
+        if (draw.Command != "Shape")
+        {
+            return;
+        }
 
-                                   if (const std::optional<MCStoreShape> kind = kindOf(draw.Data.data(), draw.Frame);
-                                       kind.has_value())
-                                   {
-                                       const auto index = static_cast<size_t>(*kind);
-                                       ++draws.All[index];
-                                       draws.Sharp[index] += draw.Sharp ? 1 : 0;
-                                       draws.LineArt[index] += draw.LineArt ? 1 : 0;
-                                   }
-                               });
-        std::cout << std::format("  {}: outlines {}/{}, pictures {}/{} line art, diagrams {}/{} sharp\n", what,
-                                 draws.LineArtOf(MCStoreShape::Outline), draws.AllOf(MCStoreShape::Outline),
-                                 draws.LineArtOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture),
-                                 draws.SharpOf(MCStoreShape::Diagram), draws.AllOf(MCStoreShape::Diagram));
-        CHECK(draws.Sharp == draws.All);
-        CHECK_EQ(draws.LineArtOf(MCStoreShape::Outline), draws.AllOf(MCStoreShape::Outline));
-        CHECK_EQ(draws.LineArtOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture));
-        CHECK_EQ(draws.LineArtOf(MCStoreShape::Diagram), 0);
-        return draws;
+        if (const std::optional<MCStoreShape> kind = kindOf(draw.Data.data(), draw.Frame); kind.has_value())
+        {
+            const auto index = static_cast<size_t>(*kind);
+            ++draws.All[index];
+            draws.Sharp[index] += draw.Sharp ? 1 : 0;
+            draws.LineArt[index] += draw.LineArt ? 1 : 0;
+        }
     };
 
-    // The purchase screen's tabs (MCLogistics::CurrentInvTab), and the stock the store is given.
-    constexpr int32_t MechTab = 0;
-    constexpr int32_t VehicleTab = 3;
-    constexpr int32_t Stock = 2;
-    const MCStoreDraws soldOut = compare("mechs sold out");
-    CHECK(soldOut.AllOf(MCStoreShape::Outline) > 0);
-    MCTestGame::StockStore(Stock);
-    const MCStoreDraws stocked = compare("mechs in stock");
-    CHECK(stocked.AllOf(MCStoreShape::Picture) > 0);
-    CHECK(stocked.AllOf(MCStoreShape::Diagram) > 0);
-    GlobalLog()->CurrentInvTab = VehicleTab;
-    GlobalLog()->SetUpPurchaseScreen(false);
-    CHECK(compare("vehicles in stock").AllOf(MCStoreShape::Picture) > 0);
+    SettleLogistics();
+    const std::vector<uint8_t> sharp = MCInput::Display()->ComposeScreen();
+    renderer->Audit = nullptr;
+    hdArt.reset();
 
-    // A mech bought, and the mech bay its row shows in.
-    GlobalLog()->CurrentInvTab = MechTab;
-    GlobalLog()->SetUpPurchaseScreen(false);
-    MCMechPurchaseBlock::OnBuyConfirmed(*GlobalLog()->PurMechList->Mechs.front(), 1, 1);
-    GlobalLog()->SetUpRepairScreen(false);
-    CHECK(compare("mech bay").AllOf(MCStoreShape::Picture) > 0);
+    std::cout << std::format("  the DATA page: outlines {}/{} line art, diagrams {}/{} sharp\n",
+                             draws.LineArtOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture),
+                             draws.SharpOf(MCStoreShape::Diagram), draws.AllOf(MCStoreShape::Diagram));
+    CHECK(draws.AllOf(MCStoreShape::Picture) > 0);
+    CHECK(draws.AllOf(MCStoreShape::Diagram) > 0);
+    CHECK(draws.Sharp == draws.All);
+    CHECK_EQ(draws.LineArtOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture));
+    CHECK_EQ(draws.LineArtOf(MCStoreShape::Diagram), 0);
+    REQUIRE_EQ(sharp.size(), plain.size());
+    CHECK(sharp == plain);
     std::filesystem::remove_all(scratch);
 }
 

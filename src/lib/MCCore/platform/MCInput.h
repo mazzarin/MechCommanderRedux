@@ -134,7 +134,8 @@ namespace MCInput
 
     /// <summary>
     /// Confines the cursor to a rectangle of the logical screen (<c>ClipCursor</c>). None frees it, back to the
-    /// default: the picture while full screen and focused (kept off its corners: <see cref="GuardCorners"/>),
+    /// default (<see cref="MouseArea"/>): while full screen and focused, the picture, or the whole window while the
+    /// layer over the game fills it (<see cref="SetEventLayer"/>), kept off its corners (<see cref="GuardCorners"/>);
     /// anywhere otherwise.
     /// </summary>
     void ClipCursor(std::optional<MCClipRect> rect);
@@ -159,9 +160,42 @@ namespace MCInput
     /// </summary>
     int32_t GuardedX(float windowX, const SDL_Rect& guarded, int32_t x, int32_t left, int32_t right);
 
+    /// <summary>What sets where the system mouse may go (<see cref="MouseArea"/>), in window points.</summary>
+    struct MCMouseAreaState
+    {
+        /// <summary>The game's ClipCursor rectangle, if it set one.</summary>
+        std::optional<SDL_Rect> Clip;
+        /// <summary>Whether the window is full screen and has the focus.</summary>
+        bool FullscreenFocused = false;
+        /// <summary>Port-only (SPEC-menus.md): whether the layer over the game fills the window (<see cref="SetEventLayer"/>).</summary>
+        bool LayerFillsWindow = false;
+        /// <summary>The picture: the shown part of the logical screen.</summary>
+        SDL_Rect Picture{};
+        /// <summary>The window's size.</summary>
+        SDL_Point Window{};
+    };
+
+    /// <summary>
+    /// Where the system mouse may go (<c>SDL_SetWindowMouseRect</c>; none: anywhere): the game's ClipCursor rectangle if
+    /// it set one; else, full screen and focused, the whole window while the layer over the game fills it (port-only:
+    /// the remade menus, whose screen is the window) and the picture otherwise (the game's screen, where its cursor
+    /// stops), either kept off its corners (<see cref="GuardCorners"/>); else anywhere.
+    /// </summary>
+    std::optional<SDL_Rect> MouseArea(const MCMouseAreaState& area);
+
+    /// <summary>The window points the picture (the shown part of the logical screen) covers whole; none without a display.</summary>
+    std::optional<SDL_Rect> PictureArea();
+
     /// <summary>Recomputes the cursor's area after the picture moved in the window without a window event (a new
     /// logical size).</summary>
     void RefreshMouseArea();
+
+    /// <summary>
+    /// Tests: the window taken as full screen and focused, where the mouse is kept (<see cref="MouseArea"/>): a hidden
+    /// window is neither, so SDL would be asked for no area. SDL takes the area (<c>SDL_GetWindowMouseRect</c>) but
+    /// confines no mouse to a window without the focus.
+    /// </summary>
+    void TakeAsFullscreen(bool taken);
 
     /// <summary>Keeps mouse messages coming while a button is held outside the window (<c>SetCapture</c>).</summary>
     void SetCapture();
@@ -203,9 +237,11 @@ namespace MCInput
     /// Port-only (SPEC-menus.md): a layer over the game that sees the mouse's and keys' events first (the remade menus,
     /// while they show): when it takes one (returns true), the game doesn't see it, but its cursor still follows a taken
     /// mouse event (<see cref="GetCursorPos"/>). None: the game sees them all. Window events (closing, resizing, focus)
-    /// always reach the game too.
+    /// always reach the game too. While <paramref name="fillsWindow"/> says the layer's screens fill the window (asked
+    /// as each pump starts: a screen swapped for another within a frame moves no mouse), the mouse may go anywhere in
+    /// it, full screen too (<see cref="MouseArea"/>).
     /// </summary>
-    void SetEventLayer(std::function<bool(const SDL_Event&)> layer);
+    void SetEventLayer(std::function<bool(const SDL_Event&)> layer, std::function<bool()> fillsWindow = {});
 
     /// <summary>The VK code Windows gives the key at <paramref name="scancode"/> (US layout for the symbol keys; letters follow <paramref name="key"/>).</summary>
     /// <param name="scancode">The physical key.</param>

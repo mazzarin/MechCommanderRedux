@@ -199,9 +199,13 @@ std::expected<std::reference_wrapper<MCRmlMenus>, std::string> MCRmlMenus::Start
         }
 
         menus = std::move(*made);
-        // While one of the menus' screens shows, the window's mouse, keys and text are theirs.
+        // While one of the menus' screens shows, the window's mouse, keys and text are theirs. While one shows on the
+        // menus' layer (out of a mission, their screen the window), the mouse reaches the whole window full screen too,
+        // not just the 1998 frame in its middle. The mission's layer (the pause, Preferences over the battle) keeps the
+        // battle's: its screens float over the battle, which fills the window, and the battle scrolls at its edges.
         MCInput::SetEventLayer([](const SDL_Event& event)
-                               { return GameMenus() != nullptr && GameMenus()->HandleEvent(event); });
+                               { return GameMenus() != nullptr && GameMenus()->HandleEvent(event); },
+                               [] { return GameMenus() != nullptr && GameMenus()->Menus().Showing(); });
 
         // Their draws over the game's picture, recorded as each frame is presented.
         if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)

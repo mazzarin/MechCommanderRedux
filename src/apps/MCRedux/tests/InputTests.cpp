@@ -1,10 +1,77 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "MCScratchFolder.h"
+#include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCScreenChange.h"
+#include "gui/MCScreenFlow.h"
+#include "logistics/MCMenuScreens.h"
+#include "logistics/MCPauseScreen.h"
+#include "main/MCMissionGlobals.h"
+#include "mission/MCMission.h"
+#include "mission/MCScenario.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "platform/MCStringTable.h"
+#include "ui/MCRmlFlow.h"
+#include "ui/MCRmlLayer.h"
+#include "ui/MCRmlMenus.h"
+#include "ui/MCRmlScreen.h"
+
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+
+namespace
+{
+    /// <summary>A player's 16:9 window: the 1998 frame (640x480) 960x720 in its middle, the menus' stone beside it.</summary>
+    constexpr int WideWidth = 1280;
+    constexpr int WideHeight = 720;
+    constexpr float FlowFrame = 1.0f / 60.0f;
+    constexpr int32_t MostFrames = 3000;
+
+    /// <summary>A window area as the checks print it.</summary>
+    std::string AreaWords(const std::optional<SDL_Rect>& area)
+    {
+        return area ? std::format("{},{} {}x{}", area->x, area->y, area->w, area->h) : std::string("anywhere");
+    }
+
+    /// <summary>The area SDL was last asked to keep the mouse to (SDL_SetWindowMouseRect), or none.</summary>
+    std::optional<SDL_Rect> AskedArea()
+    {
+        const SDL_Rect* asked = SDL_GetWindowMouseRect(&MCInput::Display()->Window());
+        return asked != nullptr ? std::optional<SDL_Rect>(*asked) : std::nullopt;
+    }
+
+    /// <summary>The wide window kept off its corners: where the mouse may go over the remade menus, full screen.</summary>
+    SDL_Rect WideWindowGuarded()
+    {
+        return MCInput::GuardCorners(SDL_Rect{0, 0, WideWidth, WideHeight});
+    }
+
+    /// <summary>The picture (the game's screen) kept off its corners: where the mouse may go over the game's own, full screen.</summary>
+    SDL_Rect PictureGuarded()
+    {
+        const std::optional<SDL_Rect> picture = MCInput::PictureArea();
+        REQUIRE(picture.has_value());
+        return MCInput::GuardCorners(*picture);
+    }
+
+    /// <summary>Frames while a change of screen runs, then one (a change queued behind it starts), then its own.</summary>
+    void RunWhileChanging()
+    {
+        for (int32_t pass = 0; pass < 2; pass++)
+        {
+            for (int32_t frame = 0; frame < MostFrames && MCScreenChange::Running(); frame++)
+            {
+                MCTestGame::RunFrame(FlowFrame);
+            }
+
+            MCTestGame::RunFrame(FlowFrame);
+        }
+    }
+}
 
 TEST_CASE("input: key lParam and Windows-1252")
 {
@@ -46,6 +113,142 @@ TEST_CASE("input: full screen, the cursor stays off the screen's corners and sti
     const SDL_Rect narrow = MCInput::GuardCorners(SDL_Rect{10, 0, 4, 10});
     CHECK_EQ(narrow.x, 10);
     CHECK_EQ(narrow.w, 4);
+}
+
+/// <summary>
+/// Full screen, the mouse is kept to the picture over the game's own screens and to the whole window while the layer over
+/// the game fills it (the remade menus, whose screen is the window), either off its corners; the game's ClipCursor
+/// rectangle wins; windowed it goes anywhere.
+/// </summary>
+TEST_CASE("input: full screen, the mouse reaches the whole window while the menus fill it, else the picture")
+{
+    // A 1512x982-point window (an M1 Air's screen) with the 1998 frame 1309 points wide in its middle.
+    MCInput::MCMouseAreaState area;
+    area.FullscreenFocused = true;
+    area.Picture = SDL_Rect{101, 0, 1309, 982};
+    area.Window = SDL_Point{1512, 982};
+    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(SDL_Rect{103, 0, 1305, 982}));
+
+    area.LayerFillsWindow = true;
+    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(SDL_Rect{2, 0, 1508, 982}));
+
+    // A window whose size couldn't be read keeps the picture's.
+    area.Window = SDL_Point{0, 0};
+    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(SDL_Rect{103, 0, 1305, 982}));
+    area.Window = SDL_Point{1512, 982};
+
+    const SDL_Rect clip{200, 100, 300, 200};
+    area.Clip = clip;
+    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(clip));
+
+    // Windowed (or without the focus), anywhere but the game's rectangle.
+    area.FullscreenFocused = false;
+    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(clip));
+    area.Clip.reset();
+    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(std::nullopt));
+}
+
+/// <summary>
+/// Full screen in a 16:9 window: over the remade main menu the mouse reaches the whole window (not just the 1998 frame
+/// in its middle: playtest 1's "15% deadzone on each side"), and a move at the window's edge is the menus'; in the
+/// mission begun from them, and under its pause, it stays on the battle's picture as before.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: full screen, the mouse reaches the whole window over the remade menus, the battle's picture in a mission")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGame::BootOptions.WindowWidth = WideWidth;
+    MCTestGame::BootOptions.WindowHeight = WideHeight;
+    const MCTestGame::KeepPrefs keptPrefs;
+    REQUIRE(MCTestGame::StartLogistics());
+    RunWhileChanging();
+    REQUIRE(MCRmlFlow::Showing());
+    MCInput::TakeAsFullscreen(true);
+    MCTestGame::RunFrame(FlowFrame);
+
+    // The 1998 frame sits in the window's middle; the mouse goes past it, to the window's sides.
+    const std::optional<SDL_Rect> frame = MCInput::PictureArea();
+    REQUIRE(frame.has_value());
+    CHECK(frame->x > MCInput::CornerGuardPoints);
+    CHECK(frame->x + frame->w < WideWidth - MCInput::CornerGuardPoints);
+    CHECK_EQ(AreaWords(AskedArea()), AreaWords(WideWindowGuarded()));
+
+    // A move at the window's left side reaches the main menu's document.
+    const MCOptionalRef<MCRmlMenus> menus = MCRmlMenus::Running();
+    REQUIRE(menus.has_value());
+    const MCOptionalRef<MCRmlScreen> top = menus->get().Menus().Top();
+    REQUIRE(top.has_value());
+    MCScreenInput::PixelMove(static_cast<float>(MCInput::CornerGuardPoints), static_cast<float>(WideHeight / 2),
+                             FlowFrame);
+    const Rml::Element* hovered = menus->get().Menus().Context().GetHoverElement();
+    REQUIRE(hovered != nullptr);
+    REQUIRE(top->get().Document().has_value());
+    CHECK(hovered->GetOwnerDocument() == &top->get().Document()->get());
+
+    // The mission begun from the remade campaign screens: the battle's picture.
+    REQUIRE(MCTestGame::StartCampaignMission());
+
+    for (int32_t step = 0; step < MostFrames && Turn <= Scenario()->StartUpTurns; step++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    REQUIRE(Turn > Scenario()->StartUpTurns);
+    CHECK(!MCRmlFlow::Showing());
+    CHECK_EQ(AreaWords(AskedArea()), AreaWords(PictureGuarded()));
+
+    // The pause floats over the battle, which fills the window: the battle's picture still.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    REQUIRE(MCPauseScreen::Shows());
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(AreaWords(AskedArea()), AreaWords(PictureGuarded()));
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    CHECK(!MCPauseScreen::Shows());
+    MCInput::TakeAsFullscreen(false);
+}
+
+/// <summary>
+/// Full screen in a 16:9 window over 1998's main menu (a screen not yet remade, in its frame): the mouse stays on the
+/// frame, as the original's did; the remade Preferences opened over it takes the whole window, and back on the 1998
+/// screen the mouse is on its frame again.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: full screen, the mouse stays on a 1998 screen's frame and reaches the window over a remade one")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGame::BootOptions.WindowWidth = WideWidth;
+    MCTestGame::BootOptions.WindowHeight = WideHeight;
+    const MCTestGame::KeepPrefs keptPrefs;
+    const MCTestGame::OldMainMenu oldMenu;
+    REQUIRE(MCTestGame::StartLogistics());
+    RunWhileChanging();
+    REQUIRE(!MCRmlFlow::Showing());
+    MCInput::TakeAsFullscreen(true);
+    MCTestGame::RunFrame(FlowFrame);
+
+    const SDL_Rect frame = PictureGuarded();
+    CHECK(frame.x > MCInput::CornerGuardPoints);
+    CHECK(frame.x + frame.w < WideWidth - MCInput::CornerGuardPoints);
+    CHECK_EQ(AreaWords(AskedArea()), AreaWords(frame));
+
+    MCScreenFlow::Open(MCMenuScreens::Preferences());
+    RunWhileChanging();
+    REQUIRE(MCRmlFlow::Showing());
+    CHECK_EQ(AreaWords(AskedArea()), AreaWords(WideWindowGuarded()));
+
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    RunWhileChanging();
+    REQUIRE(!MCRmlFlow::Showing());
+    CHECK_EQ(AreaWords(AskedArea()), AreaWords(frame));
+    MCInput::TakeAsFullscreen(false);
 }
 
 TEST_CASE("input: posted messages reach the window procedure")

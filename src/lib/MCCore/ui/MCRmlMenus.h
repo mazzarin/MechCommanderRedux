@@ -74,8 +74,8 @@ public:
     /// <summary>
     /// The game's own menus' RmlUi, started (made once, the first time a remade screen is wanted) or why not, over the
     /// game's display: its frames drawn over the game's picture as each is presented (MCDisplay::SetOverlaySource), and
-    /// the window's input theirs while one of their screens shows (MCInput::SetEventLayer). It lives until
-    /// <see cref="Stop"/> (the game's end).
+    /// the window's input theirs while one of their screens shows (MCInput::SetEventLayer), and the whole window the
+    /// mouse's, full screen too, while one shows on the menus' layer. It lives until <see cref="Stop"/> (the game's end).
     /// </summary>
     static std::expected<std::reference_wrapper<MCRmlMenus>, std::string> Start(const MCOptions& options);
     /// <summary>The game's own, when started.</summary>

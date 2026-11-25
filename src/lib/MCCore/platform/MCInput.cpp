@@ -57,6 +57,11 @@ namespace
         std::function<void()> HeldEscape;
         /// <summary>Port-only: the layer over the game that sees the events first (SetEventLayer).</summary>
         std::function<bool(const SDL_Event&)> Layer;
+        /// <summary>Port-only: whether the layer's screens fill the window (SetEventLayer), and its answer last asked.</summary>
+        std::function<bool()> LayerFills;
+        bool LayerFilling = false;
+        /// <summary>Tests: the window taken as full screen and focused (TakeAsFullscreen).</summary>
+        bool TakenAsFullscreen = false;
     };
 
     MCInputState& state()
@@ -299,11 +304,30 @@ namespace
         }
     }
 
+    /// <summary>The window points a rectangle of the logical screen covers whole (at least one point each way).</summary>
+    SDL_Rect windowArea(const MCDisplay& display, const MCClipRect& logical)
+    {
+        float left = 0.0f;
+        float top = 0.0f;
+        float right = 0.0f;
+        float bottom = 0.0f;
+        display.LogicalToWindow(static_cast<float>(logical.left), static_cast<float>(logical.top), left, top);
+        display.LogicalToWindow(static_cast<float>(logical.right), static_cast<float>(logical.bottom), right, bottom);
+        SDL_Rect area;
+        area.x = static_cast<int>(std::ceil(left));
+        area.y = static_cast<int>(std::ceil(top));
+        area.w = std::max(1, static_cast<int>(std::floor(right)) - area.x);
+        area.h = std::max(1, static_cast<int>(std::floor(bottom)) - area.y);
+        return area;
+    }
+
     /// <summary>
-    /// Sets where the system cursor may go: the game's ClipCursor rectangle if it set one; else, full screen and
-    /// focused, the picture. The original's full screen switched the monitor to the game's resolution, so the mouse
-    /// never left the picture; letterboxed, the hidden cursor would wander into the bars while the game's cursor
-    /// stuck at the edge. Kept to the picture, the cursor stays off its corners too (MCInput::GuardCorners).
+    /// Sets where the system cursor may go (MCInput::MouseArea): the game's ClipCursor rectangle if it set one; else,
+    /// full screen and focused, the picture. The original's full screen switched the monitor to the game's resolution,
+    /// so the mouse never left the picture; letterboxed, the hidden cursor would wander into the bars while the game's
+    /// cursor stuck at the edge. Port-only (SPEC-menus.md): while the remade menus fill the window (their screen is the
+    /// window, the 1998 frame in its middle), the whole window. Kept to either, the cursor stays off its corners too
+    /// (MCInput::GuardCorners).
     /// </summary>
     void applyMouseRect()
     {
@@ -317,40 +341,47 @@ namespace
         }
 
         SDL_Window* window = &display->Window();
-        std::optional<MCClipRect> logical = input.ClipRect;
-        const bool fullscreenPicture = !logical && input.Active && display->IsFullscreen();
+        MCInput::MCMouseAreaState area;
 
-        if (fullscreenPicture)
+        if (input.ClipRect)
         {
-            logical = screenArea();
+            area.Clip = windowArea(*display, *input.ClipRect);
         }
 
-        if (!logical)
+        area.FullscreenFocused = input.TakenAsFullscreen || (input.Active && display->IsFullscreen());
+        area.LayerFillsWindow = input.LayerFilling;
+        area.Picture = windowArea(*display, screenArea());
+
+        if (!SDL_GetWindowSize(window, &area.Window.x, &area.Window.y))
         {
-            SDL_SetWindowMouseRect(window, nullptr);
-            return;
+            SDL_Log("MCInput: can't read window %u's size for the mouse's area: %s", SDL_GetWindowID(window),
+                    SDL_GetError());
         }
 
-        float left = 0.0f;
-        float top = 0.0f;
-        float right = 0.0f;
-        float bottom = 0.0f;
-        display->LogicalToWindow(static_cast<float>(logical->left), static_cast<float>(logical->top), left, top);
-        display->LogicalToWindow(static_cast<float>(logical->right), static_cast<float>(logical->bottom), right,
-                                 bottom);
-        SDL_Rect area;
-        area.x = static_cast<int>(std::ceil(left));
-        area.y = static_cast<int>(std::ceil(top));
-        area.w = std::max(1, static_cast<int>(std::floor(right)) - area.x);
-        area.h = std::max(1, static_cast<int>(std::floor(bottom)) - area.y);
+        const std::optional<SDL_Rect> mouse = MCInput::MouseArea(area);
 
-        if (fullscreenPicture)
+        if (mouse && !area.Clip)
         {
-            area = MCInput::GuardCorners(area);
-            input.CornerGuard = area;
+            input.CornerGuard = mouse;
         }
 
-        SDL_SetWindowMouseRect(window, &area);
+        SDL_SetWindowMouseRect(window, mouse ? &*mouse : nullptr);
+    }
+
+    /// <summary>
+    /// Port-only: the mouse's area set again when the layer over the game has started or stopped filling the window
+    /// (SetEventLayer), asked once a pump: a screen swapped for another in one frame doesn't pull the mouse in.
+    /// </summary>
+    void followLayerFill()
+    {
+        MCInputState& input = state();
+        const bool filling = input.LayerFills && input.LayerFills();
+
+        if (filling != input.LayerFilling)
+        {
+            input.LayerFilling = filling;
+            applyMouseRect();
+        }
     }
 
     void activate(bool active)
@@ -663,6 +694,7 @@ namespace MCInput
 
         // Between the batches of keys SDL reads (see SetTextInput).
         applyTextInput();
+        followLayerFill();
         SDL_Event event;
 
         while (SDL_PollEvent(&event))
@@ -856,8 +888,47 @@ namespace MCInput
         return x;
     }
 
+    std::optional<SDL_Rect> MouseArea(const MCMouseAreaState& area)
+    {
+        if (area.Clip)
+        {
+            return area.Clip;
+        }
+
+        if (!area.FullscreenFocused)
+        {
+            return std::nullopt;
+        }
+
+        // A window with no size yet (none read) keeps the picture's.
+        if (area.LayerFillsWindow && area.Window.x > 0 && area.Window.y > 0)
+        {
+            return GuardCorners(SDL_Rect{0, 0, area.Window.x, area.Window.y});
+        }
+
+        return GuardCorners(area.Picture);
+    }
+
+    std::optional<SDL_Rect> PictureArea()
+    {
+        const std::shared_ptr<MCDisplay> display = state().Display.lock();
+
+        if (display == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        return windowArea(*display, screenArea());
+    }
+
     void RefreshMouseArea()
     {
+        applyMouseRect();
+    }
+
+    void TakeAsFullscreen(bool taken)
+    {
+        state().TakenAsFullscreen = taken;
         applyMouseRect();
     }
 
@@ -1080,11 +1151,17 @@ namespace MCInput
         input.Held = false;
         input.HeldEscape = nullptr;
         input.Layer = nullptr;
+        input.LayerFills = nullptr;
+        input.LayerFilling = false;
+        input.TakenAsFullscreen = false;
     }
 
-    void SetEventLayer(std::function<bool(const SDL_Event&)> layer)
+    void SetEventLayer(std::function<bool(const SDL_Event&)> layer, std::function<bool()> fillsWindow)
     {
-        state().Layer = std::move(layer);
+        MCInputState& input = state();
+        input.Layer = std::move(layer);
+        input.LayerFills = std::move(fillsWindow);
+        followLayerFill();
     }
 
     void HoldInput(bool held, std::function<void()> escape)

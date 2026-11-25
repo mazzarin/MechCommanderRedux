@@ -48,22 +48,22 @@ namespace
     /// <paramref name="texture"/> at (<paramref name="x"/>, <paramref name="y"/>) from <paramref name="from"/> at
     /// <paramref name="offset"/>, its rows <paramref name="rowPixels"/> apart.
     /// </summary>
-    void UploadRectangle(SDL_GPUCopyPass* pass, SDL_GPUTransferBuffer* from, size_t offset, uint32_t rowPixels,
-                         SDL_GPUTexture* texture, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+    void UploadRectangle(SDL_GPUCopyPass& pass, SDL_GPUTransferBuffer& from, size_t offset, uint32_t rowPixels,
+                         SDL_GPUTexture& texture, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
     {
         SDL_GPUTextureTransferInfo source{};
-        source.transfer_buffer = from;
+        source.transfer_buffer = &from;
         source.offset = static_cast<uint32_t>(offset);
         source.pixels_per_row = rowPixels;
         source.rows_per_layer = height;
         SDL_GPUTextureRegion destination{};
-        destination.texture = texture;
+        destination.texture = &texture;
         destination.x = x;
         destination.y = y;
         destination.w = width;
         destination.h = height;
         destination.d = 1;
-        SDL_UploadToGPUTexture(pass, &source, &destination, false);
+        SDL_UploadToGPUTexture(&pass, &source, &destination, false);
     }
 
     /// <summary>A VFX shape's header: where its bounds (from its hot spot) lie, and its size (its rows follow).</summary>
@@ -1414,8 +1414,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     // index, 0 where it leaves the one under it) and leaves their alpha, writing what stands in the stands alone
     // (shaders/channels.hlsli).
     const auto makePipeline = [&](SurfaceLayout layout, SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false,
-                                  bool shadow = false, bool marks = false, SDL_GPUShader* fragmentShader = nullptr,
-                                  bool fold = false)
+                                  bool shadow = false, bool marks = false,
+                                  MCOptionalRef<SDL_GPUShader> fragmentShader = std::nullopt, bool fold = false)
     {
         const size_t glints = layout.GlintsTarget();
         SDL_GPUColorTargetDescription targets[MostSurfaceTargets]{};
@@ -1504,7 +1504,7 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader = &vertexShader;
-        pipeline.fragment_shader = fragmentShader != nullptr ? fragmentShader : renderer->_FragmentShader.get();
+        pipeline.fragment_shader = fragmentShader.has_value() ? &fragmentShader->get() : renderer->_FragmentShader.get();
         pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
         pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
@@ -1531,23 +1531,24 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
     // Port-only: a set's fragment shaders: the draws' (every kind, the original's own, HD frames', a forest's HD
     // frames'), the terrain's and the kept ground's; the stands builds for the passes with the stands.
+    // Borrowed from the renderer's handles, every one loaded above, while the pipelines are made.
     struct SetShaders
     {
-        SDL_GPUShader* Every = nullptr;
-        SDL_GPUShader* Basic = nullptr;
-        SDL_GPUShader* Hd = nullptr;
-        SDL_GPUShader* Trees = nullptr;
-        SDL_GPUShader* Terrain = nullptr;
-        SDL_GPUShader* Ground = nullptr;
+        SDL_GPUShader& Every;
+        SDL_GPUShader& Basic;
+        SDL_GPUShader& Hd;
+        SDL_GPUShader& Trees;
+        SDL_GPUShader& Terrain;
+        SDL_GPUShader& Ground;
     };
 
-    const SetShaders plainShaders{renderer->_FragmentShader.get(),        renderer->_BasicFragmentShader.get(),
-                                  renderer->_HdFragmentShader.get(),      renderer->_TreesFragmentShader.get(),
-                                  renderer->_TerrainFragmentShader.get(), renderer->_GroundShader.get()};
+    const SetShaders plainShaders{*renderer->_FragmentShader,        *renderer->_BasicFragmentShader,
+                                  *renderer->_HdFragmentShader,      *renderer->_TreesFragmentShader,
+                                  *renderer->_TerrainFragmentShader, *renderer->_GroundShader};
     const SetShaders standsShaders{
-        renderer->_StandsFragmentShader.get(),        renderer->_StandsBasicFragmentShader.get(),
-        renderer->_StandsHdFragmentShader.get(),      renderer->_StandsTreesFragmentShader.get(),
-        renderer->_StandsTerrainFragmentShader.get(), renderer->_StandsGroundShader.get()};
+        *renderer->_StandsFragmentShader,        *renderer->_StandsBasicFragmentShader,
+        *renderer->_StandsHdFragmentShader,      *renderer->_StandsTreesFragmentShader,
+        *renderer->_StandsTerrainFragmentShader, *renderer->_StandsGroundShader};
 
     const auto makeSurfacePipelines = [&](SurfaceLayout layout, std::string_view surface)
     {
@@ -1562,8 +1563,9 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                                   bool indexOnly, bool marks, bool fold = false)
             {
                 job(std::format("{} draw ({}, {})", surface, variant, kind), slow, into,
-                    [&makePipeline, vertex = &vertexShader, fragment = &fragmentShader, layout, blend, indexOnly, marks,
-                     fold] { return makePipeline(layout, *vertex, blend, indexOnly, false, marks, fragment, fold); });
+                    [&makePipeline, vertex = std::ref(vertexShader), fragment = std::ref(fragmentShader), layout, blend,
+                     indexOnly, marks,
+                     fold] { return makePipeline(layout, vertex, blend, indexOnly, false, marks, fragment, fold); });
             };
 
             if (!trees)
@@ -1583,12 +1585,12 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
             }
         };
 
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Every)], *shaders.Every, "every", true,
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Every)], shaders.Every, "every", true,
                           false);
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Basic)], *shaders.Basic, "basic", false,
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Basic)], shaders.Basic, "basic", false,
                           false);
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Hd)], *shaders.Hd, "hd", false, false);
-        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Trees)], *shaders.Trees, "trees", false,
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Hd)], shaders.Hd, "hd", false, false);
+        makeDrawPipelines(pipelines.Draws[static_cast<size_t>(DrawVariant::Trees)], shaders.Trees, "trees", false,
                           true);
         job(std::format("{} shadow", surface), true, pipelines.Shadow, [&, layout]
             { return makePipeline(layout, *renderer->_VertexShader, false, false, true, false, shaders.Every); });
@@ -6802,7 +6804,7 @@ private:
                 {
                     if (region.Texture != nullptr)
                     {
-                        UploadRectangle(&pass, region.From, region.Offset, region.Width, region.Texture.get(), region.X,
+                        UploadRectangle(pass, *region.From, region.Offset, region.Width, *region.Texture, region.X,
                                         region.Y, region.Width, region.Height);
                     }
                     else
@@ -9046,7 +9048,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             // Nothing could hold its bytes (logged as staged): not sent.
             if (upload.Buffer != nullptr)
             {
-                UploadRectangle(&copyPass, upload.Buffer, upload.Offset, upload.Width, upload.Texture.get(), upload.X,
+                UploadRectangle(copyPass, *upload.Buffer, upload.Offset, upload.Width, *upload.Texture, upload.X,
                                 upload.Y, upload.Width, upload.Height);
             }
         }
@@ -9210,7 +9212,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
     // Draws `count` draws from draw `first` on, which share `record`'s bindings, in render pass `into` on `surface`.
     const auto drawBatch =
-        [&](SDL_GPURenderPass* into, Surface& surface, const Record& record, uint32_t first, uint32_t count)
+        [&](SDL_GPURenderPass& into, Surface& surface, const Record& record, uint32_t first, uint32_t count)
     {
         SDL_GPUTexture* source = _Blank.Handle.get();
 
@@ -9272,7 +9274,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                               : PipelinesFor(surface).Draws[static_cast<size_t>(record.Variant)].For(record);
             pipeline != boundPipeline)
         {
-            SDL_BindGPUGraphicsPipeline(into, pipeline);
+            SDL_BindGPUGraphicsPipeline(&into, pipeline);
             boundPipeline = pipeline;
         }
 
@@ -9281,7 +9283,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
         if (!boundSamplers.has_value() || !std::ranges::equal(*boundSamplers, bindings, sameBinding))
         {
-            SDL_BindGPUFragmentSamplers(into, 0, bindings.data(), DrawSamplers);
+            SDL_BindGPUFragmentSamplers(&into, 0, bindings.data(), DrawSamplers);
             boundSamplers = bindings;
         }
 
@@ -9300,20 +9302,20 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             pushedFrame = frame;
         }
 
-        SDL_DrawGPUPrimitives(into, 6, count, 0, 0);
+        SDL_DrawGPUPrimitives(&into, 6, count, 0, 0);
         ++_FrameBatches;
     };
 
     // A render pass's start on a surface's size: the viewport, and the draws' buffer.
-    const auto startPass = [&](SDL_GPURenderPass* started, const Surface& surface)
+    const auto startPass = [&](SDL_GPURenderPass& started, const Surface& surface)
     {
         forgetBound();
         const SDL_GPUViewport viewport{
             0.0f, 0.0f, static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height),
             0.0f, 1.0f};
-        SDL_SetGPUViewport(started, &viewport);
+        SDL_SetGPUViewport(&started, &viewport);
         SDL_GPUBuffer* const drawBuffer = _DrawBuffer.get();
-        SDL_BindGPUVertexStorageBuffers(started, 0, &drawBuffer, 1);
+        SDL_BindGPUVertexStorageBuffers(&started, 0, &drawBuffer, 1);
     };
 
     // Port-only: the terrain layers each surface draws this frame (the kept ground is a surface's one), and the
@@ -9337,7 +9339,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
     // Draws held record `index` (an overlay's or a tree's the view holds) into `pass` on `target`: in `part`, its draws
     // from the first to the last reaching it (the others draw none of its pixels), held to it when `scissor`; all of
     // them without a part. How many it drew.
-    const auto drawHeld = [&](SDL_GPURenderPass* pass, Surface& target, uint32_t index,
+    const auto drawHeld = [&](SDL_GPURenderPass& pass, Surface& target, uint32_t index,
                               const std::optional<MCRect>& part, bool scissor) -> uint32_t
     {
         const Record& record = run.Records[index];
@@ -9366,7 +9368,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             if (from < to && scissor)
             {
                 const SDL_Rect held{part->X0, part->Y0, part->X1 - part->X0 + 1, part->Y1 - part->Y0 + 1};
-                SDL_SetGPUScissor(pass, &held);
+                SDL_SetGPUScissor(&pass, &held);
             }
         }
 
@@ -9627,7 +9629,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
             const SurfacePipelines& pipelines = _SurfacePipelines[layout.Set()];
             SDL_GPURenderPass* const viewing = SDL_BeginGPURenderPass(&commands, targets, layout.Targets(), nullptr);
-            startPass(viewing, surface);
+            startPass(*viewing, surface);
 
             // Its overlays drawn as the surface's pass draws them (Surface: the view's targets, a pass with the stands).
             Surface viewed;
@@ -9673,7 +9675,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
                     for (const uint32_t index : overlays)
                     {
-                        _GroundCounts.OverlaysDrawn += drawHeld(viewing, viewed, index, reached, false);
+                        _GroundCounts.OverlaysDrawn += drawHeld(*viewing, viewed, index, reached, false);
                     }
 
                     batchMoved = {};
@@ -9859,7 +9861,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             }
 
             SDL_GPURenderPass* const checking = SDL_BeginGPURenderPass(&commands, targets, PlainTargets, nullptr);
-            startPass(checking, surface);
+            startPass(*checking, surface);
 
             if (picture == Picture::Laid)
             {
@@ -9999,7 +10001,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
             const SurfacePipelines& weighed = _SurfacePipelines[KeptGroundLayout.Set()];
             SDL_GPURenderPass* const keeping =
                 SDL_BeginGPURenderPass(&commands, targets, KeptGroundLayout.Targets(), nullptr);
-            startPass(keeping, surface);
+            startPass(*keeping, surface);
 
             if (plan.Whole)
             {
@@ -10255,7 +10257,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
             pass = SDL_BeginGPURenderPass(&commands, targets.data(), static_cast<uint32_t>(targets.size()), nullptr);
             passSurface = record.SurfaceIndex;
-            startPass(pass, surface);
+            startPass(*pass, surface);
         }
 
         if (record.TerrainDraw >= 0)
@@ -10322,7 +10324,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                         {
                             if (run.Records[index].Overlay && run.Records[index].SurfaceIndex == record.SurfaceIndex)
                             {
-                                drawHeld(pass, surface, index, patch, false);
+                                drawHeld(*pass, surface, index, patch, false);
                             }
                         }
 
@@ -10363,7 +10365,7 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
             for (const MCRect& patch : patches)
             {
-                patched += drawHeld(pass, surface, order[k], patch, true);
+                patched += drawHeld(*pass, surface, order[k], patch, true);
             }
 
             if (patched != 0)
@@ -10413,13 +10415,13 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
                 if (Overlaps(plan.Rects[r], writes))
                 {
                     SDL_SetGPUScissor(pass, &plan.Scissors[r]);
-                    drawBatch(pass, surface, record, record.First + wiped, count - wiped);
+                    drawBatch(*pass, surface, record, record.First + wiped, count - wiped);
                 }
             }
         }
         else if (count > wiped)
         {
-            drawBatch(pass, surface, record, record.First + wiped, count - wiped);
+            drawBatch(*pass, surface, record, record.First + wiped, count - wiped);
         }
 
         for (size_t i = k; i <= last; ++i)
@@ -10504,14 +10506,14 @@ std::expected<void, std::string> MCVulkanRenderer::Run(SDL_GPUCommandBuffer& com
 
                 clearToWipe(targets, WipeColor(run, record, kept).value_or(0));
                 pass = SDL_BeginGPURenderPass(&commands, targets, PlainTargets, nullptr);
-                startPass(pass, whole);
+                startPass(*pass, whole);
             }
 
             const uint32_t skipped = first ? 1 : 0;
 
             if (record.Count > skipped)
             {
-                drawBatch(pass, whole, record, record.First + skipped, record.Count - skipped);
+                drawBatch(*pass, whole, record, record.First + skipped, record.Count - skipped);
             }
 
             first = false;

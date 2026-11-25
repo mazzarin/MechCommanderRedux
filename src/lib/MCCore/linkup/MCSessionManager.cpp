@@ -13,6 +13,7 @@
 #include "platform/MCDirectPlay.h"
 #include "platform/MCInput.h"
 #include "platform/MCNetSwitch.h"
+#include "platform/MCNeverDestroyed.h"
 #include "platform/MCSocket.h"
 #include "platform/MCWin32Defs.h"
 
@@ -126,7 +127,7 @@ namespace
     /// </summary>
     MCGoodbyes& Goodbyes()
     {
-        static MCGoodbyes* const goodbyes = new MCGoodbyes();
+        static MCNeverDestroyed<MCGoodbyes> goodbyes;
         return *goodbyes;
     }
 

@@ -511,7 +511,8 @@ namespace
     /// </summary>
     struct SpanRead
     {
-        const MCHdArchive* Archive = nullptr;
+        /// <summary>A reference, compared by owner (the reader pins the archive while it reads).</summary>
+        std::weak_ptr<const MCHdArchive> Archive;
         uint64_t Start = 0;
         uint64_t End = 0;
         uint64_t Generation = 0;
@@ -2771,7 +2772,9 @@ namespace
         std::ofstream Out;
         std::chrono::steady_clock::time_point Start;
         std::atomic<bool> On = false;
-        std::unordered_map<const MCHdArchive*, size_t> Archives;
+        /// <summary>The archives' numbers, by references compared by owner: an archive made where a freed one was gets
+        /// a number of its own.</summary>
+        std::map<std::weak_ptr<const MCHdArchive>, size_t, std::owner_less<>> Archives;
         /// <summary>
         /// The pack's folder, which the archives' paths are given from: set by the game's thread (OpenTrace,
         /// SetPackFolder), read by the readers' (TraceArchive), so never MCHdArt::PackFolder's state there.
@@ -2802,14 +2805,14 @@ namespace
     /// The trace's number for <paramref name="archive"/>, its path (from the pack's folder) written the first time:
     /// <c>P number path</c>. With Trace::Lock held.
     /// </summary>
-    size_t TraceArchive(Trace& trace, const MCHdArchive& archive)
+    size_t TraceArchive(Trace& trace, const std::shared_ptr<MCHdArchive>& archive)
     {
-        const auto [found, fresh] = trace.Archives.try_emplace(&archive, trace.Archives.size());
+        const auto [found, fresh] = trace.Archives.try_emplace(archive, trace.Archives.size());
 
         if (fresh)
         {
             trace.Out << std::format("P\t{}\t{}\n", found->second,
-                                     MCFileSystem::ToUtf8(archive.Path.lexically_relative(trace.Pack)));
+                                     MCFileSystem::ToUtf8(archive->Path.lexically_relative(trace.Pack)));
         }
 
         return found->second;
@@ -2837,7 +2840,7 @@ namespace
         std::scoped_lock lock(trace.Lock);
         const MCFileEntry& entry = read.From->Archive->File->EntryAt(read.Entry.Index);
         trace.Out << std::format("A\t{}\t{}\t{}\t{}\t{}\t{}\n", TraceNow(trace), TraceKind(kind),
-                                 TraceArchive(trace, *read.From->Archive), entry.Offset, entry.Size, read.Entry.Entry);
+                                 TraceArchive(trace, read.From->Archive), entry.Offset, entry.Size, read.Entry.Entry);
     }
 
     /// <summary>
@@ -2858,7 +2861,7 @@ namespace
         std::scoped_lock lock(trace.Lock);
         const auto [start, end] = RunSpan(run);
         const std::string_view kind = TraceKind(run.front().From->Kind);
-        const size_t archive = TraceArchive(trace, *run.front().From->Archive);
+        const size_t archive = TraceArchive(trace, run.front().From->Archive);
 
         if (!read.has_value())
         {
@@ -2876,7 +2879,7 @@ namespace
     /// (TraceNow's), its bytes in by <paramref name="read"/>: <c>H begun read archive offset bytes streams</c>, the
     /// streams those it holds.
     /// </summary>
-    void TraceHold(const MCHdArchive& archive, int64_t begun, int64_t read, uint64_t offset, uint64_t bytes,
+    void TraceHold(const std::shared_ptr<MCHdArchive>& archive, int64_t begun, int64_t read, uint64_t offset, uint64_t bytes,
                    size_t streams)
     {
         if (!Tracing())
@@ -3002,7 +3005,8 @@ namespace
         const auto span = std::ranges::find_if(ahead.SpansRead,
                                                [&](const SpanRead& one)
                                                {
-                                                   return one.Archive == read.From->Archive.get() &&
+                                                   return !one.Archive.owner_before(read.From->Archive) &&
+                                                          !read.From->Archive.owner_before(one.Archive) &&
                                                           one.Generation == ahead.Generation && one.Start <= start &&
                                                           end <= one.End;
                                                });
@@ -3496,7 +3500,7 @@ namespace
 
         if (!alone && toRead)
         {
-            span = ahead.SpansRead.insert(ahead.SpansRead.end(), SpanRead{archive.get(), start, end, generation, {}});
+            span = ahead.SpansRead.insert(ahead.SpansRead.end(), SpanRead{archive, start, end, generation, {}});
         }
 
         WaitWhileRunsHeld(ahead, lock);
@@ -4134,7 +4138,7 @@ namespace
             // Kept under the lock, so a let-go (StopHolding, then MCFastFile::LetGoHeld) can't miss them.
             file.HoldPieces(run->First, run->End, start, std::move(bytes));
             ++holding.Reads;
-            TraceHold(*run->Archive, begun, readBy, start, end - start, run->End - run->First);
+            TraceHold(run->Archive, begun, readBy, start, end - start, run->End - run->First);
 
             if (holding.Archives.empty())
             {

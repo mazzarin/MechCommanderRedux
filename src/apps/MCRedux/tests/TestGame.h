@@ -53,6 +53,13 @@ namespace MCTestGame
     void BootInLargeWindow(int uiResolution, int interfaceSize);
 
     /// <summary>
+    /// The mouse moved to the middle of the screen, as a player's would be. The hidden window has no mouse, so the game's
+    /// cursor stays where the last move put it (at first (0, 0)), and a mission's camera scrolls toward it from its first
+    /// seconds: from the corner, off the player's units into the dark round the map.
+    /// </summary>
+    void ParkCursor();
+
+    /// <summary>
     /// Boots the whole game in a hidden window with <c>-mission &lt;segment&gt;</c> (SYSTEM.CFG's campaign, logistics
     /// skipped), as RunGame does, and runs frames until the scenario is playing. Only a TEST_CASE_ISOLATED test may:
     /// the boot expects a fresh process. The clock is an MCManualClock, installed in the context current at the boot

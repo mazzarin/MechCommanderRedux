@@ -15805,6 +15805,8 @@ namespace
         campaign.SendReady(0, std::nullopt);
         RunFrames(SettleFrames);
         detail.Screen = "loading";
+        // The mouse over the briefing, as a player's is: its last place is where the battle's camera scrolls toward.
+        MCTestGame::ParkCursor();
         campaign.PressBegin();
         return RunUntil([] { return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario; },
                         LoadFrames);

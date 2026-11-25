@@ -4,6 +4,8 @@
 #include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiPort.h"
+#include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "logistics/MCBriefingScreen.h"
@@ -315,6 +317,50 @@ namespace
         GlobalLog()->BriefingTextPath = GamePath(MissionPath, file);
         screen.SetUp(MCCampaignScreen::MCTab::Briefing);
         MCTestGame::RunFrame(FlowFrame);
+    }
+
+    /// <summary>
+    /// The mission begun, past its start-up until units move (as MCTestGame::StartMission waits): the world's part of
+    /// the screen (clear of the interface: the panels at the left, the mech bar at the bottom), in palette indices, shows
+    /// the mission's ground, no one colour over half of it and the dark round the map (index 16, the game's black: all
+    /// a camera scrolled off the map shows) a tenth at most.
+    /// </summary>
+    void CheckWorldShown(std::string_view what)
+    {
+        constexpr int32_t StartedTurn = 30;
+        constexpr int32_t MostStartFrames = 3000;
+        constexpr uint8_t Dark = 0x10;
+        constexpr size_t DarkMostShare = 10;
+
+        for (int32_t frame = 0; frame < MostStartFrames && Turn <= StartedTurn; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+
+        REQUIRE(Turn > StartedTurn);
+        const MCWindow& screen = ScreenPort()->Bitmap();
+        const int32_t width = screen.XMax + 1;
+        const int32_t height = screen.YMax + 1;
+        const std::vector<uint8_t> shown = MCScreenInput::ShownScreen();
+        REQUIRE_EQ(shown.size(), static_cast<size_t>(width) * static_cast<size_t>(height));
+        std::array<size_t, 256> counts{};
+        size_t pixels = 0;
+
+        for (int32_t y = height / 4; y < height - height / 8; y++)
+        {
+            for (int32_t x = width / 3; x < width; x++)
+            {
+                counts[shown[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)]]++;
+                pixels++;
+            }
+        }
+
+        const auto commonest = std::ranges::max_element(counts);
+        std::cout << std::format("  {}: of the world's {} pixels, {} index {} (the commonest), {} the dark\n", what,
+                                 pixels, *commonest, commonest - counts.begin(), counts[Dark]);
+        MCScreenInput::SaveShot(std::format("campaign_world_{}", what), MCScreenInput::ScreenHash());
+        CHECK(*commonest * 2 < pixels);
+        CHECK(counts[Dark] * DarkMostShare < pixels);
     }
 }
 
@@ -2963,4 +3009,61 @@ TEST_CASE_ISOLATED(
     CHECK(!MCRmlDialogs::Shown());
     CHECK(!MCRmlDialogs::Returning());
     CHECK(!menus->get().Menus().Showing());
+}
+
+/// <summary>
+/// DEPLOY's BEGIN MISSION clicked: the game's cursor is where the click was, though the remade screen took the mouse's
+/// moves and the click (left at the screen's corner, the mission's camera scrolled toward it from its first seconds, off
+/// the player's units into the dark round the map); the mission shows its world.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission begun from DEPLOY shows its world, the game's cursor where BEGIN MISSION was")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    ElementOf(screen, "ready0").Focus();
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(screen.CanBegin());
+
+    // The 640x480 window's pixels are the game's screen's.
+    const Rml::Element& begin = ElementOf(screen, "begin");
+    const Rml::Vector2f at = Middle(begin);
+    ClickOn(begin);
+    const MCPoint cursor = MCInput::GetCursorPos();
+    CHECK_EQ(cursor.x, static_cast<int32_t>(std::floor(at.x)));
+    CHECK_EQ(cursor.y, static_cast<int32_t>(std::floor(at.y)));
+
+    constexpr int32_t MostFrames = 600;
+    const auto playing = [] { return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario; };
+
+    for (int32_t frame = 0; frame < MostFrames && !playing(); frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    REQUIRE(playing());
+    CheckWorldShown("deploy");
+}
+
+/// <summary>
+/// The tests' way into a campaign's mission (MCTestGame::StartCampaignMission: the mouse over the remade briefing, its
+/// BEGIN MISSION's request): the mission shows its world, as MCTestGame::StartMission's does.
+/// </summary>
+TEST_CASE_ISOLATED("game: a campaign's mission started as the tests start it shows its world")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+    CheckWorldShown("started");
 }

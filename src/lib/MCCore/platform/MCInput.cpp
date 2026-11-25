@@ -235,6 +235,32 @@ namespace
     }
 
     /// <summary>
+    /// Port-only: the cursor kept at the place of a mouse event the layer over the game took (SetEventLayer), not made the
+    /// message position (the game handles no message for it).
+    /// </summary>
+    void followTakenMouse(const SDL_Event& event)
+    {
+        MCPoint point;
+
+        switch (event.type)
+        {
+            case SDL_EVENT_MOUSE_MOTION:
+                point = toLogical(event.motion.x, event.motion.y);
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                point = toLogical(event.button.x, event.button.y);
+                break;
+            default:
+                return;
+        }
+
+        MCInputState& input = state();
+        input.CursorX = point.x;
+        input.CursorY = point.y;
+    }
+
+    /// <summary>
     /// Shows the system arrow while the game's counter says so; else the game's cursor if it gave one; else the
     /// arrow while the mouse is over the letterbox bars (where the cursor drawn into the frame can't follow it).
     /// </summary>
@@ -885,9 +911,13 @@ namespace MCInput
             }
         }
 
-        // Port-only: the menus over the game take what they use (SetEventLayer).
+        // Port-only: the menus over the game take what they use (SetEventLayer). The game's cursor still follows the
+        // mouse under them: where the window has no mouse focus (the mouse outside it, the tests' hidden window) the game
+        // reads the cursor's last place, and one from before the menus (at first the screen's corner) would scroll the
+        // battlefield their BEGIN MISSION starts toward it, off the map into the dark round it.
         if (input.Layer && input.Layer(event))
         {
+            followTakenMouse(event);
             return;
         }
 

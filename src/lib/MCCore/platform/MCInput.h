@@ -201,8 +201,9 @@ namespace MCInput
 
     /// <summary>
     /// Port-only (SPEC-menus.md): a layer over the game that sees the mouse's and keys' events first (the remade menus,
-    /// while they show): when it takes one (returns true), the game doesn't see it. None: the game sees them all.
-    /// Window events (closing, resizing, focus) always reach the game too.
+    /// while they show): when it takes one (returns true), the game doesn't see it, but its cursor still follows a taken
+    /// mouse event (<see cref="GetCursorPos"/>). None: the game sees them all. Window events (closing, resizing, focus)
+    /// always reach the game too.
     /// </summary>
     void SetEventLayer(std::function<bool(const SDL_Event&)> layer);
 

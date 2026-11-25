@@ -201,9 +201,11 @@ private:
     void PlanComposite(const MCFrame& frame, PlannedFrame& planned);
     /// <summary>
     /// Port-only: runs <paramref name="planned"/> on <paramref name="commands"/>: the renderer's draws, the frame's
-    /// uploads, the composite into _Frame. On the render thread, or on the game's with none running.
+    /// uploads, the composite into _Frame. On the render thread (no <paramref name="frame"/>: run ahead), or on the
+    /// game's with none running (<paramref name="frame"/> the frame presented, its spans the display's).
     /// </summary>
-    std::expected<void, std::string> RunPlanned(SDL_GPUCommandBuffer& commands, PlannedFrame& planned);
+    std::expected<void, std::string> RunPlanned(SDL_GPUCommandBuffer& commands, PlannedFrame& planned,
+                                                MCOptionalRef<const MCFrame> frame);
     /// <summary>Port-only: the render thread's job: <paramref name="planned"/> run and submitted on a command buffer of its own.</summary>
     void RunAhead(PlannedFrame& planned);
     /// <summary>Port-only: gives <paramref name="planned"/>'s renderer frame back to the renderer, once it has run.</summary>
@@ -286,9 +288,11 @@ private:
     std::expected<MCVulkanRenderer::SealedFrame, std::string> Prepare(const MCFrame& frame, bool read);
     /// <summary>
     /// Uploads the frame's textures in a copy pass on <paramref name="commands"/> (with the GPU's surfaces, the palette
-    /// only; else the frame's screen, op plane and underlays, read where the frame lies: on the game's thread).
+    /// only; else <paramref name="shown"/>'s screen, op plane and underlays, read where the frame lies: on the game's
+    /// thread, so never for a frame run ahead).
     /// </summary>
-    std::expected<void, std::string> Upload(SDL_GPUCommandBuffer& commands, const PlannedFrame& planned);
+    std::expected<void, std::string> Upload(SDL_GPUCommandBuffer& commands, const PlannedFrame& planned,
+                                            MCOptionalRef<const MCFrame> shown);
     /// <summary>Bytes to go up into a texture's top left.</summary>
     struct UploadPart
     {

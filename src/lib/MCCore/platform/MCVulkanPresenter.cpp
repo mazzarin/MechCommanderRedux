@@ -864,8 +864,6 @@ namespace
 /// </summary>
 struct MCVulkanPresenter::PlannedFrame
 {
-    /// <summary>The frame presented, while it runs inline (its spans the display's); none for a frame run ahead.</summary>
-    const MCFrame* Frame = nullptr;
     /// <summary>The screen's size.</summary>
     int Width = 0;
     int Height = 0;
@@ -1298,7 +1296,6 @@ auto MCVulkanPresenter::Plan(const MCFrame& frame, bool read)
     -> std::expected<std::shared_ptr<PlannedFrame>, std::string>
 {
     auto planned = std::make_shared<PlannedFrame>();
-    planned->Frame = &frame;
     planned->Width = frame.Width;
     planned->Height = frame.Height;
     planned->Layout = ShownLayout{frame.View, frame.ScaledOutput() ? frame.OutputWidth : 0,
@@ -1403,10 +1400,11 @@ void MCVulkanPresenter::PlanComposite(const MCFrame& frame, PlannedFrame& planne
     }
 }
 
-std::expected<void, std::string> MCVulkanPresenter::RunPlanned(SDL_GPUCommandBuffer& commands, PlannedFrame& planned)
+std::expected<void, std::string> MCVulkanPresenter::RunPlanned(SDL_GPUCommandBuffer& commands, PlannedFrame& planned,
+                                                                MCOptionalRef<const MCFrame> frame)
 {
     // A frame run ahead logs its parts as the render thread's.
-    const bool ahead = planned.Frame == nullptr;
+    const bool ahead = !frame.has_value();
 
     if (MCFrameLog::Scope part(ahead ? PrepareAheadPart : PreparePart); true)
     {
@@ -1418,7 +1416,7 @@ std::expected<void, std::string> MCVulkanPresenter::RunPlanned(SDL_GPUCommandBuf
             }
         }
 
-        if (auto uploaded = Upload(commands, planned); !uploaded)
+        if (auto uploaded = Upload(commands, planned, frame); !uploaded)
         {
             return uploaded;
         }
@@ -1432,7 +1430,8 @@ std::expected<void, std::string> MCVulkanPresenter::RunPlanned(SDL_GPUCommandBuf
     return {};
 }
 
-std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer& commands, const PlannedFrame& planned)
+std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer& commands, const PlannedFrame& planned,
+                                                            MCOptionalRef<const MCFrame> shown)
 {
     const uint32_t width = static_cast<uint32_t>(planned.Width);
     const uint32_t height = static_cast<uint32_t>(planned.Height);
@@ -1459,7 +1458,7 @@ std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer&
     // The underlays' pictures, held while their pixels go up.
     std::vector<std::shared_ptr<const MCWindow>> sources;
 
-    if (!planned.GpuSurfaces && planned.Frame == nullptr)
+    if (!planned.GpuSurfaces && !shown.has_value())
     {
         return std::unexpected("MCVulkanPresenter: a frame run ahead without the GPU's surfaces (its pixels are gone)");
     }
@@ -1467,7 +1466,7 @@ std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer&
     if (!planned.GpuSurfaces)
     {
         // The software renderer's frame, read where it lies: the game's thread.
-        const MCFrame& frame = *planned.Frame;
+        const MCFrame& frame = shown->get();
 
         for (const MCUnderlay& underlay : frame.Underlays)
         {
@@ -2251,7 +2250,6 @@ std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame
     // The GPU's surfaces only: the software renderer's frame lies in the display's memory, which the next frame redraws.
     if (frame.Ahead && planned.GpuSurfaces)
     {
-        planned.Frame = nullptr;
         _Unshown = planned.Layout;
         _Running = std::move(*plan);
         _Thread.Post([this, running = _Running] { RunAhead(*running); });
@@ -2266,7 +2264,7 @@ std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame
         return std::unexpected(Joined(std::move(errors), SdlError("SDL_AcquireGPUCommandBuffer")));
     }
 
-    auto ran = RunPlanned(*commands, planned);
+    auto ran = RunPlanned(*commands, planned, frame);
     Recycle(planned);
 
     if (!ran)
@@ -2527,7 +2525,7 @@ void MCVulkanPresenter::RunAhead(PlannedFrame& planned)
         return;
     }
 
-    if (auto ran = RunPlanned(*commands, planned); !ran)
+    if (auto ran = RunPlanned(*commands, planned, std::nullopt); !ran)
     {
         SDL_CancelGPUCommandBuffer(commands);
         planned.Error = ran.error();
@@ -2710,7 +2708,7 @@ std::expected<std::vector<SDL_Color>, std::string> MCVulkanPresenter::ReadFrame(
         return std::unexpected(SdlError("SDL_AcquireGPUCommandBuffer"));
     }
 
-    auto ran = RunPlanned(*commands, planned);
+    auto ran = RunPlanned(*commands, planned, frame);
     Recycle(planned);
 
     if (!ran)

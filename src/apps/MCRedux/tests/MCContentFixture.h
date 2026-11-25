@@ -84,7 +84,9 @@ namespace MCContentFixture
         void* data = nullptr;
         size_t size = 0;
         REQUIRE(mz_zip_writer_finalize_heap_archive(&zip, &data, &size));
-        std::string made(static_cast<const char*>(data), size);
+        // Finalized, the archive's memory is the caller's (miniz's heap writer): freed once copied.
+        const std::unique_ptr<void, decltype(&mz_free)> owned(data, &mz_free);
+        std::string made(static_cast<const char*>(owned.get()), size);
         mz_zip_writer_end(&zip);
         return made;
     }

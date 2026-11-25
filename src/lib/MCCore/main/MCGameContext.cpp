@@ -61,7 +61,8 @@ namespace
 
     /// <summary>
     /// The installed context's object, or null for the root one: what Current reads, many thousands of times a frame,
-    /// where loading the shared pointer takes a lock (libc++ has no atomic shared_ptr) and its count.
+    /// where loading the shared pointer takes a lock (libc++ has no atomic shared_ptr) and its count. It never owns:
+    /// SetCurrent moves it before the context it pointed to is let go.
     /// </summary>
     constinit std::atomic<MCGameContext*> CurrentObject{nullptr};
 }
@@ -81,9 +82,11 @@ std::shared_ptr<MCGameContext> MCGameContext::CurrentShared()
 
 void MCGameContext::SetCurrent(std::shared_ptr<MCGameContext> context)
 {
-    MCGameContext* const object = context.get();
+    // The cache moves to the new context (kept alive by this call's pointer) before the old context's pointer is let
+    // go, so Current never hands out a context whose last owner has just gone. A reference Current gave is good only
+    // while the scope that installed its context lives.
+    CurrentObject.store(context.get(), std::memory_order_release);
     CurrentContext().store(std::move(context), std::memory_order_release);
-    CurrentObject.store(object, std::memory_order_release);
 }
 
 template <auto Slot> MCOptionalRef<const MCGameContext> MCGameContext::Holder() const

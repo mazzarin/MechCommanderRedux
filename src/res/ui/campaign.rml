@@ -39,7 +39,7 @@
                     <div class="eyebrow" data-if="eyebrow != ''">{{eyebrow}}</div>
                     <div class="title caps">{{title}}</div>
                     <div class="scroll-box grow">
-                        <div class="scroller" id="orders-text">
+                        <div class="scroller reading" id="orders-text">
                             <div class="split">
                                 <div>
                                     <div class="eyebrow section" data-if="objectives.size > 0">Objectives</div>

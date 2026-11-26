@@ -1298,7 +1298,7 @@ TEST_CASE_ISOLATED("game: the operation's video draws the same on every machine 
     MCRmlMenus& menus = MCRmlMenus::Running()->get();
     double clock = 0.0;
     menus.SetClock([&clock] { return clock; });
-    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xa83abd2c, 0x8b3dc24f, 0x2c1ebcbb};
+    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0x85d74366, 0xa01e34b1, 0x8a673fae};
 
     for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
     {

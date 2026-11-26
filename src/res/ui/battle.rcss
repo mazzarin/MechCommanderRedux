@@ -19,11 +19,12 @@ body.over-battle { background-color: transparent; }
 .pause-actions { width: 152dp; display: flex; flex-direction: column; gap: 8dp; }
 .pause-actions > * { flex: 0 0 auto; }
 .pause-actions > .grow { flex: 1 1 0; }
-.quick { flex: 1 1 0; border-left: 1dp #2a3742; padding-left: 16dp; }
-.quick .set-row { padding: 0; }
-.quick .set-control { width: 164dp; }
-.quick .set-control input.range.slider { width: 96dp; }
-.quick .set-control .step-value { width: 76dp; }
+/* The quick settings' place (its rows are .set-row.quick, prefs.rcss), a rule at its left between it and the way on. */
+#quick { flex: 1 1 0; border-left: 1dp #2a3742; padding-left: 16dp; }
+#quick .set-row { padding: 0; }
+#quick .set-control { width: 164dp; }
+#quick .set-control input.range.slider { width: 96dp; }
+#quick .set-control .step-value { width: 76dp; }
 
 /* ---- The results (stage 9) ---- */
 

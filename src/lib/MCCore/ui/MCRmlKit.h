@@ -89,6 +89,11 @@ private:
     void OnMouseDown(Rml::Event& event);
     /// <summary>Moves a switch's or stepper's choice by <paramref name="step"/>, with its sound; whether it moved.</summary>
     bool Step(Rml::Element& control, int step);
+    /// <summary>
+    /// Moves the slider in <paramref name="steps"/> (a slider between arrows) <paramref name="step"/> of its steps, with
+    /// a stepper's sound and RmlUi's change event; whether it moved (not past an end, nor while held).
+    /// </summary>
+    bool StepSlider(Rml::Element& steps, int step);
     /// <summary>Makes <paramref name="choice"/> the choice of <paramref name="control"/>, its look and its change event.</summary>
     void Choose(Rml::Element& control, int choice, bool tell);
 

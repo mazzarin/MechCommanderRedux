@@ -381,11 +381,6 @@ auto MCLogistics::HandleDeployForceMessage(uint32_t playerID, std::span<const ui
         mech->LocalPart = false;
         part = mech;
 
-        if (teammate)
-        {
-            mech->CalcStatus();
-        }
-
         // Port-only (SPEC-memory.md's manifest: every player's mechs): the other player's mech's HD art held from now,
         // as this player's own are as they're placed.
         MCHdArt::HoldMechAhead(mech->HdFolders);

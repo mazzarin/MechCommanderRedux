@@ -325,10 +325,8 @@ auto MCLogMech::LoadDescription(int32_t descIndex) -> void
     Description = LoadDescriptionText(DescIndex);
 }
 
-auto MCLogMech::CalcStatus() -> float
+auto MCLogMech::CalcStatus() const -> float
 {
-    StatusValue = 0.0f;
-
     if (PilotIndex < 0 && NetworkPilot.expired())
     {
         return 0.0f;
@@ -381,7 +379,7 @@ auto MCLogMech::CalcStatus() -> float
 
     if (std::isnan(firepower) || firepower == 0.0f)
     {
-        return StatusValue;
+        return 0.0f;
     }
 
     // The body: the head's armor, the weaker of two torso locations, the legs' and the side torsos' armor.
@@ -405,7 +403,7 @@ auto MCLogMech::CalcStatus() -> float
 
     if (std::isnan(body) || body == 0.0)
     {
-        return StatusValue;
+        return 0.0f;
     }
 
     // The pilot's wounds.
@@ -419,6 +417,5 @@ auto MCLogMech::CalcStatus() -> float
         woundFactor = wounds >= 0 && wounds < 7 ? woundFactors[wounds] : 0.0f;
     }
 
-    StatusValue = static_cast<float>(static_cast<double>(woundFactor) * body * firepower);
-    return StatusValue;
+    return static_cast<float>(static_cast<double>(woundFactor) * body * firepower);
 }

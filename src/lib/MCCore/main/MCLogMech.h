@@ -103,8 +103,12 @@ public:
     /// <summary>Loads the description of <see cref="MCLogPart::DescIndex"/> (once; none for a negative <paramref name="descIndex"/>).</summary>
     void LoadDescription(int32_t descIndex);
 
-    /// <summary>The mech's condition (0..1) from armor, internals and pilot.</summary>
-    float CalcStatus();
+    /// <summary>
+    /// The mech's condition (0..1) as it stands, from its armor, its weapons' firepower left and its pilot's wounds (0
+    /// without a pilot): worked out each time it's asked, as 1998's 'MECH BAY did each time its rows drew the pilot, so a
+    /// repair shows at once.
+    /// </summary>
+    [[nodiscard]] float CalcStatus() const;
 
     /// <summary>
     /// Records the mech's armor, internal structure and engine damage as <see cref="Arrived"/>: when it joins the
@@ -150,8 +154,6 @@ public:
     /// </summary>
     std::vector<std::filesystem::path> HdFolders;
     int32_t PilotModifier = 0;
-    /// <summary>The condition from <see cref="CalcStatus"/>.</summary>
-    float StatusValue = 0;
     /// <summary>The damage the mech arrived with (<see cref="TakeArrivalState"/>).</summary>
     ArrivalState Arrived;
     /// <summary>The repair sliders' knobs.</summary>

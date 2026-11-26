@@ -91,17 +91,7 @@ auto MCLogistics::SetPilot(int32_t mechIndex, int32_t pilotIndex) const -> void
     }
 
     // The mech's PilotIndex is the one record of who is in it (the original also kept the mech, unread, on the
-    // pilot's inventory block).
-    if (pilotIndex >= 0)
-    {
-        // The repair block's pilot paint worked out the mech's condition (the row draws the pilot each frame).
-        mech->PilotIndex = pilotIndex;
-        mech->CalcStatus();
-        mech->CalcPilotModifier();
-        return;
-    }
-
-    // A negative index takes the pilot off.
+    // pilot's inventory block); a negative index takes the pilot off. Its condition is worked out as a card shows it.
     mech->PilotIndex = pilotIndex;
     mech->CalcPilotModifier();
 }

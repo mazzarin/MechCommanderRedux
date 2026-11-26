@@ -37,6 +37,7 @@
 #include "main/MCLogMechList.h"
 #include "main/MCLogPart.h"
 #include "main/MCLogVehicleList.h"
+#include "main/MCLogWarrior.h"
 #include "main/MCLogWarriorList.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
@@ -2774,6 +2775,100 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY fits and takes out parts and moves MechW
     MCTestGame::RunFrame(FlowFrame);
     CHECK(mech->PilotIndex >= 0);
     CHECK_EQ(logistics->WarriorList->Warriors.size(), pilots);
+}
+
+namespace
+{
+    /// <summary>Enough resource points for every repair the cards' tests make.</summary>
+    constexpr int32_t RepairPoints = 100000;
+    /// <summary>A whole 'Mech's condition bar with an unhurt MechWarrior aboard (percent).</summary>
+    constexpr int WholeCondition = 100;
+    /// <summary>The armour a mission leaves the cards' tests' 'Mech: one part in this many.</summary>
+    constexpr uint8_t ArmorLeftShare = 2;
+
+    /// <summary>
+    /// <paramref name="mech"/> as a mission might leave it: half its armour in every location (each location's outline
+    /// coloured, its condition bar short), as it arrived, its knobs placed there.
+    /// </summary>
+    void HalveArmor(MCLogMech& mech)
+    {
+        for (size_t location = 0; location < mech.Armor.size(); location++)
+        {
+            MCLogMech::ArmorPoints& armor = mech.Armor[location];
+            armor.CurArmor = static_cast<uint8_t>(armor.MaxArmor / ArmorLeftShare);
+            mech.Arrived.Armor[location] = armor.CurArmor;
+        }
+
+        MCMechBay::PlaceKnobs(mech);
+    }
+
+    /// <summary>The MechWarrior aboard <paramref name="mech"/>, if any.</summary>
+    std::shared_ptr<MCLogWarrior> PilotOf(const MCLogMech& mech)
+    {
+        std::shared_ptr<MCLogWarrior> warrior;
+
+        if (mech.PilotIndex >= 0)
+        {
+            GlobalLog()->AssignedWarriorList->GetWarriorInfo(mech.PilotIndex, warrior);
+        }
+
+        return warrior;
+    }
+
+    /// <summary>The INVENTORY's card of the spare <paramref name="warrior"/> (its MechWarriors shown): its index.</summary>
+    size_t WarriorCard(const std::shared_ptr<MCLogWarrior>& warrior)
+    {
+        const std::vector<std::shared_ptr<MCLogWarrior>>& spares = GlobalLog()->WarriorList->Warriors;
+        const auto found = std::ranges::find(spares, warrior);
+        REQUIRE(found != spares.end());
+        return static_cast<size_t>(found - spares.begin());
+    }
+}
+
+/// <summary>
+/// A 'Mech's card shows its condition as the 'Mech stands (1998's 'MECH BAY worked it out each time its rows drew it):
+/// its armour halved, its bar short and yellow once its MechWarrior boards again; REPAIR ALL makes it whole, and its FORCE
+/// card's bar whole and green at once, not only once it leaves the force and comes back.
+/// </summary>
+TEST_CASE_ISOLATED("game: the 'MECH BAY's REPAIR ALL shows on the 'Mech's card at once")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogMech> mech = GlobalLog()->ForceMechList->Mechs.front();
+    const std::shared_ptr<MCLogWarrior> pilot = PilotOf(*mech);
+    REQUIRE(pilot != nullptr);
+    REQUIRE_EQ(pilot->Wounds, 0.0f);
+    REQUIRE(!MCMechBay::ItemsDamaged(*mech));
+    ResourcePoints = RepairPoints;
+    HalveArmor(*mech);
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.LabUnit() == mech);
+
+    // Its MechWarrior out and back in by the right button: the bar as the damage leaves it.
+    tabs.Send(MCLogisticsTabs::MCPlace::Pilot, 0);
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+    MCTestGame::RunFrame(FlowFrame);
+    tabs.Send(MCLogisticsTabs::MCPlace::Stock, WarriorCard(pilot));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(PilotOf(*mech) == pilot);
+    REQUIRE(!tabs.ForceCards().empty());
+    CHECK_EQ(tabs.ForceCards()[0].Shade, std::string("worn"));
+    CHECK(tabs.ForceCards()[0].Condition < WholeCondition);
+
+    // REPAIR ALL: whole, its card's bar with it.
+    ClickOn(ElementOf(screen, "repair-all"));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(!MCMechBay::StructureDamaged(*mech));
+    CHECK_EQ(tabs.ForceCards()[0].Condition, WholeCondition);
+    CHECK_EQ(tabs.ForceCards()[0].Shade, std::string("ok"));
 }
 
 /// <summary>

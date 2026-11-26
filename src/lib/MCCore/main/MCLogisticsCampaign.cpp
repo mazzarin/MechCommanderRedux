@@ -1150,8 +1150,8 @@ auto MCLogistics::ReadCampaignBlocks(MCCampaignReading& reading) -> int32_t
     MCPacketFile& packetFile = reading.PacketFile;
 
     packetFile.Close();
-    // The spares' rows numbered; then the force's, and each mech's condition and battle rating worked out, as the 1998
-    // 'MECH BAY's rows of the force did as its lists were shown on them (its mech tab).
+    // The spares' rows numbered; then the force's, and each mech's battle rating worked out, as the 1998 'MECH BAY's rows
+    // of the force did as its lists were shown on them (its mech tab). Its condition is worked out as a card shows it.
     NumberMechs();
     NumberPilots();
     ReIndexInventory();
@@ -1160,11 +1160,6 @@ auto MCLogistics::ReadCampaignBlocks(MCCampaignReading& reading) -> int32_t
 
     for (const std::shared_ptr<MCLogMech>& mech : ForceMechList->Mechs)
     {
-        if (mech->PilotIndex >= 0 || !mech->NetworkPilot.expired())
-        {
-            mech->CalcStatus();
-        }
-
         mech->CalcBR();
     }
 

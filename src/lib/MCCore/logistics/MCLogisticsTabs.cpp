@@ -448,9 +448,9 @@ uint64_t MCLogisticsTabs::Fingerprint() const
         {
             hash = Mixed(hash, Address(unit.get()));
 
-            if constexpr (requires { unit->StatusValue; })
+            if constexpr (requires { unit->CalcStatus(); })
             {
-                hash = Mixed(hash, static_cast<uint64_t>(std::lround(unit->StatusValue * WholePercent)));
+                hash = Mixed(hash, static_cast<uint64_t>(std::lround(unit->CalcStatus() * WholePercent)));
             }
         }
     };

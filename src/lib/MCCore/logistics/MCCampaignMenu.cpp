@@ -668,11 +668,13 @@ MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int s
     card.Pilot = warrior != nullptr ? Pictured(PilotSource(warrior->Picture)) : std::string(NoPicture);
     card.Piloted = warrior != nullptr;
     card.Health = warrior != nullptr ? static_cast<int>(std::clamp(std::round(warrior->Health), 0.0f, HealthPips)) : 0;
-    card.Condition = static_cast<int>(std::lround(std::clamp(mech.StatusValue, 0.0f, 1.0f) * WholePercent));
-    card.Shade = mech.StatusValue == 0.0f          ? std::string()
-                 : !(mech.StatusValue < WornBelow) ? std::string("ok")
-                 : mech.StatusValue > BadFrom      ? std::string("worn")
-                                                   : std::string("bad");
+    // Its condition as it stands (a repair, a refit or a wound shows at once).
+    const float status = mech.CalcStatus();
+    card.Condition = static_cast<int>(std::lround(std::clamp(status, 0.0f, 1.0f) * WholePercent));
+    card.Shade = status == 0.0f          ? std::string()
+                 : !(status < WornBelow) ? std::string("ok")
+                 : status > BadFrom      ? std::string("worn")
+                                         : std::string("bad");
     return card;
 }
 

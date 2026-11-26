@@ -251,6 +251,47 @@ namespace
         }
     }
 
+    /// <summary>
+    /// At every window the players' reports name, each time limit BRIEFING shows (the mission's beside OBJECTIVES, an
+    /// objective's beside its words) on one line, its right edge at its row's: what fault has crept back where not, as
+    /// "<window>: <words> <lines high>, <units off the right>; " (WIP 5 wrapped "MISSION TIME / LIMIT 15:00").
+    /// </summary>
+    void CheckTimeLimitsOneLine(MCRmlMenus& menus, const MCCampaignScreen& screen, std::string_view what, size_t limits)
+    {
+        constexpr float MostLines = 1.5f;
+        constexpr float EdgeSlack = 0.5f;
+        REQUIRE(screen.Document().has_value());
+
+        for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
+        {
+            menus.SetWindow(window.Width, window.Height);
+            menus.Frame();
+            Rml::ElementList shown;
+            screen.Document()->get().QuerySelectorAll(shown, ".time-limit");
+            std::erase_if(shown, [](Rml::Element* limit) { return !limit->IsVisible(true); });
+            const std::string where = std::format("{} {}x{}: ", what, window.Width, window.Height);
+            CHECK_EQ(where + std::to_string(shown.size()), where + std::to_string(limits));
+            std::string faults;
+
+            for (Rml::Element* limit : shown)
+            {
+                const float lines = limit->GetBox().GetSize(Rml::BoxArea::Content).y / limit->GetLineHeight();
+                Rml::Element& row = *limit->GetParentNode();
+                const float rowRight =
+                    row.GetAbsoluteOffset(Rml::BoxArea::Content).x + row.GetBox().GetSize(Rml::BoxArea::Content).x;
+                const float right =
+                    limit->GetAbsoluteOffset(Rml::BoxArea::Border).x + limit->GetBox().GetSize(Rml::BoxArea::Border).x;
+
+                if (lines > MostLines || std::abs(rowRight - right) > EdgeSlack)
+                {
+                    faults += std::format("{} {:.1f}, {:.1f}; ", limit->GetInnerRML(), lines, rowRight - right);
+                }
+            }
+
+            CHECK_EQ(where + faults, where);
+        }
+    }
+
     /// <summary>The window's picture saved (with --shots) as <paramref name="name"/> at its size.</summary>
     void Shot(std::string_view name)
     {
@@ -360,8 +401,9 @@ TEST_CASE("logistics: a briefing's text is read into its objectives, fire suppor
 {
     const MCBriefingText::MCRead read = MCBriefingText::Read(FirstBriefing);
     REQUIRE_EQ(read.Objectives.size(), size_t{2});
-    CHECK_EQ(read.Objectives[0], std::string("Destroy Camp \"Alpha\" HQ and Natural Gas Tower"));
-    CHECK_EQ(read.Objectives[1], std::string("Destroy all three Garrison Buildings at the Garrison Base"));
+    CHECK_EQ(read.Objectives[0].Text, std::string("Destroy Camp \"Alpha\" HQ and Natural Gas Tower"));
+    CHECK_EQ(read.Objectives[1].Text, std::string("Destroy all three Garrison Buildings at the Garrison Base"));
+    CHECK(read.TimeLimit.empty());
     REQUIRE(read.FireSupport.has_value());
     CHECK((*read.FireSupport ==
            MCBriefingText::MCFireSupport{.SmallArtillery = 4, .LargeArtillery = 1, .CameraDrones = 2}));
@@ -380,7 +422,7 @@ TEST_CASE("logistics: a briefing's text is read into its objectives, fire suppor
     const MCBriefingText::MCRead side = MCBriefingText::Read(
         "%fc6%c*** CAPTURE ENEMY BASE ***%n%fc21-Capture Enemy Headquarters%n%n"
         "%fc5%c----------%n%fc4Your team must capture the base.%n%n%fc6<<<<END DISPATCH%nNot read");
-    CHECK_EQ(side.Objectives, std::vector<std::string>{"Capture Enemy Headquarters"});
+    CHECK((side.Objectives == std::vector<MCBriefingText::MCObjective>{{.Text = "Capture Enemy Headquarters"}}));
     CHECK(!side.FireSupport.has_value());
     CHECK_EQ(side.Orders, std::vector<std::string>{"Your team must capture the base."});
     CHECK(side.Warnings.empty());
@@ -400,6 +442,48 @@ TEST_CASE("logistics: an over-long centred line of briefing text reads whole, it
                                          "%fc5%c----------%n%fc4%c{}%n%n%fc6<<<<END DISPATCH%n",
                                          Long));
     CHECK_EQ(read.Orders, std::vector<std::string>{std::string(Long)});
+}
+
+/// <summary>
+/// A briefing's time limits read apart from its objectives' words, in each way the campaigns write them (every briefing
+/// surveyed, 25 Nov): the mission's under the objectives (brf0204's "MISSION TIME LIMIT- 15:00") or after the fire
+/// support (xbrf0201's "TIME LIMIT: 25 MINUTES", xbrf0303's "***25 MINUTE TIME LIMIT***"), an objective's own under it
+/// (brf0206's "OBJECTIVE TIME LIMIT- 06:00"). An order that speaks of the time limit stays an order. In WIP 5 the
+/// mission's was read as the objective's last words and wrapped with them ("MISSION TIME / LIMIT- 15:00").
+/// </summary>
+TEST_CASE("logistics: a briefing's time limits read apart from its objectives, as each campaign writes them")
+{
+    using MCBriefingText::MCObjective;
+    constexpr std::string_view Head =
+        "%fm%fc1%c****CLASSIFIED****%n%fc5%c----------%n%fc6%c***DESTROY ENEMY ASSETS***%n";
+    constexpr std::string_view Fire = "%fc6FIRE SUPPORT:%n%fc2%t12ARTILLERY: 2 Small  0 Large%n%t12SENSOR PROBE: 1%n";
+    constexpr std::string_view Orders = "%fc5%c----------%n%fc4Destroy them before the time limit expires.%n%n"
+                                        "%fc6<<<<END DISPATCH%n";
+
+    const MCBriefingText::MCRead mission = MCBriefingText::Read(
+        std::format("{}%fc21-Destroy Smoke Jaguar Hyperpulse%n%t9Generators%nMISSION TIME LIMIT- 15:00%n%n{}{}", Head,
+                    Fire, Orders));
+    CHECK((mission.Objectives == std::vector<MCObjective>{{.Text = "Destroy Smoke Jaguar Hyperpulse Generators"}}));
+    CHECK_EQ(mission.TimeLimit, std::string("15:00"));
+    CHECK_EQ(mission.Orders, std::vector<std::string>{"Destroy them before the time limit expires."});
+
+    const MCBriefingText::MCRead objective = MCBriefingText::Read(std::format(
+        "{}%fc21-Capture Enemy Base HQ%n%t9OBJECTIVE TIME LIMIT- 06:00%n%fc22-Defend Captured Base HQ%n%n{}{}", Head,
+        Fire, Orders));
+    CHECK((objective.Objectives == std::vector<MCObjective>{{.Text = "Capture Enemy Base HQ", .TimeLimit = "6:00"},
+                                                            {.Text = "Defend Captured Base HQ"}}));
+    CHECK(objective.TimeLimit.empty());
+
+    const MCBriefingText::MCRead minutes = MCBriefingText::Read(
+        std::format("{}%fc21-Destroy the Convoy%n%n{}%n%fm%fc1%cTIME LIMIT: 25 MINUTES%n{}", Head, Fire, Orders));
+    CHECK_EQ(minutes.TimeLimit, std::string("25:00"));
+    CHECK((minutes.Objectives == std::vector<MCObjective>{{.Text = "Destroy the Convoy"}}));
+
+    const MCBriefingText::MCRead starred = MCBriefingText::Read(
+        std::format("{}%fc21-Destroy the Convoy%n%n{}%fc5%c----------%n%fm%fc1%c***25 MINUTE TIME LIMIT***%n{}", Head,
+                    Fire, Orders));
+    CHECK_EQ(starred.TimeLimit, std::string("25:00"));
+    CHECK_EQ(starred.Orders, std::vector<std::string>{"Destroy them before the time limit expires."});
 }
 
 /// <summary>
@@ -771,6 +855,17 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY lay out and read at every window t
     ShowBriefing(screen, "xbrf0103.txt");
     CHECK_EQ(screen.Warnings().size(), size_t{6});
     checkEach("briefing xbrf0103");
+
+    // The time limits: the mission's (brf0204's 15 minutes) and an objective's (brf0206's first, 6 minutes).
+    ShowBriefing(screen, "brf0204.txt");
+    CHECK_EQ(screen.TimeLimit(), std::string("15:00"));
+    CheckTimeLimitsOneLine(menus, screen, "briefing brf0204", 1);
+    checkEach("briefing brf0204");
+    ShowBriefing(screen, "brf0206.txt");
+    REQUIRE(!screen.Objectives().empty());
+    CHECK_EQ(screen.Objectives()[0].Limit, std::string("6:00"));
+    CheckTimeLimitsOneLine(menus, screen, "briefing brf0206", 1);
+    checkEach("briefing brf0206");
 
     screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
     screen.SendReady(0, std::nullopt);

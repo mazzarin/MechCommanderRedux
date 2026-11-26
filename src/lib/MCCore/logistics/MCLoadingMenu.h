@@ -19,11 +19,12 @@ class MCRmlModel;
 class MCLoadingScreen final : public MCRmlScreen
 {
 public:
-    /// <summary>A line it shows: an objective with its number, a paragraph of the orders.</summary>
+    /// <summary>A line it shows: an objective with its number (and its own time limit), a paragraph of the orders.</summary>
     struct MCLine
     {
         std::string Text;
         int Number = 0;
+        std::string Limit;
     };
 
     /// <summary>A match's player under the map: the name in their colour, lit once in, and the word for it.</summary>
@@ -52,6 +53,8 @@ public:
     /// <summary>What shows (the tests read it).</summary>
     const std::string& Eyebrow() const { return _Eyebrow; }
     const std::string& Title() const { return _Title; }
+    /// <summary>The mission's time limit ("15:00"; empty: none), at the right of OBJECTIVES.</summary>
+    const std::string& TimeLimit() const { return _TimeLimit; }
     const std::vector<MCLine>& Objectives() const { return _Objectives; }
     const std::vector<MCLine>& Orders() const { return _Orders; }
     const std::string& MapSource() const { return _Map; }
@@ -81,6 +84,7 @@ private:
     std::unique_ptr<MCRmlModel> _Model;
     std::string _Eyebrow;
     std::string _Title;
+    std::string _TimeLimit;
     std::vector<MCLine> _Objectives;
     std::vector<MCLine> _Orders;
     /// <summary>The map as a decorator (none: no map).</summary>

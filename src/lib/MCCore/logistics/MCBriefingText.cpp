@@ -28,6 +28,17 @@ namespace
     constexpr char ObjectiveMark = '-';
     /// <summary>The fire support's one line when it gives nothing.</summary>
     constexpr std::string_view NoFireSupport = "None";
+    /// <summary>
+    /// A time limit's line: TIME LIMIT and its time (minutes, or minutes:seconds), and nothing but these words ("MISSION
+    /// TIME LIMIT- 15:00", "%t9OBJECTIVE TIME LIMIT- 06:00", "TIME LIMIT: 25 MINUTES", "***25 MINUTE TIME LIMIT***"); an
+    /// objective's names OBJECTIVE.
+    /// </summary>
+    constexpr std::string_view TimeWord = "TIME";
+    constexpr std::string_view LimitWord = "LIMIT";
+    constexpr std::string_view ObjectiveWord = "OBJECTIVE";
+    constexpr std::array<std::string_view, 3> LimitWords = {"MISSION", "MINUTE", "MINUTES"};
+    constexpr char TimeMark = ':';
+    constexpr size_t SecondsDigits = 2;
 
     /// <summary>A line of the text (to its %n), its codes left out; whether it starts at a tab (a line carried on).</summary>
     struct MCLine
@@ -206,6 +217,106 @@ namespace
         return Trimmed(std::string_view(rest).substr(1));
     }
 
+    /// <summary>A time limit a line names: its time as m:ss ("15:00", "6:00"), and whether it's an objective's.</summary>
+    struct MCLimitLine
+    {
+        std::string Time;
+        bool Objective = false;
+    };
+
+    /// <summary>"25" or "06:00" as minutes and seconds; none for anything else.</summary>
+    std::optional<std::pair<int32_t, int32_t>> TimeOf(std::string_view word)
+    {
+        const size_t mark = word.find(TimeMark);
+        const std::string_view minutesWords = word.substr(0, mark);
+        const std::string_view secondsWords =
+            mark == std::string_view::npos ? std::string_view() : word.substr(mark + 1);
+        int32_t minutes = 0;
+        int32_t seconds = 0;
+        const auto [minutesEnd, minutesError] =
+            std::from_chars(minutesWords.data(), minutesWords.data() + minutesWords.size(), minutes);
+
+        if (minutesWords.empty() || minutesError != std::errc() ||
+            minutesEnd != minutesWords.data() + minutesWords.size())
+        {
+            return std::nullopt;
+        }
+
+        if (mark != std::string_view::npos)
+        {
+            const auto [secondsEnd, secondsError] =
+                std::from_chars(secondsWords.data(), secondsWords.data() + secondsWords.size(), seconds);
+
+            if (secondsWords.size() != SecondsDigits || secondsError != std::errc() ||
+                secondsEnd != secondsWords.data() + secondsWords.size())
+            {
+                return std::nullopt;
+            }
+        }
+
+        return std::pair{minutes, seconds};
+    }
+
+    /// <summary>The time limit <paramref name="line"/> names, if it is a time limit's line and nothing more.</summary>
+    std::optional<MCLimitLine> TimeLimitOf(std::string_view line)
+    {
+        MCLimitLine limit;
+        std::optional<std::pair<int32_t, int32_t>> time;
+        bool named = false;
+        std::string before;
+        std::string word;
+
+        const auto digit = [&line](size_t at)
+        { return at < line.size() && std::isdigit(static_cast<unsigned char>(line[at])) != 0; };
+
+        // Its words, parted by anything but letters and digits (the time's mark between digits is the time's).
+        for (size_t at = 0; at <= line.size(); ++at)
+        {
+            const char c = at < line.size() ? line[at] : ' ';
+
+            if (std::isalnum(static_cast<unsigned char>(c)) != 0 ||
+                (c == TimeMark && at > 0 && digit(at - 1) && digit(at + 1)))
+            {
+                word += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                continue;
+            }
+
+            if (word.empty())
+            {
+                continue;
+            }
+
+            if (word == LimitWord && before == TimeWord)
+            {
+                named = true;
+            }
+            else if (word == ObjectiveWord)
+            {
+                limit.Objective = true;
+            }
+            else if (const std::optional<std::pair<int32_t, int32_t>> given = TimeOf(word);
+                     given.has_value() && !time.has_value())
+            {
+                time = given;
+            }
+            else if (word != TimeWord && std::ranges::find(LimitWords, word) == LimitWords.end())
+            {
+                return std::nullopt;
+            }
+
+            before = std::move(word);
+            word.clear();
+        }
+
+        if (!named || !time.has_value())
+        {
+            return std::nullopt;
+        }
+
+        limit.Time = std::format("{}:{:02}", time->first, time->second);
+        return limit;
+    }
+
     /// <summary>A mission's title (***LIBERATE WORK CAMPS***), not the classification over it (****CLASSIFIED****).</summary>
     bool Starred(std::string_view line)
     {
@@ -281,6 +392,22 @@ auto MCBriefingText::Read(std::string_view text) -> MCRead
             continue;
         }
 
+        // A time limit: the mission's, or the objective's above it (not words of the objective: it reads apart).
+        if (const std::optional<MCLimitLine> limit = TimeLimitOf(words); limit.has_value())
+        {
+            if (limit->Objective && !read.Objectives.empty())
+            {
+                read.Objectives.back().TimeLimit = limit->Time;
+            }
+            else
+            {
+                read.TimeLimit = limit->Time;
+            }
+
+            open = false;
+            continue;
+        }
+
         if (Starred(words))
         {
             titled = true;
@@ -313,14 +440,14 @@ auto MCBriefingText::Read(std::string_view text) -> MCRead
                 break;
             case MCPart::Objectives:
             {
-                if (const std::optional<std::string> objective = ObjectiveOf(words); objective.has_value())
+                if (std::optional<std::string> objective = ObjectiveOf(words); objective.has_value())
                 {
-                    read.Objectives.push_back(*objective);
+                    read.Objectives.push_back(MCObjective{.Text = std::move(*objective)});
                 }
                 else if (!read.Objectives.empty())
                 {
-                    read.Objectives.back() += ' ';
-                    read.Objectives.back() += words;
+                    read.Objectives.back().Text += ' ';
+                    read.Objectives.back().Text += words;
                 }
 
                 break;

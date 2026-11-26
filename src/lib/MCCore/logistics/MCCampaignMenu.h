@@ -90,6 +90,8 @@ public:
     {
         std::string Text;
         int Number = 0;
+        /// <summary>An objective's own time limit ("6:00"; empty: none), at its line's right.</summary>
+        std::string Limit;
     };
 
     /// <summary>What a card is: a unit, an open slot (a well), a slot the player can't fill (striped).</summary>
@@ -185,6 +187,8 @@ public:
     const std::string& Eyebrow() const { return _Eyebrow; }
     const std::string& Title() const { return _Title; }
     const std::vector<MCLine>& Objectives() const { return _Objectives; }
+    /// <summary>The mission's time limit ("15:00"; empty: none), at the right of OBJECTIVES.</summary>
+    const std::string& TimeLimit() const { return _TimeLimit; }
     const std::vector<MCLine>& FireSupport() const { return _Fire; }
     const std::vector<MCLine>& Orders() const { return _Orders; }
     const std::vector<MCLine>& Warnings() const { return _Warnings; }
@@ -352,6 +356,7 @@ private:
     std::string _Eyebrow;
     std::string _Title;
     std::vector<MCLine> _Objectives;
+    std::string _TimeLimit;
     /// <summary>The fire support, a line each (none: the briefing has no FIRE SUPPORT).</summary>
     std::vector<MCLine> _Fire;
     std::vector<MCLine> _Orders;

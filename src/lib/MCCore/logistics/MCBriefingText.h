@@ -41,8 +41,8 @@ namespace MCBriefingText
     std::string Plain(std::string_view text);
 
     /// <summary>
-    /// The fire support in a line: what is given, in the order the briefing lists it ("4 small artillery, 1 sensor
-    /// probe"); "None" when it gives nothing.
+    /// The fire support a line each: what is given, in the order the briefing lists it ("4 small artillery", "1 sensor
+    /// probe"); "None" alone when it gives nothing.
     /// </summary>
-    std::string FireSupportText(const MCFireSupport& support);
+    std::vector<std::string> FireSupportLines(const MCFireSupport& support);
 }

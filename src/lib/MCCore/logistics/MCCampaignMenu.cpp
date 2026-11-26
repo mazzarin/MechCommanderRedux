@@ -278,7 +278,6 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("clock", _Clock);
     model.Value("eyebrow", _Eyebrow);
     model.Value("title", _Title);
-    model.Value("fire", _Fire);
     model.Value("warningsHead", _WarningsHead);
     model.Value("carriedLeft", _CarriedLeft);
     model.Value("carriedTop", _CarriedTop);
@@ -291,6 +290,7 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("video", _Video);
     model.Value("keysCarry", _KeysCarry);
     model.List("objectives", _Objectives, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
+    model.List("fire", _Fire, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
     model.List("orders", _Orders, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
     model.List("warnings", _Warnings, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
     model.List("zones", _Zones, std::pair{"left", &MCZoneShown::Left}, std::pair{"top", &MCZoneShown::Top},
@@ -477,7 +477,16 @@ void MCCampaignScreen::ReadBriefing()
         _Objectives.push_back(MCLine{.Text = read.Objectives[at], .Number = static_cast<int>(at + 1)});
     }
 
-    _Fire = read.FireSupport.has_value() ? MCBriefingText::FireSupportText(*read.FireSupport) : std::string();
+    _Fire.clear();
+
+    if (read.FireSupport.has_value())
+    {
+        for (std::string& line : MCBriefingText::FireSupportLines(*read.FireSupport))
+        {
+            _Fire.push_back(MCLine{.Text = std::move(line)});
+        }
+    }
+
     _Orders.clear();
 
     for (const std::string& paragraph : read.Orders)

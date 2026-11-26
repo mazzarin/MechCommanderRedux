@@ -183,7 +183,7 @@ public:
     const std::string& Eyebrow() const { return _Eyebrow; }
     const std::string& Title() const { return _Title; }
     const std::vector<MCLine>& Objectives() const { return _Objectives; }
-    const std::string& FireSupport() const { return _Fire; }
+    const std::vector<MCLine>& FireSupport() const { return _Fire; }
     const std::vector<MCLine>& Orders() const { return _Orders; }
     const std::vector<MCLine>& Warnings() const { return _Warnings; }
     const std::string& MapSource() const { return _MapSource; }
@@ -350,7 +350,8 @@ private:
     std::string _Eyebrow;
     std::string _Title;
     std::vector<MCLine> _Objectives;
-    std::string _Fire;
+    /// <summary>The fire support, a line each (none: the briefing has no FIRE SUPPORT).</summary>
+    std::vector<MCLine> _Fire;
     std::vector<MCLine> _Orders;
     std::string _WarningsHead;
     std::vector<MCLine> _Warnings;

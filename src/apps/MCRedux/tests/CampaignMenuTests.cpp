@@ -365,9 +365,9 @@ TEST_CASE("logistics: a briefing's text is read into its objectives, fire suppor
     REQUIRE(read.FireSupport.has_value());
     CHECK((*read.FireSupport ==
            MCBriefingText::MCFireSupport{.SmallArtillery = 4, .LargeArtillery = 1, .CameraDrones = 2}));
-    CHECK_EQ(MCBriefingText::FireSupportText(*read.FireSupport),
-             std::string("4 small artillery, 1 large artillery, 2 camera drones"));
-    CHECK_EQ(MCBriefingText::FireSupportText({}), std::string("None"));
+    const std::vector<std::string> fireLines{"4 small artillery", "1 large artillery", "2 camera drones"};
+    CHECK_EQ(MCBriefingText::FireSupportLines(*read.FireSupport), fireLines);
+    CHECK_EQ(MCBriefingText::FireSupportLines({}), std::vector<std::string>{"None"});
     REQUIRE_EQ(read.Orders.size(), size_t{2});
     CHECK_EQ(read.Orders[0], std::string("The Smoke Jaguars have been putting dissidents into camps."));
     CHECK_EQ(read.Orders[1], std::string("At \"Alpha\", destroy the Camp HQ."));
@@ -485,7 +485,8 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     REQUIRE_EQ(screen.Objectives().size(), size_t{3});
     CHECK_EQ(screen.Objectives()[0].Text, std::string("Destroy Camp \"Alpha\" HQ and Natural Gas Tower"));
     CHECK_EQ(screen.Objectives()[2].Number, 3);
-    CHECK_EQ(screen.FireSupport(), std::string("None"));
+    REQUIRE_EQ(screen.FireSupport().size(), size_t{1});
+    CHECK_EQ(screen.FireSupport()[0].Text, std::string("None"));
     CHECK_EQ(screen.Orders().size(), size_t{5});
     CHECK_EQ(screen.Warnings().size(), size_t{2});
     CHECK_EQ(screen.MapSource(), std::string("map:mis0101"));
@@ -751,8 +752,21 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY lay out and read at every window t
 
     ShowBriefing(screen, "xbrf0302.txt");
     REQUIRE_EQ(screen.Objectives().size(), size_t{6});
-    CHECK_EQ(screen.FireSupport(),
-             std::string("4 small artillery, 2 large artillery, 3 sensor probes, 2 camera drones"));
+    // The fire support a line each, so no line breaks inside one.
+    const std::vector<std::string> fire = [&screen]
+    {
+        std::vector<std::string> lines;
+
+        for (const MCCampaignScreen::MCLine& line : screen.FireSupport())
+        {
+            lines.push_back(line.Text);
+        }
+
+        return lines;
+    }();
+    const std::vector<std::string> fireLines{"4 small artillery", "2 large artillery", "3 sensor probes",
+                                             "2 camera drones"};
+    CHECK_EQ(fire, fireLines);
     checkEach("briefing xbrf0302");
     ShowBriefing(screen, "xbrf0103.txt");
     CHECK_EQ(screen.Warnings().size(), size_t{6});

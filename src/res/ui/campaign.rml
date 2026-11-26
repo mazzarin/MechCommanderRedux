@@ -44,9 +44,9 @@
                                 <div>
                                     <div class="eyebrow section" data-if="objectives.size > 0">Objectives</div>
                                     <div class="objective row top" data-for="line : objectives"><div class="num">{{line.num}}</div><div class="grow">{{line.text}}</div></div>
-                                    <div class="row section" data-if="fire != ''">
+                                    <div class="row top section" data-if="fire.size > 0">
                                         <div class="eyebrow fire-label">Fire support</div>
-                                        <div class="data grey caps">{{fire}}</div>
+                                        <div class="fire-lines"><div class="data grey caps" data-for="line : fire">{{line.text}}</div></div>
                                     </div>
                                 </div>
                                 <div>

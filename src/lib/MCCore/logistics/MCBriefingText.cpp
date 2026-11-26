@@ -26,6 +26,8 @@ namespace
     constexpr std::string_view ItemMark = "*";
     constexpr std::string_view EndLine = "<<<<END DISPATCH";
     constexpr char ObjectiveMark = '-';
+    /// <summary>The fire support's one line when it gives nothing.</summary>
+    constexpr std::string_view NoFireSupport = "None";
 
     /// <summary>A line of the text (to its %n), its codes left out; whether it starts at a tab (a line carried on).</summary>
     struct MCLine
@@ -384,7 +386,7 @@ auto MCBriefingText::Plain(std::string_view text) -> std::string
     return plain;
 }
 
-auto MCBriefingText::FireSupportText(const MCFireSupport& support) -> std::string
+auto MCBriefingText::FireSupportLines(const MCFireSupport& support) -> std::vector<std::string>
 {
     std::vector<std::string> given;
 
@@ -410,15 +412,8 @@ auto MCBriefingText::FireSupportText(const MCFireSupport& support) -> std::strin
 
     if (given.empty())
     {
-        return "None";
+        given.emplace_back(NoFireSupport);
     }
 
-    std::string text = given.front();
-
-    for (size_t at = 1; at < given.size(); ++at)
-    {
-        text += ", " + given[at];
-    }
-
-    return text;
+    return given;
 }

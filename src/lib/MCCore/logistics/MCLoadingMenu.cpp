@@ -39,8 +39,11 @@ void MCLoadingScreen::MakeModels(Rml::Context& context)
     MCRmlModel& model = *_Model;
     model.Value("eyebrow", _Eyebrow);
     model.Value("title", _Title);
-    model.List("objectives", _Objectives, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
-    model.List("orders", _Orders, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
+    model.Value("timeLimit", _TimeLimit);
+    model.List("objectives", _Objectives, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number},
+               std::pair{"limit", &MCLine::Limit});
+    model.List("orders", _Orders, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number},
+               std::pair{"limit", &MCLine::Limit});
     model.Value("map", _Map);
     model.Value("what", _What);
     model.Value("percent", _Percent);
@@ -67,8 +70,12 @@ void MCLoadingScreen::SetUp()
 
     for (size_t at = 0; at < mission.Briefing.Objectives.size(); ++at)
     {
-        _Objectives.push_back(MCLine{.Text = mission.Briefing.Objectives[at], .Number = static_cast<int>(at + 1)});
+        _Objectives.push_back(MCLine{.Text = mission.Briefing.Objectives[at].Text,
+                                     .Number = static_cast<int>(at + 1),
+                                     .Limit = mission.Briefing.Objectives[at].TimeLimit});
     }
+
+    _TimeLimit = mission.Briefing.TimeLimit;
 
     _Orders.clear();
 

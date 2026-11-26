@@ -28,6 +28,18 @@ namespace
     constexpr const char* StepperClass = "stepper";
     constexpr const char* ArrowClass = "arrow";
     constexpr const char* StepValueClass = "step-value";
+    /// <summary>
+    /// A slider between a stepper's two arrows (ui/look.rcss), its range input inside: each arrow a step of its level,
+    /// as RmlUi's own Left and Right.
+    /// </summary>
+    constexpr const char* SliderStepsClass = "slider-steps";
+    constexpr const char* SliderSelector = "input";
+    /// <summary>A range input's bounds, step and level, and what holds it (RmlUi's attributes).</summary>
+    constexpr const char* MinAttribute = "min";
+    constexpr const char* MaxAttribute = "max";
+    constexpr const char* StepAttribute = "step";
+    constexpr const char* DisabledAttribute = "disabled";
+    constexpr float DefaultStep = 1.0f;
     constexpr const char* RowClass = "list-row";
     constexpr const char* FieldClass = "field";
     /// <summary>The mouse's left button, in RmlUi's events (their button parameter).</summary>
@@ -100,6 +112,14 @@ namespace
         }
 
         return -1;
+    }
+
+    /// <summary>The way <paramref name="arrow"/> steps the control it is one of two arrows of: back the first, on the last.</summary>
+    int ArrowStep(Rml::Element& control, Rml::Element& arrow)
+    {
+        Rml::ElementList arrows;
+        control.GetElementsByClassName(arrows, ArrowClass);
+        return !arrows.empty() && arrows.front() == &arrow ? -1 : 1;
     }
 
     /// <summary>A stepper's words.</summary>
@@ -454,6 +474,37 @@ bool MCRmlKit::Step(Rml::Element& control, int step)
     return true;
 }
 
+bool MCRmlKit::StepSlider(Rml::Element& steps, int step)
+{
+    Rml::Element* slider = steps.QuerySelector(SliderSelector);
+
+    // A held slider (disabled) doesn't move.
+    if (slider == nullptr || slider->HasAttribute(DisabledAttribute))
+    {
+        return false;
+    }
+
+    const float least = slider->GetAttribute<float>(MinAttribute, 0.0f);
+    const float most = slider->GetAttribute<float>(MaxAttribute, least);
+    const float now = slider->GetAttribute<float>(ValueParameter, least);
+    const float next = now + static_cast<float>(step) * slider->GetAttribute<float>(StepAttribute, DefaultStep);
+
+    if (most < least || next < least || next > most)
+    {
+        // At the end already: nothing moves (its arrow is dim there).
+        return false;
+    }
+
+    // 1998's button press, as a stepper's. The level set first (RmlUi's slider tells nothing of a level set so), then
+    // told as RmlUi's slider tells a move: its screen can still put it back.
+    Play(PressSound);
+    slider->SetAttribute(ValueParameter, next);
+    Rml::Dictionary parameters;
+    parameters[ValueParameter] = next;
+    slider->DispatchEvent(Rml::EventId::Change, parameters);
+    return true;
+}
+
 bool MCRmlKit::StepTab(Rml::ElementDocument& document, int step)
 {
     Rml::ElementList rows;
@@ -528,11 +579,14 @@ void MCRmlKit::OnClick(Rml::Event& event)
     {
         if (Rml::Element* stepper = Up(arrow, StepperClass); stepper != nullptr)
         {
-            Rml::ElementList arrows;
-            stepper->GetElementsByClassName(arrows, ArrowClass);
-            const int step = !arrows.empty() && arrows.front() == arrow ? -1 : 1;
-
-            if (!Step(*stepper, step))
+            if (!Step(*stepper, ArrowStep(*stepper, *arrow)))
+            {
+                Play(OffClickSound);
+            }
+        }
+        else if (Rml::Element* steps = Up(arrow, SliderStepsClass); steps != nullptr)
+        {
+            if (!StepSlider(*steps, ArrowStep(*steps, *arrow)))
             {
                 Play(OffClickSound);
             }

@@ -22,8 +22,8 @@
                     <div class="earned" data-if="earned != ''"><div class="eyebrow">RP earned</div><div class="title">{{earned}}</div></div>
                     <div class="data grey caps" data-if="match">Match time <span class="white">{{time}}</span></div>
                 </div>
-                <div class="battle"><div class="fig" data-for="f : figures"><div class="n">{{f.n}}</div><div class="what">{{f.what}}</div></div></div>
-                <div class="result-body" data-if="!match">
+                <div class="battle" id="figures"><div class="fig" data-for="f : figures"><div class="n" data-visible="f.shown">{{f.n}}</div><div class="what">{{f.what}}</div></div></div>
+                <div class="result-body solo" data-if="!match">
                     <div class="outcome">
                         <div class="eyebrow">Objectives</div>
                         <div data-for="o : objectives">
@@ -41,7 +41,7 @@
                         </div>
                         <div class="none" data-if="noSalvage">{{noSalvageText}}</div>
                     </div>
-                    <div class="grow column">
+                    <div class="pilots column">
                         <div class="pilot-head"><div class="p-name" style="padding-left: 21dp;">Pilot</div><div class="p-mech">'Mech</div><div class="p-kills">Kills</div><div class="p-rank">Rank</div><div class="p-skill">Gunnery</div><div class="p-skill">Piloting</div><div class="p-skill">Jumping</div><div class="p-skill">Sensors</div></div>
                         <div class="pilot-row" data-for="p : pilots" data-class-gone="p.gone" data-visible="p.shown">
                             <div class="face" data-style-decorator="p.face"></div>

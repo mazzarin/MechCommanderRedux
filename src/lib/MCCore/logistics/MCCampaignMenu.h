@@ -90,6 +90,8 @@ public:
     {
         std::string Text;
         int Number = 0;
+        /// <summary>An objective's own time limit ("6:00"; empty: none), at its line's right.</summary>
+        std::string Limit;
     };
 
     /// <summary>What a card is: a unit, an open slot (a well), a slot the player can't fill (striped).</summary>
@@ -116,6 +118,8 @@ public:
         std::string Pilot{NoPicture};
         /// <summary>Whether it has a pilot (a 'Mech): the pilot's picture and the gauges show.</summary>
         bool Piloted = false;
+        /// <summary>A 'Mech without a pilot: the pilot's place an empty box (a vehicle's has none).</summary>
+        bool Unpiloted = false;
         /// <summary>The condition bar's length (a percentage) and shade ("ok", "worn", "bad"; empty: no bar).</summary>
         int Condition = 0;
         std::string Shade;
@@ -183,7 +187,9 @@ public:
     const std::string& Eyebrow() const { return _Eyebrow; }
     const std::string& Title() const { return _Title; }
     const std::vector<MCLine>& Objectives() const { return _Objectives; }
-    const std::string& FireSupport() const { return _Fire; }
+    /// <summary>The mission's time limit ("15:00"; empty: none), at the right of OBJECTIVES.</summary>
+    const std::string& TimeLimit() const { return _TimeLimit; }
+    const std::vector<MCLine>& FireSupport() const { return _Fire; }
     const std::vector<MCLine>& Orders() const { return _Orders; }
     const std::vector<MCLine>& Warnings() const { return _Warnings; }
     const std::string& MapSource() const { return _MapSource; }
@@ -350,7 +356,9 @@ private:
     std::string _Eyebrow;
     std::string _Title;
     std::vector<MCLine> _Objectives;
-    std::string _Fire;
+    std::string _TimeLimit;
+    /// <summary>The fire support, a line each (none: the briefing has no FIRE SUPPORT).</summary>
+    std::vector<MCLine> _Fire;
     std::vector<MCLine> _Orders;
     std::string _WarningsHead;
     std::vector<MCLine> _Warnings;
@@ -488,8 +496,13 @@ namespace MCCampaignMenu
     std::string TonsText(int32_t tons);
     /// <summary><paramref name="units"/> in words: "1 unit", "20 units".</summary>
     std::string UnitsText(int32_t units);
-    /// <summary>A picture's source as a card's decorator (none for none).</summary>
+    /// <summary>A picture's source as a card's decorator (none for none): a unit standing at its place's foot.</summary>
     std::string Pictured(std::string_view source);
+    /// <summary>
+    /// A MechWarrior's portrait (a <see cref="PilotSource"/>) as a good's decorator (none for none): at its place's top
+    /// left, level with the name beside it.
+    /// </summary>
+    std::string Portrait(std::string_view source);
     /// <summary>A MechWarrior's picture (its file, as the logistics data names it) as an <c>art:</c> source.</summary>
     std::string PilotSource(std::string_view picture);
     /// <summary>The number after <paramref name="prefix"/> in an element's id (slot3, force12); none without one.</summary>

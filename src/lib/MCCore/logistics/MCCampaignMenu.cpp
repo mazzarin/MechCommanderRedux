@@ -278,7 +278,7 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("clock", _Clock);
     model.Value("eyebrow", _Eyebrow);
     model.Value("title", _Title);
-    model.Value("fire", _Fire);
+    model.Value("timeLimit", _TimeLimit);
     model.Value("warningsHead", _WarningsHead);
     model.Value("carriedLeft", _CarriedLeft);
     model.Value("carriedTop", _CarriedTop);
@@ -290,9 +290,14 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("canBegin", _CanBegin);
     model.Value("video", _Video);
     model.Value("keysCarry", _KeysCarry);
-    model.List("objectives", _Objectives, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
-    model.List("orders", _Orders, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
-    model.List("warnings", _Warnings, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number});
+    model.List("objectives", _Objectives, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number},
+               std::pair{"limit", &MCLine::Limit});
+    model.List("fire", _Fire, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number},
+               std::pair{"limit", &MCLine::Limit});
+    model.List("orders", _Orders, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number},
+               std::pair{"limit", &MCLine::Limit});
+    model.List("warnings", _Warnings, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number},
+               std::pair{"limit", &MCLine::Limit});
     model.List("zones", _Zones, std::pair{"left", &MCZoneShown::Left}, std::pair{"top", &MCZoneShown::Top},
                std::pair{"width", &MCZoneShown::Width}, std::pair{"height", &MCZoneShown::Height},
                std::pair{"picture", &MCZoneShown::Picture});
@@ -300,8 +305,9 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.List("ready", _Ready, std::pair{"kind", &MCCard::Kind}, std::pair{"who", &MCCard::Who},
                std::pair{"what", &MCCard::What}, std::pair{"tons", &MCCard::Tons},
                std::pair{"outline", &MCCard::Outline}, std::pair{"pilot", &MCCard::Pilot},
-               std::pair{"piloted", &MCCard::Piloted}, std::pair{"condition", &MCCard::Condition},
-               std::pair{"shade", &MCCard::Shade}, std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
+               std::pair{"piloted", &MCCard::Piloted}, std::pair{"unpiloted", &MCCard::Unpiloted},
+               std::pair{"condition", &MCCard::Condition}, std::pair{"shade", &MCCard::Shade},
+               std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
                std::pair{"picked", &MCCard::Picked}, std::pair{"target", &MCCard::Target},
                std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot});
     model.List("carried", _Carried, std::pair{"kind", &MCCard::Kind});
@@ -474,10 +480,23 @@ void MCCampaignScreen::ReadBriefing()
 
     for (size_t at = 0; at < read.Objectives.size(); ++at)
     {
-        _Objectives.push_back(MCLine{.Text = read.Objectives[at], .Number = static_cast<int>(at + 1)});
+        _Objectives.push_back(MCLine{.Text = read.Objectives[at].Text,
+                                     .Number = static_cast<int>(at + 1),
+                                     .Limit = read.Objectives[at].TimeLimit});
     }
 
-    _Fire = read.FireSupport.has_value() ? MCBriefingText::FireSupportText(*read.FireSupport) : std::string();
+    _TimeLimit = read.TimeLimit;
+
+    _Fire.clear();
+
+    if (read.FireSupport.has_value())
+    {
+        for (std::string& line : MCBriefingText::FireSupportLines(*read.FireSupport))
+        {
+            _Fire.push_back(MCLine{.Text = std::move(line)});
+        }
+    }
+
     _Orders.clear();
 
     for (const std::string& paragraph : read.Orders)
@@ -667,6 +686,7 @@ MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int s
     card.What = mech.FileName;
     card.Pilot = warrior != nullptr ? Pictured(PilotSource(warrior->Picture)) : std::string(NoPicture);
     card.Piloted = warrior != nullptr;
+    card.Unpiloted = warrior == nullptr;
     card.Health = warrior != nullptr ? static_cast<int>(std::clamp(std::round(warrior->Health), 0.0f, HealthPips)) : 0;
     // Its condition as it stands (a repair, a refit or a wound shows at once).
     const float status = mech.CalcStatus();
@@ -1899,6 +1919,12 @@ std::string MCCampaignMenu::Pictured(std::string_view source)
 {
     return source.empty() ? std::string(MCCampaignScreen::NoPicture)
                           : std::format("image({} contain center bottom)", source);
+}
+
+std::string MCCampaignMenu::Portrait(std::string_view source)
+{
+    return source.empty() ? std::string(MCCampaignScreen::NoPicture)
+                          : std::format("image({} contain left top)", source);
 }
 
 std::string MCCampaignMenu::PilotSource(std::string_view picture)

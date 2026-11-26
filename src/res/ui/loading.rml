@@ -14,8 +14,8 @@
                 <div class="titlebar row bottom"><div class="grow"><div class="eyebrow" data-if="eyebrow != ''">{{eyebrow}}</div><div class="title caps">{{title}}</div></div></div>
                 <div class="load-body">
                     <div class="load-words">
-                        <div class="eyebrow objectives-head" data-if="objectives.size > 0">Objectives</div>
-                        <div class="obj-line" data-for="line : objectives"><div class="n">{{line.num}}</div><div class="grow">{{line.text}}</div></div>
+                        <div class="row bottom objectives-head" data-if="objectives.size > 0"><div class="eyebrow grow">Objectives</div><div class="data grey caps time-limit" data-if="timeLimit != ''">Mission time limit <span class="white">{{timeLimit}}</span></div></div>
+                        <div class="obj-line" data-for="line : objectives"><div class="n">{{line.num}}</div><div class="grow">{{line.text}}</div><div class="data grey caps time-limit" data-if="line.limit != ''">Time limit <span class="white">{{line.limit}}</span></div></div>
                         <div class="orders"><p data-for="line : orders">{{line.text}}</p></div>
                     </div>
                     <div class="load-side">

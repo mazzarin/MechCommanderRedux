@@ -149,7 +149,8 @@ void MCResultsScreen::MakeModels(Rml::Context& context)
     model.Value("salvageShown", _SalvageShown);
     model.Value("noSalvage", _NoSalvage);
     model.Value("noSalvageText", _NoSalvageText);
-    model.List("figures", _Figures, std::pair{"n", &MCFigure::Number}, std::pair{"what", &MCFigure::What});
+    model.List("figures", _Figures, std::pair{"n", &MCFigure::Number}, std::pair{"what", &MCFigure::What},
+               std::pair{"shown", &MCFigure::Shown});
     model.List("objectives", _Objectives, std::pair{"name", &MCObjectiveRow::Name},
                std::pair{"points", &MCObjectiveRow::Points}, std::pair{"state", &MCObjectiveRow::State},
                std::pair{"head", &MCObjectiveRow::Head}, std::pair{"shown", &MCObjectiveRow::Shown});
@@ -216,9 +217,12 @@ void MCResultsScreen::SetUp()
     Keys = {{"Enter", _MoveOn}};
     _Figures.clear();
 
-    for (const std::string_view what : MCResultsMenu::FigureNames)
+    const std::array<int32_t, MCResultsMenu::FigureNames.size()> values = _Results.Statistics.Values();
+
+    for (size_t at = 0; at < MCResultsMenu::FigureNames.size(); ++at)
     {
-        _Figures.push_back(MCFigure{.What = std::string(what)});
+        _Figures.push_back(
+            MCFigure{.Number = std::to_string(values[at]), .What = std::string(MCResultsMenu::FigureNames[at])});
     }
 
     // A match's rows read the session's names, before its session is left.
@@ -447,11 +451,9 @@ void MCResultsScreen::FillMatch()
     }
 
     // The battle's numbers at once (1998's match screen drew them whole).
-    const std::array<int32_t, 5> values = _Results.Statistics.Values();
-
-    for (size_t at = 0; at < _Figures.size(); ++at)
+    for (MCFigure& figure : _Figures)
     {
-        _Figures[at].Number = std::to_string(values[at]);
+        figure.Shown = true;
     }
 }
 
@@ -477,12 +479,11 @@ bool MCResultsScreen::ShowCounted()
         set(_Earned, MCGroupedPoints(std::max(_Count.ShownResourcePoints(), 0)));
     }
 
-    const std::array<int32_t, 5> values = _Results.Statistics.Values();
     const int32_t statistics = _Count.StatisticsShown();
 
     for (size_t at = 0; at < _Figures.size(); ++at)
     {
-        set(_Figures[at].Number, static_cast<int32_t>(at) < statistics ? std::to_string(values[at]) : std::string());
+        set(_Figures[at].Shown, static_cast<int32_t>(at) < statistics);
     }
 
     for (size_t at = 0; at < _Objectives.size(); ++at)

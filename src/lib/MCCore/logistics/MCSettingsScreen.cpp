@@ -30,6 +30,9 @@ namespace
     constexpr char ChoicesSeparator = '|';
     constexpr std::string_view BackArrow = "\xe2\x80\xb9";
     constexpr std::string_view OnArrow = "\xe2\x80\xba";
+    constexpr const char* ArrowClass = "arrow";
+    /// <summary>A slider's lowest level (its highest the setting's Most).</summary>
+    constexpr int SliderLeast = 0;
 
     /// <summary>A range input's level, and what holds it.</summary>
     constexpr const char* ValueAttribute = "value";
@@ -99,10 +102,13 @@ namespace
                                    setting.Id, ChoicesAttribute, EncodeRml(Joined(ChoicesOf(setting))), now, BackArrow,
                                    OnArrow);
             case MCControl::Slider:
-                return std::format("<input type=\"range\" class=\"slider\" id=\"{}\" min=\"0\" max=\"{}\" step=\"{}\" "
-                                   "value=\"{}\"/><div class=\"level\" id=\"{}\">{}</div>",
-                                   setting.Id, setting.Most, setting.Step, now, PartId(LevelPrefix, setting.Id),
-                                   LevelWords(setting, now));
+                // Between a stepper's arrows (the kit steps it by them), each dim at its end; the number beside.
+                return std::format("<div class=\"slider-steps\"><div class=\"arrow{}\">{}</div><input type=\"range\" "
+                                   "class=\"slider\" id=\"{}\" min=\"{}\" max=\"{}\" step=\"{}\" value=\"{}\"/><div "
+                                   "class=\"arrow{}\">{}</div></div><div class=\"level\" id=\"{}\">{}</div>",
+                                   now <= SliderLeast ? " off" : "", BackArrow, setting.Id, SliderLeast, setting.Most,
+                                   setting.Step, now, now >= setting.Most ? " off" : "", OnArrow,
+                                   PartId(LevelPrefix, setting.Id), LevelWords(setting, now));
             case MCControl::Button:
                 return std::format("<div class=\"button small\" id=\"{}\"></div>", setting.Id);
         }
@@ -380,6 +386,18 @@ void MCSettingsScreen::RefreshRow(Rml::ElementDocument& document, const MCSettin
             }
 
             SetFlag(*control, DisabledAttribute, isHeld);
+
+            // Its arrows, as a stepper's: the first steps back, the last on, each dim at its end.
+            if (Rml::Element* steps = control->GetParentNode(); steps != nullptr)
+            {
+                Rml::ElementList arrows;
+                steps->GetElementsByClassName(arrows, ArrowClass);
+
+                for (size_t i = 0; i < arrows.size(); ++i)
+                {
+                    arrows[i]->SetClass(OffClass, i == 0 ? now <= SliderLeast : now >= setting.Most);
+                }
+            }
 
             if (Rml::Element* level = document.GetElementById(PartId(LevelPrefix, setting.Id)); level != nullptr)
             {

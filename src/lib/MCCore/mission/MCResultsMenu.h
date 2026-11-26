@@ -19,11 +19,15 @@ class MCRmlModel;
 class MCResultsScreen final : public MCRmlScreen
 {
 public:
-    /// <summary>One of the battle's five numbers: blank until the count reaches it.</summary>
+    /// <summary>
+    /// One of the battle's five numbers: hidden until the count reaches it, its place held meanwhile (the strip never
+    /// grows as they show).
+    /// </summary>
     struct MCFigure
     {
         std::string Number;
         std::string What;
+        bool Shown = false;
     };
 
     /// <summary>An objective's row (or the tonnage bonus's): its mark, name and RP, hidden until counted.</summary>

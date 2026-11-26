@@ -428,6 +428,12 @@ input.range.slider slidertrack { margin-top: 4dp; height: 4dp; background-color:
 input.range.slider sliderprogress { margin-top: 4dp; height: 4dp; background-color: #7cd4ec; }
 input.range.slider sliderbar { width: 3dp; height: 12dp; margin-left: -1dp; background-color: #fcfcfc; }
 input.range.slider sliderarrowdec, input.range.slider sliderarrowinc { width: 0; height: 0; }
+/* A slider between a stepper's arrows, a step each (the kit's), dim at its ends: <div class="slider-steps"> holding
+   the arrows and the range input between them. */
+.slider-steps { display: flex; flex-direction: row; align-items: center; }
+.slider-steps > * { flex: 0 0 auto; }
+.slider-steps .arrow:hover { color: #fcfcfc; }
+.slider-steps .arrow.off:hover { color: #6c7a88; }
 
 /* A text box: RmlUi's text input, its caret cyan. */
 input.text.field { display: block; width: 160dp; color: #fcfcfc; }

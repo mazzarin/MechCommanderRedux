@@ -57,6 +57,12 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
 /* An objective, numbered as its pin on the map (the pins' red). */
 .objective { margin-top: 4dp; font-size: 11.63dp; line-height: 15dp; }
 .objective .num { flex: 0 0 14dp; font-weight: 700; color: #f26b55; }
+/* A time limit, one line at its place's right: the mission's beside OBJECTIVES (under it where the column is too narrow
+   for both), an objective's beside its first line. */
+.objectives-head { flex-wrap: wrap; }
+.time-limit { flex: 0 0 auto; white-space: nowrap; }
+.objectives-head .time-limit { margin-left: 12dp; }
+.objective .time-limit { margin-left: 12dp; line-height: 15dp; }
 .section { margin-top: 12dp; }
 .para { margin-top: 6dp; }
 .scroll { flex: 1 1 0; position: relative; overflow: hidden; padding-right: 10dp; }
@@ -83,6 +89,9 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
 .card .pip.lost { background-color: transparent; border: 1dp #6c7a88; }
 .card .imgs { display: flex; flex-direction: row; gap: 4dp; }
 .card .pic { width: 24dp; height: 32dp; flex: 0 0 auto; }
+/* A 'Mech without a pilot: the pilot's place an open one, sunk a step and edged (a drop slot's well), and the gauges'
+   row kept, so its outline stands level with its neighbours'. */
+.card .pic.seat { box-sizing: border-box; background-color: #0f171e; border: 1dp #2a3742; }
 .card .facts { flex: 1 1 0; }
 .card .who { font-size: 11.63dp; line-height: 14dp; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
 .card .what { font-size: 9.51dp; line-height: 12dp; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: #a4b0bc; white-space: nowrap; }

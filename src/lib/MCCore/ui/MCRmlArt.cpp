@@ -343,12 +343,15 @@ namespace
 
 namespace
 {
-    /// <summary>1998's tile's outline: its size, a mech's locations and a vehicle's, and where a vehicle's sits in it.</summary>
+    /// <summary>
+    /// 1998's tile's outline: its size (a diagram's own block, a mech's or a vehicle's), a mech's locations and a
+    /// vehicle's. 1998's tile drew a vehicle's block 11 pixels further right than a mech's, in a tile wider than the
+    /// block; the outline is the block alone, so both are drawn at its left (at 11 a vehicle lost its right 11 columns).
+    /// </summary>
     constexpr int32_t OutlineWidth = 0x19;
     constexpr int32_t OutlineHeight = 0x1e;
     constexpr int32_t MechLocations = 8;
     constexpr int32_t VehicleLocations = 5;
-    constexpr int32_t VehicleX = 0xb;
     /// <summary>The outline's ground (left transparent), and the colours the logistics screens show it in.</summary>
     constexpr uint8_t OutlineGround = 0xff;
     constexpr std::string_view LogisticsColors = "logart/lsrupm05";
@@ -439,7 +442,7 @@ namespace
             }
 
             const int32_t state = mark == Unhurt ? -1 : mark - FirstFade;
-            MCLogistics::DrawBodyLoc(table, static_cast<int32_t>(location), state, port, mech ? 0 : VehicleX, 0);
+            MCLogistics::DrawBodyLoc(table, static_cast<int32_t>(location), state, port, 0, 0);
         }
 
         const std::span<const uint8_t> pixels = port.Pixels();

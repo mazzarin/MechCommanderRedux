@@ -9,7 +9,10 @@
 .load-body { display: flex; flex-direction: row; align-items: stretch; gap: 12dp; }
 .load-body > * { flex: 0 0 auto; }
 .load-words { flex: 1 1 0; overflow: hidden; }
-.objectives-head { margin-bottom: 2dp; }
+.objectives-head { margin-bottom: 2dp; flex-wrap: wrap; }
+/* A time limit, one line at its place's right: the mission's beside OBJECTIVES, an objective's beside its first line. */
+.time-limit { flex: 0 0 auto; white-space: nowrap; margin-left: 12dp; }
+.obj-line .time-limit { margin-left: 6dp; line-height: 15dp; }
 .obj-line { display: flex; flex-direction: row; gap: 6dp; padding: 2dp 0; font-size: 11.63dp; line-height: 15dp; }
 .obj-line > * { flex: 0 0 auto; }
 .obj-line > .grow { flex: 1 1 0; }

@@ -60,8 +60,9 @@ body.mission #sheet { box-sizing: border-box; padding: 12dp; background-color: #
 /* A mark on a setting that changes how the game plays, beside its name. */
 .tag { display: inline-block; margin-left: 6dp; padding: 0 4dp; border: 1dp #6c7a88; font-size: 8.75dp; line-height: 11dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; }
 
-/* A slider in a row: its rail 120 units, its number beside it. */
-.set-control input.range.slider { width: 120dp; margin-right: 10dp; }
+/* A slider in a row: its rail 120 units between its arrows, its number beside them. */
+.set-control input.range.slider { width: 120dp; }
+.set-control .slider-steps { margin-right: 10dp; }
 .level { width: 26dp; font-size: 9.51dp; line-height: 20dp; font-weight: 600; text-align: right; color: #fcfcfc; }
 .set-control .step-value { width: 96dp; }
 

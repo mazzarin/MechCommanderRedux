@@ -4,6 +4,7 @@
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiGlobals.h"
+#include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "iface/MCKeyBindings.h"
@@ -55,6 +56,7 @@ namespace
     /// <summary>The look's classes (ui/look.rcss, ui/prefs.rcss).</summary>
     constexpr const char* HeldClass = "held";
     constexpr const char* HiddenClass = "hidden";
+    constexpr const char* OffClass = "off";
 
     /// <summary>The words a held row's line gives in a mission (logistics/MCSettingsModel).</summary>
     constexpr std::string_view NotInMission = "Not in a mission.";
@@ -516,6 +518,53 @@ TEST_CASE_ISOLATED("game: Escape in a mission opens the pause; RESUME, ALL PREFE
     CHECK_EQ(Find(*pause, "name").GetInnerRML(), "Paused");
     CHECK_EQ(Find(*pause, "leave").GetInnerRML(), "Abort mission");
     CHECK(!StepWords(Find(*pause, "scroll-speed")).empty());
+
+    // SCREEN BRIGHTNESS between a stepper's arrows, clicked: a level each way, the first dim at the lowest, the last at
+    // the highest (WIP 5's slider had none).
+    Rml::Element& brightness = Find(*pause, "brightness");
+    REQUIRE(brightness.GetParentNode() != nullptr);
+    Rml::ElementList arrows;
+    brightness.GetParentNode()->GetElementsByClassName(arrows, "arrow");
+    REQUIRE_EQ(arrows.size(), size_t{2});
+    const auto level = [&brightness] { return brightness.GetAttribute<int>("value", -1); };
+    const int least = brightness.GetAttribute<int>("min", -1);
+    const int most = brightness.GetAttribute<int>("max", -1);
+    REQUIRE(least < most);
+    const int startLevel = level();
+
+    for (int click = least; click < most && level() > least; ++click)
+    {
+        ClickOn(*arrows.front());
+    }
+
+    CHECK(arrows.front()->IsClassSet(OffClass));
+    CHECK(!arrows.back()->IsClassSet(OffClass));
+    Rml::Element& number = Find(*pause, "level-brightness");
+    const std::string lowest = number.GetInnerRML();
+    ClickOn(*arrows.back());
+    CHECK_EQ(level(), least + 1);
+    CHECK_EQ(GuiSystem().GammaLevel, least + 1);
+    CHECK(number.GetInnerRML() != lowest);
+    CHECK(!arrows.front()->IsClassSet(OffClass));
+
+    for (int click = least; click < most && level() < most; ++click)
+    {
+        ClickOn(*arrows.back());
+    }
+
+    CHECK(arrows.back()->IsClassSet(OffClass));
+    ClickOn(*arrows.back());
+    CHECK_EQ(level(), most);
+    ClickOn(*arrows.front());
+    CHECK_EQ(level(), most - 1);
+
+    for (int click = least; click < most && level() != startLevel; ++click)
+    {
+        ClickOn(*(level() > startLevel ? arrows.front() : arrows.back()));
+    }
+
+    CHECK_EQ(level(), startLevel);
+
     const int32_t turn = Turn;
     RunFrames(SettleFrames);
     CHECK_EQ(Turn, turn);

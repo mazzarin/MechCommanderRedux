@@ -252,6 +252,47 @@ namespace
         }
     }
 
+    /// <summary>
+    /// At every window the players' reports name, each time limit BRIEFING shows (the mission's beside OBJECTIVES, an
+    /// objective's beside its words) on one line, its right edge at its row's: what fault has crept back where not, as
+    /// "<window>: <words> <lines high>, <units off the right>; " (WIP 5 wrapped "MISSION TIME / LIMIT 15:00").
+    /// </summary>
+    void CheckTimeLimitsOneLine(MCRmlMenus& menus, const MCCampaignScreen& screen, std::string_view what, size_t limits)
+    {
+        constexpr float MostLines = 1.5f;
+        constexpr float EdgeSlack = 0.5f;
+        REQUIRE(screen.Document().has_value());
+
+        for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
+        {
+            menus.SetWindow(window.Width, window.Height);
+            menus.Frame();
+            Rml::ElementList shown;
+            screen.Document()->get().QuerySelectorAll(shown, ".time-limit");
+            std::erase_if(shown, [](Rml::Element* limit) { return !limit->IsVisible(true); });
+            const std::string where = std::format("{} {}x{}: ", what, window.Width, window.Height);
+            CHECK_EQ(where + std::to_string(shown.size()), where + std::to_string(limits));
+            std::string faults;
+
+            for (Rml::Element* limit : shown)
+            {
+                const float lines = limit->GetBox().GetSize(Rml::BoxArea::Content).y / limit->GetLineHeight();
+                Rml::Element& row = *limit->GetParentNode();
+                const float rowRight =
+                    row.GetAbsoluteOffset(Rml::BoxArea::Content).x + row.GetBox().GetSize(Rml::BoxArea::Content).x;
+                const float right =
+                    limit->GetAbsoluteOffset(Rml::BoxArea::Border).x + limit->GetBox().GetSize(Rml::BoxArea::Border).x;
+
+                if (lines > MostLines || std::abs(rowRight - right) > EdgeSlack)
+                {
+                    faults += std::format("{} {:.1f}, {:.1f}; ", limit->GetInnerRML(), lines, rowRight - right);
+                }
+            }
+
+            CHECK_EQ(where + faults, where);
+        }
+    }
+
     /// <summary>The window's picture saved (with --shots) as <paramref name="name"/> at its size.</summary>
     void Shot(std::string_view name)
     {
@@ -361,14 +402,15 @@ TEST_CASE("logistics: a briefing's text is read into its objectives, fire suppor
 {
     const MCBriefingText::MCRead read = MCBriefingText::Read(FirstBriefing);
     REQUIRE_EQ(read.Objectives.size(), size_t{2});
-    CHECK_EQ(read.Objectives[0], std::string("Destroy Camp \"Alpha\" HQ and Natural Gas Tower"));
-    CHECK_EQ(read.Objectives[1], std::string("Destroy all three Garrison Buildings at the Garrison Base"));
+    CHECK_EQ(read.Objectives[0].Text, std::string("Destroy Camp \"Alpha\" HQ and Natural Gas Tower"));
+    CHECK_EQ(read.Objectives[1].Text, std::string("Destroy all three Garrison Buildings at the Garrison Base"));
+    CHECK(read.TimeLimit.empty());
     REQUIRE(read.FireSupport.has_value());
     CHECK((*read.FireSupport ==
            MCBriefingText::MCFireSupport{.SmallArtillery = 4, .LargeArtillery = 1, .CameraDrones = 2}));
-    CHECK_EQ(MCBriefingText::FireSupportText(*read.FireSupport),
-             std::string("4 small artillery, 1 large artillery, 2 camera drones"));
-    CHECK_EQ(MCBriefingText::FireSupportText({}), std::string("None"));
+    const std::vector<std::string> fireLines{"4 small artillery", "1 large artillery", "2 camera drones"};
+    CHECK_EQ(MCBriefingText::FireSupportLines(*read.FireSupport), fireLines);
+    CHECK_EQ(MCBriefingText::FireSupportLines({}), std::vector<std::string>{"None"});
     REQUIRE_EQ(read.Orders.size(), size_t{2});
     CHECK_EQ(read.Orders[0], std::string("The Smoke Jaguars have been putting dissidents into camps."));
     CHECK_EQ(read.Orders[1], std::string("At \"Alpha\", destroy the Camp HQ."));
@@ -381,7 +423,7 @@ TEST_CASE("logistics: a briefing's text is read into its objectives, fire suppor
     const MCBriefingText::MCRead side = MCBriefingText::Read(
         "%fc6%c*** CAPTURE ENEMY BASE ***%n%fc21-Capture Enemy Headquarters%n%n"
         "%fc5%c----------%n%fc4Your team must capture the base.%n%n%fc6<<<<END DISPATCH%nNot read");
-    CHECK_EQ(side.Objectives, std::vector<std::string>{"Capture Enemy Headquarters"});
+    CHECK((side.Objectives == std::vector<MCBriefingText::MCObjective>{{.Text = "Capture Enemy Headquarters"}}));
     CHECK(!side.FireSupport.has_value());
     CHECK_EQ(side.Orders, std::vector<std::string>{"Your team must capture the base."});
     CHECK(side.Warnings.empty());
@@ -401,6 +443,48 @@ TEST_CASE("logistics: an over-long centred line of briefing text reads whole, it
                                          "%fc5%c----------%n%fc4%c{}%n%n%fc6<<<<END DISPATCH%n",
                                          Long));
     CHECK_EQ(read.Orders, std::vector<std::string>{std::string(Long)});
+}
+
+/// <summary>
+/// A briefing's time limits read apart from its objectives' words, in each way the campaigns write them (every briefing
+/// surveyed, 25 Nov): the mission's under the objectives (brf0204's "MISSION TIME LIMIT- 15:00") or after the fire
+/// support (xbrf0201's "TIME LIMIT: 25 MINUTES", xbrf0303's "***25 MINUTE TIME LIMIT***"), an objective's own under it
+/// (brf0206's "OBJECTIVE TIME LIMIT- 06:00"). An order that speaks of the time limit stays an order. In WIP 5 the
+/// mission's was read as the objective's last words and wrapped with them ("MISSION TIME / LIMIT- 15:00").
+/// </summary>
+TEST_CASE("logistics: a briefing's time limits read apart from its objectives, as each campaign writes them")
+{
+    using MCBriefingText::MCObjective;
+    constexpr std::string_view Head =
+        "%fm%fc1%c****CLASSIFIED****%n%fc5%c----------%n%fc6%c***DESTROY ENEMY ASSETS***%n";
+    constexpr std::string_view Fire = "%fc6FIRE SUPPORT:%n%fc2%t12ARTILLERY: 2 Small  0 Large%n%t12SENSOR PROBE: 1%n";
+    constexpr std::string_view Orders = "%fc5%c----------%n%fc4Destroy them before the time limit expires.%n%n"
+                                        "%fc6<<<<END DISPATCH%n";
+
+    const MCBriefingText::MCRead mission = MCBriefingText::Read(
+        std::format("{}%fc21-Destroy Smoke Jaguar Hyperpulse%n%t9Generators%nMISSION TIME LIMIT- 15:00%n%n{}{}", Head,
+                    Fire, Orders));
+    CHECK((mission.Objectives == std::vector<MCObjective>{{.Text = "Destroy Smoke Jaguar Hyperpulse Generators"}}));
+    CHECK_EQ(mission.TimeLimit, std::string("15:00"));
+    CHECK_EQ(mission.Orders, std::vector<std::string>{"Destroy them before the time limit expires."});
+
+    const MCBriefingText::MCRead objective = MCBriefingText::Read(std::format(
+        "{}%fc21-Capture Enemy Base HQ%n%t9OBJECTIVE TIME LIMIT- 06:00%n%fc22-Defend Captured Base HQ%n%n{}{}", Head,
+        Fire, Orders));
+    CHECK((objective.Objectives == std::vector<MCObjective>{{.Text = "Capture Enemy Base HQ", .TimeLimit = "6:00"},
+                                                            {.Text = "Defend Captured Base HQ"}}));
+    CHECK(objective.TimeLimit.empty());
+
+    const MCBriefingText::MCRead minutes = MCBriefingText::Read(
+        std::format("{}%fc21-Destroy the Convoy%n%n{}%n%fm%fc1%cTIME LIMIT: 25 MINUTES%n{}", Head, Fire, Orders));
+    CHECK_EQ(minutes.TimeLimit, std::string("25:00"));
+    CHECK((minutes.Objectives == std::vector<MCObjective>{{.Text = "Destroy the Convoy"}}));
+
+    const MCBriefingText::MCRead starred = MCBriefingText::Read(
+        std::format("{}%fc21-Destroy the Convoy%n%n{}%fc5%c----------%n%fm%fc1%c***25 MINUTE TIME LIMIT***%n{}", Head,
+                    Fire, Orders));
+    CHECK_EQ(starred.TimeLimit, std::string("25:00"));
+    CHECK_EQ(starred.Orders, std::vector<std::string>{"Destroy them before the time limit expires."});
 }
 
 /// <summary>
@@ -486,7 +570,8 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     REQUIRE_EQ(screen.Objectives().size(), size_t{3});
     CHECK_EQ(screen.Objectives()[0].Text, std::string("Destroy Camp \"Alpha\" HQ and Natural Gas Tower"));
     CHECK_EQ(screen.Objectives()[2].Number, 3);
-    CHECK_EQ(screen.FireSupport(), std::string("None"));
+    REQUIRE_EQ(screen.FireSupport().size(), size_t{1});
+    CHECK_EQ(screen.FireSupport()[0].Text, std::string("None"));
     CHECK_EQ(screen.Orders().size(), size_t{5});
     CHECK_EQ(screen.Warnings().size(), size_t{2});
     CHECK_EQ(screen.MapSource(), std::string("map:mis0101"));
@@ -752,12 +837,36 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY lay out and read at every window t
 
     ShowBriefing(screen, "xbrf0302.txt");
     REQUIRE_EQ(screen.Objectives().size(), size_t{6});
-    CHECK_EQ(screen.FireSupport(),
-             std::string("4 small artillery, 2 large artillery, 3 sensor probes, 2 camera drones"));
+    // The fire support a line each, so no line breaks inside one.
+    const std::vector<std::string> fire = [&screen]
+    {
+        std::vector<std::string> lines;
+
+        for (const MCCampaignScreen::MCLine& line : screen.FireSupport())
+        {
+            lines.push_back(line.Text);
+        }
+
+        return lines;
+    }();
+    const std::vector<std::string> fireLines{"4 small artillery", "2 large artillery", "3 sensor probes",
+                                             "2 camera drones"};
+    CHECK_EQ(fire, fireLines);
     checkEach("briefing xbrf0302");
     ShowBriefing(screen, "xbrf0103.txt");
     CHECK_EQ(screen.Warnings().size(), size_t{6});
     checkEach("briefing xbrf0103");
+
+    // The time limits: the mission's (brf0204's 15 minutes) and an objective's (brf0206's first, 6 minutes).
+    ShowBriefing(screen, "brf0204.txt");
+    CHECK_EQ(screen.TimeLimit(), std::string("15:00"));
+    CheckTimeLimitsOneLine(menus, screen, "briefing brf0204", 1);
+    checkEach("briefing brf0204");
+    ShowBriefing(screen, "brf0206.txt");
+    REQUIRE(!screen.Objectives().empty());
+    CHECK_EQ(screen.Objectives()[0].Limit, std::string("6:00"));
+    CheckTimeLimitsOneLine(menus, screen, "briefing brf0206", 1);
+    checkEach("briefing brf0206");
 
     screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
     screen.SendReady(0, std::nullopt);
@@ -2056,7 +2165,7 @@ TEST_CASE_ISOLATED(
     MCTestGame::RunFrame(FlowFrame);
     CHECK(tabs.LabUnit() != nullptr);
     CHECK(!tabs.Repairs());
-    DrawnEach(*display, clock, "mechbay_mp", {0xa1a1121c, 0xc70bba23, 0x2237615f});
+    DrawnEach(*display, clock, "mechbay_mp", {0x5375b300, 0x4a033083, 0xb0548ca7});
     CheckLaidOut(menus, "mechbay mp");
 }
 
@@ -3192,11 +3301,11 @@ TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every ma
     tabs.DealCancel();
 
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
-    DrawnEach(*display, clock, "mechbay", {0xdb26dbda, 0xfaaf559a, 0xf39fa44c});
+    DrawnEach(*display, clock, "mechbay", {0xedf3c776, 0xfdf470f6, 0xf39fa44c});
     ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
-    DrawnEach(*display, clock, "mechbay_repair", {0x77d88343, 0x40f271bb, 0x0156003e});
+    DrawnEach(*display, clock, "mechbay_repair", {0x6f67538f, 0xe21425df, 0x0156003e});
 }
 
 /// <summary>
@@ -3408,33 +3517,33 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              REQUIRE(!logistics->MechList->Mechs.empty());
              boughtMech = logistics->MechList->Mechs.back();
          },
-         0x8563da06},
-        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x4823830a},
+         0x7e021467},
+        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0xf7286cf7},
         {"purchase_variant",
          [&]
          {
              ClickOn(ElementOf(screen, "store0"));
              ClickChoice(screen, "variants", 1);
          },
-         0x52f4001e},
+         0x4df7563b},
         {"purchase_scroll",
          [&]
          {
              Hover(ElementOf(screen, "store0"));
              MCScreenInput::RealWheel(-1);
          },
-         0x32fe6b4e},
+         0x6a4b3587},
         {"purchase_too_poor",
          [&]
          {
              ResourcePoints = 0;
              DragTo(ElementOf(screen, "store0"), ElementOf(screen, "units"));
          },
-         0x3d250282},
-        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0x1728d269},
-        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, "force0")); }, 0x2f81148f},
+         0x5e479cec},
+        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0x8cea8500},
+        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, "force0")); }, 0xd17a0c62},
         {"purchase_pilots_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x89af9990},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x60b3a789},
         {"purchase_components_tab",
          [&]
          {
@@ -3447,27 +3556,27 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
          0x99eaf0cd},
         {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x5742fa14},
         {"purchase_vehicles_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0x0850d749},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0xb1acbb15},
         {"purchase_vehicle_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "units")); },
-         0x99db6c56},
-        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x5d13eed3},
+         0x4d94d9d5},
+        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xa60c05a4},
         {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
-         0x9893fc99},
+         0xf256f67d},
         {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
-         0x9b2dd3b6},
-        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xfcf5e4da},
-        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0xc9dafb74},
-        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x541512e5},
-        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0xe7f809b7},
-        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x58cef3fc},
-        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x758f023a},
+         0x96e9ee43},
+        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0x5d3ad8af},
+        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0x3e3d7c81},
+        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x1fa15f28},
+        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0x394879aa},
+        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x0c62fc39},
+        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0xbc4f2b3f},
         {"repair_mount_laser",
          [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
-         0x15507a15},
+         0x9b980f80},
         {"repair_pilots_tab", [&]
-         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x8fcc8ae6},
-        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xd06ab36d},
+         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x84d0a547},
+        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xcc124f80},
         {"repair_vehicles_tab",
          [&]
          {
@@ -3475,23 +3584,23 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              REQUIRE(!logistics->VehicleList->Vehicles.empty());
              ClickOn(ElementOf(screen, UnitCardId(tabs, logistics->VehicleList->Vehicles.back())));
          },
-         0xe4b3d927},
-        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x2bdb6eef},
-        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x2bdb6eef},
+         0xee9befa7},
+        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x742b22ca},
+        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x742b22ca},
         {"repair_mech_into_force",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0x68899c65},
-        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0x68899c65},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0x6530d170},
+        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0x6530d170},
         {"repair_mech_out",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "spare-head")); }, 0x3846584b},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "spare-head")); }, 0x610141a2},
         {"repair_weapon_list_scroll",
          [&]
          {
              Hover(ElementOf(screen, "fit0"));
              MCScreenInput::RealWheel(-1);
          },
-         0xe8ecf3e7},
+         0x98cbd576},
         {"repair_first_mech_out", [&] { DragTo(ElementOf(screen, "force0"), ElementOf(screen, "spare-head")); },
-         0x8bdc4d42},
+         0x73e8a3bb},
         {"briefing_after_repair",
          [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xaf7f1bc1},
         {"deploy_after_repair", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Deploy)); },
@@ -3509,7 +3618,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x66a9ba45u);
+    CHECK_EQ(frames, 0x56a58c29u);
 }
 
 /// <summary>

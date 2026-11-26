@@ -721,10 +721,17 @@ auto MCDeploy::PutBackKept() -> bool
                                                             [&logistics](const MCLogMech& mech)
                                                             { return MechKey(logistics, mech); }))
                        : Waiting(logistics.ForceVehicleList->Vehicles, kept->Key, VehicleKey);
+        // One that doesn't go back takes the rest out again: the drop empty, as REPLAY MISSION leaves it.
         const auto notBack = [&kept, slot](const char* why)
         {
             SDL_Log("MCDeploy: mission %d's drop not put back: slot %zu's unit (%s) %s", TheKeptDrop->Mission, slot,
                     kept->Key.c_str(), why);
+
+            for (size_t placed = 0; placed < slot; placed++)
+            {
+                TakeOut(placed);
+            }
+
             return false;
         };
 

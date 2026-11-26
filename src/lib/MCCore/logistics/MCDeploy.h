@@ -179,7 +179,7 @@ namespace MCDeploy
     /// <summary>
     /// RETRY's drop, on REPLAY MISSION's load of the start file: each unit of the drop kept found in the force and put
     /// into its slot again, as the player put it (<see cref="Lift"/>, then <see cref="Place"/>). False when one doesn't
-    /// go back (not in the force, its slot shut, or refused): the drop is left as far as it went.
+    /// go back (not in the force, its slot shut, or refused): those put back are taken out again, the drop empty.
     /// </summary>
     bool PutBackKept();
 }

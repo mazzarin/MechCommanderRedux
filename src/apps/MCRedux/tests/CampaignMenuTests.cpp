@@ -2035,7 +2035,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(screen.ChatLines().back().Text, std::string("Lasers for everyone"));
     CHECK(screen.ChatLines().back().Team);
     CHECK_EQ(ElementOf(screen, "say-logistics").GetAttribute<Rml::String>("value", "unread"), std::string());
-    DrawnEach(*display, clock, "purchase_mp", {0x1309bd7c, 0xe19a1043, 0xc6b2006d});
+    DrawnEach(*display, clock, "purchase_mp", {0x008022ea, 0xc2554b0a, 0xb802c3d7});
     CheckLaidOut(menus, "purchase mp");
 
     // A 'Mech bought into the force for the 'MECH BAY: its lab without repairs.
@@ -2048,7 +2048,7 @@ TEST_CASE_ISOLATED(
     tabs.DealConfirm();
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE(!tabs.SpareCards().empty());
-    tabs.Send(MCLogisticsTabs::MCPlace::Spare, 0);
+    tabs.Drop(MCLogisticsTabs::MCPlace::Spare, 0, MCLogisticsTabs::MCPlace::Force);
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE_EQ(tabs.ForceCards().size(), force + 1);
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
@@ -2323,8 +2323,8 @@ namespace
 /// <summary>
 /// PURCHASING buys and sells by 1998's rules (logistics/MCStore): two of a store's part bought from the buy window (the
 /// right button, the stepper's Right, Enter), a spare part sold back (dragged onto the store), a store 'Mech bought into
-/// SPARE and sold for half its worth; a force 'Mech dragged onto the store refused with its reason; a spare into the force
-/// by the right button and out again by ENTER.
+/// SPARE and sold for half its worth; a force 'Mech dragged onto the store refused with its reason; a spare dragged into
+/// the force and out again.
 /// </summary>
 TEST_CASE_ISOLATED("game: PURCHASING buys and sells by 1998's rules, from the mouse and the keys")
 {
@@ -2422,17 +2422,20 @@ TEST_CASE_ISOLATED("game: PURCHASING buys and sells by 1998's rules, from the mo
     REQUIRE(!tabs.ForceCards().empty());
     CHECK_EQ(tabs.ForceCards()[0].Why, std::string("In your force"));
 
-    // Bought again, then into the force by the right button and out by ENTER.
+    // Bought again, then dragged into the force and out again (the right button sells: its own test).
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
     tabs.PressDeal();
     tabs.DealConfirm();
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE_EQ(logistics->MechList->Mechs.size(), sparesBefore + 1);
-    ClickOn(ElementOf(screen, std::format("spare{}", logistics->MechList->Mechs.size() - 1)), SDL_BUTTON_RIGHT);
+    DragTo(ElementOf(screen, std::format("spare{}", logistics->MechList->Mechs.size() - 1)),
+           ElementOf(screen, "force0"));
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE_EQ(logistics->ForceMechList->Mechs.size(), force + 1);
     CHECK_EQ(logistics->MechList->Mechs.size(), sparesBefore);
-    KeyOn(ElementOf(screen, std::format("force{}", logistics->ForceMechList->Mechs.size() - 1)), SDL_SCANCODE_RETURN);
+    tabs.Drop(MCLogisticsTabs::MCPlace::Force, logistics->ForceMechList->Mechs.size() - 1,
+              MCLogisticsTabs::MCPlace::Spare);
+    MCTestGame::RunFrame(FlowFrame);
     CHECK_EQ(logistics->ForceMechList->Mechs.size(), force);
     CHECK_EQ(logistics->MechList->Mechs.size(), sparesBefore + 1);
 }
@@ -2486,6 +2489,63 @@ TEST_CASE_ISOLATED("game: PURCHASING sells a part's last copy, then offers no mo
     CHECK(!tabs.DealOpen());
     CHECK_EQ(ResourcePoints, sold);
     CHECK_EQ(SpareCount(masterID), 0);
+}
+
+/// <summary>
+/// PURCHASING's right button on a unit the player owns opens its sale, as on a store card the purchase (1998's): a 'Mech
+/// bought into SPARE, its card's right button opens the sale window and it stays in SPARE; ENTER on a force card refuses
+/// the sale with its reason under it, the 'Mech staying in the force.
+/// </summary>
+TEST_CASE_ISOLATED("game: PURCHASING's right button on a SPARE 'Mech opens its sale, not the force")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    constexpr int32_t Points = 200000;
+    ResourcePoints = Points;
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
+    MCTestGame::RunFrame(FlowFrame);
+
+    // A store 'Mech bought into SPARE.
+    const std::shared_ptr<MCPurMech> purMech = logistics->PurMechList->Mechs.front();
+    purMech->Variants[static_cast<size_t>(purMech->CurVariant)]->NumAvailable = 1;
+    const std::vector<std::shared_ptr<MCLogMech>> before = logistics->MechList->Mechs;
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+    tabs.PressDeal();
+    REQUIRE(tabs.DealOpen());
+    tabs.DealConfirm();
+    MCTestGame::RunFrame(FlowFrame);
+    const std::vector<std::shared_ptr<MCLogMech>>& spares = logistics->MechList->Mechs;
+    const auto bought =
+        std::ranges::find_if(spares, [&before](const auto& mech) { return !std::ranges::contains(before, mech); });
+    REQUIRE(bought != spares.end());
+    const std::shared_ptr<MCLogMech> mech = *bought;
+    const size_t force = logistics->ForceMechList->Mechs.size();
+
+    // Its SPARE card's right button: its sale; it stays in SPARE.
+    ClickOn(ElementOf(screen, std::format("spare{}", bought - spares.begin())), SDL_BUTTON_RIGHT);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(tabs.DealOpen());
+    CHECK_EQ(tabs.DealTitle(), std::string("Sell"));
+    CHECK_EQ(logistics->ForceMechList->Mechs.size(), force);
+    CHECK(std::ranges::contains(logistics->MechList->Mechs, mech));
+    tabs.DealCancel();
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(!tabs.DealOpen());
+
+    // ENTER on a force card: no sale, its reason under it; it stays in the force.
+    KeyOn(ElementOf(screen, "force0"), SDL_SCANCODE_RETURN);
+    CHECK(!tabs.DealOpen());
+    CHECK_EQ(logistics->ForceMechList->Mechs.size(), force);
+    REQUIRE(!tabs.ForceCards().empty());
+    CHECK_EQ(tabs.ForceCards()[0].Why, std::string("In your force"));
 }
 
 /// <summary>
@@ -3122,10 +3182,10 @@ TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every ma
 
     screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
-    DrawnEach(*display, clock, "purchase", {0x41c12be7, 0x9d4e7376, 0x1b434715});
+    DrawnEach(*display, clock, "purchase", {0x5236777d, 0xb46f2027, 0x501e71df});
     tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, FirstInStore(tabs));
-    DrawnEach(*display, clock, "purchase_parts", {0xabd7c4f8, 0x328991b0, 0x58cc89da});
+    DrawnEach(*display, clock, "purchase_parts", {0xca0c1b16, 0x10e1827d, 0xbc6d9484});
     tabs.PressDeal();
     REQUIRE(tabs.DealOpen());
     DrawnEach(*display, clock, "purchase_buy", {0x9ea647a9, 0xa85d2176, 0x797dbed3});
@@ -3337,7 +3397,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Purchasing));
              CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
          },
-         0x9a4baf2d},
+         0xbae24ac0},
         {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "units")); }, 0x595f4b77},
         {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0x2b6a7b1a},
         {"purchase_accept",
@@ -3348,52 +3408,52 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              REQUIRE(!logistics->MechList->Mechs.empty());
              boughtMech = logistics->MechList->Mechs.back();
          },
-         0x57ea0457},
-        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x1a72b347},
+         0x8563da06},
+        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x4823830a},
         {"purchase_variant",
          [&]
          {
              ClickOn(ElementOf(screen, "store0"));
              ClickChoice(screen, "variants", 1);
          },
-         0xd45dce33},
+         0x52f4001e},
         {"purchase_scroll",
          [&]
          {
              Hover(ElementOf(screen, "store0"));
              MCScreenInput::RealWheel(-1);
          },
-         0xbe0de1ff},
+         0x32fe6b4e},
         {"purchase_too_poor",
          [&]
          {
              ResourcePoints = 0;
              DragTo(ElementOf(screen, "store0"), ElementOf(screen, "units"));
          },
-         0x092f5a20},
-        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0xe2de6ae8},
-        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, "force0")); }, 0x8d3eb7fa},
+         0x3d250282},
+        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0x1728d269},
+        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, "force0")); }, 0x2f81148f},
         {"purchase_pilots_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x7186ee19},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x89af9990},
         {"purchase_components_tab",
          [&]
          {
              ResourcePoints = RecordedPoints;
              ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Components));
          },
-         0xb3c329a9},
+         0x927117c0},
         {"purchase_component_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "owned")); },
          0x99eaf0cd},
-        {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x478e8121},
+        {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x5742fa14},
         {"purchase_vehicles_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0x467828a8},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0x0850d749},
         {"purchase_vehicle_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "units")); },
          0x99db6c56},
-        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xae0015b2},
+        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x5d13eed3},
         {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
-         0x05132518},
+         0x9893fc99},
         {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
          0x9b2dd3b6},
         {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xfcf5e4da},
@@ -3449,7 +3509,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x842929d5u);
+    CHECK_EQ(frames, 0x66a9ba45u);
 }
 
 /// <summary>

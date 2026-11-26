@@ -245,6 +245,10 @@ private:
     std::optional<MCPlace> ColumnAt(float x, float y) const;
     /// <summary>The deal window opened for <paramref name="thing"/>: a buy from the store, else a sale.</summary>
     void OfferDeal(const MCThing& thing);
+    /// <summary>
+    /// A force card's unit out of the force, a SPARE card's into it: the 'MECH BAY's right button, either tab's drag.
+    /// </summary>
+    void MoveUnit(const MCThing& thing);
     /// <summary>A unit in or out of the force (1998's drag between the force and the inventory).</summary>
     void IntoForce(MCLogPart& unit);
     void OutOfForce(MCLogPart& unit);

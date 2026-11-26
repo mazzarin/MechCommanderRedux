@@ -624,8 +624,8 @@ TEST_CASE_ISOLATED("game: a deployed unit sold on another screen leaves its drop
     std::weak_ptr<MCLogMech> sold = DeployFirstReady(screen);
     REQUIRE(!sold.expired());
 
-    // On PURCHASING: the mech leaves the force (off its drop slot) for SPARE, the right button's move, and is sold
-    // there, dragged onto the store (gone).
+    // On PURCHASING: the mech dragged out of the force (off its drop slot) into SPARE, and sold there, dragged onto the
+    // store (gone).
     MCLogisticsTabs& tabs = screen.Logistics();
     screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
     MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
@@ -643,7 +643,8 @@ TEST_CASE_ISOLATED("game: a deployed unit sold on another screen leaves its drop
         return card;
     };
 
-    tabs.Send(MCLogisticsTabs::MCPlace::Force, cardOf(MCLogisticsTabs::MCPlace::Force, tabs.ForceCards()));
+    tabs.Drop(MCLogisticsTabs::MCPlace::Force, cardOf(MCLogisticsTabs::MCPlace::Force, tabs.ForceCards()),
+              MCLogisticsTabs::MCPlace::Spare);
     MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     CHECK(MCDeploy::SlotUnit(0) == nullptr);
     tabs.Drop(MCLogisticsTabs::MCPlace::Spare, cardOf(MCLogisticsTabs::MCPlace::Spare, tabs.SpareCards()),

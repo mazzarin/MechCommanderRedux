@@ -414,7 +414,7 @@ std::vector<MCRmlKeyHint> MCLogisticsTabs::Keys() const
 
     if (Purchasing())
     {
-        return {{"Enter", "Buy, or in and out of the force"}, {"Space", "Pick"}, {"Q E", "Change tab"}};
+        return {{"Enter", "Buy or sell"}, {"Space", "Pick"}, {"Q E", "Change tab"}};
     }
 
     return {{"Enter", "Fit, board, or in and out of the force"}, {"Space", "Pick"}, {"Q E", "Change tab"}};
@@ -1625,19 +1625,17 @@ void MCLogisticsTabs::Send(MCPlace place, size_t index)
     switch (place)
     {
         case MCPlace::Force:
-        {
-            if (const std::shared_ptr<MCLogPart> unit = thing->Unit.lock(); unit != nullptr)
-            {
-                OutOfForce(*unit);
-            }
-
-            break;
-        }
         case MCPlace::Spare:
         {
-            if (const std::shared_ptr<MCLogPart> unit = thing->Unit.lock(); unit != nullptr)
+            // PURCHASING: an owned unit's sale, as a store card's purchase (a force unit's refused with its reason); the
+            // 'MECH BAY: in or out of the force.
+            if (Purchasing())
             {
-                IntoForce(*unit);
+                OfferDeal(*thing);
+            }
+            else
+            {
+                MoveUnit(*thing);
             }
 
             break;
@@ -1686,13 +1684,9 @@ void MCLogisticsTabs::Drop(MCPlace from, size_t index, std::optional<MCPlace> on
     const bool left = onto == MCPlace::Force || onto == MCPlace::Spare;
 
     // Where each card goes (anywhere else, it goes back where it was).
-    if (from == MCPlace::Force && onto == MCPlace::Spare)
+    if ((from == MCPlace::Force && onto == MCPlace::Spare) || (from == MCPlace::Spare && onto == MCPlace::Force))
     {
-        Send(from, index);
-    }
-    else if (from == MCPlace::Spare && onto == MCPlace::Force)
-    {
-        Send(from, index);
+        MoveUnit(*thing);
     }
     else if (from == MCPlace::Force && onto == MCPlace::Store && Purchasing())
     {
@@ -1725,6 +1719,25 @@ void MCLogisticsTabs::Drop(MCPlace from, size_t index, std::optional<MCPlace> on
 
     _Fingerprint = 0;
     Fill();
+}
+
+void MCLogisticsTabs::MoveUnit(const MCThing& thing)
+{
+    const std::shared_ptr<MCLogPart> unit = thing.Unit.lock();
+
+    if (unit == nullptr)
+    {
+        return;
+    }
+
+    if (thing.Place == MCPlace::Force)
+    {
+        OutOfForce(*unit);
+    }
+    else
+    {
+        IntoForce(*unit);
+    }
 }
 
 void MCLogisticsTabs::IntoForce(MCLogPart& unit)

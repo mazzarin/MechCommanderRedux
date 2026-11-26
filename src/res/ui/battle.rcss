@@ -50,6 +50,11 @@ body.over-battle { background-color: transparent; }
 .result-body > * { flex: 0 0 auto; }
 .result-body > .grow { flex: 1 1 0; }
 .outcome { width: 248dp; }
+/* Single player: the pilots' table as wide as its columns (the face and the callsign's 135 units, the longest,
+   ELEMENTAL, with WOUNDED beside it; then 'Mech, kills, rank and the skills), the objectives and the salvage taking the
+   rest; where the window is too narrow for both, the callsigns give way. */
+.solo > .outcome { flex: 1 0 auto; }
+.solo > .pilots { flex: 0 1 481dp; }
 
 .obj { display: flex; flex-direction: row; align-items: flex-start; gap: 6dp; padding: 3dp 0; font-size: 11.63dp; line-height: 15dp; }
 .obj > * { flex: 0 0 auto; }
@@ -73,10 +78,10 @@ body.over-battle { background-color: transparent; }
 .pilot-head > .p-name, .pilot-row > .p-name { flex: 1 1 0; overflow: hidden; }
 .p-name { font-size: 11.63dp; line-height: 20dp; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
 .p-status { margin-left: 6dp; font-size: 8.46dp; letter-spacing: 0.06em; }
-.p-mech { width: 84dp; font-size: 9.51dp; line-height: 20dp; color: #a4b0bc; }
-.p-kills { box-sizing: border-box; width: 34dp; padding-right: 10dp; font-size: 11.63dp; line-height: 20dp; font-weight: 600; text-align: right; }
-.p-rank { width: 64dp; font-size: 9.51dp; line-height: 20dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
-.p-skill { box-sizing: border-box; width: 54dp; padding-left: 6dp; }
+.p-mech { width: 72dp; font-size: 9.51dp; line-height: 20dp; color: #a4b0bc; }
+.p-kills { box-sizing: border-box; width: 32dp; padding-right: 8dp; font-size: 11.63dp; line-height: 20dp; font-weight: 600; text-align: right; }
+.p-rank { width: 58dp; font-size: 9.51dp; line-height: 20dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.p-skill { box-sizing: border-box; width: 46dp; padding-left: 4dp; }
 .p-skill .v { font-size: 9.51dp; line-height: 13dp; font-weight: 600; }
 .meter.thin { height: 2dp; margin-top: 1dp; }
 .meter-gain { position: absolute; top: 0; bottom: 0; background-color: #fcfcb8; }
@@ -109,13 +114,9 @@ body.over-battle { background-color: transparent; }
 #results .foot > * { flex: 0 0 auto; }
 #results .foot > .grow { flex: 1 1 0; }
 
-/* 16:10: the left column and the pilots' columns narrower, so the callsigns keep their room. */
+/* 16:10: the left column narrower. */
 @media (max-aspect-ratio: 17/10) {
     .outcome { width: 220dp; }
-    .p-mech { width: 72dp; }
-    .p-kills { width: 30dp; padding-right: 8dp; }
-    .p-rank { width: 58dp; }
-    .p-skill { width: 46dp; padding-left: 4dp; }
 }
 
 /* 4:3 and 5:4 (the frames stop at 16:10): narrower again, every column kept, the callsigns' room what's left. */
@@ -126,6 +127,7 @@ body.over-battle { background-color: transparent; }
     .p-kills { width: 32dp; padding-right: 6dp; }
     .p-rank { width: 50dp; }
     .p-skill { width: 40dp; padding-left: 3dp; }
+    .solo > .pilots { flex-basis: 433dp; }
     .c-mech { width: 96dp; }
     .c-who { width: 72dp; }
     .c-n { width: 36dp; }

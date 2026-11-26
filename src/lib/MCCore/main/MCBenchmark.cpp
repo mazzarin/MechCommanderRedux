@@ -621,7 +621,7 @@ namespace
             }
         }
 
-        return "the 'MECH BAY lists no other mech";
+        return "the MECH BAY lists no other mech";
     }
 
     /// <summary>The campaign screen's tab <typeparamref name="Tab"/> chosen, as its button chooses it.</summary>

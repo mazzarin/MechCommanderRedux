@@ -2089,7 +2089,7 @@ TEST_CASE_ISOLATED("game: a launcher's match ends when a player leaves its remad
 /// players' reports name.
 /// </summary>
 TEST_CASE_ISOLATED(
-    "game: a match's PURCHASING and 'MECH BAY stand on the chat, the store unlimited, a sale the full price")
+    "game: a match's PURCHASING and MECH BAY stand on the chat, the store unlimited, a sale the full price")
 {
     if (!MCTestGame::Available())
     {
@@ -2671,7 +2671,7 @@ TEST_CASE_ISOLATED("game: PURCHASING's right button on an INVENTORY 'Mech opens 
 /// REFIT ALL works only with a weapon, equipment or jammer damaged, as 1998's button (its CanRepairItems): with none, the
 /// 'Mech stays in the drop; with one, it leaves it for the refit.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY's REFIT ALL does nothing with nothing damaged")
+TEST_CASE_ISOLATED("game: the MECH BAY's REFIT ALL does nothing with nothing damaged")
 {
     if (!MCTestGame::Available())
     {
@@ -2719,7 +2719,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's REFIT ALL does nothing with nothing da
 /// do, ten steps back refunds it all; short of points it stops where they run out; the engine a level a step; REPAIR ALL
 /// the rest at 1998's prices.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY's sliders repair and undo point by point as 1998's knobs")
+TEST_CASE_ISOLATED("game: the MECH BAY's sliders repair and undo point by point as 1998's knobs")
 {
     if (!MCTestGame::Available())
     {
@@ -2829,7 +2829,7 @@ namespace
 /// the right: after every step, each slider's value (where RmlUi draws its knob) is the model's knob. 1998's structure
 /// and engine knobs, dragged left, were drawn again only after the repair (gone with the 1998 screens).
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY's structure and engine sliders draw their knobs where each move leaves them")
+TEST_CASE_ISOLATED("game: the MECH BAY's structure and engine sliders draw their knobs where each move leaves them")
 {
     if (!MCTestGame::Available())
     {
@@ -2888,7 +2888,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's structure and engine sliders draw thei
 /// INVENTORY, its tons freed; ENTER on its INVENTORY card fits it back; a part too heavy is dim with its reason and
 /// stays; the MechWarrior out by the right button joins the INVENTORY's MechWarriors and boards again by its card.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY fits and takes out parts and moves MechWarriors as 1998's drags")
+TEST_CASE_ISOLATED("game: the MECH BAY fits and takes out parts and moves MechWarriors as 1998's drags")
 {
     if (!MCTestGame::Available())
     {
@@ -3011,7 +3011,7 @@ namespace
 /// its armour halved, its bar short and yellow once its MechWarrior boards again; REPAIR ALL makes it whole, and its FORCE
 /// card's bar whole and green at once, not only once it leaves the force and comes back.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY's REPAIR ALL shows on the 'Mech's card at once")
+TEST_CASE_ISOLATED("game: the MECH BAY's REPAIR ALL shows on the 'Mech's card at once")
 {
     if (!MCTestGame::Available())
     {
@@ -3057,7 +3057,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's REPAIR ALL shows on the 'Mech's card a
 /// screen showed has its card on DEPLOY as on the 'MECH BAY (its outline coloured, its bar short); repaired there by
 /// REPAIR ALL, its READY AREA card whole at once.
 /// </summary>
-TEST_CASE_ISOLATED("game: DEPLOY's READY AREA shows a 'Mech as the 'MECH BAY left it")
+TEST_CASE_ISOLATED("game: DEPLOY's READY AREA shows a 'Mech as the MECH BAY left it")
 {
     if (!MCTestGame::Available())
     {
@@ -3114,7 +3114,7 @@ TEST_CASE_ISOLATED("game: DEPLOY's READY AREA shows a 'Mech as the 'MECH BAY lef
 /// its head, picked in the lab; its MechWarrior boards it, every other 'Mech keeps its own, and every MechWarrior taken
 /// is aboard a 'Mech.
 /// </summary>
-TEST_CASE_ISOLATED("game: a MechWarrior boards the 'MECH BAY's 'Mech after it left the force and came back")
+TEST_CASE_ISOLATED("game: a MechWarrior boards the MECH BAY's 'Mech after it left the force and came back")
 {
     if (!MCTestGame::Available())
     {
@@ -3246,7 +3246,7 @@ namespace
 /// the force from there by its card's right button, by ENTER on it and by a drag onto the force, each picked in the lab
 /// and counted in the FORCE head ("4 / 15"); a force card's right button sends its unit back to the INVENTORY.
 /// </summary>
-TEST_CASE_ISOLATED("game: a 'Mech in the 'MECH BAY's INVENTORY joins the force by either button or ENTER, picked there")
+TEST_CASE_ISOLATED("game: a 'Mech in the MECH BAY's INVENTORY joins the force by either button or ENTER, picked there")
 {
     if (!MCTestGame::Available())
     {
@@ -3333,7 +3333,7 @@ TEST_CASE_ISOLATED("game: a 'Mech in the 'MECH BAY's INVENTORY joins the force b
 /// The force holds 1998's most, MCMechBay::ForceUnits (15, the FORCE head's "15 / 15"): one more sent from the 'MECH
 /// BAY's INVENTORY is turned back with 1998's message, and stays in the INVENTORY.
 /// </summary>
-TEST_CASE_ISOLATED("game: a full force turns back a unit from the 'MECH BAY's INVENTORY with its message")
+TEST_CASE_ISOLATED("game: a full force turns back a unit from the MECH BAY's INVENTORY with its message")
 {
     if (!MCTestGame::Available())
     {
@@ -3381,7 +3381,7 @@ TEST_CASE_ISOLATED("game: a full force turns back a unit from the 'MECH BAY's IN
 /// one aboard goes back to the INVENTORY's MECHWARRIORS; the 'Mech they came from stays without a pilot.
 /// </summary>
 TEST_CASE_ISOLATED(
-    "game: a MechWarrior dragged onto the 'MECH BAY's piloted 'Mech boards it, the one aboard to the INVENTORY")
+    "game: a MechWarrior dragged onto the MECH BAY's piloted 'Mech boards it, the one aboard to the INVENTORY")
 {
     if (!MCTestGame::Available())
     {
@@ -3490,7 +3490,7 @@ TEST_CASE_ISOLATED("game: the bar's rule stands between RP and the clock, its wo
 /// own row. Two weapons the inventory lists the other way round (by master id, the higher first) show the lower damage
 /// first.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY lists a 'Mech's weapons as 1998's, by range, each by damage, lowest first")
+TEST_CASE_ISOLATED("game: the MECH BAY lists a 'Mech's weapons as 1998's, by range, each by damage, lowest first")
 {
     if (!MCTestGame::Available())
     {
@@ -3589,7 +3589,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY lists a 'Mech's weapons as 1998's, by ra
 /// window at 640x480, 1280x720 and 1280x1024, the hashes recorded: the Mac's and Windows' alike with the game's data.
 /// With <c>--shots</c> each is saved.
 /// </summary>
-TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every machine")
+TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY draw the same on every machine")
 {
     if (!MCTestGame::Available())
     {
@@ -3634,7 +3634,7 @@ TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every ma
 /// 'Mech picked from its MECHS: every element inside the window, no two siblings overlapping, no text spilling or cut
 /// (MCRmlChecks::BoxProblems); every text at least 8 units high, at its contrast (MCRmlChecks::Illegible).
 /// </summary>
-TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY lay out and read at every window the players' reports name")
+TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY lay out and read at every window the players' reports name")
 {
     if (!MCTestGame::Available())
     {
@@ -3772,7 +3772,7 @@ namespace
 /// window on the software renderer at 1280x720 once settled, its hash recorded, and every frame on the way folded into
 /// one more. With <c>--shots</c> each step is saved.
 /// </summary>
-TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logistics recording's steps")
+TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistics recording's steps")
 {
     if (!MCTestGame::Available())
     {
@@ -4094,7 +4094,7 @@ TEST_CASE_ISOLATED("game: the remade menus walked from the start, through a camp
 
     for (const auto& [tab, name] : {std::pair{MCCampaignScreen::MCTab::Briefing, "BRIEFING"},
                                     std::pair{MCCampaignScreen::MCTab::Purchasing, "PURCHASING"},
-                                    std::pair{MCCampaignScreen::MCTab::MechBay, "'MECH BAY"},
+                                    std::pair{MCCampaignScreen::MCTab::MechBay, "MECH BAY"},
                                     std::pair{MCCampaignScreen::MCTab::Deploy, "DEPLOY"}})
     {
         Shown().ChooseTab(tab);

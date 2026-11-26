@@ -10,6 +10,36 @@ only the characters on a keyboard. The release script takes the entry under the 
 (version.json) and refuses a release without one.
 -->
 
+## 0.7.3
+
+- Fix for a visual issue with some standing mechs.
+- Fix for HD colours at higher Brightness.
+- Fix for missing buildings.
+- Fix for Radeon cards.
+
+This is a two-part update.
+- First, INSTALL downloads version 0.7.3. When it's done, press RESTART.
+- Then press UPDATE on the main menu to watch the new HD art download, sized for your computer: 7.3 GB, or 4.3 GB for
+  the smaller set.
+- When the art is done, press RESTART, and you're ready to play.
+
+- HD art remade: mechs, vehicles, buildings, trees, the ground, the menus and the briefing maps are sharper and more
+  detailed.
+- HD voices: cleaner and louder, and heard over the battle.
+- SMOOTH MOTION in HD OPTIONS: walking mechs and the scrolling view move smoothly instead of a whole pixel at a time.
+  On by default.
+- Smoother scrolling and zooming, with fewer pauses and nothing popping in at the screen's edge.
+- Faster at night and in the rain.
+- HD ART SIZE in HD OPTIONS: a smaller set for computers with less memory, 4.8 GB instead of 7.8.
+- BRAKING: mechs moved together halt a cell apart, as in the original.
+- Night mode, in testing: units see half as far, and LIGHTS (N) turns their headlights off or on.
+- MATCH OPTIONS: MOST SKILLED PILOT, and a ban on each kind of weapon.
+- Up to 200 mechs and vehicles outside a match (was 100).
+- The main menu shows the version you're running.
+- Many crashes fixed.
+- Multiplayer cleanup: match continues after host leaves, reallocation of mechs after a player leaves, ability to
+  rematch, a check box for a private game, other bug fixes and enhancements.
+
 ## 0.7.2
 
 - Fix for missing buildings.

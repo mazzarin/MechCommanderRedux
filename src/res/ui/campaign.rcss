@@ -2,8 +2,10 @@
    copy of tools/menus-frames/frames/campaign.rcss with its screens' own rules (the frames' style blocks) and the controls
    live: the bar along the top, the cards. The night and the columns' heads are look.rcss's. */
 
-/* The bar: the way back, the screens as tabs, RP and the clock. */
+/* The bar: the way back, the screens as tabs, RP and the clock; on the cards' slate, a rule under it (the user's, 26 Nov). */
 #topbar { position: absolute; left: 0; right: 0; top: 0; height: 44dp; }
+/* Port-only: the rule under the bar's 44 units (content-box), so the tabs keep their row's full height. */
+#topbar.bar { box-sizing: content-box; background-color: #142029; border-bottom: 1dp #2a3742; }
 #topbar .content { padding-top: 16dp; }
 #topbar .row { height: 28dp; }
 /* Port-only: the bar over the page (whose margin runs under it), so the tabs and MAIN MENU take the mouse; a window
@@ -19,7 +21,7 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
    in its player's colour, as in the chat; at the right how many are ready (the mission starts when all are). */
 /* Port-only: a unit over the frame's 62 for the rule under the tabs' row, which would take it from the row. */
 .mp #topbar { height: 63dp; }
-.mp #topbar .tabs-row { border-bottom: 1dp #1e2a34; }
+.mp #topbar .tabs-row { border-bottom: 1dp #2a3742; }
 .mp #page { padding-top: 75dp; }
 .players { display: flex; flex-direction: row; align-items: center; height: 18dp; gap: 24dp; font-size: 9.51dp; line-height: 18dp; font-weight: 600; white-space: nowrap; }
 .players > * { flex: 0 0 auto; }
@@ -120,8 +122,14 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
 
 /* ---- The game's (the frames' style blocks, and what the live controls add) ---- */
 
-.money-label { line-height: 28dp; }
-.money.points { margin-right: 16dp; }
+/* RP and the clock as two cells, a rule between them (the user's, 26 Nov): each word on the tabs' line, 26 units over
+   the 2 the current tab's line takes, so every word in the bar shares one baseline; the rule the tabs' height in the
+   heads' rule colour, its foot on the line the tabs' line stands on, 12 units each side (a tab's padding). */
+.status { display: flex; flex-direction: row; align-items: flex-start; height: 28dp; }
+.status > * { flex: 0 0 auto; }
+.status .eyebrow { line-height: 26dp; padding-top: 0.67dp; margin-right: 4dp; }
+.status .money { line-height: 26dp; }
+.status .vrule { width: 1dp; height: 28dp; margin: 0dp 12dp; background-color: #2a3742; }
 #mainmenu { margin-right: 12dp; }
 .tabs { display: flex; flex-direction: row; }
 .tab { cursor: pointer; }

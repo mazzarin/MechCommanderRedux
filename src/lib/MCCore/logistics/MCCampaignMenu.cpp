@@ -309,7 +309,8 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
                std::pair{"condition", &MCCard::Condition}, std::pair{"shade", &MCCard::Shade},
                std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
                std::pair{"picked", &MCCard::Picked}, std::pair{"target", &MCCard::Target},
-               std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot});
+               std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot},
+               std::pair{"long", &MCCard::Long});
     model.List("carried", _Carried, std::pair{"kind", &MCCard::Kind});
     model.List("groups", _Groups, std::pair{"name", &MCGroup::Name}, std::pair{"tons", &MCGroup::Tons},
                std::pair{"closed", &MCGroup::Closed}, std::pair{"cards", &MCGroup::Cards});
@@ -345,6 +346,7 @@ void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
     OnClick("deal-confirm", [this] { _Logistics->DealConfirm(); });
     OnClick("repair-all", [this] { _Logistics->RepairAll(); });
     OnClick("refit-all", [this] { _Logistics->RefitAll(); });
+    OnClick("into-force", [this] { _Logistics->IntoTheForce(); });
 
     // A match's chat: each place's line sent on Enter, its switch followed by the others.
     for (const char* id : SayIds)
@@ -688,8 +690,9 @@ MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int s
     card.Piloted = warrior != nullptr;
     card.Unpiloted = warrior == nullptr;
     card.Health = warrior != nullptr ? static_cast<int>(std::clamp(std::round(warrior->Health), 0.0f, HealthPips)) : 0;
-    // Its condition as it stands (a repair, a refit or a wound shows at once).
-    const float status = mech.CalcStatus();
+    // Its condition as it stands (a repair, a refit or a wound shows at once); without a pilot, the 'Mech's own (1998's
+    // status reads none), as the logistics' cards show it.
+    const float status = warrior != nullptr ? mech.CalcStatus() : mech.CalcCondition();
     card.Condition = static_cast<int>(std::lround(std::clamp(status, 0.0f, 1.0f) * WholePercent));
     card.Shade = status == 0.0f          ? std::string()
                  : !(status < WornBelow) ? std::string("ok")
@@ -1952,11 +1955,6 @@ std::optional<size_t> MCCampaignMenu::NumberAfter(std::string_view id, std::stri
     const std::string_view digits = id.substr(prefix.size());
     const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), number);
     return error == std::errc() && end == digits.data() + digits.size() ? std::optional(number) : std::nullopt;
-}
-
-std::string MCCampaignMenu::UnitsText(int32_t units)
-{
-    return units == 1 ? std::string("1 unit") : std::format("{} units", units);
 }
 
 std::string MCCampaignMenu::TonsText(int32_t tons)

@@ -24,6 +24,12 @@ namespace MCMechBay
     /// </summary>
     inline constexpr std::array<uint8_t, 5> RestrictedComps = {15, 37, 38, 42, 43};
 
+    /// <summary>
+    /// The most units the force holds (a game rule: the original turns back the unit just assigned to it past this,
+    /// <see cref="ForceFull"/>).
+    /// </summary>
+    inline constexpr int32_t ForceUnits = 0xf;
+
     /// <summary>A repair knob.</summary>
     enum class MCKnob : uint8_t
     {
@@ -253,7 +259,10 @@ namespace MCMechBay
     /// <returns>The pilot, or null when the mech had none.</returns>
     std::shared_ptr<MCLogWarrior> PilotOut(MCLogMech& mech);
 
-    /// <summary>Whether a MechWarrior may board <paramref name="mech"/>: a force mech without a pilot.</summary>
+    /// <summary>
+    /// Whether a MechWarrior may board <paramref name="mech"/>: a force mech of the player's own (one already aboard
+    /// leaves it for the INVENTORY first: <see cref="PilotOut"/>).
+    /// </summary>
     bool CanBoard(const MCLogMech& mech);
 
     /// <summary>

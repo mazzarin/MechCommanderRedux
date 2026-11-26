@@ -1,15 +1,15 @@
 /* Port-only (SPEC-menus.md, stage 8): the game's copy of tools/menus-frames/frames/logistics.rcss, with the remade
    screens' own rules after it (logistics/MCLogisticsTabs). PURCHASING and the 'MECH BAY (with campaign.rcss: the bar,
    the ground, the cards, the chat). One document holds the four tabs, so every rule is scoped to these two tabs' own
-   elements: #logistics, the lifted card and the buy window. The force keeps the left side on PURCHASING, the 'MECH BAY
-   and DEPLOY, so a tab changes what is beside it, never where it is. */
+   elements: #logistics, the lifted card and the buy window. The INVENTORY keeps the left side on PURCHASING and the
+   'MECH BAY (A2, the user's, 26 Nov): what is beside it changes with the tab, never where it is. */
 
 /* A list's switch under its column's name (PURCHASING's kinds under STORE, 1998's tabs MECHS, MECHWARRIORS,
-   COMPONENTS, VEHICLES, choosing what both lists show; the inventory's under INVENTORY), so the force never moves. */
+   COMPONENTS, VEHICLES, choosing what both lists show; the INVENTORY's MECHS, MECHWARRIORS and COMPONENTS). */
 #logistics .kinds { display: flex; flex-direction: row; margin-bottom: 8dp; }
 #logistics .kinds > * { flex: 0 0 auto; }
 
-/* The columns: the force, the store (or the lab) and the details (or the inventory), 16 apart. */
+/* The columns: the INVENTORY, the store (or the force) and the details (or the lab), 16 apart. */
 #logistics.cols, #logistics .cols { flex: 1 1 0; display: flex; flex-direction: row; align-items: stretch; }
 #logistics.cols > *, #logistics .cols > * { flex: 0 0 auto; }
 #logistics .side { flex: 0 0 288dp; display: flex; flex-direction: column; }
@@ -124,13 +124,13 @@
 #logistics .lab-foot { display: flex; flex-direction: row; align-items: center; gap: 10dp; margin-top: 10dp; }
 #logistics .lab-foot > * { flex: 0 0 auto; }
 #logistics .lab-foot > .grow { flex: 1 1 0; }
-#logistics #inventory { flex: 0 0 168dp; }
+#logistics #inventory { flex: 0 0 204dp; }
 
-/* A part being dragged from the inventory (campaign.rcss lifts it): the inventory's width. */
+/* A part being dragged from the inventory (campaign.rcss lifts it): the width of the INVENTORY's card at 16:10. */
 .good.dragged { width: 168dp; }
 
 /* Multiplayer: the middle and right columns stand on the chat (its newest two lines and the line being typed), so the
-   force keeps the whole left side, as on DEPLOY, where the chat sits under the groups. */
+   INVENTORY keeps the whole left side, as on DEPLOY, where the chat sits under the groups. */
 #logistics .over-band { flex: 1 1 0; display: flex; flex-direction: column; }
 #logistics .over-band > * { flex: 0 0 auto; }
 #logistics .over-band > .cols { flex: 1 1 0; }
@@ -150,15 +150,14 @@
 /* 2:1 and wider (21:9): the lists three cards a row; the lab's payload a column beside its repairs and pilot. */
 @media (min-aspect-ratio: 2/1) {
     #logistics .side { flex-basis: 426dp; }
-    #logistics #inventory { flex-basis: 200dp; }
+    #logistics #inventory { flex-basis: 240dp; }
     #logistics .lab-body { flex-direction: row; }
     #logistics .lab-body > * { flex: 1 1 0; }
     #logistics .lab-body > .payload { margin-top: 0dp; margin-left: 24dp; }
 }
 
-/* The game's own: the lists scroll in their columns, SPARE's head under the force, a lifted card, the pilot's picture. */
+/* The game's own: the lists scroll in their columns, a lifted card, the pilot's picture. */
 #logistics .side > .scroll-box { flex: 1 1 0; }
-#logistics .spare-head { margin-top: 10dp; }
 #logistics .card .row-t .note { margin-left: 3dp; }
 .good.dragged.lifted { width: 168dp; }
 #logistics .pilot .portrait { width: 24dp; height: 32dp; }
@@ -198,8 +197,8 @@
     /* The columns' switches (the store's kinds, the INVENTORY's) wrap onto a second row, sharing their borders (the
        padding holds the last segment's shared border on each row). */
     #logistics .side .switch { flex-wrap: wrap; padding: 0dp 1dp 1dp 0dp; }
-    /* The INVENTORY's name alone, as on the 'MECH BAY (its count beside it would spill the column). */
-    #logistics #owned > .head > .data { display: none; }
+    /* The INVENTORY's name alone (its count beside it would spill the column). */
+    #logistics #inventory > .head > .data { display: none; }
     #logistics .side .switch > div { flex: 1 1 auto; text-align: center; margin-bottom: -1dp; }
 }
 /* Picked but out of reach (a sold-out good, a variant none are left of): its words lighter on the teal, still dim. */
@@ -207,8 +206,9 @@
 #logistics .card.picked.off .row-t, #logistics .switch > .on.off { color: #a4b0bc; }
 /* A good's name longer than the frames' (LogisticsTabs' LongName) in the details' size, so it fits its card. */
 #logistics .good .who.long, .card.lifted .who.long { font-size: 9.51dp; letter-spacing: 0; }
-/* The INVENTORY's switch a little tighter than the kit's, so COMPONENTS and MECHWARRIORS fit its 168 units. */
-#logistics #inventory .switch.small > div { padding: 0dp 6dp; }
+/* The INVENTORY's switch a little tighter than the kit's, so MECHS, MECHWARRIORS and COMPONENTS fit its 204 units at
+   every 16:9 window (their letters set a little wider at some sizes, as 3600x2024's). */
+#logistics #inventory .switch.small > div { padding: 0dp 5dp; }
 /* 16:10 and narrower: the switches' segments and a good's card a little tighter, so the store's four kinds, the
    variants and a part's longest lines fit the narrower columns. */
 @media (max-aspect-ratio: 17/10) {
@@ -217,11 +217,40 @@
     #logistics .card.good .what { letter-spacing: 0; }
 }
 /* Port-only: 21:9 keeps the lab one column, as 16:9 (the frame's payload beside the repairs leaves a fitted part's name
-   too little room beside its range, tons and state); the pilot's four skills a row, a little narrower so they fit beside
-   the rail's room (never three and one). */
+   too little room beside its range, tons and state), the payload under the pilot; the pilot's four skills a row,
+   sharing the lab's width (never three and one). */
 @media (min-aspect-ratio: 2/1) {
     #logistics .lab-body { flex-direction: column; }
     #logistics .lab-body > * { flex: 0 0 auto; }
     #logistics .lab-body > .payload { margin-top: 12dp; margin-left: 0dp; }
-    #logistics .skill { flex-basis: 72dp; }
+    #logistics .skills { flex-wrap: nowrap; }
+    #logistics .skill { flex: 1 1 0; }
+}
+
+/* ---- A2 (the user's, 26 Nov): the INVENTORY on the left, its MECHS the units stored outside the force ---- */
+
+/* A 'Mech without a MechWarrior (the force's, the INVENTORY's): its name in its own case first, NO PILOT under it in
+   the cards' capitals; its condition over its outline, the pilot's place an empty seat. */
+#logistics .card.pilotless .who { text-transform: none; letter-spacing: 0.01em; }
+#logistics .card.pilotless .what { text-transform: uppercase; letter-spacing: 0.04em; }
+/* A name longer than a force card holds (LogisticsTabs' PilotlessNameLetters) in the details' size; at 16:10 and
+   narrower every force card's, as its 127 units hold the details' size alone; the INVENTORY's long ones at 4:3. */
+#logistics #units .card.pilotless .who.long { font-size: 9.51dp; letter-spacing: 0; }
+@media (max-aspect-ratio: 17/10) {
+    #logistics #units .card.pilotless .who { font-size: 9.51dp; letter-spacing: 0; }
+}
+@media (max-aspect-ratio: 3/2) {
+    #logistics #inventory .card.pilotless .who.long { font-size: 9.51dp; letter-spacing: 0; }
+}
+/* A MechWarrior in no 'Mech: their health over their portrait, as on a unit's card; the callsign, the rank. */
+#logistics .card.good.warrior .pics { flex: 0 0 24dp; }
+#logistics .card.good.warrior .pics > .pic { flex: 0 0 32dp; width: 24dp; height: 32dp; }
+/* The lab's 'Mech without a MechWarrior: the pilot's place an open seat, sunk a step, boxed. */
+#logistics .pilot.seat-row { align-items: center; padding: 4dp; background-color: #0f171e; border: 1dp #1e2b36; tab-index: none; }
+#logistics .pilot .seat { box-sizing: border-box; width: 24dp; height: 32dp; background-color: #0b1116; border: 1dp #2a3742; }
+#logistics .pilot.seat-row .name { margin-left: 10dp; width: auto; }
+/* 16:10: the INVENTORY's 160 units hold its switch on two rows, sharing their borders (as 4:3's). */
+@media (max-aspect-ratio: 17/10) {
+    #logistics #inventory .switch { flex-wrap: wrap; padding: 0dp 1dp 1dp 0dp; }
+    #logistics #inventory .switch > div { flex: 1 1 auto; text-align: center; margin-bottom: -1dp; }
 }

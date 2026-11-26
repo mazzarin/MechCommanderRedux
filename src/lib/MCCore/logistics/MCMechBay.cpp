@@ -17,9 +17,6 @@ namespace
     /// <summary>The knob's track in the original's pixels.</summary>
     constexpr double TrackPixels = 61.0;
 
-    /// <summary>The most units the force holds before the one just assigned to it is turned back (a game rule).</summary>
-    constexpr int32_t ForceUnits = 0xf;
-
     /// <summary>A weapon's long range: the last of its ranges (MCMasterComponent::WeaponRange).</summary>
     constexpr size_t LongRangeIndex = 3;
 
@@ -904,8 +901,8 @@ std::shared_ptr<MCLogWarrior> MCMechBay::PilotOut(MCLogMech& mech)
 
 bool MCMechBay::CanBoard(const MCLogMech& mech)
 {
-    return mech.PilotIndex < 0 && GlobalLog()->ForceMechList->GetMechIndex(
-                                      std::static_pointer_cast<const MCLogMech>(mech.shared_from_this())) >= 0;
+    return mech.LocalPart && GlobalLog()->ForceMechList->GetMechIndex(
+                                 std::static_pointer_cast<const MCLogMech>(mech.shared_from_this())) >= 0;
 }
 
 void MCMechBay::Assign(MCLogWarrior& warrior)

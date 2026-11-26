@@ -134,6 +134,10 @@ public:
         std::string Why;
         /// <summary>The drop slot it is (0 to 11; -1 in READY AREA).</summary>
         int Slot = -1;
+        /// <summary>
+        /// A name longer than a narrow card holds at the cards' size (the logistics' pilotless 'Mechs).
+        /// </summary>
+        bool Long = false;
     };
 
     /// <summary>A drop group: its head, and its four slots.</summary>
@@ -494,8 +498,6 @@ namespace MCCampaignMenu
 
     /// <summary><paramref name="tons"/> in words: "1 ton", "25 tons".</summary>
     std::string TonsText(int32_t tons);
-    /// <summary><paramref name="units"/> in words: "1 unit", "20 units".</summary>
-    std::string UnitsText(int32_t units);
     /// <summary>A picture's source as a card's decorator (none for none): a unit standing at its place's foot.</summary>
     std::string Pictured(std::string_view source);
     /// <summary>

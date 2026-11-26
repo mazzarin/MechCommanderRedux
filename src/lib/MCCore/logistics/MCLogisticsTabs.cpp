@@ -40,14 +40,13 @@ namespace
 
     /// <summary>The cards' ids: their place's prefix and their index (force3, store0); the lab's MechWarrior's.</summary>
     constexpr std::string_view ForcePrefix = "force";
-    constexpr std::string_view SparePrefix = "spare";
+    constexpr std::string_view StoredPrefix = "stored";
     constexpr std::string_view StorePrefix = "store";
     constexpr std::string_view StockPrefix = "stock";
     constexpr std::string_view FitPrefix = "fit";
     constexpr std::string_view PilotId = "pilot";
     /// <summary>The columns a drag is let go over (their elements' ids).</summary>
     constexpr std::string_view UnitsId = "units";
-    constexpr std::string_view OwnedId = "owned";
     constexpr std::string_view StoreId = "store";
     constexpr std::string_view InfoId = "info";
     constexpr std::string_view LabId = "lab";
@@ -106,6 +105,11 @@ namespace
     constexpr int EngineLevels = 3;
     /// <summary>The longest name the frames' cards hold at their size ("Light Autocannon"); longer ones are set smaller.</summary>
     constexpr size_t LongNameLetters = 16;
+    /// <summary>
+    /// The most letters of a 'Mech's name a force card holds at the cards' size on 16:9 (1998's longest of these,
+    /// "Commando W", fills it; "Shadow Cat W" spills): a longer one is set at the details' size (logistics.rcss).
+    /// </summary>
+    constexpr size_t PilotlessNameLetters = 11;
 
     /// <summary>Whether <paramref name="who"/> is longer than a card's name holds at its own size.</summary>
     bool LongName(std::string_view who)
@@ -121,12 +125,24 @@ namespace
     /// <summary>The words the remade screens add (1998's say nothing there).</summary>
     constexpr std::string_view BuyWord = "Buy";
     constexpr std::string_view SellWord = "Sell";
-    constexpr std::string_view InForceWhy = "In your force";
     constexpr std::string_view RequiredWhy = "The mission needs it";
     constexpr std::string_view SoldOutNote = "0 left";
     constexpr std::string_view LeftFormat = "{} left";
     constexpr std::string_view InStoreFormat = "{} in store";
     constexpr std::string_view OwnedNote = "owned";
+    /// <summary>A 'Mech without a MechWarrior, under its name; a unit the INVENTORY stores, before its tons.</summary>
+    constexpr std::string_view NoPilotWord = "No pilot";
+    constexpr std::string_view StoredWord = "Stored";
+    /// <summary>The force's count against the most it holds; the INVENTORY's.</summary>
+    constexpr std::string_view ForceCountFormat = "{} / {}";
+    constexpr std::string_view CountFormat = "{} {}";
+    constexpr std::string_view MechWord = "mech";
+    constexpr std::string_view MechsWord = "mechs";
+    constexpr std::string_view UnitWord = "unit";
+    constexpr std::string_view UnitsWord = "units";
+    constexpr std::string_view VehiclesWord = "vehicles";
+    constexpr std::string_view MechWarriorsWord = "MechWarriors";
+    constexpr std::string_view PartsWord = "parts";
     constexpr std::string_view PointsFormat = "{} RP";
     constexpr std::string_view RepairAllFormat = "Repair all · {} RP";
     constexpr std::string_view RepairAllWord = "Repair all";
@@ -229,7 +245,7 @@ namespace
         return std::clamp(static_cast<int>(std::lround(rating / FullRating * WholePercent)), 0, WholePercent);
     }
 
-    /// <summary>A unit's own list of the force or the spares it is in.</summary>
+    /// <summary>A unit's own list of the force or the INVENTORY's MECHS it is in.</summary>
     template <typename Part> bool In(const std::vector<std::shared_ptr<Part>>& list, const MCLogPart& part)
     {
         return std::ranges::any_of(list, [&part](const std::shared_ptr<Part>& in) { return in.get() == &part; });
@@ -300,18 +316,18 @@ MCLogisticsTabs::~MCLogisticsTabs() = default;
 void MCLogisticsTabs::Bind(MCRmlModel& model)
 {
     _Model = model;
-    model.Value("left", _Left);
     model.Value("forceCount", _ForceCount);
     model.Value("storeCount", _StoreCount);
     model.Value("stockCount", _StockCount);
     model.Value("stockKind", _StockKind);
     // The cards' type is the campaign's (its "ready" list registered it first).
     model.List("force", _Force, std::pair{"kind", &MCCampaignScreen::MCCard::Kind});
-    model.List("spare", _Spare, std::pair{"kind", &MCCampaignScreen::MCCard::Kind});
+    model.List("stored", _Stored, std::pair{"kind", &MCCampaignScreen::MCCard::Kind});
     model.List("store", _Store, std::pair{"picture", &MCGood::Picture}, std::pair{"who", &MCGood::Who},
                std::pair{"what", &MCGood::What}, std::pair{"price", &MCGood::Price}, std::pair{"note", &MCGood::Note},
                std::pair{"why", &MCGood::Why}, std::pair{"off", &MCGood::Off}, std::pair{"picked", &MCGood::Picked},
-               std::pair{"part", &MCGood::Part}, std::pair{"long", &MCGood::Long});
+               std::pair{"part", &MCGood::Part}, std::pair{"long", &MCGood::Long},
+               std::pair{"warrior", &MCGood::Warrior}, std::pair{"health", &MCGood::Health});
     model.List("stock", _StockGoods, std::pair{"picture", &MCGood::Picture});
     model.List("lifted", _Lifted, std::pair{"picture", &MCGood::Picture});
     model.Value("liftedLeft", _LiftedLeft);
@@ -345,6 +361,7 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
     model.Value("labName", _LabName);
     model.Value("labWhat", _LabWhat);
     model.Value("labPicture", _LabPicture);
+    model.Value("labStored", _LabStored);
     model.Value("armorNow", _Armor.Now);
     model.Value("armorCost", _Armor.Cost);
     model.Value("armorKnob", _Armor.Knob);
@@ -356,6 +373,7 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
     model.Value("engineKnob", _Engine.Knob);
     model.Value("repairs", _Repairs);
     model.Value("hasPilot", _HasPilot);
+    model.Value("seat", _Seat);
     model.Value("pilotName", _PilotName);
     model.Value("pilotRank", _PilotRank);
     model.Value("pilotPicture", _PilotPicture);
@@ -439,7 +457,8 @@ uint64_t MCLogisticsTabs::Fingerprint() const
         return 0;
     }
 
-    uint64_t hash = Mixed(static_cast<uint64_t>(ResourcePoints), static_cast<uint64_t>(_Kind * 4 + _StockKind));
+    uint64_t hash =
+        Mixed(static_cast<uint64_t>(ResourcePoints), static_cast<uint64_t>(_Kind * 4 + static_cast<int>(_BayStock)));
     const auto units = [&hash](const auto& list)
     {
         hash = Mixed(hash, list.size());
@@ -569,7 +588,7 @@ void MCLogisticsTabs::Fill()
         _LabPart.reset();
     }
 
-    _Left = Purchasing() && Kind() == MCKind::MechWarriors ? 1 : Purchasing() && Kind() == MCKind::Components ? 2 : 0;
+    _StockKind = static_cast<int>(Shelf());
     FillUnits();
     FillStore();
     FillStock();
@@ -605,9 +624,9 @@ void MCLogisticsTabs::FillUnits()
 {
     const MCLogistics& logistics = *GlobalLog();
     _Force.clear();
-    _Spare.clear();
+    _Stored.clear();
     _ForceThings.clear();
-    _SpareThings.clear();
+    _StoredThings.clear();
     const std::shared_ptr<MCLogPart> lab = _LabPart.lock();
 
     const auto add = [&](const std::shared_ptr<MCLogPart>& part, MCPlace place)
@@ -618,13 +637,21 @@ void MCLogisticsTabs::FillUnits()
                                          !thing.Unit.owner_before(_Picked->Unit)
                                    : part == lab;
 
+        // A 'Mech without a MechWarrior: its name first, NO PILOT under it (DEPLOY's card keeps the name alone).
+        if (card.Unpiloted)
+        {
+            card.Who = std::move(card.What);
+            card.What = std::string(NoPilotWord);
+            card.Long = card.Who.size() > PilotlessNameLetters;
+        }
+
         if (_WhyThing.has_value() && _WhyThing->Same(thing))
         {
             card.Why = _WhyText;
         }
 
-        (place == MCPlace::Force ? _Force : _Spare).push_back(std::move(card));
-        (place == MCPlace::Force ? _ForceThings : _SpareThings).push_back(thing);
+        (place == MCPlace::Force ? _Force : _Stored).push_back(std::move(card));
+        (place == MCPlace::Force ? _ForceThings : _StoredThings).push_back(thing);
     };
 
     for (const std::shared_ptr<MCLogMech>& mech : logistics.ForceMechList->Mechs)
@@ -639,15 +666,36 @@ void MCLogisticsTabs::FillUnits()
 
     for (const std::shared_ptr<MCLogMech>& mech : logistics.MechList->Mechs)
     {
-        add(mech, MCPlace::Spare);
+        add(mech, MCPlace::Stored);
     }
 
     for (const std::shared_ptr<MCLogVehicle>& vehicle : logistics.VehicleList->Vehicles)
     {
-        add(vehicle, MCPlace::Spare);
+        add(vehicle, MCPlace::Stored);
     }
 
-    _ForceCount = MCCampaignMenu::UnitsText(static_cast<int32_t>(_Force.size()));
+    _ForceCount = std::format(ForceCountFormat, _Force.size(), MCMechBay::ForceUnits);
+}
+
+MCLogisticsTabs::MCStock MCLogisticsTabs::Shelf() const
+{
+    if (!Purchasing())
+    {
+        return _BayStock;
+    }
+
+    switch (Kind())
+    {
+        case MCKind::MechWarriors:
+            return MCStock::MechWarriors;
+        case MCKind::Components:
+            return MCStock::Components;
+        case MCKind::Mechs:
+        case MCKind::Vehicles:
+            return MCStock::Mechs;
+    }
+
+    return MCStock::Mechs;
 }
 
 void MCLogisticsTabs::FillStore()
@@ -748,8 +796,8 @@ void MCLogisticsTabs::FillStore()
         }
     }
 
-    constexpr std::array<std::string_view, 4> StoreWords = {"mechs", "MechWarriors", "parts", "vehicles"};
-    _StoreCount = std::format("{} {}", _Store.size(), StoreWords[static_cast<size_t>(Kind())]);
+    constexpr std::array<std::string_view, 4> StoreWords = {MechsWord, MechWarriorsWord, PartsWord, VehiclesWord};
+    _StoreCount = std::format(CountFormat, _Store.size(), StoreWords[static_cast<size_t>(Kind())]);
 }
 
 void MCLogisticsTabs::FillStock()
@@ -757,15 +805,18 @@ void MCLogisticsTabs::FillStock()
     _StockGoods.clear();
     _StockThings.clear();
     const MCLogistics& logistics = *GlobalLog();
-    // PURCHASING lists them with MECHWARRIORS or COMPONENTS chosen; the 'MECH BAY by its own switch.
-    const bool pilots = Purchasing() ? Kind() == MCKind::MechWarriors : Stock() == MCStock::MechWarriors;
 
-    if (Purchasing() && _Left == 0)
+    // MECHS: the units stored (FillUnits made their cards): "3 mechs", or with a vehicle among them "4 units".
+    if (Stock() == MCStock::Mechs)
     {
-        _StockCount.clear();
+        const size_t units = _Stored.size();
+        const bool vehicles = !logistics.VehicleList->Vehicles.empty();
+        _StockCount = std::format(CountFormat, units,
+                                  vehicles ? (units == 1 ? UnitWord : UnitsWord) : (units == 1 ? MechWord : MechsWord));
         return;
     }
 
+    const bool pilots = Stock() == MCStock::MechWarriors;
     const std::shared_ptr<MCLogMech> mech = WorkedMech();
     const auto add = [this](MCGood good, MCThing thing)
     {
@@ -789,8 +840,10 @@ void MCLogisticsTabs::FillStock()
         {
             MCGood good{.Picture = MCCampaignMenu::Portrait(MCCampaignMenu::PilotSource(warrior->Picture)),
                         .Who = warrior->Callsign,
-                        .What = RankWord(warrior->Rank)};
-            // The 'MECH BAY: a MechWarrior boards the lab's 'Mech when it has none (1998's greyed rows).
+                        .What = RankWord(warrior->Rank),
+                        .Warrior = true,
+                        .Health = static_cast<int>(std::clamp(std::round(warrior->Health), 0.0f, HealthPips))};
+            // The 'MECH BAY: a MechWarrior boards the lab's 'Mech when it is a force 'Mech of the player's own.
             good.Off = !Purchasing() && (mech == nullptr || !MCMechBay::CanBoard(*mech));
             add(std::move(good), MCThing{.Warrior = warrior});
         }
@@ -835,7 +888,7 @@ void MCLogisticsTabs::FillStock()
         }
     }
 
-    _StockCount = std::format("{} {}", _StockGoods.size(), pilots ? "MechWarriors" : "parts");
+    _StockCount = std::format(CountFormat, _StockGoods.size(), pilots ? MechWarriorsWord : PartsWord);
 }
 
 void MCLogisticsTabs::FillDetails()
@@ -1010,16 +1063,12 @@ void MCLogisticsTabs::FillDetails()
             _Kit = KitOf(*mech.Inventory);
         }
 
-        // Only a spare sells (1998's inventory alone did), and none the mission needs.
-        if (thing.Place == MCPlace::Force)
-        {
-            _InfoNote = std::string(InForceWhy);
-        }
-        else if (unit->Required)
+        // Only a stored unit sells (1998's inventory alone did), and none the mission needs.
+        if (unit->Required)
         {
             _InfoNote = std::string(RequiredWhy);
         }
-        else
+        else if (thing.Place == MCPlace::Stored)
         {
             _InfoCost = MCGroupedPoints(unit->PartType == 1 ? MCStore::SalePrice(static_cast<MCLogMech&>(*unit))
                                                             : MCStore::SalePrice(static_cast<MCLogVehicle&>(*unit)));
@@ -1051,8 +1100,10 @@ void MCLogisticsTabs::FillLab()
     _LabName.clear();
     _LabWhat.clear();
     _LabPicture = MCCampaignScreen::NoPicture;
+    _LabStored = false;
     _Repairs = false;
     _HasPilot = false;
+    _Seat = false;
     _Fits.clear();
     _FitThings.clear();
     _Skills.clear();
@@ -1068,6 +1119,13 @@ void MCLogisticsTabs::FillLab()
     _LabName = lab->FileName;
     _LabWhat = TonsAndClass(lab->CurTonnage);
     _LabPicture = MCCampaignMenu::Pictured(MCRmlArt::UnitSource(*lab));
+    // A unit the INVENTORY stores says so, and goes into the force from here (INTO THE FORCE).
+    _LabStored = In(logistics.MechList->Mechs, *lab) || In(logistics.VehicleList->Vehicles, *lab);
+
+    if (_LabStored)
+    {
+        _LabWhat = std::format(WhatFormat, StoredWord, _LabWhat);
+    }
 
     if (lab->PartType != 1)
     {
@@ -1078,7 +1136,8 @@ void MCLogisticsTabs::FillLab()
 
     auto& mech = static_cast<MCLogMech&>(*lab);
     const std::shared_ptr<MCLogMech> worked = WorkedMech();
-    // A force 'Mech is worked on; a spare is shown as it is (1998 never showed one in the lab). A match has no repairs.
+    // A force 'Mech is worked on; a stored one is shown as it is (1998 never showed one in the lab). No repairs in a
+    // match.
     _LabKind = worked != nullptr ? 1 : 3;
     _Repairs = worked != nullptr && MultiPlayer() == nullptr;
 
@@ -1138,6 +1197,9 @@ void MCLogisticsTabs::FillLab()
             }
         }
     }
+
+    // No MechWarrior aboard (a stored 'Mech never has one): the pilot's place an empty seat.
+    _Seat = !_HasPilot;
 
     // The payload: the weapons' weight against the free weight (1998's tonnage bar), each fitted copy a row.
     const float free = mech.FreeTonnage;
@@ -1211,7 +1273,7 @@ std::optional<std::pair<MCPlace, size_t>> MCLogisticsTabs::CardOf(MCOptionalRef<
         }
 
         for (const auto& [prefix, place] :
-             {std::pair{ForcePrefix, MCPlace::Force}, std::pair{SparePrefix, MCPlace::Spare},
+             {std::pair{ForcePrefix, MCPlace::Force}, std::pair{StoredPrefix, MCPlace::Stored},
               std::pair{StorePrefix, MCPlace::Store}, std::pair{StockPrefix, MCPlace::Stock},
               std::pair{FitPrefix, MCPlace::Fitted}})
         {
@@ -1242,9 +1304,12 @@ std::optional<MCPlace> MCLogisticsTabs::ColumnAt(float x, float y) const
         return card->first == MCPlace::Pilot ? MCPlace::Fitted : card->first;
     }
 
+    // The INVENTORY's column is its MECHS' while they show, else its goods'.
+    const MCPlace inventory = Stock() == MCStock::Mechs ? MCPlace::Stored : MCPlace::Stock;
+
     for (const auto& [id, place] :
-         {std::pair{UnitsId, MCPlace::Spare}, std::pair{OwnedId, MCPlace::Stock}, std::pair{StoreId, MCPlace::Store},
-          std::pair{InfoId, MCPlace::Store}, std::pair{LabId, MCPlace::Fitted}, std::pair{InventoryId, MCPlace::Stock}})
+         {std::pair{UnitsId, MCPlace::Force}, std::pair{StoreId, MCPlace::Store}, std::pair{InfoId, MCPlace::Store},
+          std::pair{LabId, MCPlace::Fitted}, std::pair{InventoryId, inventory}})
     {
         Rml::Element* column = document->get().GetElementById(std::string(id));
 
@@ -1274,8 +1339,8 @@ std::optional<MCLogisticsTabs::MCThing> MCLogisticsTabs::ThingAt(MCPlace place, 
     {
         case MCPlace::Force:
             return from(_ForceThings);
-        case MCPlace::Spare:
-            return from(_SpareThings);
+        case MCPlace::Stored:
+            return from(_StoredThings);
         case MCPlace::Store:
             return from(_StoreThings);
         case MCPlace::Stock:
@@ -1328,8 +1393,8 @@ void MCLogisticsTabs::OnMouse(Rml::Event& event)
                         lifted = goods->get()[_Hold->Index];
                     }
                     else if (const std::vector<MCCampaignScreen::MCCard>& cards =
-                                 _Hold->From == MCPlace::Force ? _Force : _Spare;
-                             (_Hold->From == MCPlace::Force || _Hold->From == MCPlace::Spare) &&
+                                 _Hold->From == MCPlace::Force ? _Force : _Stored;
+                             (_Hold->From == MCPlace::Force || _Hold->From == MCPlace::Stored) &&
                              _Hold->Index < cards.size())
                     {
                         lifted = {.Picture = cards[_Hold->Index].Outline,
@@ -1555,7 +1620,20 @@ void MCLogisticsTabs::ChooseKind(MCKind kind)
 
 void MCLogisticsTabs::ChooseStock(MCStock stock)
 {
-    _StockKind = static_cast<int>(stock);
+    // PURCHASING's INVENTORY follows the store's kind, and its switch chooses it (MECHS keeps VEHICLES).
+    if (Purchasing())
+    {
+        if (stock != Shelf())
+        {
+            ChooseKind(stock == MCStock::MechWarriors ? MCKind::MechWarriors
+                       : stock == MCStock::Components ? MCKind::Components
+                                                      : MCKind::Mechs);
+        }
+
+        return;
+    }
+
+    _BayStock = stock;
     _Fingerprint = 0;
     Fill();
 }
@@ -1593,7 +1671,7 @@ void MCLogisticsTabs::Pick(MCPlace place, size_t index)
         _Hovered.reset();
     }
     else if (const std::shared_ptr<MCLogPart> unit = thing->Unit.lock();
-             unit != nullptr && (place == MCPlace::Force || place == MCPlace::Spare))
+             unit != nullptr && (place == MCPlace::Force || place == MCPlace::Stored))
     {
         // The 'MECH BAY: the unit into the lab, its knobs where it arrived.
         PlayLogSound(PlacedSound);
@@ -1625,10 +1703,9 @@ void MCLogisticsTabs::Send(MCPlace place, size_t index)
     switch (place)
     {
         case MCPlace::Force:
-        case MCPlace::Spare:
+        case MCPlace::Stored:
         {
-            // PURCHASING: an owned unit's sale, as a store card's purchase (a force unit's refused with its reason); the
-            // 'MECH BAY: in or out of the force.
+            // PURCHASING: a stored unit's sale, as a store card's purchase; the 'MECH BAY: in or out of the force.
             if (Purchasing())
             {
                 OfferDeal(*thing);
@@ -1681,26 +1758,19 @@ void MCLogisticsTabs::Drop(MCPlace from, size_t index, std::optional<MCPlace> on
         return;
     }
 
-    const bool left = onto == MCPlace::Force || onto == MCPlace::Spare;
+    // The INVENTORY's column, whichever of its lists shows.
+    const bool inventory = onto == MCPlace::Stored || onto == MCPlace::Stock;
 
     // Where each card goes (anywhere else, it goes back where it was).
-    if ((from == MCPlace::Force && onto == MCPlace::Spare) || (from == MCPlace::Spare && onto == MCPlace::Force))
+    if ((from == MCPlace::Force && inventory) || (from == MCPlace::Stored && onto == MCPlace::Force))
     {
         MoveUnit(*thing);
     }
-    else if (from == MCPlace::Force && onto == MCPlace::Store && Purchasing())
-    {
-        // Only a spare sells: the force's card says why.
-        PlayLogSound(RefusedSound);
-        _WhyThing = thing;
-        _WhyText = std::string(InForceWhy);
-        _WhyUntil = RmlNow() + WhySeconds;
-    }
-    else if ((from == MCPlace::Spare || (from == MCPlace::Stock && Purchasing())) && onto == MCPlace::Store)
+    else if ((from == MCPlace::Stored || from == MCPlace::Stock) && Purchasing() && onto == MCPlace::Store)
     {
         OfferDeal(*thing);
     }
-    else if (from == MCPlace::Store && (left || onto == MCPlace::Stock))
+    else if (from == MCPlace::Store && inventory)
     {
         OfferDeal(*thing);
     }
@@ -1708,7 +1778,7 @@ void MCLogisticsTabs::Drop(MCPlace from, size_t index, std::optional<MCPlace> on
     {
         Send(from, index);
     }
-    else if ((from == MCPlace::Fitted || from == MCPlace::Pilot) && onto == MCPlace::Stock)
+    else if ((from == MCPlace::Fitted || from == MCPlace::Pilot) && inventory)
     {
         Send(from, index);
     }
@@ -1734,13 +1804,33 @@ void MCLogisticsTabs::MoveUnit(const MCThing& thing)
     {
         OutOfForce(*unit);
     }
-    else
+    else if (IntoForce(*unit))
     {
-        IntoForce(*unit);
+        // Into the lab, its knobs where it arrived, to be worked on.
+        _LabPart = unit;
+
+        if (unit->PartType == 1)
+        {
+            _Knobs = MCMechBay::KnobsOf(static_cast<const MCLogMech&>(*unit));
+        }
     }
 }
 
-void MCLogisticsTabs::IntoForce(MCLogPart& unit)
+void MCLogisticsTabs::IntoTheForce()
+{
+    const std::shared_ptr<MCLogPart> lab = _LabPart.lock();
+
+    if (lab == nullptr || !_LabStored)
+    {
+        return;
+    }
+
+    MoveUnit(MCThing{.Unit = lab, .Place = MCPlace::Stored});
+    _Fingerprint = 0;
+    Fill();
+}
+
+bool MCLogisticsTabs::IntoForce(MCLogPart& unit)
 {
     PlayLogSound(PickedSound);
     const bool joined = unit.PartType == 1 ? MCMechBay::JoinForce(static_cast<MCLogMech&>(unit))
@@ -1764,6 +1854,8 @@ void MCLogisticsTabs::IntoForce(MCLogPart& unit)
     {
         GlobalLog()->NumberVehicles();
     }
+
+    return joined;
 }
 
 void MCLogisticsTabs::OutOfForce(MCLogPart& unit)
@@ -1863,8 +1955,15 @@ void MCLogisticsTabs::BoardPilot(MCLogWarrior& warrior)
         return;
     }
 
-    // 1998's pick-up assigns the MechWarrior; its drop on the 'Mech boards it.
+    // 1998's pick-up assigns the MechWarrior; its drop on the 'Mech boards it. One aboard goes back to the INVENTORY
+    // first (1998 took only an empty 'Mech: its pilot was dragged off before).
     PlayLogSound(PickedSound);
+
+    if (mech->PilotIndex >= 0 && MCMechBay::PilotOut(*mech) != nullptr)
+    {
+        GlobalLog()->NumberPilots();
+    }
+
     MCMechBay::Assign(warrior);
     MCMechBay::Board(warrior, *mech, mech->SlotIndex);
     GlobalLog()->NumberPilots();
@@ -2083,13 +2182,19 @@ void MCLogisticsTabs::OfferDeal(const MCThing& thing)
     }
     else if (const std::shared_ptr<MCLogPart> unit = thing.Unit.lock(); unit != nullptr)
     {
-        // Only a spare sells, and none the mission needs (1998 never offered its sale).
-        if (thing.Place != MCPlace::Spare || unit->Required)
+        // Only a stored unit sells (a force's isn't on PURCHASING), and none the mission needs: 1998 never offered
+        // its sale, and its card says why.
+        if (thing.Place != MCPlace::Stored || unit->Required)
         {
             PlayLogSound(RefusedSound);
-            _WhyThing = thing;
-            _WhyText = std::string(thing.Place != MCPlace::Spare ? InForceWhy : RequiredWhy);
-            _WhyUntil = RmlNow() + WhySeconds;
+
+            if (unit->Required)
+            {
+                _WhyThing = thing;
+                _WhyText = std::string(RequiredWhy);
+                _WhyUntil = RmlNow() + WhySeconds;
+            }
+
             return;
         }
 

@@ -1,13 +1,14 @@
 #pragma once
 
 // Port-only (SPEC-menus.md's stage 8, step 2): PURCHASING and the 'MECH BAY remade, two tabs of the campaign's screen
-// (logistics/MCCampaignMenu, ui/campaign.rml), which binds their values into its model and hands them its mouse, keys and
-// frames while one shows. The left column is the force, then SPARE (1998's inventory: the mechs and vehicles outside the
-// force); PURCHASING's store beside it (MECHS, MECHWARRIORS, COMPONENTS, VEHICLES: with MECHWARRIORS or COMPONENTS the
-// left column is the INVENTORY's) with the details of what is under the pointer, else what was picked, and its BUY or
-// SELL; the buy (or sell) window is 1998's purchase dialog (each, how many, the total, the RP left). The 'MECH BAY's lab
-// shows the unit picked: its outline coloured for damage, the repairs as sliders moving point by point as 1998's knobs,
-// its MechWarrior, its payload, REPAIR ALL and REFIT ALL; the INVENTORY beside it (COMPONENTS | MECHWARRIORS). Every
+// (logistics/MCCampaignMenu, ui/campaign.rml), which binds their values into its model and hands them its mouse, keys
+// and frames while one shows. On both the left column is the INVENTORY (1998's word: what the player owns outside the
+// force), its switch MECHS (the mechs and vehicles stored), MECHWARRIORS (those no mech carries) and COMPONENTS.
+// PURCHASING: the store beside it (MECHS, MECHWARRIORS, COMPONENTS, VEHICLES, the INVENTORY's switch following it), the
+// details of what is under the pointer, else what was picked, and its BUY or SELL; the buy (or sell) window is 1998's
+// purchase dialog (each, how many, the total, the RP left). The 'MECH BAY: the force beside it ("11 / 15"), and the
+// lab, the unit picked: its outline coloured for damage, the repairs as sliders moving point by point as 1998's knobs,
+// its MechWarrior (or its empty seat), its payload, REPAIR ALL and REFIT ALL (a stored unit's INTO THE FORCE). Every
 // rule is 1998's: logistics/MCStore and logistics/MCMechBay, which the 1998 screens' blocks call too; the messages are
 // 1998's (shown in the remade dialog). The right button (and ENTER on the keys' focus) does each card's one move; the
 // left button picks, or drags a card to where it goes.
@@ -35,7 +36,9 @@ struct MCLogInventoryItem;
 class MCLogisticsTabs
 {
 public:
-    /// <summary>PURCHASING's switch: what the store (and with MECHWARRIORS or COMPONENTS, the left column) lists.</summary>
+    /// <summary>
+    /// PURCHASING's switch: what the store lists (and the INVENTORY with it: VEHICLES shows its MECHS).
+    /// </summary>
     enum class MCKind : uint8_t
     {
         Mechs,
@@ -44,18 +47,25 @@ public:
         Vehicles,
     };
 
-    /// <summary>The 'MECH BAY's INVENTORY switch.</summary>
+    /// <summary>
+    /// The INVENTORY's switch: the mechs and vehicles stored (outside the force), the MechWarriors no mech carries, the
+    /// spare parts. The 'MECH BAY's own; PURCHASING's follows the store's kind.
+    /// </summary>
     enum class MCStock : uint8_t
     {
-        Components,
+        Mechs,
         MechWarriors,
+        Components,
     };
 
-    /// <summary>Where a card is: the force, SPARE, the store, the INVENTORY, the lab's fitted parts and MechWarrior.</summary>
+    /// <summary>
+    /// Where a card is: the force, the INVENTORY's MECHS (a unit stored outside the force), the store, the INVENTORY's
+    /// MECHWARRIORS or COMPONENTS (its goods), the lab's fitted parts and MechWarrior.
+    /// </summary>
     enum class MCPlace : uint8_t
     {
         Force,
-        Spare,
+        Stored,
         Store,
         Stock,
         Fitted,
@@ -68,6 +78,9 @@ public:
         std::string Picture{MCCampaignScreen::NoPicture};
         std::string Who;
         std::string What;
+        /// <summary>A MechWarrior in the INVENTORY: their health (pips kept, of six) over their portrait.</summary>
+        bool Warrior = false;
+        int Health = 0;
         /// <summary>Its price or count (cream), and the word after it (grey: "2 LEFT", "OWNED").</summary>
         std::string Price;
         std::string Note;
@@ -143,6 +156,8 @@ public:
     void Pick(MCPlace place, size_t index);
     /// <summary>The right button (ENTER) on a card: its one move (buy, sell, in or out of the force, fit, take out).</summary>
     void Send(MCPlace place, size_t index);
+    /// <summary>The lab's INTO THE FORCE: the stored unit it shows joins the force, still picked.</summary>
+    void IntoTheForce();
     /// <summary>A card dragged from <paramref name="from"/> and let go over <paramref name="onto"/>.</summary>
     void Drop(MCPlace from, size_t index, std::optional<MCPlace> onto);
     /// <summary>The details' BUY or SELL.</summary>
@@ -158,9 +173,14 @@ public:
 
     /// <summary>What shows (the tests read it).</summary>
     MCKind Kind() const { return static_cast<MCKind>(_Kind); }
+    /// <summary>What the INVENTORY shows (PURCHASING: its store's kind's).</summary>
     MCStock Stock() const { return static_cast<MCStock>(_StockKind); }
     const std::vector<MCCampaignScreen::MCCard>& ForceCards() const { return _Force; }
-    const std::vector<MCCampaignScreen::MCCard>& SpareCards() const { return _Spare; }
+    /// <summary>The INVENTORY's MECHS: the units stored outside the force.</summary>
+    const std::vector<MCCampaignScreen::MCCard>& StoredCards() const { return _Stored; }
+    /// <summary>The force's count against the most it holds ("11 / 15"), and the INVENTORY's ("3 mechs").</summary>
+    const std::string& ForceCount() const { return _ForceCount; }
+    const std::string& StockCount() const { return _StockCount; }
     const std::vector<MCGood>& StoreGoods() const { return _Store; }
     const std::vector<MCGood>& StockGoods() const { return _StockGoods; }
     const std::vector<MCFitRow>& FittedRows() const { return _Fits; }
@@ -172,6 +192,9 @@ public:
     int DealCountShown() const { return _Deal.has_value() ? _Deal->Count : 0; }
     const std::string& DealTotal() const { return _DealTotal; }
     const std::string& LabName() const { return _LabName; }
+    const std::string& LabWhat() const { return _LabWhat; }
+    /// <summary>Whether the lab shows a stored unit (INTO THE FORCE at its foot).</summary>
+    bool LabStored() const { return _LabStored; }
     const MCRepair& ArmorRepair() const { return _Armor; }
     const MCRepair& StructureRepair() const { return _Structure; }
     const MCRepair& EngineRepair() const { return _Engine; }
@@ -179,13 +202,13 @@ public:
     std::shared_ptr<MCLogPart> LabUnit() const { return _LabPart.lock(); }
     /// <summary>The store mech's variant shown (the details' switch).</summary>
     int Variant() const { return _Variant; }
-    /// <summary>The unit a card on the left stands for (<paramref name="place"/> Force or Spare), if any.</summary>
+    /// <summary>The unit a card stands for (<paramref name="place"/> Force or Stored), if any.</summary>
     std::shared_ptr<MCLogPart> UnitAt(MCPlace place, size_t index) const;
     /// <summary>Whether the lab's 'Mech can be repaired here (a force 'Mech's, outside a match): sliders, not meters.</summary>
     bool Repairs() const { return _Repairs; }
 
 private:
-    /// <summary>What a card stands for: a unit, a store's good or a spare (one is set).</summary>
+    /// <summary>What a card stands for: a unit, a store's good, a spare part or a MechWarrior (one is set).</summary>
     struct MCThing
     {
         std::weak_ptr<MCLogPart> Unit;
@@ -225,6 +248,10 @@ private:
     };
 
     bool Purchasing() const { return _Screen.Tab() == MCCampaignScreen::MCTab::Purchasing; }
+    /// <summary>
+    /// What the INVENTORY shows: PURCHASING's by its store's kind, the 'MECH BAY's by its own switch.
+    /// </summary>
+    MCStock Shelf() const;
     /// <summary>The lists made again from the logistics data; the details and the lab with them.</summary>
     void Fill();
     void FillUnits();
@@ -241,23 +268,30 @@ private:
     std::optional<MCThing> ThingAt(MCPlace place, size_t index) const;
     /// <summary>The card the element is in (its id: force3, store0), if any.</summary>
     static std::optional<std::pair<MCPlace, size_t>> CardOf(MCOptionalRef<const Rml::Element> element);
-    /// <summary>The column a point (pixels) is over: the force's (Force), SPARE's, the store, the INVENTORY, the lab.</summary>
+    /// <summary>
+    /// The column a point (pixels) is over: the force, the INVENTORY (Stored with its MECHS shown, else Stock), the
+    /// store, the lab.
+    /// </summary>
     std::optional<MCPlace> ColumnAt(float x, float y) const;
     /// <summary>The deal window opened for <paramref name="thing"/>: a buy from the store, else a sale.</summary>
     void OfferDeal(const MCThing& thing);
     /// <summary>
-    /// A force card's unit out of the force, a SPARE card's into it: the 'MECH BAY's right button, either tab's drag.
+    /// A force card's unit out of the force to the INVENTORY, a stored one into it (and picked): the 'MECH BAY's right
+    /// button and drags.
     /// </summary>
     void MoveUnit(const MCThing& thing);
     /// <summary>A unit in or out of the force (1998's drag between the force and the inventory).</summary>
-    void IntoForce(MCLogPart& unit);
+    /// <returns>Whether it joined (else the force is full, said as 1998's).</returns>
+    bool IntoForce(MCLogPart& unit);
     void OutOfForce(MCLogPart& unit);
     /// <summary>A part fitted into the lab's mech, a part taken out to the spares, a MechWarrior boarding or leaving.</summary>
     void FitPart(MCLogInventoryItem& part);
     void TakeOutPart(size_t fitted);
     void BoardPilot(MCLogWarrior& warrior);
     void PilotLeaves();
-    /// <summary>The lab's mech when it is one the player can work on (a force mech, outside a match's spares).</summary>
+    /// <summary>
+    /// The lab's mech when it is one the player can work on (a force mech, not one stored in the INVENTORY).
+    /// </summary>
     std::shared_ptr<MCLogMech> WorkedMech() const;
     void Changed();
 
@@ -272,7 +306,7 @@ private:
     /// <summary>The lab mech's knobs (where it arrived), read as it is picked.</summary>
     MCMechBay::MCKnobs _Knobs;
     std::vector<MCThing> _ForceThings;
-    std::vector<MCThing> _SpareThings;
+    std::vector<MCThing> _StoredThings;
     std::vector<MCThing> _StoreThings;
     std::vector<MCThing> _StockThings;
     std::vector<MCThing> _FitThings;
@@ -283,14 +317,14 @@ private:
 
     // The model's values.
     int _Kind = 0;
+    /// <summary>What the INVENTORY shows (an MCStock), and the 'MECH BAY's choice.</summary>
     int _StockKind = 0;
-    /// <summary>The left column: 0 the force and SPARE, 1 the INVENTORY's MechWarriors, 2 its parts (PURCHASING).</summary>
-    int _Left = 0;
+    MCStock _BayStock = MCStock::Components;
     std::string _ForceCount;
     std::string _StockCount;
     std::string _StoreCount;
     std::vector<MCCampaignScreen::MCCard> _Force;
-    std::vector<MCCampaignScreen::MCCard> _Spare;
+    std::vector<MCCampaignScreen::MCCard> _Stored;
     std::vector<MCGood> _Store;
     std::vector<MCGood> _StockGoods;
     /// <summary>The card a drag holds (one or none), and where it is (pixels).</summary>
@@ -331,11 +365,14 @@ private:
     std::string _LabName;
     std::string _LabWhat;
     std::string _LabPicture{MCCampaignScreen::NoPicture};
+    bool _LabStored = false;
     MCRepair _Armor;
     MCRepair _Structure;
     MCRepair _Engine;
     bool _Repairs = false;
     bool _HasPilot = false;
+    /// <summary>A 'Mech without a MechWarrior: its empty seat where the pilot shows.</summary>
+    bool _Seat = false;
     std::string _PilotName;
     std::string _PilotRank;
     std::string _PilotPicture{MCCampaignScreen::NoPicture};

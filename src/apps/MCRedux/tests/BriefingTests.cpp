@@ -624,10 +624,10 @@ TEST_CASE_ISOLATED("game: a deployed unit sold on another screen leaves its drop
     std::weak_ptr<MCLogMech> sold = DeployFirstReady(screen);
     REQUIRE(!sold.expired());
 
-    // On PURCHASING: the mech dragged out of the force (off its drop slot) into SPARE, and sold there, dragged onto the
-    // store (gone).
+    // On the 'MECH BAY the mech dragged out of the force (off its drop slot) into the INVENTORY; on PURCHASING sold
+    // from there, dragged onto the store (gone).
     MCLogisticsTabs& tabs = screen.Logistics();
-    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
     MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     const auto cardOf =
         [&tabs, &sold](MCLogisticsTabs::MCPlace place, const std::vector<MCCampaignScreen::MCCard>& cards)
@@ -644,15 +644,17 @@ TEST_CASE_ISOLATED("game: a deployed unit sold on another screen leaves its drop
     };
 
     tabs.Drop(MCLogisticsTabs::MCPlace::Force, cardOf(MCLogisticsTabs::MCPlace::Force, tabs.ForceCards()),
-              MCLogisticsTabs::MCPlace::Spare);
+              MCLogisticsTabs::MCPlace::Stored);
     MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     CHECK(MCDeploy::SlotUnit(0) == nullptr);
-    tabs.Drop(MCLogisticsTabs::MCPlace::Spare, cardOf(MCLogisticsTabs::MCPlace::Spare, tabs.SpareCards()),
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    tabs.Drop(MCLogisticsTabs::MCPlace::Stored, cardOf(MCLogisticsTabs::MCPlace::Stored, tabs.StoredCards()),
               MCLogisticsTabs::MCPlace::Store);
     REQUIRE(tabs.DealOpen());
     tabs.DealConfirm();
     MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
-    // Owned no more: in neither the force nor SPARE.
+    // Owned no more: in neither the force nor the INVENTORY.
     const auto owned = [&sold](const MCLogMechList& list) { return std::ranges::contains(list.Mechs, sold.lock()); };
     REQUIRE(!owned(*GlobalLog()->ForceMechList));
     REQUIRE(!owned(*GlobalLog()->MechList));

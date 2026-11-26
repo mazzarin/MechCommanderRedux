@@ -9,8 +9,8 @@
 <!-- Port-only (SPEC-menus.md, stage 8): the campaign's screens under one bar (logistics/MCCampaignMenu): BRIEFING to read
      the mission (the map whole on the left; its title, objectives, fire support, orders and warnings on the right) and
      DEPLOY to choose the force (READY AREA's cards left, two a row; the drop's three groups right, the weight and BEGIN
-     MISSION along its foot); PURCHASING (the force and SPARE, or the INVENTORY, left; the store; the details, BUY or
-     SELL, the buy window) and the 'MECH BAY (the force and SPARE; the lab; the INVENTORY): logistics/MCLogisticsTabs. -->
+     MISSION along its foot); PURCHASING (the INVENTORY left; the store; the details, BUY or SELL, the buy window) and
+     the 'MECH BAY (the INVENTORY; the force; the lab): logistics/MCLogisticsTabs. -->
 <body class="night" data-model="campaign" data-class-mp="mp" data-class-keyscarry="keysCarry">
     <div id="topbar" class="bar">
         <div class="stage16">
@@ -19,7 +19,7 @@
                     <div class="button small" id="mainmenu" data-hint="Main menu">Main menu</div>
                     <div class="tabs row" id="tabs"><div class="tab now">Briefing</div><div class="tab">Purchasing</div><div class="tab">'Mech bay</div><div class="tab">Deploy</div></div>
                     <div class="grow"></div>
-                    <div class="eyebrow money-label" data-if="rp != ''">RP</div><div class="money points" data-if="rp != ''">{{rp}}</div><div class="money">{{clock}}</div>
+                    <div class="status"><div class="eyebrow" data-if="rp != ''">RP</div><div class="money points" data-if="rp != ''">{{rp}}</div><div class="vrule" data-if="rp != ''"></div><div class="money">{{clock}}</div></div>
                 </div>
                 <div class="players" data-if="mp">
                     <div class="team" data-if="ours.size > 0"><div class="team-name">Your team</div><div class="player" data-for="p : ours"><div class="light" data-class-ready="p.ready"></div><span data-attr-class="p.colour">{{p.name}}</span></div></div>
@@ -149,58 +149,36 @@
                 <div class="side-place" data-if="mp"><div class="chat side"><div class="row bottom head"><div class="heading caps grow">Chat</div></div><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game" data-class-team="line.team"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-deploy-side" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-deploy-side" maxlength="255" data-line="" data-value="say"/></div></div></div>
             </div>
             <div class="row cols" id="logistics" data-if="tab == 1 || tab == 2">
-                <div id="units" class="side" data-if="tab == 2 || left == 0">
-                    <div class="scroll-box grow">
-                        <div class="scroller">
-                            <div class="row bottom head">
-                                <div class="heading caps grow">Force</div>
-                                <div class="data grey caps nowrap">{{forceCount}}</div>
-                            </div>
-                            <div class="grid">
-                                <div class="card-cell" data-for="c, i : force"><div class="card unit" data-attr-id="'force' + i" data-class-picked="c.picked"
-                                     data-hint="Pick" data-hint-right="Out of the force">
-                                    <div class="pics">
-                                        <div class="gauges" data-visible="c.piloted">
-                                            <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
-                                            <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
-                                        </div>
-                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
-                                    </div>
-                                    <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
-                                </div></div>
-                            </div>
-                            <div class="row bottom head spare-head" id="spare-head" data-if="spare.size > 0">
-                                <div class="data cyan caps grow">Spare</div>
-                            </div>
-                            <div class="grid">
-                                <div class="card-cell" data-for="c, i : spare"><div class="card unit" data-attr-id="'spare' + i" data-class-picked="c.picked"
-                                     data-hint="Pick" data-hint-right="Into the force">
-                                    <div class="pics">
-                                        <div class="gauges" data-visible="c.piloted">
-                                            <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
-                                            <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
-                                        </div>
-                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
-                                    </div>
-                                    <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
-                                </div></div>
-                            </div>
-                        </div>
-                        <div class="fade"></div>
-                    </div>
-                </div>
-                <div id="owned" class="side" data-if="tab == 1 &amp;&amp; left != 0">
+                <div id="inventory" class="side">
                     <div class="row bottom head">
                         <div class="heading caps grow">Inventory</div>
                         <div class="data grey caps nowrap">{{stockCount}}</div>
                     </div>
+                    <div class="kinds"><div class="switch small" id="stock-kinds" data-hint="What the inventory shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div></div></div>
                     <div class="scroll-box grow">
                         <div class="scroller">
-                            <div class="grid">
-                                <div class="card-cell" data-for="g, i : stock"><div class="card good" data-attr-id="'stock' + i" data-class-picked="g.picked" data-class-off="g.off"
-                                     data-hint="Pick" data-hint-right="Sell">
-                                    <div class="pic picture" data-class-part="g.part" data-style-decorator="g.picture"></div>
-                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div></div></div>
+                            <div class="stack" data-if="stockKind == 0">
+                                <div class="card-cell" data-for="c, i : stored"><div class="card unit" data-attr-id="'stored' + i" data-class-picked="c.picked" data-class-pilotless="c.unpiloted"
+                                     data-attr-data-hint="tab == 1 ? 'Drag onto the store' : 'Drag onto the force'" data-attr-data-hint-right="tab == 1 ? 'Sell' : 'Into the force'">
+                                    <div class="pics">
+                                        <div class="gauges" data-visible="c.piloted || c.unpiloted">
+                                            <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
+                                            <div class="health" data-visible="c.piloted"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
+                                        </div>
+                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
+                                    </div>
+                                    <div class="facts"><div class="who" data-class-long="c.long">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
+                                </div></div>
+                            </div>
+                            <div class="stack" data-if="stockKind != 0">
+                                <div class="card-cell" data-for="g, i : stock"><div class="card good" data-attr-id="'stock' + i" data-class-picked="g.picked" data-class-off="g.off" data-class-warrior="g.warrior"
+                                     data-attr-data-hint="tab == 1 ? 'Drag onto the store' : (g.warrior ? 'Drag to board' : 'Drag into the payload')" data-attr-data-hint-right="tab == 1 ? 'Sell' : (g.warrior ? 'Board' : 'Fit')">
+                                    <div class="pics" data-if="g.warrior">
+                                        <div class="gauges"><div class="health"><div class="pip" data-class-lost="g.health &lt; 1"></div><div class="pip" data-class-lost="g.health &lt; 2"></div><div class="pip" data-class-lost="g.health &lt; 3"></div><div class="pip" data-class-lost="g.health &lt; 4"></div><div class="pip" data-class-lost="g.health &lt; 5"></div><div class="pip" data-class-lost="g.health &lt; 6"></div></div></div>
+                                        <div class="pic picture" data-style-decorator="g.picture"></div>
+                                    </div>
+                                    <div class="pic picture" data-if="!g.warrior" data-class-part="g.part" data-style-decorator="g.picture"></div>
+                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == '' &amp;&amp; g.price != ''"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
                                 </div></div>
                             </div>
                         </div>
@@ -210,6 +188,30 @@
                 <div class="gap"></div>
                 <div class="over-band">
                 <div class="row cols">
+                <div id="units" class="side" data-if="tab == 2">
+                    <div class="row bottom head">
+                        <div class="heading caps grow">Force</div>
+                        <div class="data grey caps nowrap">{{forceCount}}</div>
+                    </div>
+                    <div class="scroll-box grow">
+                        <div class="scroller">
+                            <div class="grid">
+                                <div class="card-cell" data-for="c, i : force"><div class="card unit" data-attr-id="'force' + i" data-class-picked="c.picked" data-class-pilotless="c.unpiloted"
+                                     data-hint="Pick" data-hint-right="Into the inventory">
+                                    <div class="pics">
+                                        <div class="gauges" data-visible="c.piloted || c.unpiloted">
+                                            <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
+                                            <div class="health" data-visible="c.piloted"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
+                                        </div>
+                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
+                                    </div>
+                                    <div class="facts"><div class="who" data-class-long="c.long">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
+                                </div></div>
+                            </div>
+                        </div>
+                        <div class="fade"></div>
+                    </div>
+                </div>
                 <div id="store" class="side" data-if="tab == 1">
                     <div class="row bottom head">
                         <div class="heading caps grow">Store</div>
@@ -229,7 +231,7 @@
                         <div class="fade"></div>
                     </div>
                 </div>
-                <div class="gap" data-if="tab == 1"></div>
+                <div class="gap"></div>
                 <div id="info" data-if="tab == 1">
                     <div class="row bottom head"><div class="heading caps grow">{{infoName}}</div><div class="data grey caps nowrap" data-if="infoWhat != ''">{{infoWhat}}</div></div>
                     <div class="row variant" data-if="variants &gt; 1"><div class="switch small" id="variants" data-hint="Variant"><div class="on" data-class-off="variantOff0">Armor</div><div data-class-off="variantOff1">Weapons</div><div data-class-off="variantOff2">Jump jets</div></div></div>
@@ -272,6 +274,7 @@
                                 <div class="name"><div class="text caps pilot-name">{{pilotName}}</div><div class="data grey caps">{{pilotRank}}</div></div>
                                 <div class="skills"><div class="skill" data-for="s : skills"><div class="repair-line"><div class="label">{{s.label}}</div><div class="grow"></div><div>{{s.value}}</div></div><div class="meter"><div class="meter-fill" data-style-width="s.value + '%'"></div></div></div></div>
                             </div>
+                            <div class="pilot seat-row" id="seat" data-if="seat"><div class="seat"></div><div class="name"><div class="data grey caps">No pilot</div></div></div>
                         </div>
                         <div class="payload" data-if="labKind != 2">
                             <div class="row bottom payload-head"><div class="eyebrow grow">Payload</div><div class="data caps nowrap"><span class="cream">{{payloadNow}}</span><span class="grey"> {{payloadOf}}</span></div></div>
@@ -281,24 +284,7 @@
                         </div>
                     </div>
                     <div class="grow"></div>
-                    <div class="lab-foot" data-if="repairs"><div class="grow"></div><div class="button" id="repair-all" data-class-dark="!canRepairAll" data-hint="Repair all">{{repairAllWord}}</div><div class="button" id="refit-all" data-class-dark="!canRefit" data-hint="Refit all">Refit all</div></div>
-                </div>
-                <div class="gap" data-if="tab == 2"></div>
-                <div id="inventory" class="side" data-if="tab == 2">
-                    <div class="row bottom head"><div class="heading caps grow">Inventory</div></div>
-                    <div class="kinds"><div class="switch small" id="stock-kinds" data-hint="What the inventory shows"><div class="on">Components</div><div>MechWarriors</div></div></div>
-                    <div class="scroll-box grow">
-                        <div class="scroller">
-                            <div class="stack">
-                                <div class="card-cell" data-for="g, i : stock"><div class="card good" data-attr-id="'stock' + i" data-class-picked="g.picked" data-class-off="g.off"
-                                     data-hint="Drag onto the 'Mech" data-attr-data-hint-right="stockKind == 0 ? 'Fit' : 'Board'">
-                                    <div class="pic picture" data-class-part="g.part" data-style-decorator="g.picture"></div>
-                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == ''"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
-                                </div></div>
-                            </div>
-                        </div>
-                        <div class="fade"></div>
-                    </div>
+                    <div class="lab-foot" data-if="repairs || labStored"><div class="grow"></div><div class="button" id="repair-all" data-if="repairs" data-class-dark="!canRepairAll" data-hint="Repair all">{{repairAllWord}}</div><div class="button" id="refit-all" data-if="repairs" data-class-dark="!canRefit" data-hint="Refit all">Refit all</div><div class="button" id="into-force" data-if="labStored" data-hint="Into the force">Into the force</div></div>
                 </div>
                 </div>
                 <div class="chat band" data-if="mp"><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game" data-class-team="line.team"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-logistics" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-logistics" maxlength="255" data-line="" data-value="say"/></div></div>

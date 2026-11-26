@@ -371,16 +371,16 @@ TEST_CASE_ISOLATED("game: the deal window counts up to what the resource points 
         OpenDeal(tabs, MCLogisticsTabs::MCPlace::Store, 0);
         DealKey(SDL_SCANCODE_RETURN);
         const std::shared_ptr<MCLogMech> bought = GlobalLog()->MechList->Mechs.back();
-        size_t spareCard = 0;
+        size_t storedCard = 0;
 
-        while (spareCard < tabs.SpareCards().size() &&
-               tabs.UnitAt(MCLogisticsTabs::MCPlace::Spare, spareCard) != bought)
+        while (storedCard < tabs.StoredCards().size() &&
+               tabs.UnitAt(MCLogisticsTabs::MCPlace::Stored, storedCard) != bought)
         {
-            spareCard++;
+            storedCard++;
         }
 
-        REQUIRE(spareCard < tabs.SpareCards().size());
-        tabs.Drop(MCLogisticsTabs::MCPlace::Spare, spareCard, MCLogisticsTabs::MCPlace::Store);
+        REQUIRE(storedCard < tabs.StoredCards().size());
+        tabs.Drop(MCLogisticsTabs::MCPlace::Stored, storedCard, MCLogisticsTabs::MCPlace::Store);
         MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
         REQUIRE(tabs.DealOpen());
         CHECK_EQ(tabs.DealTitle(), std::string("Sell"));

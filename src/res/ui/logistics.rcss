@@ -282,3 +282,81 @@
 /* An owned 'Mech's damaged parts in PURCHASING's payload (the user's, 26 Nov): DAMAGED in red at the row's right, as
    the 'MECH BAY's rows. */
 #logistics .kit-row .state { float: right; font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #f26b55; }
+
+/* ---- The user's picks, 26 Nov (menu-overhaul/26nov-mocks, the A's) ---- */
+
+/* Three near-equal columns (question 1, A): the INVENTORY 264, the force (or the store) 264, the details the rest
+   (261) at 16:9; the force's and the store's cards two a row at 126 units, and the INVENTORY's MECHS too, as the
+   force's. A good's padding and gap tighter; a 'Mech's name without a pilot (a vehicle's) at the details' size. */
+#logistics #inventory { flex-basis: 264dp; }
+#logistics #units, #logistics #store { flex-basis: 264dp; }
+#logistics .grid > .card-cell { flex-basis: 126dp; }
+#logistics .card.good { padding: 4dp 3dp; gap: 4dp; }
+#logistics .card.good .what { letter-spacing: 0; }
+#logistics .grid .card.pilotless .who, #logistics .grid .card.vehicle .who { font-size: 9.51dp; letter-spacing: 0; }
+#logistics .grid .card.unit .who.long.longer { font-size: 8.75dp; }
+/* 21:9: 284, 426 (three cards a row at 136) and the rest (373); a name without a pilot at the cards' size again. */
+@media (min-aspect-ratio: 2/1) {
+    #logistics #inventory { flex-basis: 284dp; }
+    #logistics #units, #logistics #store { flex-basis: 426dp; }
+    #logistics .grid > .card-cell { flex-basis: 136dp; }
+    #logistics .card.good { padding: 4dp 5dp; gap: 6dp; }
+    #logistics .grid .card.pilotless .who, #logistics .grid .card.vehicle .who { font-size: 11.63dp; letter-spacing: 0.01em; }
+    #logistics .grid .card.pilotless .who.long, #logistics .grid .card.vehicle .who.long { font-size: 9.51dp; letter-spacing: 0; }
+}
+/* 16:10: 220, 268 (two cards a row at 127) and the rest (221); the INVENTORY's MECHS one a row. */
+@media (max-aspect-ratio: 17/10) {
+    #logistics #inventory { flex-basis: 220dp; }
+    #logistics #units, #logistics #store { flex-basis: 268dp; }
+    #logistics .grid > .card-cell { flex-basis: 127dp; }
+    #logistics #inventory .grid.mechs > .card-cell { flex-basis: 100%; }
+}
+/* Port-only, 4:3 and 5:4: the INVENTORY 16:10's 220, so its switch keeps one row with Z and C; the force (or the
+   store) one card a row (148); the details the rest (216, 16:10's arrangement). */
+@media (max-aspect-ratio: 3/2) {
+    #logistics #inventory { flex-basis: 220dp; }
+    #logistics #units, #logistics #store { flex-basis: 148dp; }
+    #logistics .grid > .card-cell { flex-basis: 136dp; }
+    #logistics #inventory > .head > .data { display: block; }
+}
+
+/* A list's switch with Z and C at its ends (the user's keys for it): the switch spans the column between them, its
+   segments sharing it, so a narrower column never wraps it; the store's four kinds set closer. */
+#logistics .kinds { align-items: center; }
+#logistics .kinds > .key { flex: 0 0 auto; height: 16dp; margin-right: 0dp; padding: 0dp 4dp; font-size: 9.51dp; line-height: 14dp; }
+#logistics .kinds > .key.first { margin-right: 4dp; }
+#logistics .kinds > .key.last { margin-left: 4dp; }
+#logistics .kinds > .switch { flex: 1 1 auto; }
+#logistics .kinds > .switch > div, #logistics #inventory .kinds > .switch.small > div { flex: 1 1 auto; text-align: center; padding: 0dp 4dp; }
+#logistics .kinds > .switch.many > div { padding: 0dp 2dp; letter-spacing: 0.02em; }
+/* 16:10, 4:3: the INVENTORY's switch kept on one row, its words set closer. */
+@media (max-aspect-ratio: 17/10) {
+    #logistics #inventory .switch { flex-wrap: nowrap; padding: 0dp; }
+    #logistics #inventory .switch > div, #logistics #inventory .kinds > .switch.small > div { padding: 0dp 2dp; letter-spacing: 0.02em; margin-bottom: 0dp; }
+    #logistics #inventory .switch > div:last-child { margin-right: 0dp; }
+}
+
+/* The details narrower: the pilot's face beside the callsign and rank on one line, the four skills two a row under
+   them (one row at 21:9, as before). */
+#logistics .pilot > .pbody { flex: 1 1 0; margin-left: 10dp; display: flex; flex-direction: column; }
+#logistics .pilot > .pbody > * { flex: 0 0 auto; }
+#logistics .pilot .pname { display: flex; flex-direction: row; align-items: flex-end; margin-bottom: 4dp; white-space: nowrap; }
+#logistics .pilot .pname > * { flex: 0 0 auto; }
+#logistics .pilot .pname > .data { margin-left: 8dp; line-height: 14dp; }
+#logistics .pilot .skills { gap: 4dp 12dp; }
+#logistics .pilot .skill { flex: 1 1 40%; }
+@media (min-aspect-ratio: 2/1) {
+    #logistics .pilot .skill { flex: 1 1 0; }
+}
+/* A fitted part's row: its range in Fine, its tons narrower, so its name keeps its room (ST SR Missile Pack, the
+   longest); a damaged part says DAMAGED in red in its range's place. */
+#logistics .fit-row .range { width: 50dp; font-size: 8.75dp; letter-spacing: 0.03em; }
+#logistics .fit-row .range.damaged { color: #f26b55; }
+#logistics .fit-row .t { width: 44dp; }
+#logistics .fit-row > .grow { padding-right: 3dp; }
+/* The foot's buttons tighter; where they don't fit one row (16:10) they wrap onto two, at the right. */
+#logistics .lab-foot { flex-wrap: wrap; justify-content: flex-end; gap: 6dp 8dp; }
+#logistics .lab-foot .button { padding: 0dp 10dp; }
+/* The details' description keeps the pixel at its right a wrapped line may take (RmlUi rounds its room up), as the
+   room's map text. */
+#logistics .desc { padding-right: 1px; }

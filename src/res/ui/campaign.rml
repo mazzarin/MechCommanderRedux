@@ -154,10 +154,10 @@
                         <div class="heading caps grow">Inventory</div>
                         <div class="data grey caps nowrap">{{stockCount}}</div>
                     </div>
-                    <div class="kinds"><div class="switch small" id="stock-kinds" data-class-subtabs="tab == 2" data-hint="What the inventory shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div></div></div>
+                    <div class="kinds"><div class="key first" data-if="tab == 2">Z</div><div class="switch small" id="stock-kinds" data-class-subtabs="tab == 2" data-hint="What the inventory shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div></div><div class="key last" data-if="tab == 2">C</div></div>
                     <div class="scroll-box grow">
                         <div class="scroller">
-                            <div class="stack" data-if="stockKind == 0">
+                            <div class="grid mechs" data-if="stockKind == 0">
                                 <div class="card-cell" data-for="c, i : stored"><div class="card unit" data-attr-id="'stored' + i" data-class-picked="c.picked" data-class-pilotless="c.unpiloted" data-class-vehicle="c.vehicle"
                                      data-attr-data-hint="tab == 1 ? 'Drag onto the store' : 'Drag onto the force'" data-attr-data-hint-right="tab == 1 ? 'Sell' : 'Into the force'">
                                     <div class="pics">
@@ -218,7 +218,7 @@
                         <div class="heading caps grow">Store</div>
                         <div class="data grey caps nowrap">{{storeCount}}</div>
                     </div>
-                    <div class="kinds"><div class="switch small subtabs" id="kinds" data-hint="What the store shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div><div>Vehicles</div></div></div>
+                    <div class="kinds"><div class="key first">Z</div><div class="switch small subtabs many" id="kinds" data-hint="What the store shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div><div>Vehicles</div></div><div class="key last">C</div></div>
                     <div class="scroll-box grow">
                         <div class="scroller">
                             <div class="grid">
@@ -272,15 +272,17 @@
                             </div>
                             <div class="pilot" id="pilot" data-if="hasPilot" data-hint="Drag the MechWarrior" data-hint-right="Out of the 'Mech">
                                 <div class="pics"><div class="health"><div class="pip" data-class-lost="pilotHealth &lt; 1"></div><div class="pip" data-class-lost="pilotHealth &lt; 2"></div><div class="pip" data-class-lost="pilotHealth &lt; 3"></div><div class="pip" data-class-lost="pilotHealth &lt; 4"></div><div class="pip" data-class-lost="pilotHealth &lt; 5"></div><div class="pip" data-class-lost="pilotHealth &lt; 6"></div></div><div class="portrait picture" data-style-decorator="pilotPicture"></div></div>
-                                <div class="name"><div class="text caps pilot-name">{{pilotName}}</div><div class="data grey caps">{{pilotRank}}</div></div>
-                                <div class="skills"><div class="skill" data-for="s : skills"><div class="repair-line"><div class="label">{{s.label}}</div><div class="grow"></div><div>{{s.value}}</div></div><div class="meter"><div class="meter-fill" data-style-width="s.value + '%'"></div></div></div></div>
+                                <div class="pbody">
+                                    <div class="pname"><div class="text caps pilot-name">{{pilotName}}</div><div class="data grey caps">{{pilotRank}}</div></div>
+                                    <div class="skills"><div class="skill" data-for="s : skills"><div class="repair-line"><div class="label">{{s.label}}</div><div class="grow"></div><div>{{s.value}}</div></div><div class="meter"><div class="meter-fill" data-style-width="s.value + '%'"></div></div></div></div>
+                                </div>
                             </div>
                             <div class="pilot seat-row" id="seat" data-if="seat"><div class="seat"></div><div class="name"><div class="data grey caps">No pilot</div></div></div>
                         </div>
                         <div class="payload" data-if="labKind != 2">
                             <div class="row bottom payload-head"><div class="eyebrow grow">Payload</div><div class="data caps nowrap"><span class="cream">{{payloadNow}}</span><span class="grey"> {{payloadOf}}</span></div></div>
                             <div class="ramp small gauge"><div class="seg" data-for="s : payloadRamp" data-style-height="s.height" data-class-on="s.state == 1" data-class-more="s.state == 2" data-class-over="s.state == 3"></div></div>
-                            <div class="fit-cell" data-for="f, i : fits"><div class="fit-row" data-attr-id="'fit' + i" data-hint="Pick" data-hint-right="Take out"><div class="range">{{f.range}}</div><div class="grow">{{f.name}}</div><div class="t">{{f.tons}}</div><div class="state">{{f.state}}</div></div></div>
+                            <div class="fit-cell" data-for="f, i : fits"><div class="fit-row" data-attr-id="'fit' + i" data-hint="Pick" data-hint-right="Take out"><div class="range" data-class-damaged="f.state != ''">{{f.state != '' ? f.state : f.range}}</div><div class="grow">{{f.name}}</div><div class="t">{{f.tons}}</div></div></div>
                             <div class="fit-row open" data-if="labKind == 1"><div class="range"></div><div class="grow free">{{free}}</div></div>
                         </div>
                     </div>

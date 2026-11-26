@@ -130,9 +130,7 @@ namespace
     /// <summary>A 'Mech without a MechWarrior, under its name; a unit the INVENTORY stores, before its tons.</summary>
     constexpr std::string_view NoPilotWord = "No pilot";
     constexpr std::string_view StoredWord = "Stored";
-    /// <summary>The hint line's keys for the list's switch and the tabs.</summary>
-    constexpr std::string_view ListKeys = "Z C";
-    constexpr std::string_view ListKeysDo = "Change list";
+    /// <summary>The hint line's keys for the tabs (Z and C are drawn at the ends of the list's switch they step).</summary>
     constexpr std::string_view TabKeys = "Q E";
     constexpr std::string_view TabKeysDo = "Change tab";
     /// <summary>The force's count against the most it holds; the INVENTORY's.</summary>
@@ -504,16 +502,15 @@ std::vector<MCRmlKeyHint> MCLogisticsTabs::Keys() const
         return {{"← →", "How many"}, {"Enter", _DealTitle}, {"Esc", "Cancel"}};
     }
 
-    // Z and C step the list's switch (the store's kinds, the 'MECH BAY's INVENTORY), as Q and E the tabs.
-    const MCRmlKeyHint list{std::string(ListKeys), std::string(ListKeysDo)};
+    // Z and C step the list's switch (the store's kinds, the 'MECH BAY's INVENTORY): their caps stand at its ends.
     const MCRmlKeyHint tabs{std::string(TabKeys), std::string(TabKeysDo)};
 
     if (Purchasing())
     {
-        return {{"Enter", "Buy or sell"}, {"Space", "Pick"}, list, tabs};
+        return {{"Enter", "Buy or sell"}, {"Space", "Pick"}, tabs};
     }
 
-    return {{"Enter", "Fit, board, or in and out of the force"}, {"Space", "Pick"}, list, tabs};
+    return {{"Enter", "Fit, board, or in and out of the force"}, {"Space", "Pick"}, tabs};
 }
 
 void MCLogisticsTabs::Changed()

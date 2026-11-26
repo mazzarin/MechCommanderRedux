@@ -8,6 +8,7 @@
 #include "main/MCLogMechList.h"
 #include "main/MCLogVehicle.h"
 #include "main/MCLogVehicleList.h"
+#include "main/MCLogWarrior.h"
 #include "main/MCLogWarriorList.h"
 #include "main/MCLogistics.h"
 #include "mission/MCMission.h"
@@ -38,6 +39,54 @@ namespace
 
     uint64_t TheRevision = 0;
     bool TheLock = false;
+
+    /// <summary>
+    /// A unit of the drop kept for a loss's RETRY (MCDeploy::Keep), by what the mission's start file gives back, its
+    /// place in the force's lists aside (a load puts each unit it reads at its list's front): a 'Mech by its name and its
+    /// pilot's (a pilot is in one 'Mech), a vehicle by its name, armour and structure (two alike are the same to the drop).
+    /// </summary>
+    struct MCKeptUnit
+    {
+        bool Mech = false;
+        std::string Key;
+    };
+
+    /// <summary>The drop kept for RETRY: its mission, and each slot's unit.</summary>
+    struct MCKeptDrop
+    {
+        int32_t Mission = -1;
+        std::array<std::optional<MCKeptUnit>, MCDeploy::Slots> Slots{};
+    };
+
+    std::optional<MCKeptDrop> TheKeptDrop;
+
+    std::string MechKey(const MCLogistics& logistics, const MCLogMech& mech)
+    {
+        std::shared_ptr<MCLogWarrior> pilot;
+        logistics.AssignedWarriorList->GetWarriorInfo(mech.PilotIndex, pilot);
+        return pilot != nullptr ? std::format("{}|{}|{}", mech.FileName, pilot->Callsign, pilot->Name) : mech.FileName;
+    }
+
+    std::string VehicleKey(const MCLogVehicle& vehicle)
+    {
+        std::string key = vehicle.FileName;
+
+        for (size_t at = 0; at < MCLogVehicle::NumLocations; at++)
+        {
+            key += std::format("|{},{}", vehicle.CurArmorPoints[at], vehicle.CurInternalStructure[at]);
+        }
+
+        return key;
+    }
+
+    /// <summary>The first of <paramref name="parts"/> not in the drop whose key (<paramref name="keyOf"/>) is <paramref name="key"/>.</summary>
+    template <typename Part, typename KeyOf>
+    std::shared_ptr<Part> Waiting(const std::vector<std::shared_ptr<Part>>& parts, const std::string& key, KeyOf keyOf)
+    {
+        const auto found = std::ranges::find_if(parts, [&](const std::shared_ptr<Part>& part)
+                                                { return !part->Deployed && keyOf(*part) == key; });
+        return found != parts.end() ? *found : nullptr;
+    }
 
     MCLogistics& Logistics()
     {
@@ -615,4 +664,91 @@ auto MCDeploy::Revision() -> uint64_t
 auto MCDeploy::Changed() -> void
 {
     TheRevision++;
+}
+
+auto MCDeploy::Keep(int32_t mission) -> void
+{
+    const MCLogistics& logistics = Logistics();
+    MCKeptDrop kept{.Mission = mission};
+
+    for (size_t slot = 0; slot < Slots; slot++)
+    {
+        const MCLogistics::DeploySlot& deploy = DeploySlotOf(slot);
+
+        if (std::shared_ptr<MCLogMech> mech;
+            deploy.Unit >= 0 && logistics.ForceMechList->GetMechInfo(deploy.Unit, mech) == 0)
+        {
+            kept.Slots[slot] = MCKeptUnit{.Mech = true, .Key = MechKey(logistics, *mech)};
+        }
+        else if (std::shared_ptr<MCLogVehicle> vehicle;
+                 deploy.Unit < 0 && deploy.Vehicle >= 0 &&
+                 logistics.ForceVehicleList->GetVehicleInfo(deploy.Vehicle, vehicle) == 0)
+        {
+            kept.Slots[slot] = MCKeptUnit{.Mech = false, .Key = VehicleKey(*vehicle)};
+        }
+    }
+
+    TheKeptDrop = kept;
+}
+
+auto MCDeploy::Kept(int32_t mission) -> bool
+{
+    return TheKeptDrop.has_value() && TheKeptDrop->Mission == mission;
+}
+
+auto MCDeploy::PutBackKept() -> bool
+{
+    if (!TheKeptDrop.has_value())
+    {
+        return false;
+    }
+
+    MCLogistics& logistics = Logistics();
+    // The drop's tons from its slots (none, as the load left them).
+    CountTons();
+
+    for (size_t slot = 0; slot < Slots; slot++)
+    {
+        const std::optional<MCKeptUnit>& kept = TheKeptDrop->Slots[slot];
+
+        if (!kept.has_value())
+        {
+            continue;
+        }
+
+        const std::shared_ptr<MCLogPart> part =
+            kept->Mech ? std::shared_ptr<MCLogPart>(Waiting(logistics.ForceMechList->Mechs, kept->Key,
+                                                            [&logistics](const MCLogMech& mech)
+                                                            { return MechKey(logistics, mech); }))
+                       : Waiting(logistics.ForceVehicleList->Vehicles, kept->Key, VehicleKey);
+        const auto notBack = [&kept, slot](const char* why)
+        {
+            SDL_Log("MCDeploy: mission %d's drop not put back: slot %zu's unit (%s) %s", TheKeptDrop->Mission, slot,
+                    kept->Key.c_str(), why);
+            return false;
+        };
+
+        if (part == nullptr)
+        {
+            return notBack("isn't in the force");
+        }
+
+        if (!Open(slot))
+        {
+            return notBack("has its slot shut");
+        }
+
+        if (Lift(*part) != MCRefusal::None)
+        {
+            return notBack("can't drop");
+        }
+
+        if (Place(*part, slot) != MCRefusal::None)
+        {
+            Unlift(*part);
+            return notBack("is over the limit");
+        }
+    }
+
+    return true;
 }

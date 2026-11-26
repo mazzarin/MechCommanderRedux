@@ -25,6 +25,7 @@
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCOperationVideo.h"
 #include "logistics/MCPurMechList.h"
+#include "logistics/MCPurVehicleList.h"
 #include "logistics/MCRoomScreen.h"
 #include "logistics/MCSavesMenu.h"
 #include "logistics/MCStore.h"
@@ -38,12 +39,14 @@
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCLogPart.h"
+#include "main/MCLogVehicle.h"
 #include "main/MCLogVehicleList.h"
 #include "main/MCLogWarrior.h"
 #include "main/MCLogWarriorList.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
+#include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "linkup/MCFidpMessage.h"
 #include "linkup/MCFidpPlayer.h"
@@ -1634,6 +1637,240 @@ TEST_CASE_ISOLATED("game: the results' NEXT MISSION and REPLAY MISSION go back t
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > solo missions"));
 }
 
+namespace
+{
+    /// <summary>A part's type: a 'Mech (MCLogPart::PartType).</summary>
+    constexpr int32_t MechPart = 1;
+
+    /// <summary>A 'Mech's name with its pilot's ("Commando · Lt. Ace"), as the campaign has them.</summary>
+    std::string WithPilot(const MCLogistics& logistics, const MCLogMech& mech)
+    {
+        std::shared_ptr<MCLogWarrior> pilot;
+        logistics.AssignedWarriorList->GetWarriorInfo(mech.PilotIndex, pilot);
+        return std::format("{} · {}", mech.FileName, pilot != nullptr ? pilot->Name : std::string("no pilot"));
+    }
+
+    /// <summary>
+    /// The drop as DEPLOY holds it, slot by slot, group by group: each unit's name (a 'Mech's with its pilot's), "-" for
+    /// an empty slot, a unit not marked in the drop said so.
+    /// </summary>
+    std::vector<std::string> DropNow()
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        REQUIRE(logistics != nullptr);
+        std::vector<std::string> drop;
+
+        for (size_t slot = 0; slot < MCDeploy::Slots; slot++)
+        {
+            const std::shared_ptr<MCLogPart> part = MCDeploy::SlotUnit(slot);
+
+            if (part == nullptr)
+            {
+                drop.emplace_back("-");
+                continue;
+            }
+
+            const std::string unit = part->PartType == MechPart
+                                         ? WithPilot(*logistics, static_cast<const MCLogMech&>(*part))
+                                         : part->FileName;
+            drop.push_back(part->Deployed ? unit : unit + " (not in the drop)");
+        }
+
+        return drop;
+    }
+
+    /// <summary>
+    /// What a mission's start puts back: the RP, the force's 'Mechs with their pilots and its vehicles (in no order: a
+    /// load puts each unit it reads at its list's front).
+    /// </summary>
+    std::string CampaignNow()
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        REQUIRE(logistics != nullptr);
+        std::vector<std::string> units;
+
+        for (const std::shared_ptr<MCLogMech>& mech : logistics->ForceMechList->Mechs)
+        {
+            units.push_back(WithPilot(*logistics, *mech));
+        }
+
+        for (const std::shared_ptr<MCLogVehicle>& vehicle : logistics->ForceVehicleList->Vehicles)
+        {
+            units.push_back(vehicle->FileName);
+        }
+
+        std::ranges::sort(units);
+        std::string campaign = std::format("{} RP", ResourcePoints);
+
+        for (const std::string& unit : units)
+        {
+            campaign += "; " + unit;
+        }
+
+        return campaign;
+    }
+
+    /// <summary>
+    /// The campaign saved as it stands, at mission <paramref name="mission"/>, as <paramref name="name"/>, and that save
+    /// loaded from the main menu's LOAD GAME: the mission's briefing.
+    /// </summary>
+    void SaveAtAndLoad(int32_t mission, std::string_view name)
+    {
+        GlobalLog()->CurrentMission = mission;
+        REQUIRE_EQ(MCLogistics::SaveCampaign(name), 0);
+        MCMenuScreens::LeaveCampaign();
+        RunWhileChanging();
+        REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+        RunWhileChanging();
+        REQUIRE(MCSavesMenu::Screen().has_value());
+        MCSavesScreen& load = MCSavesMenu::Screen()->get();
+        const auto saved = std::ranges::find(load.Saves(), std::string(name));
+        REQUIRE(saved != load.Saves().end());
+        load.Pick(static_cast<int>(saved - load.Saves().begin()));
+        load.PressMain();
+        RunWhileChanging();
+        REQUIRE(MCCampaignMenu::Shown());
+        REQUIRE_EQ(GlobalLog()->CurrentMission, mission);
+    }
+
+    /// <summary>The mission playing lost (the player's ABORT MISSION), run until its results are up.</summary>
+    MCResultsScreen& LoseToResults()
+    {
+        ScenarioResult = Lost;
+        Mission()->EndScenarioRequested = -1;
+
+        for (int32_t frame = 0; frame < MostFramesToResults && Mission()->State != MCMissionState::Results; frame++)
+        {
+            MCTestGame::RunFrame(MissionFrame);
+        }
+
+        REQUIRE(Mission()->State == MCMissionState::Results);
+        REQUIRE(MCResultsMenu::Screen().has_value());
+        return MCResultsMenu::Screen()->get();
+    }
+}
+
+/// <summary>
+/// A lost mission's RETRY (the user's, 26 Nov: "a replay button just to quickstart back with the same load out"): beside
+/// REPLAY MISSION, Left from it and Enter. The campaign goes back as REPLAY MISSION puts it (the mission's start: its RP,
+/// its force), the same drop goes back in its slots (the same 'Mechs with the same pilots and the same vehicle, in the
+/// same groups and places, the gaps kept), and the mission loads behind the loading screen with no briefing or tab
+/// showing between. The drop spans the three groups of the campaign's fifth mission, out of order, and its vehicle is the
+/// force's first while the second waits: the load of the mission's start file gives the force back in another order
+/// (each unit it reads at its list's front), so the drop goes back by its units, not their places. Lost again, REPLAY
+/// MISSION: its briefing, the campaign as RETRY put it back, the drop empty, as before.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lost mission's RETRY drops the same force straight back into it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The campaign's fifth mission: its drop opens all three groups (ten slots, 240 tons).
+    constexpr int32_t ThreeGroups = 4;
+    constexpr std::string_view SaveName = "n26bretry";
+    constexpr size_t Vehicles = 2;
+    // READY AREA's three 'Mechs and the force's first vehicle, each into its slot: group 3's second, group 2's first,
+    // group 1's third, group 2's third.
+    constexpr std::array<size_t, 4> Places = {9, 4, 2, 6};
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+    SaveAtAndLoad(ThreeGroups, SaveName);
+
+    // Two vehicles from the store join the force (bought and joined, as the store and the MECH BAY do).
+    MCLogistics& logistics = *GlobalLog();
+    REQUIRE(logistics.PurVehicleList != nullptr);
+    REQUIRE(logistics.PurVehicleList->Vehicles.size() >= Vehicles);
+
+    for (size_t i = 0; i < Vehicles; i++)
+    {
+        const std::shared_ptr<MCLogVehicle> vehicle =
+            logistics.VehicleList->AddVehicle(logistics.PurVehicleList->Vehicles[i]->Data->FileName, false, true, true);
+        REQUIRE(vehicle != nullptr);
+        vehicle->Assigned = true;
+    }
+
+    logistics.ReorderVehicles();
+    REQUIRE_EQ(logistics.ForceVehicleList->Vehicles.size(), Vehicles);
+    const std::vector<std::shared_ptr<MCLogPart>> ready = MCDeploy::ReadyUnits();
+    REQUIRE(ready.size() > Places.size());
+
+    for (size_t i = 0; i < Places.size(); i++)
+    {
+        REQUIRE(MCDeploy::Lift(*ready[i]) == MCDeploy::MCRefusal::None);
+        REQUIRE(MCDeploy::Place(*ready[i], Places[i]) == MCDeploy::MCRefusal::None);
+    }
+
+    REQUIRE(ready[Places.size() - 1].get() == logistics.ForceVehicleList->Vehicles.front().get());
+    const std::vector<std::string> drop = DropNow();
+    MCCampaignScreen& screen = Shown();
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(screen.CanBegin());
+    ClickOn(ElementOf(screen, "begin"));
+
+    for (int32_t frame = 0; frame < MostFramesToResults * 10 && !Playing(); frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    REQUIRE(Playing());
+
+    // Lost: RETRY beside REPLAY MISSION, Left from it.
+    MCResultsScreen& results = LoseToResults();
+    CHECK(results.RetryShown());
+    CHECK_EQ(results.MoveOnWord(), std::string(MCResultsMenu::ReplayMissionWord));
+    Rml::Context& context = MCRmlMenus::Running()->get().Mission().Context();
+    const auto focused = [&context]
+    { return context.GetFocusElement() != nullptr ? context.GetFocusElement()->GetId() : std::string(); };
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(focused(), std::string("move-on"));
+    MCScreenInput::RealKey(SDL_SCANCODE_LEFT);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(focused(), std::string("retry"));
+
+    // Enter: dark, the campaign put back, the drop with it; the loading screen, then the mission. Neither the briefing
+    // nor a tab shows on the way.
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    std::vector<std::string> dropAgain;
+    std::string campaignAgain;
+    bool briefingSeen = false;
+
+    for (int32_t frame = 0; frame < MostFramesToResults * 10 && !Playing(); frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+        briefingSeen = briefingSeen || (MCCampaignMenu::Shown() && !MCScreenChange::Dark());
+
+        if (GlobalLog() != nullptr && MCLoadingMenu::Shown())
+        {
+            dropAgain = DropNow();
+            campaignAgain = CampaignNow();
+            CHECK(!GlobalLog()->AutoPlayMovie);
+        }
+    }
+
+    REQUIRE(Playing());
+    CHECK(!briefingSeen);
+    CHECK_EQ(Mission()->CurrentScenario, ThreeGroups);
+    CHECK(dropAgain == drop);
+    REQUIRE(!campaignAgain.empty());
+
+    // Lost again, REPLAY MISSION: the briefing, the campaign as RETRY put it back, the drop empty.
+    MCResultsScreen& again = LoseToResults();
+    CHECK(again.RetryShown());
+    MCTestGame::RunFrame(FlowFrame);
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    RunWhileChanging();
+    REQUIRE(MCCampaignMenu::Shown());
+    CHECK_EQ(GlobalLog()->CurrentMission, ThreeGroups);
+    CHECK_EQ(CampaignNow(), campaignAgain);
+    CHECK(std::ranges::all_of(DropNow(), [](const std::string& unit) { return unit == "-"; }));
+}
+
 /// <summary>
 /// The operation's video plays by itself on each operation's first briefing, as 1998's did (the campaign file's
 /// AutoPlay; the user's, 26 Nov: "I just finished Op2 and loaded up Op3Mis1, and no briefing video played"). A new
@@ -1691,21 +1928,7 @@ TEST_CASE_ISOLATED("game: an operation's first briefing plays its video by itsel
     CHECK(!MCVideoMenu::Shown());
 
     // A save made before the third operation, at the second's last mission, loaded from LOAD GAME: no video there.
-    GlobalLog()->CurrentMission = SecondOperationLast;
-    REQUIRE_EQ(MCLogistics::SaveCampaign(SaveName), 0);
-    MCMenuScreens::LeaveCampaign();
-    RunWhileChanging();
-    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
-    RunWhileChanging();
-    REQUIRE(MCSavesMenu::Screen().has_value());
-    MCSavesScreen& load = MCSavesMenu::Screen()->get();
-    const auto saved = std::ranges::find(load.Saves(), std::string(SaveName));
-    REQUIRE(saved != load.Saves().end());
-    load.Pick(static_cast<int>(saved - load.Saves().begin()));
-    load.PressMain();
-    RunWhileChanging();
-    REQUIRE(MCCampaignMenu::Shown());
-    REQUIRE_EQ(GlobalLog()->CurrentMission, SecondOperationLast);
+    SaveAtAndLoad(SecondOperationLast, SaveName);
     CHECK(!MCVideoMenu::Shown());
 
     // Its mission won, NEXT MISSION: the third operation's first briefing, its video by itself.

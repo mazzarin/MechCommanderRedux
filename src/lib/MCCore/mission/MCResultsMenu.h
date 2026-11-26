@@ -114,6 +114,8 @@ public:
     void MoveOn();
     /// <summary>REMATCH: it goes, and the rematch begins (network/MCRoomEnd.h).</summary>
     void Rematch();
+    /// <summary>RETRY (a loss's, beside REPLAY MISSION): the same mission again with the same drop (MCMission::Retry).</summary>
+    void Retry();
 
     /// <summary>Whether every step of the count is shown (a match's: at once).</summary>
     bool Finished() const;
@@ -124,6 +126,7 @@ public:
     const std::string& Earned() const { return _Earned; }
     const std::string& MoveOnWord() const { return _MoveOn; }
     bool RematchShown() const { return _RematchShown; }
+    bool RetryShown() const { return _RetryShown; }
     const std::vector<MCFigure>& Figures() const { return _Figures; }
     const std::vector<MCObjectiveRow>& Objectives() const { return _Objectives; }
     const std::vector<MCSalvageRow>& Salvage() const { return _Salvage; }
@@ -158,6 +161,7 @@ private:
     std::string _Earned;
     std::string _MoveOn;
     bool _RematchShown = false;
+    bool _RetryShown = false;
     std::vector<MCFigure> _Figures;
     std::vector<MCObjectiveRow> _Objectives;
     /// <summary>Each objective row's place in the count (its step and index), as the 1998 screen lists them.</summary>
@@ -218,6 +222,7 @@ namespace MCResultsMenu
     inline constexpr std::string_view LostTitle = "Mission failed";
     inline constexpr std::string_view NextMissionWord = "Next mission";
     inline constexpr std::string_view ReplayMissionWord = "Replay mission";
+    inline constexpr std::string_view RetryWord = "Retry";
     inline constexpr std::string_view DoneWord = "Done";
     /// <summary>A campaign mission's eyebrow (the won frame's: it names the mission), a solo mission's, a match's.</summary>
     inline constexpr std::string_view EyebrowFormat = "Operation {} · Mission {} · {}";

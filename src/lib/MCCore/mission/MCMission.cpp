@@ -37,6 +37,7 @@
 #include "lib/MCFile.h"
 #include "lib/MCFilesAhead.h"
 #include "lib/MCFitIniFile.h"
+#include "logistics/MCDeploy.h"
 #include "logistics/MCDueArtNotice.h"
 #include "logistics/MCReportsNotice.h"
 #include "main/MCSystemConfig.h"
@@ -44,6 +45,7 @@
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCGameStrings.h"
+#include "mission/MCMissionEnd.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "network/MCLobbyUpdate.h"
@@ -1116,6 +1118,13 @@ auto MCMission::LoadScenario(std::string_view name) -> void
     if (GlobalGameSegment == 0)
     {
         GlobalLog()->PrepareScenario(scenarioName, "bridge");
+
+        // Port-only (SPEC-menus.md's RETRY): the drop kept as the start file just written gives the force back, for a
+        // loss's RETRY.
+        if (MultiPlayer() == nullptr)
+        {
+            MCDeploy::Keep(CurrentScenario);
+        }
     }
 
     if (Logistics != nullptr)
@@ -1488,10 +1497,94 @@ auto MCMission::LeaveResults() -> void
     }
 }
 
+auto MCMission::CanRetry() const -> bool
+{
+    return MultiPlayer() == nullptr && GlobalGameSegment == 0 && !GameOver && MCMissionEnd::Lost() &&
+           MCDeploy::Kept(CurrentScenario);
+}
+
+auto MCMission::Retry() -> void
+{
+    // Leaving already (the move-on button heard first).
+    if (MCScreenChange::Name() == OutOfTheMissionChange || !ResultsUp() || Scenario() == nullptr || !CanRetry())
+    {
+        return;
+    }
+
+    const std::string scenarioName = Scenarios[static_cast<size_t>(CurrentScenario)];
+    const auto into = [this, scenarioName]
+    {
+        if (std::exchange(_Retrying, false))
+        {
+            StartIntoTheBattle(scenarioName);
+        }
+    };
+
+    // As LeaveResults: the results fade out live, the way back's files read ahead; dark, REPLAY MISSION's way back.
+    if (GuiSystem().CanChangeScreen() && MCScreenChange::Start({.Name = std::string(OutOfTheMissionChange),
+                                                                .Job = WayBackAhead(false),
+                                                                .FadeOut = MCScreenChange::MCFadeOut::AtPress,
+                                                                .Dark = RetryClosing(),
+                                                                .CalledOff = [] { MCFilesAhead::Forget(); },
+                                                                .Then = into}))
+    {
+        return;
+    }
+
+    // At once where no change of screen can run, as CloseResultsScreen.
+    MCScreenChange::RunPieces(WayBackAhead(true));
+    MCScreenChange::RunPieces(RetryClosing());
+    into();
+}
+
+auto MCMission::RetryClosing() -> std::vector<MCScreenChange::MCPiece>
+{
+    // REPLAY MISSION's way back (its start file loaded), then the drop put back and the loading screen up in the dark, as
+    // BEGIN MISSION's change puts it up; where the drop doesn't go back, REPLAY MISSION's briefing fades in instead.
+    std::vector<MCScreenChange::MCPiece> pieces = ResultsWayBack();
+    pieces.push_back({.Part = "change.drop again",
+                      .Run = [this]
+                      {
+                          _Retrying =
+                              GlobalLog() != nullptr && State == MCMissionState::Logistics && MCDeploy::PutBackKept();
+
+                          if (!_Retrying)
+                          {
+                              MCScreenChange::RunNext(NextScreenPieces());
+                              return;
+                          }
+
+                          // The briefing's own video waits for the briefing, which RETRY doesn't show.
+                          GlobalLog()->AutoPlayMovie = false;
+                          ShowLoadingScreen();
+                      }});
+    return pieces;
+}
+
+auto MCMission::NextScreenPieces() -> std::vector<MCScreenChange::MCPiece>
+{
+    std::vector<MCScreenChange::MCPiece> pieces;
+
+    for (std::function<void()>& piece : IntoScreenPieces())
+    {
+        pieces.push_back({.Part = "change.next screen", .Run = std::move(piece)});
+    }
+
+    return pieces;
+}
+
 auto MCMission::ResultsClosing() -> std::vector<MCScreenChange::MCPiece>
 {
+    // The way back, then what a fade into a screen does.
+    std::vector<MCScreenChange::MCPiece> pieces = ResultsWayBack();
+    std::ranges::move(NextScreenPieces(), std::back_inserter(pieces));
+    return pieces;
+}
+
+auto MCMission::ResultsWayBack() -> std::vector<MCScreenChange::MCPiece>
+{
     // The scenario ended (the bridge file, the sounds, its unload), the way back (the menus made again, the next screen
-    // set up), then what a fade into a screen does.
+    // set up).
     std::vector<MCScreenChange::MCPiece> pieces;
     pieces.push_back({.Part = "change.scenario ended",
                       .Run = [this]
@@ -1524,12 +1617,6 @@ auto MCMission::ResultsClosing() -> std::vector<MCScreenChange::MCPiece>
                           AfterResults();
                           MCFilesAhead::Forget();
                       }});
-
-    for (std::function<void()>& piece : IntoScreenPieces())
-    {
-        pieces.push_back({.Part = "change.next screen", .Run = std::move(piece)});
-    }
-
     return pieces;
 }
 

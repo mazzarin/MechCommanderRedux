@@ -61,6 +61,7 @@ namespace
     constexpr const char* PanelId = "results";
     constexpr const char* MoveOnId = "move-on";
     constexpr const char* RematchId = "rematch";
+    constexpr const char* RetryId = "retry";
     constexpr const char* FiguresId = "figures";
     constexpr const char* SalvageId = "salvage";
     /// <summary>How far the panel's middle may be from the window's (a pixel's rounding).</summary>
@@ -352,6 +353,8 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(results->Title(), std::string(MCResultsMenu::WonTitle));
     CHECK_EQ(results->MoveOnWord(), std::string(MCResultsMenu::NextMissionWord));
     CHECK(!results->RematchShown());
+    CHECK(!results->RetryShown());
+    CHECK(!MCRemadeTest::Visible(*results, RetryId));
     CHECK_EQ(MCRemadeTest::Words(*results, MoveOnId), std::string(MCResultsMenu::NextMissionWord));
 
     // At first nothing counted; the count shows a step at a time.
@@ -406,6 +409,8 @@ TEST_CASE_ISOLATED(
     REQUIRE(results != nullptr);
     CHECK_EQ(results->Title(), std::string(MCResultsMenu::LostTitle));
     CHECK_EQ(results->MoveOnWord(), std::string(MCResultsMenu::ReplayMissionWord));
+    CHECK(results->RetryShown());
+    CHECK_EQ(MCRemadeTest::Words(*results, RetryId), std::string(MCResultsMenu::RetryWord));
     CHECK(results->Earned().empty());
     CHECK(!results->Finished());
 
@@ -572,6 +577,8 @@ TEST_CASE_ISOLATED("game: a match's results show every pilot by kills, the best 
     CHECK_EQ(results->MoveOnWord(), std::string(MCResultsMenu::DoneWord));
     CHECK(!results->RematchShown());
     CHECK(!MCRemadeTest::Visible(*results, RematchId));
+    CHECK(!results->RetryShown());
+    CHECK(!MCRemadeTest::Visible(*results, RetryId));
     CHECK_EQ(results->MatchTime().size(), 5u);
     CHECK(results->Objectives().empty());
     CHECK(results->Pilots().empty());

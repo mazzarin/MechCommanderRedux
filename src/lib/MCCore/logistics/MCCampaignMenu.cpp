@@ -300,8 +300,9 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.List("ready", _Ready, std::pair{"kind", &MCCard::Kind}, std::pair{"who", &MCCard::Who},
                std::pair{"what", &MCCard::What}, std::pair{"tons", &MCCard::Tons},
                std::pair{"outline", &MCCard::Outline}, std::pair{"pilot", &MCCard::Pilot},
-               std::pair{"piloted", &MCCard::Piloted}, std::pair{"condition", &MCCard::Condition},
-               std::pair{"shade", &MCCard::Shade}, std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
+               std::pair{"piloted", &MCCard::Piloted}, std::pair{"unpiloted", &MCCard::Unpiloted},
+               std::pair{"condition", &MCCard::Condition}, std::pair{"shade", &MCCard::Shade},
+               std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
                std::pair{"picked", &MCCard::Picked}, std::pair{"target", &MCCard::Target},
                std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot});
     model.List("carried", _Carried, std::pair{"kind", &MCCard::Kind});
@@ -676,6 +677,7 @@ MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int s
     card.What = mech.FileName;
     card.Pilot = warrior != nullptr ? Pictured(PilotSource(warrior->Picture)) : std::string(NoPicture);
     card.Piloted = warrior != nullptr;
+    card.Unpiloted = warrior == nullptr;
     card.Health = warrior != nullptr ? static_cast<int>(std::clamp(std::round(warrior->Health), 0.0f, HealthPips)) : 0;
     card.Condition = static_cast<int>(std::lround(std::clamp(mech.StatusValue, 0.0f, 1.0f) * WholePercent));
     card.Shade = mech.StatusValue == 0.0f          ? std::string()

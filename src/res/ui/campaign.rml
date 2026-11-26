@@ -81,11 +81,11 @@
                                      data-class-off="c.off" data-class-refuse="c.refuse"
                                      data-hint="Drag into a slot" data-hint-right="Into the first open slot" data-hint-group="Into that group">
                                     <div class="pics">
-                                        <div class="gauges" data-if="c.piloted">
+                                        <div class="gauges" data-visible="c.piloted">
                                             <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
                                             <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
                                         </div>
-                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div></div>
+                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                     </div>
                                     <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>
@@ -107,11 +107,11 @@
                                  data-class-target="c.target" data-class-refuse="c.refuse"
                                  data-attr-data-hint="c.kind == 0 ? 'Drag into a slot' : ''" data-attr-data-hint-right="c.kind == 0 ? 'Back to the ready area' : ''">
                                 <div class="pics" data-if="c.kind == 0">
-                                    <div class="gauges" data-if="c.piloted">
+                                    <div class="gauges" data-visible="c.piloted">
                                         <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
                                         <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
                                     </div>
-                                    <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div></div>
+                                    <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                 </div>
                                 <div class="facts" data-if="c.kind == 0"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
                             </div>
@@ -136,11 +136,11 @@
                     <div class="card-cell" data-for="c : carried"><div class="card unit dragged" data-class-refuse="c.refuse"
                          data-style-left="carriedLeft" data-style-top="carriedTop" data-hint="Drop into the slot">
                         <div class="pics">
-                            <div class="gauges" data-if="c.piloted">
+                            <div class="gauges" data-visible="c.piloted">
                                 <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
                                 <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
                             </div>
-                            <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div></div>
+                            <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                         </div>
                         <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
                         <div class="why" data-if="c.why != ''">{{c.why}}</div>
@@ -160,11 +160,11 @@
                                 <div class="card-cell" data-for="c, i : force"><div class="card unit" data-attr-id="'force' + i" data-class-picked="c.picked"
                                      data-hint="Pick" data-hint-right="Out of the force">
                                     <div class="pics">
-                                        <div class="gauges" data-if="c.piloted">
+                                        <div class="gauges" data-visible="c.piloted">
                                             <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
                                             <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
                                         </div>
-                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div></div>
+                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                     </div>
                                     <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>
@@ -176,11 +176,11 @@
                                 <div class="card-cell" data-for="c, i : spare"><div class="card unit" data-attr-id="'spare' + i" data-class-picked="c.picked"
                                      data-hint="Pick" data-hint-right="Into the force">
                                     <div class="pics">
-                                        <div class="gauges" data-if="c.piloted">
+                                        <div class="gauges" data-visible="c.piloted">
                                             <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
                                             <div class="health"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
                                         </div>
-                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div></div>
+                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                     </div>
                                     <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>

@@ -116,6 +116,8 @@ public:
         std::string Pilot{NoPicture};
         /// <summary>Whether it has a pilot (a 'Mech): the pilot's picture and the gauges show.</summary>
         bool Piloted = false;
+        /// <summary>A 'Mech without a pilot: the pilot's place an empty box (a vehicle's has none).</summary>
+        bool Unpiloted = false;
         /// <summary>The condition bar's length (a percentage) and shade ("ok", "worn", "bad"; empty: no bar).</summary>
         int Condition = 0;
         std::string Shade;

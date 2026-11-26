@@ -276,6 +276,10 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("mp", _Multiplayer);
     model.Value("rp", _Points);
     model.Value("clock", _Clock);
+    model.List("rpFigures", _PointsFigures, std::pair{"text", &MCFigureGlyph::Text},
+               std::pair{"digit", &MCFigureGlyph::Digit});
+    model.List("clockFigures", _ClockFigures, std::pair{"text", &MCFigureGlyph::Text},
+               std::pair{"digit", &MCFigureGlyph::Digit});
     model.Value("eyebrow", _Eyebrow);
     model.Value("title", _Title);
     model.Value("timeLimit", _TimeLimit);
@@ -598,6 +602,8 @@ bool MCCampaignScreen::FillBar()
 
     _Points = points;
     _Clock = clock;
+    _PointsFigures = MCHeldFigures(_Points);
+    _ClockFigures = MCHeldFigures(_Clock);
     return true;
 }
 

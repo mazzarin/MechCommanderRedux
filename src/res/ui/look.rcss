@@ -55,6 +55,10 @@ span, em, strong { display: inline; }
 .orange { color: #e08a2c; }
 .red { color: #f26b55; }
 .nowrap { white-space: nowrap; }
+/* A number held still as it changes (the bar's RP and clock: MCHeldFigures): Saira's figures are proportional, so each
+   digit stands in a place as wide as the widest (0.59 em) with its letter spacing and a pixel's rounding at every
+   size, centred in it; the marks between them (a colon, a comma) at their own widths. */
+.figures .digit { display: inline-block; width: 0.66em; text-align: center; }
 .right { text-align: right; }
 .centre { text-align: center; }
 

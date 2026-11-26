@@ -10,6 +10,7 @@
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCChatView.h"
 #include "logistics/MCDeploy.h"
+#include "ui/MCRmlFigures.h"
 #include "ui/MCRmlScreen.h"
 
 namespace Rml
@@ -357,6 +358,9 @@ private:
     bool _Multiplayer = false;
     std::string _Points;
     std::string _Clock;
+    /// <summary>RP and the clock a character each, their digits held in places of one width (MCHeldFigures).</summary>
+    std::vector<MCFigureGlyph> _PointsFigures;
+    std::vector<MCFigureGlyph> _ClockFigures;
     std::string _Eyebrow;
     std::string _Title;
     std::vector<MCLine> _Objectives;

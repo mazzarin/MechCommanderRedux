@@ -4,6 +4,7 @@
 #include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "fakes/MCManualClock.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
@@ -3223,16 +3224,31 @@ namespace
     /// <summary>
     /// Where the first line of <paramref name="element"/>'s own words stands (its baseline), in pixels.
     /// </summary>
-    float BaselineOf(Rml::Element& element)
+    /// <summary>The first words in <paramref name="element"/> or under it (a held number's are its digits' places').</summary>
+    Rml::ElementText* FirstWords(Rml::Element& element)
     {
         for (int child = 0; child < element.GetNumChildren(); child++)
         {
-            auto* text = dynamic_cast<Rml::ElementText*>(element.GetChild(child));
-
-            if (text != nullptr && !text->GetLines().empty())
+            if (auto* text = dynamic_cast<Rml::ElementText*>(element.GetChild(child));
+                text != nullptr && !text->GetLines().empty())
             {
-                return text->GetAbsoluteOffset(Rml::BoxArea::Border).y + text->GetLines().front().position.y;
+                return text;
             }
+
+            if (Rml::ElementText* under = FirstWords(*element.GetChild(child)); under != nullptr)
+            {
+                return under;
+            }
+        }
+
+        return nullptr;
+    }
+
+    float BaselineOf(Rml::Element& element)
+    {
+        if (Rml::ElementText* text = FirstWords(element); text != nullptr)
+        {
+            return text->GetAbsoluteOffset(Rml::BoxArea::Border).y + text->GetLines().front().position.y;
         }
 
         FAIL(std::format("{} has no words", element.GetAddress()));
@@ -3481,6 +3497,125 @@ TEST_CASE_ISOLATED("game: the bar's rule stands between RP and the clock, its wo
         CHECK(std::abs(BaselineOf(rp) - baseline) <= Slack);
         CHECK(std::abs(BaselineOf(points) - baseline) <= Slack);
         CHECK(std::abs(BaselineOf(clock) - baseline) <= Slack);
+    }
+}
+
+/// <summary>
+/// The bar's RP and clock hold still (the user's, 26 Nov: "The clock in the top right moves the RP and clock fields
+/// slightly as the fonts change, they shouldnt"): at every window the players' reports name (4:3, 16:9 and 21:9 among
+/// them), as the clock ticks through its seconds, minutes and hours and RP changes, the rule, RP's right edge and the
+/// clock's two edges stay where they were, each digit's place one width and its digit inside it.
+/// </summary>
+TEST_CASE_ISOLATED("game: the bar's RP and clock hold still as their digits change, the rule between them put")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    REQUIRE(screen.Document().has_value());
+    Rml::ElementDocument& document = screen.Document()->get();
+    auto& clock = dynamic_cast<MCManualClock&>(MCGameContext::Current().Clock());
+    constexpr float Slack = 0.01f;
+    constexpr uint64_t Second = 1'000'000'000ull;
+    // A second at a time through the seconds' digits, then an hour, a minute and a second at a time through the rest.
+    constexpr int32_t Seconds = 12;
+    constexpr int32_t Hours = 12;
+    constexpr uint64_t HourMinuteSecond = 3661 * Second;
+    // RP of six figures each, its digits the face's narrowest and widest among them.
+    constexpr std::array<int32_t, 4> Points = {111'111, 888'888, 104'815, 999'990};
+
+    struct MCPlaces
+    {
+        float Rule = 0;
+        float PointsRight = 0;
+        float ClockLeft = 0;
+        float ClockRight = 0;
+        std::vector<float> Digits;
+    };
+
+    const auto left = [](Rml::Element& element) { return element.GetAbsoluteOffset(Rml::BoxArea::Border).x; };
+    const auto width = [](Rml::Element& element) { return element.GetBox().GetSize(Rml::BoxArea::Border).x; };
+
+    for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
+    {
+        menus.SetWindow(window.Width, window.Height);
+        const MCTest::Scope scope{std::format("{}x{}", window.Width, window.Height)};
+        std::optional<MCPlaces> first;
+        std::set<std::string> clocks;
+        std::set<std::string> shownPoints;
+
+        const auto measure = [&]
+        {
+            MCTestGame::RunFrame(FlowFrame);
+            menus.Frame();
+            Rml::Element* status = document.QuerySelector("#topbar .status");
+            REQUIRE(status != nullptr);
+            REQUIRE_EQ(status->GetNumChildren(), 4);
+            Rml::Element& points = *status->GetChild(1);
+            Rml::Element& rule = *status->GetChild(2);
+            Rml::Element& shownClock = *status->GetChild(3);
+            clocks.insert(shownClock.GetInnerRML());
+            shownPoints.insert(points.GetInnerRML());
+            MCPlaces places{.Rule = left(rule),
+                            .PointsRight = left(points) + width(points),
+                            .ClockLeft = left(shownClock),
+                            .ClockRight = left(shownClock) + width(shownClock)};
+            Rml::ElementList digits;
+            status->QuerySelectorAll(digits, ".digit");
+            REQUIRE(!digits.empty());
+
+            for (Rml::Element* digit : digits)
+            {
+                places.Digits.push_back(left(*digit));
+                CHECK(std::abs(width(*digit) - width(*digits.front())) <= Slack);
+                Rml::ElementText* words = FirstWords(*digit);
+                REQUIRE(words != nullptr);
+                CHECK(static_cast<float>(words->GetLines().front().width) <= width(*digit) + Slack);
+            }
+
+            if (!first.has_value())
+            {
+                first = places;
+                return;
+            }
+
+            CHECK(std::abs(places.Rule - first->Rule) <= Slack);
+            CHECK(std::abs(places.PointsRight - first->PointsRight) <= Slack);
+            CHECK(std::abs(places.ClockLeft - first->ClockLeft) <= Slack);
+            CHECK(std::abs(places.ClockRight - first->ClockRight) <= Slack);
+            REQUIRE_EQ(places.Digits.size(), first->Digits.size());
+
+            for (size_t at = 0; at < places.Digits.size(); ++at)
+            {
+                CHECK(std::abs(places.Digits[at] - first->Digits[at]) <= Slack);
+            }
+        };
+
+        for (const int32_t shown : Points)
+        {
+            ResourcePoints = shown;
+
+            for (int32_t tick = 0; tick < Seconds; ++tick)
+            {
+                clock.Advance(Second);
+                measure();
+            }
+
+            for (int32_t tick = 0; tick < Hours; ++tick)
+            {
+                clock.Advance(HourMinuteSecond);
+                measure();
+            }
+        }
+
+        // The clock and RP did change under it.
+        CHECK(clocks.size() > static_cast<size_t>(Seconds));
+        CHECK_EQ(shownPoints.size(), Points.size());
     }
 }
 

@@ -19,7 +19,7 @@
                     <div class="button small" id="mainmenu" data-hint="Main menu">Main menu</div>
                     <div class="tabs row" id="tabs"><div class="tab now">Briefing</div><div class="tab">Purchasing</div><div class="tab">Mech bay</div><div class="tab">Deploy</div></div>
                     <div class="grow"></div>
-                    <div class="status"><div class="eyebrow" data-if="rp != ''">RP</div><div class="money points" data-if="rp != ''">{{rp}}</div><div class="vrule" data-if="rp != ''"></div><div class="money">{{clock}}</div></div>
+                    <div class="status"><div class="eyebrow" data-if="rp != ''">RP</div><div class="money points figures" data-if="rp != ''"><span data-for="g : rpFigures" data-class-digit="g.digit">{{g.text}}</span></div><div class="vrule" data-if="rp != ''"></div><div class="money figures"><span data-for="g : clockFigures" data-class-digit="g.digit">{{g.text}}</span></div></div>
                 </div>
                 <div class="players" data-if="mp">
                     <div class="team" data-if="ours.size > 0"><div class="team-name">Your team</div><div class="player" data-for="p : ours"><div class="light" data-class-ready="p.ready"></div><span data-attr-class="p.colour">{{p.name}}</span></div></div>

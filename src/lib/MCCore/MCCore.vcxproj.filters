@@ -2843,6 +2843,9 @@
     <ClInclude Include="ui\MCRmlDialog.h">
       <Filter>ui</Filter>
     </ClInclude>
+    <ClInclude Include="ui\MCRmlFigures.h">
+      <Filter>ui</Filter>
+    </ClInclude>
     <ClInclude Include="ui\MCRmlFlow.h">
       <Filter>ui</Filter>
     </ClInclude>

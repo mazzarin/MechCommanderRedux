@@ -349,7 +349,51 @@ auto MCLogMech::CalcStatus() const -> float
         pilotFactor = static_cast<float>(static_cast<double>(warrior->Skills[3]) * 0.02);
     }
 
-    // The firepower left: the undamaged weapons' worth over all weapons' worth (0/0 without a pilot).
+    const float firepower = FirepowerLeft(pilotFactor);
+
+    if (firepower == 0.0f)
+    {
+        return 0.0f;
+    }
+
+    const MCBodyStatus body = BodyStatus();
+
+    if (body.Body == 0.0)
+    {
+        return 0.0f;
+    }
+
+    // The pilot's wounds.
+    static constexpr float woundFactors[7] = {1.0f, 0.95f, 0.85f, 0.75f, 0.5f, 0.3f, 0.0f};
+    float woundFactor = body.Head;
+
+    if (warrior != nullptr)
+    {
+        auto wounds = static_cast<int32_t>(warrior->Wounds);
+        // Port fix: wounds past the table read 0 (the original read the stack beyond it).
+        woundFactor = wounds >= 0 && wounds < 7 ? woundFactors[wounds] : 0.0f;
+    }
+
+    return static_cast<float>(static_cast<double>(woundFactor) * body.Body * firepower);
+}
+
+auto MCLogMech::CalcCondition() const -> float
+{
+    // Any pilot's factor: the firepower's share is the same whatever it is, past none.
+    constexpr float AnyPilotFactor = 1.0f;
+    const float firepower = FirepowerLeft(AnyPilotFactor);
+
+    if (firepower == 0.0f)
+    {
+        return 0.0f;
+    }
+
+    return static_cast<float>(BodyStatus().Body * firepower);
+}
+
+auto MCLogMech::FirepowerLeft(float pilotFactor) const -> float
+{
+    // The undamaged weapons' worth over all weapons' worth (0/0 without a pilot), each by the pilot's factor.
     double working = 0.0;
     double total = 0.0;
 
@@ -376,13 +420,12 @@ auto MCLogMech::CalcStatus() const -> float
     }
 
     auto firepower = static_cast<float>(working / total);
+    return std::isnan(firepower) ? 0.0f : firepower;
+}
 
-    if (std::isnan(firepower) || firepower == 0.0f)
-    {
-        return 0.0f;
-    }
-
-    // The body: the head's armor, the weaker of two torso locations, the legs' and the side torsos' armor.
+auto MCLogMech::BodyStatus() const -> MCBodyStatus
+{
+    // The head's armor, the weaker of two torso locations, the legs' and the side torsos' armor.
     auto head = static_cast<float>(static_cast<double>(Armor[0].CurArmor) / Armor[0].MaxArmor * 0.6 + 0.4);
     double weakCurrent = Armor[1].CurArmor;
     double weakMaximum = Armor[1].MaxArmor;
@@ -400,22 +443,5 @@ auto MCLogMech::CalcStatus() const -> float
                        (Armor[10].MaxArmor + Armor[9].MaxArmor + Armor[3].MaxArmor + Armor[2].MaxArmor) * 0.25 +
                    0.75;
     double body = sides * ((weakCurrent / weakMaximum + 1.0) * 0.5) * legs * legs * head;
-
-    if (std::isnan(body) || body == 0.0)
-    {
-        return 0.0f;
-    }
-
-    // The pilot's wounds.
-    static constexpr float woundFactors[7] = {1.0f, 0.95f, 0.85f, 0.75f, 0.5f, 0.3f, 0.0f};
-    float woundFactor = head;
-
-    if (warrior != nullptr)
-    {
-        auto wounds = static_cast<int32_t>(warrior->Wounds);
-        // Port fix: wounds past the table read 0 (the original read the stack beyond it).
-        woundFactor = wounds >= 0 && wounds < 7 ? woundFactors[wounds] : 0.0f;
-    }
-
-    return static_cast<float>(static_cast<double>(woundFactor) * body * firepower);
+    return MCBodyStatus{.Body = std::isnan(body) ? 0.0 : body, .Head = head};
 }

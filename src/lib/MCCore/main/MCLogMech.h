@@ -111,6 +111,12 @@ public:
     [[nodiscard]] float CalcStatus() const;
 
     /// <summary>
+    /// The mech's condition (0..1) whoever is aboard: CalcStatus's armor and firepower left, no pilot's wounds (a
+    /// stored 'Mech's card shows it, though CalcStatus gives one without a pilot 0).
+    /// </summary>
+    [[nodiscard]] float CalcCondition() const;
+
+    /// <summary>
     /// Records the mech's armor, internal structure and engine damage as <see cref="Arrived"/>: when it joins the
     /// lists (<see cref="MCLogMechList::AddMech"/>), the moment the original's repair block took them.
     /// </summary>
@@ -160,4 +166,24 @@ public:
     RepairSliderKnobs RepairSliders;
     /// <summary>The pilot of a multiplayer mech received over the network (in <see cref="MCLogistics::MpWarriorList"/>).</summary>
     std::weak_ptr<MCLogWarrior> NetworkPilot;
+
+private:
+    /// <summary>
+    /// CalcStatus's body (0 where its armor reads none) and its head's share, the factor with no wounds read.
+    /// </summary>
+    struct MCBodyStatus
+    {
+        double Body = 0.0;
+        float Head = 0.0f;
+    };
+
+    /// <summary>
+    /// CalcStatus's firepower left with <paramref name="pilotFactor"/> (0 where it works out to none).
+    /// </summary>
+    [[nodiscard]] float FirepowerLeft(float pilotFactor) const;
+
+    /// <summary>
+    /// CalcStatus's body: the head's armor, the weaker of two torso locations, the legs' and side torsos'.
+    /// </summary>
+    [[nodiscard]] MCBodyStatus BodyStatus() const;
 };

@@ -119,6 +119,20 @@ namespace
     constexpr std::array<std::string_view, MCLogWarrior::NumSkills> SkillWords = {"Gunnery", "Piloting", "Jumping",
                                                                                   "Sensors"};
 
+    /// <summary>A MechWarrior's four skills (<paramref name="skills"/> in the array's order) as their bars read them.</summary>
+    template <typename Skills> std::vector<MCLogisticsTabs::MCStat> SkillStats(const Skills& skills)
+    {
+        std::vector<MCLogisticsTabs::MCStat> stats;
+        stats.reserve(SkillOrder.size());
+
+        for (size_t at = 0; at < SkillOrder.size(); ++at)
+        {
+            stats.push_back({std::string(SkillWords[at]), std::to_string(static_cast<int>(skills[SkillOrder[at]]))});
+        }
+
+        return stats;
+    }
+
     /// <summary>The words the remade screens add (1998's say nothing there).</summary>
     constexpr std::string_view BuyWord = "Buy";
     constexpr std::string_view SellWord = "Sell";
@@ -520,7 +534,8 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
                std::pair{"variants", &MCGood::Variants}, std::pair{"price", &MCGood::Price},
                std::pair{"note", &MCGood::Note}, std::pair{"why", &MCGood::Why}, std::pair{"off", &MCGood::Off},
                std::pair{"picked", &MCGood::Picked}, std::pair{"part", &MCGood::Part}, std::pair{"long", &MCGood::Long},
-               std::pair{"warrior", &MCGood::Warrior}, std::pair{"health", &MCGood::Health});
+               std::pair{"warrior", &MCGood::Warrior}, std::pair{"health", &MCGood::Health},
+               std::pair{"skills", &MCGood::Skills});
     model.List("stock", _StockGoods, std::pair{"picture", &MCGood::Picture});
     model.List("lifted", _Lifted, std::pair{"picture", &MCGood::Picture});
     model.Value("liftedLeft", _LiftedLeft);
@@ -1050,7 +1065,8 @@ void MCLogisticsTabs::FillStock()
                         .Who = warrior->Callsign,
                         .What = RankWord(warrior->Rank),
                         .Warrior = true,
-                        .Health = static_cast<int>(std::clamp(std::round(warrior->Health), 0.0f, HealthPips))};
+                        .Health = static_cast<int>(std::clamp(std::round(warrior->Health), 0.0f, HealthPips)),
+                        .Skills = SkillStats(warrior->Skills)};
             // The 'MECH BAY: a MechWarrior boards the lab's 'Mech when it is a force 'Mech of the player's own.
             good.Off = !Purchasing() && (mech == nullptr || !MCMechBay::CanBoard(*mech));
             add(std::move(good), MCThing{.Warrior = warrior});
@@ -1176,10 +1192,7 @@ void MCLogisticsTabs::FillDetails()
         const std::array<char, MCLogWarrior::NumSkills> skills = {pilot->Piloting, pilot->Jumping, pilot->Sensors,
                                                                   pilot->Gunnery};
 
-        for (size_t at = 0; at < SkillOrder.size(); ++at)
-        {
-            _Stats.push_back({std::string(SkillWords[at]), std::to_string(static_cast<int>(skills[SkillOrder[at]]))});
-        }
+        _Stats = SkillStats(skills);
 
         _Description = MCBriefingText::Plain(pilot->Description);
         _InfoCost = MCGroupedPoints(pilot->Cost);
@@ -1235,11 +1248,7 @@ void MCLogisticsTabs::FillDetails()
         _InfoWhat = RankWord(warrior->Rank);
         _InfoPicture = MCCampaignMenu::Portrait(MCCampaignMenu::PilotSource(warrior->Picture));
 
-        for (size_t at = 0; at < SkillOrder.size(); ++at)
-        {
-            _Stats.push_back(
-                {std::string(SkillWords[at]), std::to_string(static_cast<int>(warrior->Skills[SkillOrder[at]]))});
-        }
+        _Stats = SkillStats(warrior->Skills);
 
         _Description = MCBriefingText::Plain(warrior->Description);
         _InfoCost = MCGroupedPoints(MCStore::SalePrice(*warrior));
@@ -1386,11 +1395,7 @@ void MCLogisticsTabs::FillLab()
             _PilotPicture = MCCampaignMenu::Pictured(MCCampaignMenu::PilotSource(warrior->Picture));
             _PilotHealth = static_cast<int>(std::clamp(std::round(warrior->Health), 0.0f, HealthPips));
 
-            for (size_t at = 0; at < SkillOrder.size(); ++at)
-            {
-                _Skills.push_back(
-                    {std::string(SkillWords[at]), std::to_string(static_cast<int>(warrior->Skills[SkillOrder[at]]))});
-            }
+            _Skills = SkillStats(warrior->Skills);
         }
     }
 

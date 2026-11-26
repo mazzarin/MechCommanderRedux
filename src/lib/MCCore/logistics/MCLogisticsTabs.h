@@ -74,6 +74,13 @@ public:
         Aboard,
     };
 
+    /// <summary>A line of the details' stats, a MechWarrior's skill (its bar's length the value, of 100).</summary>
+    struct MCStat
+    {
+        std::string Label;
+        std::string Value;
+    };
+
     /// <summary>
     /// A store 'Mech's variant: a row of the details' VARIANT (its letter, its word, what it changes in the game's own
     /// words, how many are left), and a pip under its store card's picture.
@@ -105,6 +112,8 @@ public:
         /// <summary>A MechWarrior in the INVENTORY: their health (pips kept, of six) over their portrait.</summary>
         bool Warrior = false;
         int Health = 0;
+        /// <summary>An INVENTORY MechWarrior's four skills, as bars beside their name (the lab's pilot's, in 1998's order).</summary>
+        std::vector<MCStat> Skills;
         /// <summary>Its price or count (cream), and the word after it (grey: "2 LEFT", "OWNED").</summary>
         std::string Price;
         std::string Note;
@@ -116,13 +125,6 @@ public:
         bool Part = false;
         /// <summary>A name longer than the frames' (LongName): set smaller to fit its card.</summary>
         bool Long = false;
-    };
-
-    /// <summary>A line of the details' stats, a row of a payload, a fitted part's row.</summary>
-    struct MCStat
-    {
-        std::string Label;
-        std::string Value;
     };
 
     /// <summary>A row of the details' payload: how many, the part, and DAMAGED for an owned 'Mech's damaged copies.</summary>

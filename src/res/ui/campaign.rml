@@ -171,7 +171,7 @@
                                 </div></div>
                             </div>
                             <div class="stack" data-if="stockKind != 0">
-                                <div class="card-cell" data-for="g, i : stock"><div class="card good" data-attr-id="'stock' + i" data-class-picked="g.picked" data-class-off="g.off" data-class-warrior="g.warrior"
+                                <div class="card-cell" data-for="g, i : stock"><div class="card good" data-attr-id="'stock' + i" data-class-picked="g.picked" data-class-off="g.off" data-class-warrior="g.warrior" data-class-skilled="g.skills.size &gt; 0"
                                      data-attr-data-hint="tab == 1 ? 'Drag onto the store' : (g.warrior ? 'Drag to board' : 'Drag into the payload')" data-attr-data-hint-right="tab == 1 ? 'Sell' : (g.warrior ? 'Board' : 'Fit')">
                                     <div class="pics" data-if="g.warrior">
                                         <div class="gauges"><div class="health"><div class="pip" data-class-lost="g.health &lt; 1"></div><div class="pip" data-class-lost="g.health &lt; 2"></div><div class="pip" data-class-lost="g.health &lt; 3"></div><div class="pip" data-class-lost="g.health &lt; 4"></div><div class="pip" data-class-lost="g.health &lt; 5"></div><div class="pip" data-class-lost="g.health &lt; 6"></div></div></div>
@@ -179,6 +179,7 @@
                                     </div>
                                     <div class="pic picture" data-if="!g.warrior" data-class-part="g.part" data-style-decorator="g.picture"></div>
                                     <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == '' &amp;&amp; g.price != ''"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
+                                    <div class="wskills" data-if="g.skills.size &gt; 0"><div class="skill" data-for="s : g.skills"><div class="repair-line"><div class="label">{{s.label}}</div><div class="grow"></div><div>{{s.value}}</div></div><div class="meter"><div class="meter-fill" data-style-width="s.value + '%'"></div></div></div></div>
                                 </div></div>
                             </div>
                         </div>

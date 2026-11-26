@@ -395,3 +395,20 @@
 /* The one shown with none left: dim on the teal in the picked card's grey (#6c7a88 reads 2:1 there, this 4:1). */
 #logistics .vrow.on.off .vword, #logistics .vrow.on.off .vsays, #logistics .vrow.on.off .vleft { color: #a4b0bc; }
 #logistics .vrow.on.off .vchip { border-color: #a4b0bc; color: #a4b0bc; }
+
+/* ---- The user's MechWarrior skills A (26 Nov mocks): the INVENTORY's MechWarriors' four skills ---- */
+
+/* A MechWarrior's card shows their four skills in its free room, two a row, as the lab's pilot box draws them; at 16:10
+   and narrower (the INVENTORY one card wide at 220 units) under the face and the name, the card taller. */
+#logistics .card.good.warrior.skilled .facts { flex: 0 0 62dp; }
+#logistics .card.good.warrior.skilled .wskills { flex: 1 1 0; display: flex; flex-direction: row; flex-wrap: wrap; gap: 2dp 10dp; margin-top: 1dp; }
+#logistics .wskills > .skill { flex: 1 1 40%; }
+#logistics .wskills .repair-line { margin-bottom: 1dp; line-height: 12dp; }
+#logistics .wskills .meter { height: 3dp; }
+#logistics .card.picked .wskills .meter { background-color: #0b3a3a; }
+#logistics .card.picked .wskills .meter-fill { background-color: #c4ccd4; }
+@media (max-aspect-ratio: 17/10) {
+    #logistics .card.good.warrior.skilled { height: auto; flex-wrap: wrap; }
+    #logistics .card.good.warrior.skilled .facts { flex: 1 1 0; }
+    #logistics .card.good.warrior.skilled .wskills { flex: 0 0 100%; margin-top: 2dp; }
+}

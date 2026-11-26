@@ -4658,6 +4658,104 @@ TEST_CASE_ISOLATED("game: a 'Mech's variant letter in a chip on every card, the 
 
 namespace
 {
+    /// <summary>The skills' bars in 1998's order (the lab's pilot box's): Gunnery, the array's last, then the rest.</summary>
+    constexpr std::array<size_t, MCLogWarrior::NumSkills> BarSkills = {3, 0, 1, 2};
+    constexpr std::array<std::string_view, MCLogWarrior::NumSkills> BarWords = {"Gunnery", "Piloting", "Jumping",
+                                                                                "Sensors"};
+    /// <summary>How far a bar's drawn length may be from its skill's (of 100), in hundredths: a pixel at 640x480.</summary>
+    constexpr float BarSlack = 2.0f;
+
+    /// <summary>
+    /// The INVENTORY's MechWarrior cards on the shown screen: each the MechWarrior's four skills, labelled in 1998's
+    /// order, their values the warrior's, and drawn as four bars each its value's length of the meter.
+    /// </summary>
+    void CheckSkillCards(const MCCampaignScreen& screen, const std::string& where)
+    {
+        const MCLogisticsTabs& tabs = screen.Logistics();
+        const std::vector<std::shared_ptr<MCLogWarrior>>& warriors = GlobalLog()->WarriorList->Warriors;
+        REQUIRE(!warriors.empty());
+        REQUIRE_EQ(tabs.StockGoods().size(), warriors.size());
+
+        for (size_t card = 0; card < warriors.size(); card++)
+        {
+            const MCLogisticsTabs::MCGood& good = tabs.StockGoods()[card];
+            Rml::Element& drawn = ElementOf(screen, std::format("stock{}", card));
+            CHECK(drawn.IsClassSet("skilled"));
+            REQUIRE_EQ(good.Skills.size(), BarSkills.size());
+            Rml::ElementList skills;
+            drawn.QuerySelectorAll(skills, ".wskills > .skill");
+            // Not the list's own row (RmlUi keeps it, hidden).
+            std::erase_if(skills, [](const Rml::Element* skill) { return !skill->IsVisible(true); });
+            REQUIRE_EQ(skills.size(), BarSkills.size());
+
+            for (size_t at = 0; at < BarSkills.size(); at++)
+            {
+                const int value = static_cast<int>(warriors[card]->Skills[BarSkills[at]]);
+                const std::string what = std::format("{} {} {}: ", where, warriors[card]->Callsign, BarWords[at]);
+                CHECK_EQ(what + good.Skills[at].Label, what + std::string(BarWords[at]));
+                CHECK_EQ(what + good.Skills[at].Value, what + std::to_string(value));
+                Rml::Element* meter = skills[at]->QuerySelector(".meter");
+                Rml::Element* fill = skills[at]->QuerySelector(".meter-fill");
+                REQUIRE(meter != nullptr);
+                REQUIRE(fill != nullptr);
+                const float length = fill->GetBox().GetSize().x / meter->GetBox().GetSize().x * 100.0f;
+                // Its value's length, within the slack (the bar's length printed when it isn't).
+                const float shown =
+                    std::abs(length - static_cast<float>(value)) <= BarSlack ? static_cast<float>(value) : length;
+                CHECK_EQ(what + std::format("{:.1f}", shown), what + std::format("{:.1f}", static_cast<float>(value)));
+            }
+        }
+    }
+}
+
+/// <summary>
+/// The user's MechWarrior skills A of 26 Nov: the INVENTORY's MechWarrior cards, on the 'MECH BAY and PURCHASING, each
+/// show the MechWarrior's four skills as the lab's pilot box draws them (a label, the value, a bar), two a row beside
+/// the name, under it when the INVENTORY is one card wide; a 'Mech's card none. Laid out at every window the players'
+/// reports name.
+/// </summary>
+TEST_CASE_ISOLATED("game: the INVENTORY's MechWarrior cards show their four skills as bars")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+
+    // A 'Mech into the INVENTORY, its MechWarrior out of it: the INVENTORY's MechWarriors one at least.
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::Mechs);
+    tabs.Send(MCLogisticsTabs::MCPlace::Force, 0);
+    MCTestGame::RunFrame(FlowFrame);
+
+    for (const MCCampaignScreen::MCTab tab : {MCCampaignScreen::MCTab::MechBay, MCCampaignScreen::MCTab::Purchasing})
+    {
+        const std::string where = tab == MCCampaignScreen::MCTab::MechBay ? "mechbay" : "purchase";
+        screen.ChooseTab(tab);
+        tabs.ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+        MCTestGame::RunFrame(FlowFrame);
+        CheckSkillCards(screen, where);
+        CheckLaidOut(menus, "skills " + where);
+
+        // The COMPONENTS' cards (the same card): none.
+        tabs.ChooseStock(MCLogisticsTabs::MCStock::Components);
+        MCTestGame::RunFrame(FlowFrame);
+
+        for (size_t card = 0; card < tabs.StockGoods().size(); card++)
+        {
+            CHECK(tabs.StockGoods()[card].Skills.empty());
+            CHECK(!ElementOf(screen, std::format("stock{}", card)).IsClassSet("skilled"));
+        }
+    }
+}
+
+namespace
+{
     /// <summary>The remade recording's window (the frames' 16:9 size) and the frames each step settles over.</summary>
     constexpr MCMenusPictures::MCWindowSize RecordedWindow{1280, 720};
     constexpr int32_t RecordedSettleFrames = 8;
@@ -4819,7 +4917,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
         {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0x27638744},
         {"purchase_inventory_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0xa3029dfc},
         {"purchase_pilots_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x857020b1},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0xae4837d6},
         {"purchase_components_tab",
          [&]
          {
@@ -4851,8 +4949,8 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
          [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
          0xec7a5915},
         {"repair_pilots_tab", [&]
-         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x0a0c1cae},
-        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x681342a2},
+         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x11f31a01},
+        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xb4f57705},
         {"repair_vehicles_tab",
          [&]
          {
@@ -4895,7 +4993,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x8addc6b4u);
+    CHECK_EQ(frames, 0x7aa3944cu);
 }
 
 /// <summary>

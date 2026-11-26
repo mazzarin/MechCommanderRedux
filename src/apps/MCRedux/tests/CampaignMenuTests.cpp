@@ -2187,7 +2187,7 @@ TEST_CASE_ISOLATED(
     CHECK(tabs.LabUnit() != nullptr);
     CHECK(!tabs.Repairs());
     CHECK(!RepairForceShown(screen));
-    DrawnEach(*display, clock, "mechbay_mp", {0xa277aaa2, 0xf47dc0dc, 0x96f729ff});
+    DrawnEach(*display, clock, "mechbay_mp", {0x0e22e19f, 0x9f97606c, 0x51ccee3f});
     CheckLaidOut(menus, "mechbay mp");
 }
 
@@ -4229,11 +4229,11 @@ TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every ma
     tabs.DealCancel();
 
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
-    DrawnEach(*display, clock, "mechbay", {0xd8035133, 0x602ae792, 0xca40380e});
+    DrawnEach(*display, clock, "mechbay", {0x1ff9d487, 0x066945e0, 0xc03588b9});
     ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
-    DrawnEach(*display, clock, "mechbay_repair", {0xf4b732a0, 0x48bf7f1e, 0x391a58af});
+    DrawnEach(*display, clock, "mechbay_repair", {0x65718b4c, 0x32208918, 0xd56bbd58});
 }
 
 /// <summary>
@@ -4311,6 +4311,9 @@ TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY lay out and read at every
 
 namespace
 {
+    /// <summary>The squarest windows' shape (4:3, 5:4) up to this width to height: the narrow columns (the rcss' 3/2).</summary>
+    constexpr float SquareTo = 1.5f;
+
     /// <summary>
     /// The columns' widths the user's A (26 Nov) sets for a window's shape: the INVENTORY's and the force's (or the
     /// store's), in units, the details the rest; how many of the INVENTORY's MECHS a row.
@@ -4325,7 +4328,6 @@ namespace
     MCColumns ColumnsAt(const MCMenusPictures::MCWindowSize& window)
     {
         constexpr float WideFrom = 2.0f;
-        constexpr float SquareTo = 1.5f;
         constexpr float SixteenTenTo = 1.7f;
         const float aspect = static_cast<float>(window.Width) / static_cast<float>(window.Height);
 
@@ -4426,7 +4428,6 @@ TEST_CASE_ISOLATED(
 
     /// <summary>How much narrower than the narrower list the details may be (16:9's 261 beside 264).</summary>
     constexpr float NearEqual = 4.0f;
-    constexpr float SquareTo = 1.5f;
     StartFirstBriefing();
     MCCampaignScreen& screen = Shown();
     MCLogisticsTabs& tabs = screen.Logistics();
@@ -4666,6 +4667,16 @@ namespace
     constexpr float BarSlack = 2.0f;
 
     /// <summary>
+    /// <paramref name="drawn"/> (an edge, a length) equal to <paramref name="meant"/> within <paramref name="slack"/>;
+    /// both printed after <paramref name="what"/> when not.
+    /// </summary>
+    void CheckNear(float drawn, float meant, float slack, const std::string& what)
+    {
+        const float shown = std::abs(drawn - meant) <= slack ? meant : drawn;
+        CHECK_EQ(what + std::format("{:.1f}", shown), what + std::format("{:.1f}", meant));
+    }
+
+    /// <summary>
     /// The INVENTORY's MechWarrior cards on the shown screen: each the MechWarrior's four skills, labelled in 1998's
     /// order, their values the warrior's, and drawn as four bars each its value's length of the meter.
     /// </summary>
@@ -4698,11 +4709,8 @@ namespace
                 Rml::Element* fill = skills[at]->QuerySelector(".meter-fill");
                 REQUIRE(meter != nullptr);
                 REQUIRE(fill != nullptr);
-                const float length = fill->GetBox().GetSize().x / meter->GetBox().GetSize().x * 100.0f;
-                // Its value's length, within the slack (the bar's length printed when it isn't).
-                const float shown =
-                    std::abs(length - static_cast<float>(value)) <= BarSlack ? static_cast<float>(value) : length;
-                CHECK_EQ(what + std::format("{:.1f}", shown), what + std::format("{:.1f}", static_cast<float>(value)));
+                CheckNear(fill->GetBox().GetSize().x / meter->GetBox().GetSize().x * 100.0f, static_cast<float>(value),
+                          BarSlack, what);
             }
         }
     }
@@ -4751,6 +4759,170 @@ TEST_CASE_ISOLATED("game: the INVENTORY's MechWarrior cards show their four skil
             CHECK(tabs.StockGoods()[card].Skills.empty());
             CHECK(!ElementOf(screen, std::format("stock{}", card)).IsClassSet("skilled"));
         }
+    }
+}
+
+namespace
+{
+    /// <summary>1998's battle rating bar: full at 18010; a MechWarrior a rank under the weight class takes 0x400.</summary>
+    constexpr double FullRating = 18010.0;
+    constexpr int32_t RankPenalty = 0x400;
+    /// <summary>The ranks: Green, then Regular (a Medium's).</summary>
+    constexpr int32_t GreenRank = 0;
+    constexpr int32_t RegularRank = 1;
+    constexpr int32_t MediumClass = 1;
+    /// <summary>How far a bar's drawn edge may be from its share: a pixel's rounding.</summary>
+    constexpr float EdgeSlack = 1.0f;
+
+    /// <summary>A share of the COMBAT EFFECTIVENESS bar as its width reads ("18.7%").</summary>
+    std::string BarShare(double rating)
+    {
+        return std::format("{:.1f}%", rating / FullRating * 100.0);
+    }
+
+    /// <summary>
+    /// The lab's COMBAT EFFECTIVENESS for <paramref name="mech"/>, its MechWarrior's penalty <paramref name="taken"/>: the
+    /// bar grey to the rating less what the penalty takes, the red end that much from there, no line under it.
+    /// </summary>
+    void CheckCombatBar(const MCCampaignScreen& screen, const MCLogMech& mech, double taken, const std::string& where)
+    {
+        const MCLogisticsTabs& tabs = screen.Logistics();
+        const double rating = std::clamp(static_cast<double>(mech.BattleRating), 0.0, FullRating);
+        CHECK_EQ(where + tabs.LabRating(), where + BarShare(rating - taken));
+        CHECK_EQ(where + tabs.LabPenalty(), where + BarShare(taken));
+        Rml::Element* bar = ElementOf(screen, "lab").QuerySelector(".ce");
+        REQUIRE(bar != nullptr);
+        CHECK(bar->IsVisible(true));
+        // Its head and its bar, nothing under it.
+        CHECK_EQ(bar->GetNumChildren(), 2);
+        Rml::Element* meter = bar->QuerySelector(".meter");
+        Rml::Element* fill = bar->QuerySelector(".meter-fill");
+        Rml::Element* pen = bar->QuerySelector(".meter-pen");
+        REQUIRE(meter != nullptr);
+        REQUIRE(fill != nullptr);
+        REQUIRE(pen != nullptr);
+        const float width = meter->GetBox().GetSize().x;
+        const float filled = fill->GetBox().GetSize().x;
+        CheckNear(filled, static_cast<float>((rating - taken) / FullRating) * width, EdgeSlack, where + "grey ");
+        // The red end (none without a penalty) starts where the grey stops.
+        CheckNear(pen->GetAbsoluteLeft(), fill->GetAbsoluteLeft() + filled, EdgeSlack, where + "red at ");
+        CheckNear(pen->GetBox().GetSize().x, static_cast<float>(taken / FullRating) * width, EdgeSlack, where + "red ");
+    }
+}
+
+/// <summary>
+/// The user's combat effectiveness B of 26 Nov: the 'MECH BAY's lab gives a 'Mech's SPEED (as PURCHASING's details) and,
+/// over its payload, COMBAT EFFECTIVENESS, 1998's battle rating bar laid flat: grey to the 'Mech's rating of 18010, a
+/// MechWarrior ranked under its weight class the bar's top end in red (1998's PaintBR), with no pilot or a matched one
+/// none; no line under the bar, no payload ramp. FORCE's head its count, its tons and the mission's drop limit (its count
+/// alone at 4:3). Laid out at every window the players' reports name.
+/// </summary>
+TEST_CASE_ISOLATED("game: the 'MECH BAY's SPEED, COMBAT EFFECTIVENESS with a MechWarrior's penalty, FORCE's tons")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    // Enough for a Medium.
+    constexpr int32_t Points = 2000000;
+    constexpr int32_t Stock = 3;
+    ResourcePoints = Points;
+    MCTestGame::StockStore(Stock);
+
+    // A Medium bought (its variant shown).
+    screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
+    MCTestGame::RunFrame(FlowFrame);
+    const auto& store = logistics->PurMechList->Mechs;
+    const auto mediumAt = std::ranges::find_if(
+        store, [](const std::shared_ptr<MCPurMech>& mech)
+        { return LogWeightClass(mech->Variants[static_cast<size_t>(mech->CurVariant)]->CurTonnage) == MediumClass; });
+    REQUIRE(mediumAt != store.end());
+    tabs.Pick(MCLogisticsTabs::MCPlace::Store, static_cast<size_t>(mediumAt - store.begin()));
+    tabs.PressDeal();
+    REQUIRE(tabs.DealOpen());
+    tabs.DealConfirm();
+    MCTestGame::RunFrame(FlowFrame);
+    const auto bought = std::ranges::find_if(logistics->MechList->Mechs, [](const std::shared_ptr<MCLogMech>& mech)
+                                             { return LogWeightClass(mech->CurTonnage) == MediumClass; });
+    REQUIRE(bought != logistics->MechList->Mechs.end());
+    const std::shared_ptr<MCLogMech> medium = *bought;
+
+    // A MechWarrior out of the force's first 'Mech (the store hires none yet).
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::Mechs);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    tabs.Send(MCLogisticsTabs::MCPlace::Pilot, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(!logistics->WarriorList->Warriors.empty());
+    const std::shared_ptr<MCLogWarrior> warrior = logistics->WarriorList->Warriors.back();
+
+    // FORCE's head: its count, its tons, the drop limit.
+    tabs.Send(MCLogisticsTabs::MCPlace::Stored, static_cast<size_t>(bought - logistics->MechList->Mechs.begin()));
+    MCTestGame::RunFrame(FlowFrame);
+    float tons = 0.0f;
+
+    for (const std::shared_ptr<MCLogMech>& mech : logistics->ForceMechList->Mechs)
+    {
+        tons += mech->CurTonnage;
+    }
+
+    REQUIRE(MaxDeployTonnage > 0);
+    CHECK_EQ(tabs.ForceWeight(), std::format(" · {} tons · drop limit {}", std::lround(tons), MaxDeployTonnage));
+    Rml::Element* weight = ElementOf(screen, "units").QuerySelector(".head .force-weight");
+    REQUIRE(weight != nullptr);
+
+    // The Medium in the lab without a MechWarrior: its SPEED, its bar without a red end.
+    const auto forceAt = std::ranges::find(logistics->ForceMechList->Mechs, medium);
+    REQUIRE(forceAt != logistics->ForceMechList->Mechs.end());
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, static_cast<size_t>(forceAt - logistics->ForceMechList->Mechs.begin()));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(PilotOf(*medium) == nullptr);
+    CHECK_EQ(tabs.LabSpeed(), std::format("{} m/s", medium->MaxRunSpeed));
+    Rml::Element* speed = ElementOf(screen, "lab").QuerySelector(".speed");
+    REQUIRE(speed != nullptr);
+    CHECK(speed->IsVisible(true));
+    CHECK(speed->GetInnerRML().contains(tabs.LabSpeed()));
+    CHECK(ElementOf(screen, "lab").QuerySelector(".ramp") == nullptr);
+    CheckCombatBar(screen, *medium, 0.0, "no pilot: ");
+    CheckLaidOut(menus, "combat no pilot");
+
+    // A Regular aboard (a Medium's rank): no red end.
+    warrior->Rank = RegularRank;
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+    tabs.Send(MCLogisticsTabs::MCPlace::Stock, WarriorCard(warrior));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(PilotOf(*medium) == warrior);
+    CHECK_EQ(medium->PilotModifier, 0);
+    CheckCombatBar(screen, *medium, 0.0, "matched: ");
+
+    // A Green aboard, a rank under: the modifier off the bar's top end, red.
+    tabs.Send(MCLogisticsTabs::MCPlace::Pilot, 0);
+    warrior->Rank = GreenRank;
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+    tabs.Send(MCLogisticsTabs::MCPlace::Stock, WarriorCard(warrior));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(PilotOf(*medium) == warrior);
+    CHECK_EQ(medium->PilotModifier, -RankPenalty);
+    const double rating = std::clamp(static_cast<double>(medium->BattleRating), 0.0, FullRating);
+    CheckCombatBar(screen, *medium, std::min(static_cast<double>(RankPenalty), rating), "penalty: ");
+    CheckLaidOut(menus, "combat penalty");
+
+    // FORCE's tons and drop limit at 16:10 and wider; at 4:3 and 5:4 its count alone.
+    for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
+    {
+        menus.SetWindow(window.Width, window.Height);
+        menus.Frame();
+        const bool wide = static_cast<float>(window.Width) / static_cast<float>(window.Height) > SquareTo;
+        CHECK_EQ(std::format("{}x{}: {}", window.Width, window.Height, weight->IsVisible(true)),
+                 std::format("{}x{}: {}", window.Width, window.Height, wide));
     }
 }
 
@@ -4938,19 +5110,19 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
         {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
          0x3d1770b2},
         {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
-         0xd230a561},
-        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xfa4459dd},
-        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0x719299b3},
-        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x97913a9e},
-        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0xbe33efb9},
-        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x53d19c9f},
-        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x4a2319b3},
+         0xf69c3677},
+        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xb8bba4d3},
+        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0x5d618b7e},
+        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x69836e93},
+        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0x4a763da0},
+        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0xbd187c72},
+        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0xdcd0d5a9},
         {"repair_mount_laser",
          [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
-         0xec7a5915},
+         0x2ab3bf3f},
         {"repair_pilots_tab", [&]
-         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x11f31a01},
-        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xb4f57705},
+         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x39cf149b},
+        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x05dfd8ab},
         {"repair_vehicles_tab",
          [&]
          {
@@ -4959,23 +5131,23 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::Mechs));
              ClickOn(ElementOf(screen, UnitCardId(tabs, logistics->VehicleList->Vehicles.back())));
          },
-         0xf90bc2cc},
-        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x21b0be0f},
-        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x21b0be0f},
+         0x0c0f8ee7},
+        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x224edde8},
+        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x224edde8},
         {"repair_mech_into_force",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0x2c0f4e98},
-        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0x2c0f4e98},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0xc3ea7e2d},
+        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0xc3ea7e2d},
         {"repair_mech_out",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "inventory")); }, 0x60488656},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "inventory")); }, 0x48404d95},
         {"repair_weapon_list_scroll",
          [&]
          {
              Hover(ElementOf(screen, "fit0"));
              MCScreenInput::RealWheel(-1);
          },
-         0x421f7aba},
+         0x65d3abf1},
         {"repair_first_mech_out", [&] { DragTo(ElementOf(screen, "force0"), ElementOf(screen, "inventory")); },
-         0xa1859fdf},
+         0xfe10bca4},
         {"briefing_after_repair",
          [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xc4a45a12},
         {"deploy_after_repair", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Deploy)); },
@@ -4993,7 +5165,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x7aa3944cu);
+    CHECK_EQ(frames, 0xc8de400cu);
 }
 
 /// <summary>

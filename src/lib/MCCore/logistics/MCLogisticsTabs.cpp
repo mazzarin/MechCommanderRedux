@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCBriefingText.h"
+#include "logistics/MCDeploy.h"
 #include "logistics/MCMatchMaps.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurPilotList.h"
@@ -100,9 +101,8 @@ namespace
     constexpr double FullRating = 18010.0;
     constexpr int WholePercent = 100;
     constexpr float HealthPips = 6.0f;
-    /// <summary>The payload's ramp: its segments, the lowest a third of the highest.</summary>
-    constexpr size_t PayloadSegments = 40;
-    constexpr float LowestSegment = 1.0f / 3.0f;
+    /// <summary>A share of a bar, as its width ("18.7%").</summary>
+    constexpr std::string_view PercentFormat = "{:.1f}%";
     /// <summary>The engine slider's levels: 0 at three hits to 3 whole.</summary>
     constexpr int EngineLevels = 3;
     /// <summary>The longest name the frames' cards hold at their size ("Light Autocannon"); longer ones are set smaller.</summary>
@@ -148,6 +148,9 @@ namespace
     constexpr std::string_view TabKeysDo = "Change tab";
     /// <summary>The force's count against the most it holds; the INVENTORY's.</summary>
     constexpr std::string_view ForceCountFormat = "{} / {}";
+    /// <summary>The FORCE's head after its count: its tons, then the mission's drop limit.</summary>
+    constexpr std::string_view ForceWeightFormat = " · {}";
+    constexpr std::string_view DropLimitFormat = "drop limit {}";
     constexpr std::string_view CountFormat = "{} {}";
     constexpr std::string_view MechWord = "mech";
     constexpr std::string_view MechsWord = "mechs";
@@ -444,6 +447,12 @@ namespace
         return std::clamp(static_cast<int>(std::lround(rating / FullRating * WholePercent)), 0, WholePercent);
     }
 
+    /// <summary><paramref name="rating"/> as a share of 1998's battle rating bar, its width ("18.7%").</summary>
+    std::string RatingShare(double rating)
+    {
+        return std::format(PercentFormat, rating / FullRating * WholePercent);
+    }
+
     /// <summary>A unit's own list of the force or the INVENTORY's MECHS it is in.</summary>
     template <typename Part> bool In(const std::vector<std::shared_ptr<Part>>& list, const MCLogPart& part)
     {
@@ -500,14 +509,9 @@ bool MCLogisticsTabs::MCThing::Gone() const
 
 // MCLogisticsTabs
 
-MCLogisticsTabs::MCLogisticsTabs(MCCampaignScreen& screen) : _Screen(screen)
+MCLogisticsTabs::MCLogisticsTabs(MCCampaignScreen& screen)
+    : _Screen(screen), _LabRating(RatingShare(0)), _LabPenalty(RatingShare(0))
 {
-    for (size_t segment = 0; segment < PayloadSegments; ++segment)
-    {
-        const float height =
-            LowestSegment + (1.0f - LowestSegment) * static_cast<float>(segment) / (PayloadSegments - 1);
-        _PayloadRamp.push_back({.Height = std::format("{:.1f}%", height * WholePercent)});
-    }
 }
 
 MCLogisticsTabs::~MCLogisticsTabs() = default;
@@ -516,6 +520,7 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
 {
     _Model = model;
     model.Value("forceCount", _ForceCount);
+    model.Value("forceWeight", _ForceWeight);
     model.Value("storeCount", _StoreCount);
     model.Value("stockCount", _StockCount);
     model.Value("stockKind", _StockKind);
@@ -595,7 +600,9 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
     model.List("skills", _Skills, std::pair{"label", &MCStat::Label});
     model.Value("payloadNow", _PayloadNow);
     model.Value("payloadOf", _PayloadOf);
-    model.List("payloadRamp", _PayloadRamp, std::pair{"height", &MCCampaignScreen::MCSegment::Height});
+    model.Value("labSpeed", _LabSpeed);
+    model.Value("labRating", _LabRating);
+    model.Value("labPenalty", _LabPenalty);
     model.List("fits", _Fits, std::pair{"range", &MCFitRow::Range}, std::pair{"name", &MCFitRow::Name},
                std::pair{"tons", &MCFitRow::Tons}, std::pair{"state", &MCFitRow::State});
     model.Value("free", _Free);
@@ -849,10 +856,17 @@ void MCLogisticsTabs::FillUnits()
     _ForceThings.clear();
     _StoredThings.clear();
     const std::shared_ptr<MCLogPart> lab = _LabPart.lock();
+    float forceTons = 0.0f;
 
     const auto add = [&](const std::shared_ptr<MCLogPart>& part, MCPlace place)
     {
         MCCampaignScreen::MCCard card = _Screen.UnitCard(*part, -1);
+
+        if (place == MCPlace::Force)
+        {
+            forceTons += part->CurTonnage;
+        }
+
         const MCThing thing{.Unit = part, .Place = place};
         card.Picked = Purchasing() ? _Picked.has_value() && !_Picked->Unit.owner_before(thing.Unit) &&
                                          !thing.Unit.owner_before(_Picked->Unit)
@@ -890,6 +904,11 @@ void MCLogisticsTabs::FillUnits()
     }
 
     _ForceCount = std::format(ForceCountFormat, _Force.size(), MCMechBay::ForceUnits);
+    // After the count, the force's tons and the mission's drop limit (in a match the player's share, as DEPLOY's).
+    const std::string tons = MCCampaignMenu::TonsText(static_cast<int32_t>(std::lround(forceTons)));
+    _ForceWeight = std::format(
+        ForceWeightFormat,
+        MaxDeployTonnage > 0 ? std::format(WhatFormat, tons, std::format(DropLimitFormat, MaxDeployTonnage)) : tons);
 }
 
 MCLogisticsTabs::MCStock MCLogisticsTabs::Shelf() const
@@ -1313,6 +1332,9 @@ void MCLogisticsTabs::FillLab()
     _LabName.clear();
     _LabLetter.clear();
     _LabWhat.clear();
+    _LabSpeed.clear();
+    _LabRating = RatingShare(0);
+    _LabPenalty = RatingShare(0);
     _LabPicture = MCCampaignScreen::NoPicture;
     _LabStored = false;
     _Repairs = false;
@@ -1356,6 +1378,7 @@ void MCLogisticsTabs::FillLab()
     // match.
     _LabKind = worked != nullptr ? 1 : 3;
     _Repairs = worked != nullptr && MultiPlayer() == nullptr;
+    _LabSpeed = std::format(SpeedFormat, mech.MaxRunSpeed);
 
     const int32_t armor = MCMechBay::Points(mech.Armor, false);
     const int32_t armorMost = MCMechBay::Points(mech.Armor, true);
@@ -1402,18 +1425,17 @@ void MCLogisticsTabs::FillLab()
     // No MechWarrior aboard (a stored 'Mech never has one): the pilot's place an empty seat.
     _Seat = !_HasPilot;
 
-    // The payload: the weapons' weight against the free weight (1998's tonnage bar), each fitted copy a row.
-    const float free = mech.FreeTonnage;
-    _PayloadNow = std::format("{:.1f}", mech.WeaponTonnage);
-    _PayloadOf = std::format(PayloadOfFormat, free);
-    const float lit = free > 0 ? std::clamp(mech.WeaponTonnage / free, 0.0f, 1.0f) : 0.0f;
-    const auto litSegments = static_cast<size_t>(std::lround(lit * static_cast<float>(PayloadSegments)));
+    // COMBAT EFFECTIVENESS: 1998's battle rating bar (PaintBR) laid flat, filled to the 'Mech's rating of 18010; a
+    // MechWarrior ranked under its weight class takes their modifier off the bar's top end, drawn red.
+    const double rating = std::clamp(static_cast<double>(mech.BattleRating), 0.0, FullRating);
+    const double taken =
+        _HasPilot && mech.PilotModifier < 0 ? std::min(-static_cast<double>(mech.PilotModifier), rating) : 0.0;
+    _LabRating = RatingShare(rating - taken);
+    _LabPenalty = RatingShare(taken);
 
-    for (size_t segment = 0; segment < _PayloadRamp.size(); ++segment)
-    {
-        _PayloadRamp[segment].State =
-            static_cast<int>(segment < litSegments ? MCCampaignScreen::MCLit::On : MCCampaignScreen::MCLit::Dark);
-    }
+    // The payload: the weapons' weight against the free weight (1998's tonnage bar), each fitted copy a row.
+    _PayloadNow = std::format("{:.1f}", mech.WeaponTonnage);
+    _PayloadOf = std::format(PayloadOfFormat, mech.FreeTonnage);
 
     _Free = std::format(FreeFormat, std::max(mech.CurTonnage - mech.UsedTonnage, 0.0f));
     _CanRefit = false;

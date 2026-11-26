@@ -192,7 +192,7 @@
                 <div id="units" class="side" data-if="tab == 2">
                     <div class="row bottom head">
                         <div class="heading caps grow">Force</div>
-                        <div class="data grey caps nowrap">{{forceCount}}</div>
+                        <div class="data grey caps nowrap">{{forceCount}}<span class="force-weight">{{forceWeight}}</span></div>
                     </div>
                     <div class="scroll-box grow">
                         <div class="scroller">
@@ -271,6 +271,7 @@
                                     <div class="repair"><div class="repair-line"><div class="label">Engine</div><div>{{engineNow}}</div><div class="grow"></div><div class="cost">{{engineCost}}</div></div>
                                         <input type="range" class="slider" id="engine" min="0" max="3" step="1" data-value="engineKnob" data-hint="Repair" data-if="repairs"/>
                                         <div class="meter" data-if="!repairs"><div class="meter-fill" data-style-width="(engineKnob * 100 / 3) + '%'"></div></div></div>
+                                    <div class="repair speed"><div class="repair-line"><div class="label">Speed</div><div>{{labSpeed}}</div></div></div>
                                 </div>
                             </div>
                             <div class="pilot" id="pilot" data-if="hasPilot" data-hint="Drag the MechWarrior" data-hint-right="Out of the 'Mech">
@@ -283,8 +284,8 @@
                             <div class="pilot seat-row" id="seat" data-if="seat"><div class="seat"></div><div class="name"><div class="data grey caps">No pilot</div></div></div>
                         </div>
                         <div class="payload" data-if="labKind != 2">
+                            <div class="ce"><div class="row bottom"><div class="eyebrow grow">Combat effectiveness</div></div><div class="meter"><div class="meter-fill" data-style-width="labRating"></div><div class="meter-pen" data-style-left="labRating" data-style-width="labPenalty"></div></div></div>
                             <div class="row bottom payload-head"><div class="eyebrow grow">Payload</div><div class="data caps nowrap"><span class="cream">{{payloadNow}}</span><span class="grey"> {{payloadOf}}</span></div></div>
-                            <div class="ramp small gauge"><div class="seg" data-for="s : payloadRamp" data-style-height="s.height" data-class-on="s.state == 1" data-class-more="s.state == 2" data-class-over="s.state == 3"></div></div>
                             <div class="fit-cell" data-for="f, i : fits"><div class="fit-row" data-attr-id="'fit' + i" data-hint="Pick" data-hint-right="Take out"><div class="range" data-class-damaged="f.state != ''">{{f.state != '' ? f.state : f.range}}</div><div class="grow">{{f.name}}</div><div class="t">{{f.tons}}</div></div></div>
                             <div class="fit-row open" data-if="labKind == 1"><div class="range"></div><div class="grow free">{{free}}</div></div>
                         </div>

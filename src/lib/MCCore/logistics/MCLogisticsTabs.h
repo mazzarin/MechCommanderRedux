@@ -216,6 +216,8 @@ public:
     const std::vector<MCCampaignScreen::MCCard>& StoredCards() const { return _Stored; }
     /// <summary>The force's count against the most it holds ("11 / 15"), and the INVENTORY's ("3 mechs").</summary>
     const std::string& ForceCount() const { return _ForceCount; }
+    /// <summary>What the FORCE's head says after its count: " · 385 tons · drop limit 300".</summary>
+    const std::string& ForceWeight() const { return _ForceWeight; }
     const std::string& StockCount() const { return _StockCount; }
     const std::vector<MCGood>& StoreGoods() const { return _Store; }
     const std::vector<MCGood>& StockGoods() const { return _StockGoods; }
@@ -229,6 +231,14 @@ public:
     const std::string& DealTotal() const { return _DealTotal; }
     const std::string& LabName() const { return _LabName; }
     const std::string& LabWhat() const { return _LabWhat; }
+    /// <summary>The lab's 'Mech's SPEED ("18 m/s"), as PURCHASING's details give it.</summary>
+    const std::string& LabSpeed() const { return _LabSpeed; }
+    /// <summary>
+    /// The lab's COMBAT EFFECTIVENESS bar: its grey fill and its red end (a MechWarrior's penalty, "0.0%" without),
+    /// each a width of the bar ("18.7%").
+    /// </summary>
+    const std::string& LabRating() const { return _LabRating; }
+    const std::string& LabPenalty() const { return _LabPenalty; }
     /// <summary>Whether the lab shows a stored unit (INTO THE FORCE at its foot).</summary>
     bool LabStored() const { return _LabStored; }
     const MCRepair& ArmorRepair() const { return _Armor; }
@@ -387,6 +397,7 @@ private:
     int _StockKind = 0;
     MCStock _BayStock = MCStock::Components;
     std::string _ForceCount;
+    std::string _ForceWeight;
     std::string _StockCount;
     std::string _StoreCount;
     std::vector<MCCampaignScreen::MCCard> _Force;
@@ -430,6 +441,9 @@ private:
     /// <summary>The lab's 'Mech's variant letter, in a chip after its chassis.</summary>
     std::string _LabLetter;
     std::string _LabWhat;
+    std::string _LabSpeed;
+    std::string _LabRating;
+    std::string _LabPenalty;
     std::string _LabPicture{MCCampaignScreen::NoPicture};
     bool _LabStored = false;
     MCRepair _Armor;
@@ -446,7 +460,6 @@ private:
     std::vector<MCStat> _Skills;
     std::string _PayloadNow;
     std::string _PayloadOf;
-    std::vector<MCCampaignScreen::MCSegment> _PayloadRamp;
     std::vector<MCFitRow> _Fits;
     std::string _Free;
     std::string _RepairAllWord;

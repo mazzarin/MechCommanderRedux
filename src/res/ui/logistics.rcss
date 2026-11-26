@@ -106,7 +106,6 @@
 #logistics .skill { flex: 0 0 76dp; }
 #logistics .skill .repair-line { margin-bottom: 2dp; }
 #logistics .payload { margin-top: 12dp; }
-#logistics .payload .ramp { margin-bottom: 6dp; }
 #logistics .fit-row { box-sizing: border-box; display: flex; flex-direction: row; align-items: center; height: 18dp; padding: 0dp 4dp; border-bottom: 1dp #141e26; font-size: 11.63dp; line-height: 17dp; white-space: nowrap; }
 #logistics .fit-row > * { flex: 0 0 auto; }
 #logistics .fit-row > .grow { flex: 1 1 0; }
@@ -348,11 +347,11 @@
 @media (min-aspect-ratio: 2/1) {
     #logistics .pilot .skill { flex: 1 1 0; }
 }
-/* A fitted part's row: its range in Fine, its tons narrower, so its name keeps its room (ST SR Missile Pack, the
-   longest); a damaged part says DAMAGED in red in its range's place. */
+/* A fitted part's row: its range in Fine, its tons narrower (as wide as "16.5 TONS"), so its name keeps its room (ST SR
+   Missile Pack, the longest); a damaged part says DAMAGED in red in its range's place. */
 #logistics .fit-row .range { width: 50dp; font-size: 8.75dp; letter-spacing: 0.03em; }
 #logistics .fit-row .range.damaged { color: #f26b55; }
-#logistics .fit-row .t { width: 44dp; }
+#logistics .fit-row .t { width: 48dp; }
 #logistics .fit-row > .grow { padding-right: 3dp; }
 /* The foot's buttons tighter; where they don't fit one row (16:10) they wrap onto two, at the right. */
 #logistics .lab-foot { flex-wrap: wrap; justify-content: flex-end; gap: 6dp 8dp; }
@@ -411,4 +410,17 @@
     #logistics .card.good.warrior.skilled { height: auto; flex-wrap: wrap; }
     #logistics .card.good.warrior.skilled .facts { flex: 1 1 0; }
     #logistics .card.good.warrior.skilled .wskills { flex: 0 0 100%; margin-top: 2dp; }
+}
+
+/* ---- The user's combat effectiveness B (26 Nov mocks): SPEED, COMBAT EFFECTIVENESS, the force's tons ---- */
+
+/* COMBAT EFFECTIVENESS over the payload, one plain bar: grey to the 'Mech's rating, a MechWarrior's penalty its top end
+   in red (1998's PaintBR). */
+#logistics .ce { margin-bottom: 8dp; }
+#logistics .ce .row { margin-bottom: 3dp; }
+#logistics .ce .meter { height: 6dp; }
+#logistics .ce .meter-pen { position: absolute; top: 0dp; bottom: 0dp; background-color: #f26b55; }
+/* 4:3 and 5:4: FORCE's column (148 units) holds its count alone. */
+@media (max-aspect-ratio: 3/2) {
+    #logistics #units .head .force-weight { display: none; }
 }

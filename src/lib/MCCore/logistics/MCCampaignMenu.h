@@ -495,6 +495,13 @@ namespace MCCampaignMenu
     /// <summary>The screen, while the menus have it.</summary>
     MCOptionalRef<MCCampaignScreen> Screen();
 
+    /// <summary>
+    /// Whether BRIEFING plays the operation's video by itself where the campaign says to (1998's AutoPlay, on each
+    /// operation's first mission): on in play; off for the briefing benchmark's tour, which times the tabs, and in the
+    /// tests but theirs of it (theirs start campaigns at its first mission, and would each open on the video).
+    /// </summary>
+    inline bool AutoPlaysVideo = true;
+
     /// <summary>Whether it shows, and whether its first frame is whole (the flow's "campaign" kind's).</summary>
     bool Shown();
     bool Ready();

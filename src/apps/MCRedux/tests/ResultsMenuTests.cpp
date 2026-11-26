@@ -445,7 +445,8 @@ TEST_CASE_ISOLATED("game: a long salvage scrolls inside the results' panel, ever
     constexpr size_t Parts = 30;
     constexpr int32_t MostKeys = 200;
     constexpr float Slack = 0.5f;
-    constexpr std::array<MCWindowSize, 5> Windows = {{{640, 480}, {1280, 720}, {1280, 1024}, {1920, 1080}, {3440, 1440}}};
+    constexpr std::array<MCWindowSize, 5> Windows = {
+        {{640, 480}, {1280, 720}, {1280, 1024}, {1920, 1080}, {3440, 1440}}};
     const MCTestGame::SaveGameCleanup saves;
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE(MCTestGame::StartCampaignMission());

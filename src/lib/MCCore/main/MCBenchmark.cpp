@@ -821,6 +821,8 @@ namespace
                 if (MCMenuScreens::Top() == MCMenuScreens::Main())
                 {
                     MCFrameLog::Note("benchmark: a new campaign");
+                    // The tour times the tabs: the first mission's video doesn't play by itself over them.
+                    MCCampaignMenu::AutoPlaysVideo = false;
                     NewCampaign();
                     run.Phase = MCBriefingPhase::Opening;
                 }

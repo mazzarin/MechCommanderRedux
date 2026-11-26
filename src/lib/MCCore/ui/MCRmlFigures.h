@@ -28,7 +28,8 @@ inline std::vector<MCFigureGlyph> MCHeldFigures(std::string_view number)
 
     for (const char character : number)
     {
-        glyphs.push_back(MCFigureGlyph{.Text = std::string(1, character), .Digit = character >= '0' && character <= '9'});
+        glyphs.push_back(
+            MCFigureGlyph{.Text = std::string(1, character), .Digit = character >= '0' && character <= '9'});
     }
 
     return glyphs;

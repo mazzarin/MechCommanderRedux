@@ -724,7 +724,10 @@ TEST_CASE_ISOLATED("game: BRIEFING shows the drop's limit beside OBJECTIVES, und
         REQUIRE(head != nullptr);
         REQUIRE(head->IsClassSet("objectives-head"));
         const auto right = [](Rml::Element& element)
-        { return element.GetAbsoluteOffset(Rml::BoxArea::Border).x + element.GetBox().GetSize(Rml::BoxArea::Border).x; };
+        {
+            return element.GetAbsoluteOffset(Rml::BoxArea::Border).x + element.GetBox().GetSize(Rml::BoxArea::Border).x;
+        };
+
         const auto top = [](Rml::Element& element) { return element.GetAbsoluteOffset(Rml::BoxArea::Border).y; };
         const float headRight =
             head->GetAbsoluteOffset(Rml::BoxArea::Content).x + head->GetBox().GetSize(Rml::BoxArea::Content).x;
@@ -1632,6 +1635,94 @@ TEST_CASE_ISOLATED("game: the results' NEXT MISSION and REPLAY MISSION go back t
 }
 
 /// <summary>
+/// The operation's video plays by itself on each operation's first briefing, as 1998's did (the campaign file's
+/// AutoPlay; the user's, 26 Nov: "I just finished Op2 and loaded up Op3Mis1, and no briefing video played"). A new
+/// campaign's first briefing: none while its change runs, then OPVID1 once BRIEFING shows whole; closed, BRIEFING shown
+/// again (another tab, RETURN TO GAME) plays nothing. The user's way: a save made before the third operation (at the
+/// second's last mission) loaded, its briefing with no video (AutoPlay is the operation's first mission's), its mission
+/// won, NEXT MISSION: the third operation's first briefing, OPVID3 playing by itself.
+/// </summary>
+TEST_CASE_ISOLATED("game: an operation's first briefing plays its video by itself, from a save made before it too")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The second operation's last mission, the third's first (the campaign's 12th and 13th, from 0).
+    constexpr int32_t SecondOperationLast = 11;
+    constexpr int32_t ThirdOperationFirst = 12;
+    constexpr int32_t ThirdOperation = 3;
+    constexpr std::string_view SaveName = "n26bbeforeop3";
+    MCCampaignMenu::AutoPlaysVideo = true;
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+
+    for (int32_t frame = 0; frame < MostChangeFrames && MCScreenChange::Running(); frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+        CHECK(!MCVideoMenu::Shown());
+    }
+
+    RunWhileChanging();
+    CheckRemadeBriefing(FirstEyebrow, FirstTitle);
+    REQUIRE(MCVideoMenu::Shown());
+    CHECK(!GlobalLog()->AutoPlayMovie);
+    CHECK_EQ(GlobalLog()->Operation, 1);
+    REQUIRE(MCVideoMenu::Window().has_value());
+    CHECK(MCVideoMenu::Window()->get().Video().has_value());
+
+    // Closed: BRIEFING again plays nothing, from another tab or the main menu's RETURN TO GAME.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!MCVideoMenu::Shown());
+    Shown().ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    MCTestGame::RunFrame(FlowFrame);
+    Shown().ChooseTab(MCCampaignScreen::MCTab::Briefing);
+    RunWhileChanging();
+    CHECK(!MCVideoMenu::Shown());
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    MCScreenFlow::Via("return to game", ReturnToGame)();
+    RunWhileChanging();
+    CheckRemadeBriefing(FirstEyebrow, FirstTitle);
+    CHECK(!MCVideoMenu::Shown());
+
+    // A save made before the third operation, at the second's last mission, loaded from LOAD GAME: no video there.
+    GlobalLog()->CurrentMission = SecondOperationLast;
+    REQUIRE_EQ(MCLogistics::SaveCampaign(SaveName), 0);
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+    RunWhileChanging();
+    REQUIRE(MCSavesMenu::Screen().has_value());
+    MCSavesScreen& load = MCSavesMenu::Screen()->get();
+    const auto saved = std::ranges::find(load.Saves(), std::string(SaveName));
+    REQUIRE(saved != load.Saves().end());
+    load.Pick(static_cast<int>(saved - load.Saves().begin()));
+    load.PressMain();
+    RunWhileChanging();
+    REQUIRE(MCCampaignMenu::Shown());
+    REQUIRE_EQ(GlobalLog()->CurrentMission, SecondOperationLast);
+    CHECK(!MCVideoMenu::Shown());
+
+    // Its mission won, NEXT MISSION: the third operation's first briefing, its video by itself.
+    BeginFromDeploy();
+    EndAndCloseResults(Won);
+    REQUIRE(MCCampaignMenu::Shown());
+    CHECK_EQ(GlobalLog()->CurrentMission, ThirdOperationFirst);
+    CHECK_EQ(GlobalLog()->Operation, ThirdOperation);
+    CHECK(Shown().Tab() == MCCampaignScreen::MCTab::Briefing);
+    CHECK(MCVideoMenu::Shown());
+    CHECK(!GlobalLog()->AutoPlayMovie);
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!MCVideoMenu::Shown());
+}
+
+/// <summary>
 /// A solo mission's PLAY (SOLO MISSIONS' first, picked as it opens) opens its remade briefing: its name (its
 /// briefing's STARCOM line, as two of the expansion's solo missions write it), no force yet (BEGIN MISSION dark), the
 /// tons that drop and the RP to buy them; the same four tabs as a campaign's.
@@ -1745,8 +1836,8 @@ namespace
         for (MCTestGuest::Guest& guest : guests)
         {
             REQUIRE(guest.Join(*manager.DirectPlay, address));
-            REQUIRE(MCTestGuest::SettleUntil([&]
-                                             { return MCTestGuest::RoomShows(guest.Id()) && guest.SessionScreens() == 1; }));
+            REQUIRE(MCTestGuest::SettleUntil(
+                [&] { return MCTestGuest::RoomShows(guest.Id()) && guest.SessionScreens() == 1; }));
             REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, guest.Id()));
             guest.AnswerFiles(sameData);
         }

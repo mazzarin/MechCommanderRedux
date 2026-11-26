@@ -1599,6 +1599,17 @@ void MCCampaignScreen::OnFrame()
         return;
     }
 
+    // 1998's AutoPlay (the campaign file's, on each operation's first mission): the operation's video plays by itself
+    // once BRIEFING shows whole (the change's fade in over, nothing said over it), once: the flag cleared as it starts,
+    // as 1998's SetUpOperation cleared it, so BRIEFING shown again (a tab, RETURN TO GAME) doesn't play it again. The
+    // campaign file sets it again each time a briefing is read (a save loaded at that mission, REPLAY MISSION), as 1998's.
+    if (MCCampaignMenu::AutoPlaysVideo && GlobalLog()->AutoPlayMovie && _Video && Tab() == MCTab::Briefing &&
+        !MCScreenChange::Running() && !MCRmlDialogs::Shown() && !MCVideoMenu::Shown())
+    {
+        GlobalLog()->AutoPlayMovie = false;
+        PlayVideo();
+    }
+
     bool changed = FillBar();
 
     if (_Multiplayer)

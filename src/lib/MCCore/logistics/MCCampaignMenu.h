@@ -111,6 +111,16 @@ public:
     /// </summary>
     static constexpr size_t UnitNameLetters = 11;
     static constexpr size_t SmallNameLetters = 15;
+    /// <summary>The room a variant's chip takes after a name, in its letters (the mocks': the name with its letter, and two).</summary>
+    static constexpr size_t ChipLetters = 4;
+    /// <summary>
+    /// The most letters of a chassis a unit card's line holds beside its variant's chip: at the cards' size (a longer
+    /// one, Commando's 8, at the details' size), and at the details' size (a longer one, Firestarter's 11, in Fine).
+    /// </summary>
+    static constexpr size_t ChipNameLetters = 7;
+    static constexpr size_t ChipSmallNameLetters = 9;
+    /// <summary>A 'Mech without a MechWarrior, under its name.</summary>
+    static constexpr std::string_view NoPilotWord = "No pilot";
 
     /// <summary>A card as it shows: a unit's, or a drop slot.</summary>
     struct MCCard
@@ -118,6 +128,11 @@ public:
         int Kind = 0;
         std::string Who;
         std::string What;
+        /// <summary>
+        /// A 'Mech's variant letter, in a chip after its chassis (after What under a MechWarrior's callsign, after Who
+        /// without one); none for a vehicle.
+        /// </summary>
+        std::string Letter;
         /// <summary>Its last line: the tons, or why it can't go.</summary>
         std::string Tons;
         /// <summary>The outline's and the pilot's pictures, as decorators (none: a vehicle's pilot, a slot's).</summary>
@@ -142,8 +157,9 @@ public:
         /// <summary>The drop slot it is (0 to 11; -1 in READY AREA).</summary>
         int Slot = -1;
         /// <summary>
-        /// A name longer than a narrow card holds at the cards' size (the logistics' pilotless 'Mechs, a vehicle's),
-        /// and longer than it holds at the details' size (<see cref="SmallNameLetters"/>).
+        /// A name longer than a narrow card holds at the cards' size (a vehicle's, a 'Mech's without a MechWarrior),
+        /// and longer than it holds at the details' size (<see cref="SmallNameLetters"/>; with a chip the Chip
+        /// lengths); under a callsign, Long is the chassis beside its chip longer than its line holds (Fine).
         /// </summary>
         bool Long = false;
         bool Longer = false;
@@ -509,6 +525,20 @@ namespace MCCampaignMenu
 
     /// <summary><paramref name="tons"/> in words: "1 ton", "25 tons".</summary>
     std::string TonsText(int32_t tons);
+
+    /// <summary>A 'Mech's name as the cards draw it: its chassis, and its variant's letter for a chip after it.</summary>
+    struct MCVariantName
+    {
+        std::string Chassis;
+        /// <summary>The variant's letter (A, W, J); none for a name without one (a campaign's own, "Kotare's Turkina").</summary>
+        std::string Letter;
+    };
+
+    /// <summary>
+    /// <paramref name="name"/> ("Hollander II W", as the string table names a variant) split at its last word when that
+    /// is a single capital letter; else the name whole, no letter.
+    /// </summary>
+    MCVariantName VariantName(std::string_view name);
     /// <summary>A picture's source as a card's decorator (none for none): a unit standing at its place's foot.</summary>
     std::string Pictured(std::string_view source);
     /// <summary>

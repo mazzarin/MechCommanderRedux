@@ -36,7 +36,6 @@
 #logistics #info { flex: 1 1 0; display: flex; flex-direction: column; }
 #logistics #info > * { flex: 0 0 auto; }
 #logistics #info > .grow { flex: 1 1 0; }
-#logistics .variant { margin-bottom: 8dp; }
 #logistics .spec { display: flex; flex-direction: row; align-items: flex-start; }
 #logistics .spec > * { flex: 0 0 auto; }
 #logistics .spec > .stats { flex: 1 1 0; margin-left: 10dp; }
@@ -204,6 +203,7 @@
 /* Picked but out of reach (a sold-out good, a variant none are left of): its words lighter on the teal, still dim. */
 #logistics .card.picked.off .who, #logistics .card.picked.off .what, #logistics .card.picked.off .t,
 #logistics .card.picked.off .row-t, #logistics .switch > .on.off { color: #a4b0bc; }
+#logistics .card.picked.off .vchip { border-color: #a4b0bc; color: #a4b0bc; }
 /* A good's name longer than the frames' (LogisticsTabs' LongName) in the details' size, so it fits its card. */
 #logistics .good .who.long, .card.lifted .who.long { font-size: 9.51dp; letter-spacing: 0; }
 /* The INVENTORY's switch a little tighter than the kit's, so MECHS, MECHWARRIORS and COMPONENTS fit its 204 units at
@@ -360,3 +360,38 @@
 /* The details' description keeps the pixel at its right a wrapped line may take (RmlUi rounds its room up), as the
    room's map text. */
 #logistics .desc { padding-right: 1px; }
+
+/* ---- The user's variants A (26 Nov mocks): the letter in a chip (campaign.rcss), pips, the VARIANT rows ---- */
+
+/* A store 'Mech's variants: three pips under its picture, cream for one in store, an empty box for one none are left
+   of, the one shown cyan. */
+#logistics .card.good .pics.chassis { flex: 0 0 24dp; display: flex; flex-direction: column; }
+#logistics .card.good .pics.chassis > * { flex: 0 0 auto; }
+#logistics .card.good .pic.with-pips { height: 32dp; }
+#logistics .vpips { display: flex; flex-direction: row; gap: 2dp; height: 4dp; margin-top: 2dp; padding-left: 2dp; }
+#logistics .vpips > div { box-sizing: border-box; flex: 0 0 5dp; height: 4dp; background-color: #fcfcb8; }
+#logistics .vpips > div.out { background-color: transparent; border: 1dp #6c7a88; }
+#logistics .vpips > div.shown { background-color: #7cd4ec; }
+/* The details' VARIANT (for 1998's variant buttons): a row a variant, the one shown teal; each its letter, its word,
+   what it changes (its description's own sentence) and how many are left; one none are left of dim. A row takes the
+   keys' focus as a list's; a click or Enter shows it. */
+#logistics .vrows { display: flex; flex-direction: column; gap: 2dp; margin: 4dp 0dp 10dp 0dp; }
+#logistics .vrows > * { flex: 0 0 auto; }
+#logistics .vrow { display: flex; flex-direction: row; align-items: center; height: 18dp; padding: 0dp 4dp;
+                   background-color: #142029; white-space: nowrap; tab-index: auto; nav: auto; focus: auto; }
+#logistics .vrow > * { flex: 0 0 auto; }
+#logistics .vrow > .grow { flex: 1 1 0; }
+#logistics .vrow:hover { background-color: #1b2c38; }
+#logistics .vrow.on { background-color: #045454; }
+/* One chip width, so the words line up. */
+#logistics .vrow .vchip { width: 12dp; text-align: center; padding: 0dp; margin-left: 0dp; margin-right: 6dp; }
+#logistics .vrow .vword { width: 54dp; font-size: 9.51dp; line-height: 18dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+#logistics .vrow .vsays { font-size: 8.75dp; line-height: 18dp; color: #a4b0bc; }
+#logistics .vrow.on .vsays { color: #c4ccd4; }
+#logistics .vrow .vleft { font-size: 9.51dp; line-height: 18dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #a4b0bc; margin-left: 6dp; }
+#logistics .vrow.on .vleft { color: #c4ccd4; }
+#logistics .vrow.off .vword, #logistics .vrow.off .vsays, #logistics .vrow.off .vleft { color: #6c7a88; }
+#logistics .vrow.off .vchip { border-color: #6c7a88; color: #6c7a88; }
+/* The one shown with none left: dim on the teal in the picked card's grey (#6c7a88 reads 2:1 there, this 4:1). */
+#logistics .vrow.on.off .vword, #logistics .vrow.on.off .vsays, #logistics .vrow.on.off .vleft { color: #a4b0bc; }
+#logistics .vrow.on.off .vchip { border-color: #a4b0bc; color: #a4b0bc; }

@@ -304,15 +304,16 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
                std::pair{"width", &MCZoneShown::Width}, std::pair{"height", &MCZoneShown::Height},
                std::pair{"picture", &MCZoneShown::Picture});
     // The cards' list first: the groups' rows hold their cards (RmlUi's register then knows a list of cards).
-    model.List(
-        "ready", _Ready, std::pair{"kind", &MCCard::Kind}, std::pair{"who", &MCCard::Who},
-        std::pair{"what", &MCCard::What}, std::pair{"tons", &MCCard::Tons}, std::pair{"outline", &MCCard::Outline},
-        std::pair{"pilot", &MCCard::Pilot}, std::pair{"piloted", &MCCard::Piloted},
-        std::pair{"unpiloted", &MCCard::Unpiloted}, std::pair{"condition", &MCCard::Condition},
-        std::pair{"shade", &MCCard::Shade}, std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
-        std::pair{"picked", &MCCard::Picked}, std::pair{"target", &MCCard::Target},
-        std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot},
-        std::pair{"long", &MCCard::Long}, std::pair{"longer", &MCCard::Longer}, std::pair{"vehicle", &MCCard::Vehicle});
+    model.List("ready", _Ready, std::pair{"kind", &MCCard::Kind}, std::pair{"who", &MCCard::Who},
+               std::pair{"what", &MCCard::What}, std::pair{"letter", &MCCard::Letter}, std::pair{"tons", &MCCard::Tons},
+               std::pair{"outline", &MCCard::Outline}, std::pair{"pilot", &MCCard::Pilot},
+               std::pair{"piloted", &MCCard::Piloted}, std::pair{"unpiloted", &MCCard::Unpiloted},
+               std::pair{"condition", &MCCard::Condition}, std::pair{"shade", &MCCard::Shade},
+               std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
+               std::pair{"picked", &MCCard::Picked}, std::pair{"target", &MCCard::Target},
+               std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot},
+               std::pair{"long", &MCCard::Long}, std::pair{"longer", &MCCard::Longer},
+               std::pair{"vehicle", &MCCard::Vehicle});
     model.List("carried", _Carried, std::pair{"kind", &MCCard::Kind});
     model.List("groups", _Groups, std::pair{"name", &MCGroup::Name}, std::pair{"tons", &MCGroup::Tons},
                std::pair{"closed", &MCGroup::Closed}, std::pair{"cards", &MCGroup::Cards});
@@ -338,7 +339,6 @@ void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
     OnChange("kinds", [this](int kind) { _Logistics->ChooseKind(static_cast<MCLogisticsTabs::MCKind>(kind)); });
     OnChange("stock-kinds",
              [this](int stock) { _Logistics->ChooseStock(static_cast<MCLogisticsTabs::MCStock>(stock)); });
-    OnChange("variants", [this](int variant) { _Logistics->ChooseVariant(variant); });
     OnChange("deal-count", [this](int choice) { _Logistics->DealCount(choice + 1); });
     OnChange("armor", [this](int place) { _Logistics->MoveSlider(MCMechBay::MCKnob::Armor, place); });
     OnChange("structure", [this](int place) { _Logistics->MoveSlider(MCMechBay::MCKnob::Internal, place); });
@@ -691,9 +691,29 @@ MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int s
         logistics->AssignedWarriorList->GetWarriorInfo(mech.PilotIndex, warrior);
     }
 
-    card.Who = warrior != nullptr ? warrior->Callsign : std::string();
-    // The name the store and the 'MECH BAY give it (the string table's), not its file's short one (COM-A).
-    card.What = mech.FileName;
+    // The name the store and the 'MECH BAY give it (the string table's), not its file's short one (COM-A): its chassis,
+    // the variant's letter in a chip after it (the user's variants A, 26 Nov).
+    MCCampaignMenu::MCVariantName name = MCCampaignMenu::VariantName(mech.FileName);
+    card.Letter = std::move(name.Letter);
+
+    const bool chip = !card.Letter.empty();
+
+    if (warrior != nullptr)
+    {
+        // Under the callsign (its line at the details' size already), a long chassis beside its chip in Fine.
+        card.Who = warrior->Callsign;
+        card.What = std::move(name.Chassis);
+        card.Long = chip && card.What.size() > ChipSmallNameLetters;
+    }
+    else
+    {
+        // Without a MechWarrior: its name first, in its own case, NO PILOT under it; a long one smaller.
+        card.Who = std::move(name.Chassis);
+        card.What = std::string(NoPilotWord);
+        card.Long = card.Who.size() > (chip ? ChipNameLetters : UnitNameLetters);
+        card.Longer = card.Who.size() > (chip ? ChipSmallNameLetters : SmallNameLetters);
+    }
+
     card.Pilot = warrior != nullptr ? Pictured(PilotSource(warrior->Picture)) : std::string(NoPicture);
     card.Piloted = warrior != nullptr;
     card.Unpiloted = warrior == nullptr;
@@ -1968,6 +1988,21 @@ std::optional<size_t> MCCampaignMenu::NumberAfter(std::string_view id, std::stri
 std::string MCCampaignMenu::TonsText(int32_t tons)
 {
     return tons == 1 ? std::format("{} ton", tons) : std::format("{} tons", tons);
+}
+
+MCCampaignMenu::MCVariantName MCCampaignMenu::VariantName(std::string_view name)
+{
+    // The letter: one capital after the name's last space ("Commando A"; "Hunchback IIc J").
+    constexpr size_t LetterWord = 2;
+    const size_t space = name.rfind(' ');
+
+    if (space == std::string_view::npos || space == 0 || name.size() - space != LetterWord ||
+        std::isupper(static_cast<unsigned char>(name.back())) == 0)
+    {
+        return {.Chassis = std::string(name)};
+    }
+
+    return {.Chassis = std::string(name.substr(0, space)), .Letter = std::string(name.substr(space + 1))};
 }
 
 bool MCCampaignMenu::Shown()

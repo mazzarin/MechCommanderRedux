@@ -74,12 +74,34 @@ public:
         Aboard,
     };
 
+    /// <summary>
+    /// A store 'Mech's variant: a row of the details' VARIANT (its letter, its word, what it changes in the game's own
+    /// words, how many are left), and a pip under its store card's picture.
+    /// </summary>
+    struct MCVariantRow
+    {
+        /// <summary>Its place among the store 'Mech's variants (1998's button: 0 A, 1 W, 2 J), as ChooseVariant takes it.</summary>
+        int Variant = 0;
+        std::string Letter;
+        std::string Word;
+        std::string Says;
+        std::string Left;
+        /// <summary>The one the store 'Mech shows (its row teal, its pip cyan while any are left).</summary>
+        bool On = false;
+        /// <summary>None left: its row dim, its pip an empty box.</summary>
+        bool Off = false;
+    };
+
     /// <summary>A thing as a card (the store's goods, the INVENTORY's parts and MechWarriors).</summary>
     struct MCGood
     {
         std::string Picture{MCCampaignScreen::NoPicture};
         std::string Who;
         std::string What;
+        /// <summary>A 'Mech's variant letter, in a chip after its chassis (Who).</summary>
+        std::string Letter;
+        /// <summary>A store 'Mech's variants, as pips under its picture (none for anything else).</summary>
+        std::vector<MCVariantRow> Variants;
         /// <summary>A MechWarrior in the INVENTORY: their health (pips kept, of six) over their portrait.</summary>
         bool Warrior = false;
         int Health = 0;
@@ -212,8 +234,8 @@ public:
     const MCRepair& EngineRepair() const { return _Engine; }
     /// <summary>The unit the lab shows, the unit or thing picked.</summary>
     std::shared_ptr<MCLogPart> LabUnit() const { return _LabPart.lock(); }
-    /// <summary>The store mech's variant shown (the details' switch).</summary>
-    int Variant() const { return _Variant; }
+    /// <summary>The store 'Mech's variants as the details' VARIANT rows show them.</summary>
+    const std::vector<MCVariantRow>& VariantRows() const { return _VariantRows; }
     /// <summary>The unit a card stands for (<paramref name="place"/> Force or Stored), if any.</summary>
     std::shared_ptr<MCLogPart> UnitAt(MCPlace place, size_t index) const;
     /// <summary>Whether the lab's 'Mech can be repaired here (a force 'Mech's, outside a match): sliders, not meters.</summary>
@@ -378,11 +400,9 @@ private:
     std::string _InfoWhat;
     std::string _InfoPicture{MCCampaignScreen::NoPicture};
     /// <summary>A store mech's variants (1998's three: A, W and J), those the store has none of, and the one shown.</summary>
-    int _Variants = 0;
-    bool _VariantOff0 = false;
-    bool _VariantOff1 = false;
-    bool _VariantOff2 = false;
-    int _Variant = 0;
+    /// <summary>The details' name's variant letter (an owned 'Mech's; a store 'Mech's VARIANT rows say it).</summary>
+    std::string _InfoLetter;
+    std::vector<MCVariantRow> _VariantRows;
     std::vector<MCStat> _Stats;
     bool _Rated = false;
     int _Rating = 0;
@@ -405,6 +425,8 @@ private:
     // The lab.
     int _LabKind = 0;
     std::string _LabName;
+    /// <summary>The lab's 'Mech's variant letter, in a chip after its chassis.</summary>
+    std::string _LabLetter;
     std::string _LabWhat;
     std::string _LabPicture{MCCampaignScreen::NoPicture};
     bool _LabStored = false;

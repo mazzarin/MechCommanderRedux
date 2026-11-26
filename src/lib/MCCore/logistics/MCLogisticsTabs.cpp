@@ -70,7 +70,7 @@ namespace
     constexpr uint32_t PickedSound = 0x35;
     constexpr uint32_t PlacedSound = 0x34;
     constexpr uint32_t RefusedSound = 0x33;
-    /// <summary>1998's click: the purchase dialog's arrows (a store mech's variant buttons are the kit's switch).</summary>
+    /// <summary>1998's click: the purchase dialog's arrows, a store 'Mech's variant chosen.</summary>
     constexpr uint32_t ClickSound = 0xf;
     /// <summary>1998's messages: too poor, the force full, too heavy, short of points to repair; the refit's question.</summary>
     constexpr uint32_t TooPoorMessage = 0x4d;
@@ -108,10 +108,10 @@ namespace
     /// <summary>The longest name the frames' cards hold at their size ("Light Autocannon"); longer ones are set smaller.</summary>
     constexpr size_t LongNameLetters = 16;
 
-    /// <summary>Whether <paramref name="who"/> is longer than a card's name holds at its own size.</summary>
-    bool LongName(std::string_view who)
+    /// <summary>Whether a good's name, with its variant's chip, is longer than a card's name holds at its own size.</summary>
+    bool LongName(const MCLogisticsTabs::MCGood& good)
     {
-        return who.size() > LongNameLetters;
+        return good.Who.size() + (good.Letter.empty() ? 0 : MCCampaignScreen::ChipLetters) > LongNameLetters;
     }
 
     /// <summary>The skills in the order 1998's bars show them (the array's: Piloting, Jumping, Sensors, Gunnery).</summary>
@@ -127,8 +127,7 @@ namespace
     constexpr std::string_view LeftFormat = "{} left";
     constexpr std::string_view InStoreFormat = "{} in store";
     constexpr std::string_view OwnedNote = "owned";
-    /// <summary>A 'Mech without a MechWarrior, under its name; a unit the INVENTORY stores, before its tons.</summary>
-    constexpr std::string_view NoPilotWord = "No pilot";
+    /// <summary>A unit the INVENTORY stores, before its tons.</summary>
     constexpr std::string_view StoredWord = "Stored";
     /// <summary>The hint line's keys for the tabs (Z and C are drawn at the ends of the list's switch they step).</summary>
     constexpr std::string_view TabKeys = "Q E";
@@ -231,6 +230,125 @@ namespace
         return variant >= 0 && static_cast<size_t>(variant) < purMech.Variants.size()
                    ? MCOptionalOf<const MCPurMechData>(purMech.Variants[static_cast<size_t>(variant)].get())
                    : std::nullopt;
+    }
+
+    /// <summary>A store 'Mech's variants in 1998's order (its buttons'): their words, as the VARIANT rows name them.</summary>
+    constexpr std::array<std::string_view, MCPurMech::NumVariants> VariantWords = {"Armor", "Weapons", "Jump jets"};
+    /// <summary>
+    /// The words of a store 'Mech's description saying what its variant changes ("This variant has extra armor and no
+    /// jump-jets."; the rare ones' "This rare variant has ..."), and how the VARIANT rows put them (the user's mocks,
+    /// 26 Nov: "Extra armor, no jump jets", "Less armor and weapons"), in order.
+    /// </summary>
+    constexpr std::string_view VariantHas = "variant has ";
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 3> VariantRewords = {
+        {{"jump-jets", "jump jets"},
+         {" and no ", ", no "},
+         {"jump jets at the expense of armor and weapons", "less armor and weapons"}}};
+
+    /// <summary>Where the sentence naming a variant's change stands in <paramref name="text"/>: its start and end.</summary>
+    std::optional<std::pair<size_t, size_t>> VariantSentence(std::string_view text)
+    {
+        const size_t has = text.find(VariantHas);
+
+        if (has == std::string_view::npos)
+        {
+            return std::nullopt;
+        }
+
+        constexpr std::string_view SentenceEnd = ". ";
+        const size_t before = text.rfind(SentenceEnd, has);
+        const size_t end = text.find('.', has);
+        return std::pair{before == std::string_view::npos ? size_t{0} : before + SentenceEnd.size(),
+                         end == std::string_view::npos ? text.size() : end + 1};
+    }
+
+    /// <summary>What a variant changes, in its description's own words ("Extra armor, no jump jets"); none unsaid.</summary>
+    std::string VariantSays(std::string_view description)
+    {
+        const std::optional<std::pair<size_t, size_t>> sentence = VariantSentence(description);
+
+        if (!sentence.has_value())
+        {
+            return {};
+        }
+
+        const size_t from = description.find(VariantHas, sentence->first) + VariantHas.size();
+        const size_t to = description[sentence->second - 1] == '.' ? sentence->second - 1 : sentence->second;
+        std::string says(description.substr(from, to - from));
+
+        for (const auto& [was, put] : VariantRewords)
+        {
+            for (size_t at = says.find(was); at != std::string::npos; at = says.find(was, at + put.size()))
+            {
+                says.replace(at, was.size(), put);
+            }
+        }
+
+        if (!says.empty())
+        {
+            says.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(says.front())));
+        }
+
+        return says;
+    }
+
+    /// <summary>A description without the sentence naming its variant's change (the VARIANT rows say it).</summary>
+    std::string WithoutVariantSentence(const std::string& description)
+    {
+        const std::optional<std::pair<size_t, size_t>> sentence = VariantSentence(description);
+
+        if (!sentence.has_value())
+        {
+            return description;
+        }
+
+        std::string rest = description.substr(0, sentence->first) + description.substr(sentence->second);
+
+        while (!rest.empty() && std::isspace(static_cast<unsigned char>(rest.back())) != 0)
+        {
+            rest.pop_back();
+        }
+
+        return rest;
+    }
+
+    /// <summary>An owned unit's name as a heading: a 'Mech's chassis with its variant's chip; a vehicle's whole.</summary>
+    MCCampaignMenu::MCVariantName UnitName(const MCLogPart& unit)
+    {
+        return unit.PartType == 1 ? MCCampaignMenu::VariantName(unit.FileName)
+                                  : MCCampaignMenu::MCVariantName{.Chassis = unit.FileName};
+    }
+
+    /// <summary>A store 'Mech's variants: each one's letter, how many are left, the one shown.</summary>
+    std::vector<MCLogisticsTabs::MCVariantRow> VariantsOf(const MCPurMech& purMech, bool worded)
+    {
+        std::vector<MCLogisticsTabs::MCVariantRow> rows;
+
+        for (size_t variant = 0; variant < purMech.Variants.size() && variant < VariantWords.size(); ++variant)
+        {
+            const MCPurMechData* data = purMech.Variants[variant].get();
+
+            if (data == nullptr)
+            {
+                continue;
+            }
+
+            MCLogisticsTabs::MCVariantRow row{.Variant = static_cast<int>(variant),
+                                              .Letter = MCCampaignMenu::VariantName(data->Name).Letter,
+                                              .On = static_cast<int32_t>(variant) == purMech.CurVariant,
+                                              .Off = data->NumAvailable == 0};
+
+            if (worded)
+            {
+                row.Word = std::string(VariantWords[variant]);
+                row.Says = VariantSays(MCBriefingText::Plain(data->Description));
+                row.Left = LeftNote(data->NumAvailable);
+            }
+
+            rows.push_back(std::move(row));
+        }
+
+        return rows;
     }
 
     /// <summary>Whether a payload lists <paramref name="item"/>: a weapon or piece of equipment it carries.</summary>
@@ -390,10 +508,18 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
     // The cards' type is the campaign's (its "ready" list registered it first).
     model.List("force", _Force, std::pair{"kind", &MCCampaignScreen::MCCard::Kind});
     model.List("stored", _Stored, std::pair{"kind", &MCCampaignScreen::MCCard::Kind});
+    // The goods' nested lists' rows first (RmlUi registers a member's type before its owner's): a store 'Mech's
+    // variants, a MechWarrior's skills.
+    model.List("variantRows", _VariantRows, std::pair{"variant", &MCVariantRow::Variant},
+               std::pair{"letter", &MCVariantRow::Letter}, std::pair{"word", &MCVariantRow::Word},
+               std::pair{"says", &MCVariantRow::Says}, std::pair{"left", &MCVariantRow::Left},
+               std::pair{"on", &MCVariantRow::On}, std::pair{"off", &MCVariantRow::Off});
+    model.List("stats", _Stats, std::pair{"label", &MCStat::Label}, std::pair{"value", &MCStat::Value});
     model.List("store", _Store, std::pair{"picture", &MCGood::Picture}, std::pair{"who", &MCGood::Who},
-               std::pair{"what", &MCGood::What}, std::pair{"price", &MCGood::Price}, std::pair{"note", &MCGood::Note},
-               std::pair{"why", &MCGood::Why}, std::pair{"off", &MCGood::Off}, std::pair{"picked", &MCGood::Picked},
-               std::pair{"part", &MCGood::Part}, std::pair{"long", &MCGood::Long},
+               std::pair{"what", &MCGood::What}, std::pair{"letter", &MCGood::Letter},
+               std::pair{"variants", &MCGood::Variants}, std::pair{"price", &MCGood::Price},
+               std::pair{"note", &MCGood::Note}, std::pair{"why", &MCGood::Why}, std::pair{"off", &MCGood::Off},
+               std::pair{"picked", &MCGood::Picked}, std::pair{"part", &MCGood::Part}, std::pair{"long", &MCGood::Long},
                std::pair{"warrior", &MCGood::Warrior}, std::pair{"health", &MCGood::Health});
     model.List("stock", _StockGoods, std::pair{"picture", &MCGood::Picture});
     model.List("lifted", _Lifted, std::pair{"picture", &MCGood::Picture});
@@ -403,11 +529,15 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
     model.Value("infoName", _InfoName);
     model.Value("infoWhat", _InfoWhat);
     model.Value("infoPicture", _InfoPicture);
-    model.Value("variants", _Variants);
-    model.Value("variantOff0", _VariantOff0);
-    model.Value("variantOff1", _VariantOff1);
-    model.Value("variantOff2", _VariantOff2);
-    model.List("stats", _Stats, std::pair{"label", &MCStat::Label}, std::pair{"value", &MCStat::Value});
+    model.Value("infoLetter", _InfoLetter);
+    model.Event("variant",
+                [this](const Rml::VariantList& arguments)
+                {
+                    if (!arguments.empty())
+                    {
+                        ChooseVariant(arguments.front().Get<int>());
+                    }
+                });
     model.Value("rated", _Rated);
     model.Value("rating", _Rating);
     model.List("kit", _Kit, std::pair{"count", &MCKitRow::Count}, std::pair{"name", &MCKitRow::Name},
@@ -427,6 +557,7 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
     model.Value("dealLeft", _DealLeft);
     model.Value("labKind", _LabKind);
     model.Value("labName", _LabName);
+    model.Value("labLetter", _LabLetter);
     model.Value("labWhat", _LabWhat);
     model.Value("labPicture", _LabPicture);
     model.Value("labStored", _LabStored);
@@ -685,8 +816,7 @@ void MCLogisticsTabs::MarkSwitches() const
     }
 
     // The switches as the lists stand, however they were chosen (a click, the tests).
-    for (const auto& [id, choice] :
-         {std::pair{"kinds", _Kind}, std::pair{"stock-kinds", _StockKind}, std::pair{"variants", _Variant}})
+    for (const auto& [id, choice] : {std::pair{"kinds", _Kind}, std::pair{"stock-kinds", _StockKind}})
     {
         if (Rml::Element* control = document->get().GetElementById(id);
             control != nullptr && MCRmlKit::Choice(*control) != choice)
@@ -712,15 +842,6 @@ void MCLogisticsTabs::FillUnits()
         card.Picked = Purchasing() ? _Picked.has_value() && !_Picked->Unit.owner_before(thing.Unit) &&
                                          !thing.Unit.owner_before(_Picked->Unit)
                                    : part == lab;
-
-        // A 'Mech without a MechWarrior: its name first, NO PILOT under it (DEPLOY's card keeps the name alone).
-        if (card.Unpiloted)
-        {
-            card.Who = std::move(card.What);
-            card.What = std::string(NoPilotWord);
-            card.Long = card.Who.size() > MCCampaignScreen::UnitNameLetters;
-            card.Longer = card.Who.size() > MCCampaignScreen::SmallNameLetters;
-        }
 
         if (_WhyThing.has_value() && _WhyThing->Same(thing))
         {
@@ -793,7 +914,7 @@ void MCLogisticsTabs::FillStore()
     {
         thing.Place = MCPlace::Store;
         good.Picked = _Picked.has_value() && _Picked->Same(thing);
-        good.Long = LongName(good.Who);
+        good.Long = LongName(good);
         _Store.push_back(std::move(good));
         _StoreThings.push_back(std::move(thing));
     };
@@ -811,10 +932,14 @@ void MCLogisticsTabs::FillStore()
                     continue;
                 }
 
+                // Its chassis, the variant shown in a chip after it, its variants as pips under its picture.
                 const MCPurMechData& data = *shownData;
+                MCCampaignMenu::MCVariantName name = MCCampaignMenu::VariantName(data.Name);
                 add(MCGood{.Picture = MCCampaignMenu::Pictured(MCRmlArt::WholeUnitSource(true, data.NameIndex)),
-                           .Who = data.Name,
+                           .Who = std::move(name.Chassis),
                            .What = TonsAndClass(data.CurTonnage),
+                           .Letter = std::move(name.Letter),
+                           .Variants = VariantsOf(*purMech, false),
                            .Price = Points(data.Cost),
                            .Note = data.NumAvailable == 0 ? std::string(SoldOutNote) : LeftNote(data.NumAvailable),
                            .Off = data.NumAvailable == 0},
@@ -905,7 +1030,7 @@ void MCLogisticsTabs::FillStock()
     {
         thing.Place = MCPlace::Stock;
         good.Picked = _Picked.has_value() && _Picked->Same(thing);
-        good.Long = LongName(good.Who);
+        good.Long = LongName(good);
 
         if (_WhyThing.has_value() && _WhyThing->Same(thing))
         {
@@ -979,9 +1104,10 @@ void MCLogisticsTabs::FillDetails()
 {
     _InfoShown = false;
     _InfoName.clear();
+    _InfoLetter.clear();
     _InfoWhat.clear();
     _InfoPicture = MCCampaignScreen::NoPicture;
-    _Variants = 0;
+    _VariantRows.clear();
     _Stats.clear();
     _Rated = false;
     _Kit.clear();
@@ -1016,21 +1142,12 @@ void MCLogisticsTabs::FillDetails()
             return;
         }
 
+        // Its chassis; its VARIANT rows name each variant (1998's buttons), the one shown teal.
         const MCPurMechData& data = *shownData;
-        _InfoName = data.Name;
+        _InfoName = MCCampaignMenu::VariantName(data.Name).Chassis;
         _InfoWhat = TonsAndClass(data.CurTonnage);
         _InfoPicture = MCCampaignMenu::Pictured(MCRmlArt::WholeUnitSource(true, data.NameIndex));
-        const std::array<std::reference_wrapper<bool>, MCPurMech::NumVariants> offs = {_VariantOff0, _VariantOff1,
-                                                                                       _VariantOff2};
-
-        for (size_t variant = 0; variant < purMech->Variants.size(); ++variant)
-        {
-            const MCPurMechData* shown = purMech->Variants[variant].get();
-            offs[variant].get() = shown == nullptr || shown->NumAvailable == 0;
-            _Variants += shown != nullptr ? 1 : 0;
-        }
-
-        _Variant = std::max(purMech->CurVariant, 0);
+        _VariantRows = VariantsOf(*purMech, true);
         const int32_t internals = std::ranges::fold_left(data.CurInternalStructure, 0, std::plus<>());
         _Stats = {{"Tons", MCCampaignMenu::TonsText(static_cast<int32_t>(std::lround(data.CurTonnage)))},
                   {"Class", ClassWord(data.CurTonnage)},
@@ -1045,7 +1162,8 @@ void MCLogisticsTabs::FillDetails()
             _Kit = KitOf(*data.Inventory);
         }
 
-        _Description = MCBriefingText::Plain(data.Description);
+        // Its description without what its VARIANT row says.
+        _Description = WithoutVariantSentence(MCBriefingText::Plain(data.Description));
         _InfoCost = MCGroupedPoints(data.Cost);
         _InfoNote = data.NumAvailable < 0 ? std::string() : std::format(InStoreFormat, data.NumAvailable);
         _CanDeal = MCStore::WhyNotBuy(*purMech) == MCStore::MCRefusal::None;
@@ -1130,7 +1248,9 @@ void MCLogisticsTabs::FillDetails()
     }
     else if (const std::shared_ptr<MCLogPart> unit = thing.Unit.lock(); unit != nullptr)
     {
-        _InfoName = unit->FileName;
+        MCCampaignMenu::MCVariantName name = UnitName(*unit);
+        _InfoName = std::move(name.Chassis);
+        _InfoLetter = std::move(name.Letter);
         _InfoWhat = TonsAndClass(unit->CurTonnage);
         _InfoPicture = MCCampaignMenu::Pictured(MCRmlArt::UnitSource(*unit));
         _DealWord = std::string(SellWord);
@@ -1182,6 +1302,7 @@ void MCLogisticsTabs::FillLab()
 {
     _LabKind = 0;
     _LabName.clear();
+    _LabLetter.clear();
     _LabWhat.clear();
     _LabPicture = MCCampaignScreen::NoPicture;
     _LabStored = false;
@@ -1200,7 +1321,9 @@ void MCLogisticsTabs::FillLab()
     }
 
     const MCLogistics& logistics = *GlobalLog();
-    _LabName = lab->FileName;
+    MCCampaignMenu::MCVariantName name = UnitName(*lab);
+    _LabName = std::move(name.Chassis);
+    _LabLetter = std::move(name.Letter);
     _LabWhat = TonsAndClass(lab->CurTonnage);
     _LabPicture = MCCampaignMenu::Pictured(MCRmlArt::UnitSource(*lab));
     // A unit the INVENTORY stores says so, and goes into the force from here (INTO THE FORCE).
@@ -1489,10 +1612,12 @@ void MCLogisticsTabs::OnMouse(Rml::Event& event)
                              (_Hold->From == MCPlace::Force || _Hold->From == MCPlace::Stored) &&
                              _Hold->Index < cards.size())
                     {
-                        lifted = {.Picture = cards[_Hold->Index].Outline,
-                                  .Who = cards[_Hold->Index].Who.empty() ? cards[_Hold->Index].What
-                                                                         : cards[_Hold->Index].Who,
-                                  .What = cards[_Hold->Index].Tons};
+                        const MCCampaignScreen::MCCard& card = cards[_Hold->Index];
+                        // Its first line as its card's: a callsign, or a 'Mech's chassis with its variant's chip.
+                        lifted = {.Picture = card.Outline,
+                                  .Who = card.Who.empty() ? card.What : card.Who,
+                                  .What = card.Tons,
+                                  .Letter = card.Unpiloted ? card.Letter : std::string()};
                     }
                     else if (_Hold->From == MCPlace::Fitted && _Hold->Index < _Fits.size())
                     {
@@ -1517,7 +1642,7 @@ void MCLogisticsTabs::OnMouse(Rml::Event& event)
 
                     lifted.Picked = false;
                     lifted.Off = false;
-                    lifted.Long = LongName(lifted.Who);
+                    lifted.Long = LongName(lifted);
                     _Lifted = {lifted};
                 }
 
@@ -1760,8 +1885,8 @@ void MCLogisticsTabs::ChooseStock(MCStock stock)
 
 void MCLogisticsTabs::ChooseVariant(int variant)
 {
-    // 1998's variant buttons: the store mech shows (and sells) the variant chosen. Their click is the switch's own (the
-    // kit's button press), once.
+    // 1998's variant buttons (the details' VARIANT rows): the store mech shows (and sells) the variant chosen, with
+    // 1998's click when it changes; one none are left of shows too, as 1998's button did.
     const std::optional<MCThing>& shown = _Hovered.has_value() ? _Hovered : _Picked;
     const std::shared_ptr<MCPurMech> purMech = shown.has_value() ? shown->StoreMech.lock() : nullptr;
 
@@ -1769,6 +1894,11 @@ void MCLogisticsTabs::ChooseVariant(int variant)
         purMech->Variants[static_cast<size_t>(variant)] == nullptr)
     {
         return;
+    }
+
+    if (purMech->CurVariant != variant)
+    {
+        PlayLogSound(ClickSound);
     }
 
     purMech->CurVariant = variant;

@@ -78,7 +78,7 @@
                         <div class="scroller">
                             <div class="ready-grid">
                                 <div class="card-cell" data-for="c, i : ready"><div class="card unit" data-attr-id="'ready' + i"
-                                     data-class-off="c.off" data-class-refuse="c.refuse" data-class-vehicle="c.vehicle"
+                                     data-class-off="c.off" data-class-refuse="c.refuse" data-class-vehicle="c.vehicle" data-class-pilotless="c.unpiloted"
                                      data-hint="Drag into a slot" data-hint-right="Into the first open slot" data-hint-group="Into that group">
                                     <div class="pics">
                                         <div class="gauges" data-visible="c.piloted">
@@ -87,7 +87,7 @@
                                         </div>
                                         <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                     </div>
-                                    <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
+                                    <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}<span class="vchip" data-if="c.unpiloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="what" data-class-long="c.piloted &amp;&amp; c.long">{{c.what}}<span class="vchip" data-if="c.piloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>
                             </div>
                         </div>
@@ -104,7 +104,7 @@
                             <div class="group-head"><div class="eyebrow" data-class-closed="g.closed">{{g.name}}</div><div class="tons" data-if="g.tons != ''">{{g.tons}}</div></div>
                             <div class="card" data-for="c : g.cards" data-attr-id="'slot' + c.slot"
                                  data-class-unit="c.kind == 0" data-class-empty="c.kind == 1" data-class-closed="c.kind == 2"
-                                 data-class-target="c.target" data-class-refuse="c.refuse" data-class-vehicle="c.kind == 0 &amp;&amp; c.vehicle"
+                                 data-class-target="c.target" data-class-refuse="c.refuse" data-class-vehicle="c.kind == 0 &amp;&amp; c.vehicle" data-class-pilotless="c.kind == 0 &amp;&amp; c.unpiloted"
                                  data-attr-data-hint="c.kind == 0 ? 'Drag into a slot' : ''" data-attr-data-hint-right="c.kind == 0 ? 'Back to the ready area' : ''">
                                 <div class="pics" data-if="c.kind == 0">
                                     <div class="gauges" data-visible="c.piloted">
@@ -113,7 +113,7 @@
                                     </div>
                                     <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                 </div>
-                                <div class="facts" data-if="c.kind == 0"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
+                                <div class="facts" data-if="c.kind == 0"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}<span class="vchip" data-if="c.unpiloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="what" data-class-long="c.piloted &amp;&amp; c.long">{{c.what}}<span class="vchip" data-if="c.piloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="t">{{c.tons}}</div></div>
                             </div>
                         </div>
                     </div>
@@ -133,7 +133,7 @@
                         </div>
                     </div>
                     </div>
-                    <div class="card-cell" data-for="c : carried"><div class="card unit dragged" data-class-refuse="c.refuse" data-class-vehicle="c.vehicle"
+                    <div class="card-cell" data-for="c : carried"><div class="card unit dragged" data-class-refuse="c.refuse" data-class-vehicle="c.vehicle" data-class-pilotless="c.unpiloted"
                          data-style-left="carriedLeft" data-style-top="carriedTop" data-hint="Drop into the slot">
                         <div class="pics">
                             <div class="gauges" data-visible="c.piloted">
@@ -142,7 +142,7 @@
                             </div>
                             <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                         </div>
-                        <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
+                        <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}<span class="vchip" data-if="c.unpiloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="what" data-class-long="c.piloted &amp;&amp; c.long">{{c.what}}<span class="vchip" data-if="c.piloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="t">{{c.tons}}</div></div>
                         <div class="why" data-if="c.why != ''">{{c.why}}</div>
                     </div></div>
                 </div>
@@ -167,7 +167,7 @@
                                         </div>
                                         <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                     </div>
-                                    <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
+                                    <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}<span class="vchip" data-if="c.unpiloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="what" data-class-long="c.piloted &amp;&amp; c.long">{{c.what}}<span class="vchip" data-if="c.piloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>
                             </div>
                             <div class="stack" data-if="stockKind != 0">
@@ -205,7 +205,7 @@
                                         </div>
                                         <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic photo" data-if="c.piloted" data-style-decorator="c.pilot" data-hint="Drag the MechWarrior" data-hint-right="Out of the 'Mech"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                     </div>
-                                    <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
+                                    <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}<span class="vchip" data-if="c.unpiloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="what" data-class-long="c.piloted &amp;&amp; c.long">{{c.what}}<span class="vchip" data-if="c.piloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>
                             </div>
                         </div>
@@ -224,8 +224,9 @@
                             <div class="grid">
                                 <div class="card-cell" data-for="g, i : store"><div class="card good" data-attr-id="'store' + i" data-class-picked="g.picked" data-class-off="g.off"
                                      data-hint="Pick" data-hint-right="Buy">
-                                    <div class="pic picture" data-class-part="g.part" data-style-decorator="g.picture"></div>
-                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == ''"><div class="cream">{{g.price}}</div><div class="grow"></div><div class="grey">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
+                                    <div class="pics chassis" data-if="g.variants.size &gt; 0"><div class="pic picture with-pips" data-style-decorator="g.picture"></div><div class="vpips"><div data-for="v : g.variants" data-class-out="v.off" data-class-shown="v.on &amp;&amp; !v.off"></div></div></div>
+                                    <div class="pic picture" data-if="g.variants.size == 0" data-class-part="g.part" data-style-decorator="g.picture"></div>
+                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}<span class="vchip" data-if="g.letter != ''">{{g.letter}}</span></div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == ''"><div class="cream">{{g.price}}</div><div class="grow"></div><div class="grey">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
                                 </div></div>
                             </div>
                         </div>
@@ -234,8 +235,9 @@
                 </div>
                 <div class="gap"></div>
                 <div id="info" data-if="tab == 1">
-                    <div class="row bottom head"><div class="heading caps grow">{{infoName}}</div><div class="data grey caps nowrap" data-if="infoWhat != ''">{{infoWhat}}</div></div>
-                    <div class="row variant" data-if="variants &gt; 1"><div class="switch small" id="variants" data-hint="Variant"><div class="on" data-class-off="variantOff0">Armor</div><div data-class-off="variantOff1">Weapons</div><div data-class-off="variantOff2">Jump jets</div></div></div>
+                    <div class="row bottom head"><div class="heading caps grow">{{infoName}}<span class="vchip" data-if="infoLetter != ''">{{infoLetter}}</span></div><div class="data grey caps nowrap" data-if="infoWhat != ''">{{infoWhat}}</div></div>
+                    <div class="eyebrow" data-if="variantRows.size &gt; 1">Variant</div>
+                    <div class="vrows" data-if="variantRows.size &gt; 1"><div class="vrow" data-for="v, i : variantRows" data-attr-id="'variant' + i" data-class-on="v.on" data-class-off="v.off" data-event-click="variant(v.variant)" data-hint="Pick"><span class="vchip">{{v.letter}}</span><div class="vword">{{v.word}}</div><div class="vsays">{{v.says}}</div><div class="grow"></div><div class="vleft">{{v.left}}</div></div></div>
                     <div class="spec" data-if="infoShown">
                         <div class="schematic picture" data-style-decorator="infoPicture"></div>
                         <div class="stats"><div class="stat" data-for="s : stats"><div class="label">{{s.label}}</div><div class="value">{{s.value}}</div></div></div>
@@ -253,7 +255,7 @@
                     </div>
                 </div>
                 <div id="lab" class="lab" data-if="tab == 2">
-                    <div class="row bottom head"><div class="heading caps grow">{{labName}}</div><div class="data grey caps nowrap">{{labWhat}}</div></div>
+                    <div class="row bottom head"><div class="heading caps grow">{{labName}}<span class="vchip" data-if="labLetter != ''">{{labLetter}}</span></div><div class="data grey caps nowrap">{{labWhat}}</div></div>
                     <div class="lab-body" data-if="labKind &gt; 0">
                         <div>
                             <div class="lab-top">
@@ -304,7 +306,7 @@
     </div>
     <div class="card-cell" data-for="g : lifted"><div class="card good dragged lifted" data-style-left="liftedLeft" data-style-top="liftedTop">
         <div class="pic picture" data-class-part="g.part" data-style-decorator="g.picture"></div>
-        <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div></div>
+        <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}<span class="vchip" data-if="g.letter != ''">{{g.letter}}</span></div><div class="what">{{g.what}}</div></div>
     </div></div>
     <div class="veil" data-if="dealOpen"></div>
     <div class="window-place" data-if="dealOpen">

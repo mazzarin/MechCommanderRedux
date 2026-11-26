@@ -567,8 +567,8 @@ namespace
             return;
         }
 
-        CHECK_EQ(windows, 0x3f575714u);
-        MCMenusPictures::CheckWindowFrames(*display, "results finished", {0xa932861au, 0x3e44da72u, 0x560d8a5fu},
+        CHECK_EQ(windows, 0x0fa9d4cbu);
+        MCMenusPictures::CheckWindowFrames(*display, "results finished", {0xa932861au, 0xee1a04f2u, 0x5da2cbb5u},
                                            settle);
     }
 }

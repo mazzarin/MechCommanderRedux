@@ -2164,7 +2164,7 @@ TEST_CASE_ISOLATED(
     MCTestGame::RunFrame(FlowFrame);
     CHECK(tabs.LabUnit() != nullptr);
     CHECK(!tabs.Repairs());
-    DrawnEach(*display, clock, "mechbay_mp", {0xa1a1121c, 0xc70bba23, 0x2237615f});
+    DrawnEach(*display, clock, "mechbay_mp", {0x5375b300, 0x4a033083, 0xb0548ca7});
     CheckLaidOut(menus, "mechbay mp");
 }
 
@@ -3021,11 +3021,11 @@ TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every ma
     tabs.DealCancel();
 
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
-    DrawnEach(*display, clock, "mechbay", {0xdb26dbda, 0xfaaf559a, 0xf39fa44c});
+    DrawnEach(*display, clock, "mechbay", {0xedf3c776, 0xfdf470f6, 0xf39fa44c});
     ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
-    DrawnEach(*display, clock, "mechbay_repair", {0x77d88343, 0x40f271bb, 0x0156003e});
+    DrawnEach(*display, clock, "mechbay_repair", {0x6f67538f, 0xe21425df, 0x0156003e});
 }
 
 /// <summary>
@@ -3237,33 +3237,33 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              REQUIRE(!logistics->MechList->Mechs.empty());
              boughtMech = logistics->MechList->Mechs.back();
          },
-         0x57ea0457},
-        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x1a72b347},
+         0x7e021467},
+        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0xf7286cf7},
         {"purchase_variant",
          [&]
          {
              ClickOn(ElementOf(screen, "store0"));
              ClickChoice(screen, "variants", 1);
          },
-         0xd45dce33},
+         0x4df7563b},
         {"purchase_scroll",
          [&]
          {
              Hover(ElementOf(screen, "store0"));
              MCScreenInput::RealWheel(-1);
          },
-         0xbe0de1ff},
+         0x6a4b3587},
         {"purchase_too_poor",
          [&]
          {
              ResourcePoints = 0;
              DragTo(ElementOf(screen, "store0"), ElementOf(screen, "units"));
          },
-         0x092f5a20},
-        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0xe2de6ae8},
-        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, "force0")); }, 0x8d3eb7fa},
+         0x5e479cec},
+        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0x8cea8500},
+        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, "force0")); }, 0xd17a0c62},
         {"purchase_pilots_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x7186ee19},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x60b3a789},
         {"purchase_components_tab",
          [&]
          {
@@ -3276,27 +3276,27 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
          0x99eaf0cd},
         {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x478e8121},
         {"purchase_vehicles_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0x467828a8},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0xb1acbb15},
         {"purchase_vehicle_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "units")); },
-         0x99db6c56},
-        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xae0015b2},
+         0x4d94d9d5},
+        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xa60c05a4},
         {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
-         0x05132518},
+         0xf256f67d},
         {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
-         0x9b2dd3b6},
-        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xfcf5e4da},
-        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0xc9dafb74},
-        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x541512e5},
-        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0xe7f809b7},
-        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x58cef3fc},
-        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x758f023a},
+         0x96e9ee43},
+        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0x5d3ad8af},
+        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0x3e3d7c81},
+        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x1fa15f28},
+        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0x394879aa},
+        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x0c62fc39},
+        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0xbc4f2b3f},
         {"repair_mount_laser",
          [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
-         0x15507a15},
+         0x9b980f80},
         {"repair_pilots_tab", [&]
-         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x8fcc8ae6},
-        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xd06ab36d},
+         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x84d0a547},
+        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xcc124f80},
         {"repair_vehicles_tab",
          [&]
          {
@@ -3304,23 +3304,23 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              REQUIRE(!logistics->VehicleList->Vehicles.empty());
              ClickOn(ElementOf(screen, UnitCardId(tabs, logistics->VehicleList->Vehicles.back())));
          },
-         0xe4b3d927},
-        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x2bdb6eef},
-        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x2bdb6eef},
+         0xee9befa7},
+        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x742b22ca},
+        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x742b22ca},
         {"repair_mech_into_force",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0x68899c65},
-        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0x68899c65},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0x6530d170},
+        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0x6530d170},
         {"repair_mech_out",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "spare-head")); }, 0x3846584b},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "spare-head")); }, 0x610141a2},
         {"repair_weapon_list_scroll",
          [&]
          {
              Hover(ElementOf(screen, "fit0"));
              MCScreenInput::RealWheel(-1);
          },
-         0xe8ecf3e7},
+         0x98cbd576},
         {"repair_first_mech_out", [&] { DragTo(ElementOf(screen, "force0"), ElementOf(screen, "spare-head")); },
-         0x8bdc4d42},
+         0x73e8a3bb},
         {"briefing_after_repair",
          [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xaf7f1bc1},
         {"deploy_after_repair", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Deploy)); },
@@ -3338,7 +3338,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x842929d5u);
+    CHECK_EQ(frames, 0x56a58c29u);
 }
 
 /// <summary>

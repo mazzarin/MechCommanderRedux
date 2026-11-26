@@ -899,6 +899,12 @@ void MCCampaignScreen::ChooseTab(MCTab tab)
     {
         _Logistics->Show(tab);
     }
+    else if (tab == MCTab::Deploy)
+    {
+        // DEPLOY's cards made from the units as they stand: a repair or a refit on the 'MECH BAY changes how a unit looks,
+        // not the deploy data the frame watches.
+        FillCards();
+    }
 
     SetKeys();
     MarkTab();

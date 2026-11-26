@@ -2872,6 +2872,62 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's REPAIR ALL shows on the 'Mech's card a
 }
 
 /// <summary>
+/// DEPLOY's READY AREA shows each unit as the other tabs left it, with no unit moved in the drop: a 'Mech damaged after the
+/// screen showed has its card on DEPLOY as on the 'MECH BAY (its outline coloured, its bar short); repaired there by
+/// REPAIR ALL, its READY AREA card whole at once.
+/// </summary>
+TEST_CASE_ISOLATED("game: DEPLOY's READY AREA shows a 'Mech as the 'MECH BAY left it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogMech> mech = GlobalLog()->ForceMechList->Mechs.front();
+    REQUIRE(PilotOf(*mech) != nullptr);
+    ResourcePoints = RepairPoints;
+    const auto readyCard = [&screen, &mech]
+    {
+        const std::vector<std::shared_ptr<MCLogPart>> units = MCDeploy::ReadyUnits();
+        const auto at = std::ranges::find(units, std::static_pointer_cast<MCLogPart>(mech));
+        REQUIRE(at != units.end());
+        const auto card = static_cast<size_t>(at - units.begin());
+        REQUIRE(card < screen.ReadyCards().size());
+        return screen.ReadyCards()[card];
+    };
+
+    // Damaged after the screen showed: DEPLOY shows it as the 'MECH BAY does.
+    HalveArmor(*mech);
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.LabUnit() == mech);
+    REQUIRE(!tabs.ForceCards().empty());
+    const MCCampaignScreen::MCCard damaged = tabs.ForceCards()[0];
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(readyCard().Outline, damaged.Outline);
+    CHECK_EQ(readyCard().Condition, damaged.Condition);
+
+    // REPAIR ALL on the 'MECH BAY: whole on DEPLOY at once.
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    MCTestGame::RunFrame(FlowFrame);
+    ClickOn(ElementOf(screen, "repair-all"));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(!MCMechBay::StructureDamaged(*mech));
+    const MCCampaignScreen::MCCard repaired = tabs.ForceCards()[0];
+    REQUIRE(repaired.Outline != damaged.Outline);
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(readyCard().Outline, repaired.Outline);
+    CHECK_EQ(readyCard().Condition, repaired.Condition);
+    CHECK_EQ(readyCard().Shade, repaired.Shade);
+}
+
+/// <summary>
 /// The 'MECH BAY lists a 'Mech's fitted parts in 1998's order (its weapon list's, MCMechBay::FittedCopies): the
 /// short-, medium- and long-range weapons, each by damage, lowest first, then the equipment, each copy's damage on its
 /// own row. Two weapons the inventory lists the other way round (by master id, the higher first) show the lower damage

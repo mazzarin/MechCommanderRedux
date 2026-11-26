@@ -1902,6 +1902,12 @@ std::string MCCampaignMenu::Pictured(std::string_view source)
                           : std::format("image({} contain center bottom)", source);
 }
 
+std::string MCCampaignMenu::Portrait(std::string_view source)
+{
+    return source.empty() ? std::string(MCCampaignScreen::NoPicture)
+                          : std::format("image({} contain left top)", source);
+}
+
 std::string MCCampaignMenu::PilotSource(std::string_view picture)
 {
     constexpr std::string_view Tga = ".tga";

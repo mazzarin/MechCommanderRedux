@@ -180,7 +180,7 @@ namespace
 
     std::string PilotPicture(int32_t nameIndex)
     {
-        return std::format("image({}logart/pilot{:02} contain center bottom)", MCRmlArt::Scheme, nameIndex);
+        return MCCampaignMenu::Portrait(std::format("{}logart/pilot{:02}", MCRmlArt::Scheme, nameIndex));
     }
 
     /// <summary>A part's line under its name: its range (a weapon's) and its tons as fitted.</summary>
@@ -787,7 +787,7 @@ void MCLogisticsTabs::FillStock()
     {
         for (const std::shared_ptr<MCLogWarrior>& warrior : logistics.WarriorList->Warriors)
         {
-            MCGood good{.Picture = MCCampaignMenu::Pictured(MCCampaignMenu::PilotSource(warrior->Picture)),
+            MCGood good{.Picture = MCCampaignMenu::Portrait(MCCampaignMenu::PilotSource(warrior->Picture)),
                         .Who = warrior->Callsign,
                         .What = RankWord(warrior->Rank)};
             // The 'MECH BAY: a MechWarrior boards the lab's 'Mech when it has none (1998's greyed rows).
@@ -978,7 +978,7 @@ void MCLogisticsTabs::FillDetails()
     {
         _InfoName = warrior->Callsign;
         _InfoWhat = RankWord(warrior->Rank);
-        _InfoPicture = MCCampaignMenu::Pictured(MCCampaignMenu::PilotSource(warrior->Picture));
+        _InfoPicture = MCCampaignMenu::Portrait(MCCampaignMenu::PilotSource(warrior->Picture));
 
         for (size_t at = 0; at < SkillOrder.size(); ++at)
         {
@@ -2066,7 +2066,7 @@ void MCLogisticsTabs::OfferDeal(const MCThing& thing)
         deal = {.Thing = thing, .Sale = true, .Each = MCStore::SalePrice(*warrior), .Most = 1, .Type = FireType};
         _DealName = warrior->Callsign;
         what = RankWord(warrior->Rank);
-        picture = MCCampaignMenu::Pictured(MCCampaignMenu::PilotSource(warrior->Picture));
+        picture = MCCampaignMenu::Portrait(MCCampaignMenu::PilotSource(warrior->Picture));
     }
     else if (const std::shared_ptr<MCLogPart> unit = thing.Unit.lock(); unit != nullptr)
     {

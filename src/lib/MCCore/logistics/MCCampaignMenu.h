@@ -489,8 +489,13 @@ namespace MCCampaignMenu
     std::string TonsText(int32_t tons);
     /// <summary><paramref name="units"/> in words: "1 unit", "20 units".</summary>
     std::string UnitsText(int32_t units);
-    /// <summary>A picture's source as a card's decorator (none for none).</summary>
+    /// <summary>A picture's source as a card's decorator (none for none): a unit standing at its place's foot.</summary>
     std::string Pictured(std::string_view source);
+    /// <summary>
+    /// A MechWarrior's portrait (a <see cref="PilotSource"/>) as a good's decorator (none for none): at its place's top
+    /// left, level with the name beside it.
+    /// </summary>
+    std::string Portrait(std::string_view source);
     /// <summary>A MechWarrior's picture (its file, as the logistics data names it) as an <c>art:</c> source.</summary>
     std::string PilotSource(std::string_view picture);
     /// <summary>The number after <paramref name="prefix"/> in an element's id (slot3, force12); none without one.</summary>

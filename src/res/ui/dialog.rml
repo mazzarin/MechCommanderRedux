@@ -7,6 +7,9 @@
         /* Over a remade screen: what it belongs to alone above the sentence when it has no title; the keys under it. */
         #dialog .titlebar.bare { border-bottom-width: 0; padding-bottom: 0; margin-bottom: 4dp; }
         #dialog .hints { margin-top: 8dp; }
+        /* A message's own lines kept (the user's, 26 Nov): 1998's run its parts a line each (REFIT ALL's question: the
+           parts with no spare between its words), and the port's add a line to theirs (the room's game data). */
+        #dialog #say { white-space: pre-line; }
     </style>
 </head>
 <!-- Port-only (SPEC-menus.md's stage 3, "When something goes wrong"): a message or question over a remade screen: what

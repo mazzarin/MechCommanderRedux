@@ -175,3 +175,12 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
     .mp #briefing > .side-place { display: flex; flex-direction: column; flex: 0 0 300dp; margin-left: 16dp; }
     .mp #deploy > .side-place { display: flex; flex-direction: column; flex: 0 0 224dp; margin-left: 16dp; }
 }
+/* A vehicle's card (the user's, 26 Nov: REFIT TRUCK in the callsign's capitals overflowed it) as a 'Mech's without a
+   MechWarrior: its name in its own case at the cards' size, VEHICLE under it in the cards' grey capitals, its tons; its
+   text where the 'Mechs' starts (the pilot's place empty). On DEPLOY's 136-unit cards a name longer than they hold at
+   the cards' size (MCCampaignScreen::UnitNameLetters) at the details' size, and a longer one again in Fine
+   (SmallNameLetters); logistics.rcss sizes the 'MECH BAY's and PURCHASING's. */
+.card.vehicle .who { text-transform: none; letter-spacing: 0.01em; }
+.card.unit.vehicle .what { text-transform: uppercase; letter-spacing: 0.04em; }
+#deploy .card.vehicle .who.long { font-size: 9.51dp; letter-spacing: 0; }
+#deploy .card.vehicle .who.long.longer { font-size: 8.75dp; }

@@ -32,6 +32,9 @@
 #include "ui/MCRmlDialog.h"
 #include "main/MCLogisticsShared.h"
 
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+
 // The logistics screens' controls (P3-log-1): the ports and the base object, the text formatter, the ticker, text
 // fields, scrolling text, the game list, the slider, the save list's sort, ini-built screens, the purchase dialog and
 // the message dialogs. Most run on a GUI system with a 640x480 screen window and letterless fonts (they measure 0 and
@@ -451,7 +454,7 @@ TEST_CASE_ISOLATED("game: the message dialog's timeout closes it after its time,
 
 /// <summary>
 /// The 'MECH BAY's REFIT ALL, with damaged parts it has no spare for, asks whether to strip them: 1998's refit dialog's
-/// words before and after, each part on a line of its own between them (three, then one).
+/// words before and after, each part on a line of its own between them (three, then one), drawn so.
 /// </summary>
 TEST_CASE_ISOLATED("game: REFIT ALL's question has a line per part it has no spare for between its words")
 {
@@ -508,6 +511,13 @@ TEST_CASE_ISOLATED("game: REFIT ALL's question has a line per part it has no spa
     MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     REQUIRE(MCRmlDialogs::Shown());
     CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text, question(damaged));
+    // Drawn so, a line each (RmlUi's white space would run them together): its words' two and a part's each.
+    REQUIRE(MCRmlDialogs::Dialog()->Document().has_value());
+    Rml::Element* say = MCRmlDialogs::Dialog()->Document()->get().GetElementById("say");
+    REQUIRE(say != nullptr);
+    constexpr float LineSlack = 0.5f;
+    CHECK(say->GetBox().GetSize(Rml::BoxArea::Content).y / say->GetLineHeight() >
+          static_cast<float>(Damaged + 2) - LineSlack);
     // Cancel: the parts stay as they are, still damaged.
     MCRemadeTest::AnswerDialog(false);
     CHECK_EQ(damaged.back()->Stats.front()->Hits, 1);

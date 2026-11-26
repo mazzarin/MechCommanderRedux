@@ -78,7 +78,7 @@
                         <div class="scroller">
                             <div class="ready-grid">
                                 <div class="card-cell" data-for="c, i : ready"><div class="card unit" data-attr-id="'ready' + i"
-                                     data-class-off="c.off" data-class-refuse="c.refuse"
+                                     data-class-off="c.off" data-class-refuse="c.refuse" data-class-vehicle="c.vehicle"
                                      data-hint="Drag into a slot" data-hint-right="Into the first open slot" data-hint-group="Into that group">
                                     <div class="pics">
                                         <div class="gauges" data-visible="c.piloted">
@@ -87,7 +87,7 @@
                                         </div>
                                         <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                     </div>
-                                    <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
+                                    <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>
                             </div>
                         </div>
@@ -104,7 +104,7 @@
                             <div class="group-head"><div class="eyebrow" data-class-closed="g.closed">{{g.name}}</div><div class="tons" data-if="g.tons != ''">{{g.tons}}</div></div>
                             <div class="card" data-for="c : g.cards" data-attr-id="'slot' + c.slot"
                                  data-class-unit="c.kind == 0" data-class-empty="c.kind == 1" data-class-closed="c.kind == 2"
-                                 data-class-target="c.target" data-class-refuse="c.refuse"
+                                 data-class-target="c.target" data-class-refuse="c.refuse" data-class-vehicle="c.kind == 0 &amp;&amp; c.vehicle"
                                  data-attr-data-hint="c.kind == 0 ? 'Drag into a slot' : ''" data-attr-data-hint-right="c.kind == 0 ? 'Back to the ready area' : ''">
                                 <div class="pics" data-if="c.kind == 0">
                                     <div class="gauges" data-visible="c.piloted">
@@ -113,7 +113,7 @@
                                     </div>
                                     <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                 </div>
-                                <div class="facts" data-if="c.kind == 0"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
+                                <div class="facts" data-if="c.kind == 0"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
                             </div>
                         </div>
                     </div>
@@ -133,7 +133,7 @@
                         </div>
                     </div>
                     </div>
-                    <div class="card-cell" data-for="c : carried"><div class="card unit dragged" data-class-refuse="c.refuse"
+                    <div class="card-cell" data-for="c : carried"><div class="card unit dragged" data-class-refuse="c.refuse" data-class-vehicle="c.vehicle"
                          data-style-left="carriedLeft" data-style-top="carriedTop" data-hint="Drop into the slot">
                         <div class="pics">
                             <div class="gauges" data-visible="c.piloted">
@@ -142,7 +142,7 @@
                             </div>
                             <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                         </div>
-                        <div class="facts"><div class="who">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
+                        <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t">{{c.tons}}</div></div>
                         <div class="why" data-if="c.why != ''">{{c.why}}</div>
                     </div></div>
                 </div>
@@ -154,11 +154,11 @@
                         <div class="heading caps grow">Inventory</div>
                         <div class="data grey caps nowrap">{{stockCount}}</div>
                     </div>
-                    <div class="kinds"><div class="switch small" id="stock-kinds" data-hint="What the inventory shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div></div></div>
+                    <div class="kinds"><div class="switch small" id="stock-kinds" data-class-subtabs="tab == 2" data-hint="What the inventory shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div></div></div>
                     <div class="scroll-box grow">
                         <div class="scroller">
                             <div class="stack" data-if="stockKind == 0">
-                                <div class="card-cell" data-for="c, i : stored"><div class="card unit" data-attr-id="'stored' + i" data-class-picked="c.picked" data-class-pilotless="c.unpiloted"
+                                <div class="card-cell" data-for="c, i : stored"><div class="card unit" data-attr-id="'stored' + i" data-class-picked="c.picked" data-class-pilotless="c.unpiloted" data-class-vehicle="c.vehicle"
                                      data-attr-data-hint="tab == 1 ? 'Drag onto the store' : 'Drag onto the force'" data-attr-data-hint-right="tab == 1 ? 'Sell' : 'Into the force'">
                                     <div class="pics">
                                         <div class="gauges" data-visible="c.piloted || c.unpiloted">
@@ -167,7 +167,7 @@
                                         </div>
                                         <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                     </div>
-                                    <div class="facts"><div class="who" data-class-long="c.long">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
+                                    <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>
                             </div>
                             <div class="stack" data-if="stockKind != 0">
@@ -196,28 +196,29 @@
                     <div class="scroll-box grow">
                         <div class="scroller">
                             <div class="grid">
-                                <div class="card-cell" data-for="c, i : force"><div class="card unit" data-attr-id="'force' + i" data-class-picked="c.picked" data-class-pilotless="c.unpiloted"
+                                <div class="card-cell" data-for="c, i : force"><div class="card unit" data-attr-id="'force' + i" data-class-picked="c.picked" data-class-pilotless="c.unpiloted" data-class-vehicle="c.vehicle" data-class-target="c.target"
                                      data-hint="Pick" data-hint-right="Into the inventory">
                                     <div class="pics">
                                         <div class="gauges" data-visible="c.piloted || c.unpiloted">
                                             <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
                                             <div class="health" data-visible="c.piloted"><div class="pip" data-class-lost="c.health &lt; 1"></div><div class="pip" data-class-lost="c.health &lt; 2"></div><div class="pip" data-class-lost="c.health &lt; 3"></div><div class="pip" data-class-lost="c.health &lt; 4"></div><div class="pip" data-class-lost="c.health &lt; 5"></div><div class="pip" data-class-lost="c.health &lt; 6"></div></div>
                                         </div>
-                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
+                                        <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic photo" data-if="c.piloted" data-style-decorator="c.pilot" data-hint="Drag the MechWarrior" data-hint-right="Out of the 'Mech"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                     </div>
-                                    <div class="facts"><div class="who" data-class-long="c.long">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
+                                    <div class="facts"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}</div><div class="what">{{c.what}}</div><div class="t" data-if="c.why == ''">{{c.tons}}</div><div class="t why-line" data-if="c.why != ''">{{c.why}}</div></div>
                                 </div></div>
                             </div>
                         </div>
                         <div class="fade"></div>
                     </div>
+                    <div class="force-foot" data-if="forceRepairs"><div class="grow"></div><div class="button" id="repair-force" data-class-dark="!canRepairForce" data-hint="Repair force">{{repairForceWord}}</div></div>
                 </div>
                 <div id="store" class="side" data-if="tab == 1">
                     <div class="row bottom head">
                         <div class="heading caps grow">Store</div>
                         <div class="data grey caps nowrap">{{storeCount}}</div>
                     </div>
-                    <div class="kinds"><div class="switch small" id="kinds" data-hint="What the store shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div><div>Vehicles</div></div></div>
+                    <div class="kinds"><div class="switch small subtabs" id="kinds" data-hint="What the store shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div><div>Vehicles</div></div></div>
                     <div class="scroll-box grow">
                         <div class="scroller">
                             <div class="grid">
@@ -244,7 +245,7 @@
                         <div class="meter"><div class="meter-fill" data-style-width="rating + '%'"></div></div>
                     </div>
                     <div class="eyebrow section" data-if="kit.size > 0">Payload</div>
-                    <div class="kit-row" data-for="k : kit"><span class="n">{{k.count}}</span>{{k.name}}</div>
+                    <div class="kit-row" data-for="k : kit"><span class="state" data-if="k.state != ''">{{k.state}}</span><span class="n">{{k.count}}</span>{{k.name}}</div>
                     <p class="desc" data-if="description != ''">{{description}}</p>
                     <div class="grow"></div>
                     <div class="deal" data-if="infoShown">
@@ -269,7 +270,7 @@
                                         <div class="meter" data-if="!repairs"><div class="meter-fill" data-style-width="(engineKnob * 100 / 3) + '%'"></div></div></div>
                                 </div>
                             </div>
-                            <div class="pilot" id="pilot" data-if="hasPilot" data-hint-right="Out of the 'Mech">
+                            <div class="pilot" id="pilot" data-if="hasPilot" data-hint="Drag the MechWarrior" data-hint-right="Out of the 'Mech">
                                 <div class="pics"><div class="health"><div class="pip" data-class-lost="pilotHealth &lt; 1"></div><div class="pip" data-class-lost="pilotHealth &lt; 2"></div><div class="pip" data-class-lost="pilotHealth &lt; 3"></div><div class="pip" data-class-lost="pilotHealth &lt; 4"></div><div class="pip" data-class-lost="pilotHealth &lt; 5"></div><div class="pip" data-class-lost="pilotHealth &lt; 6"></div></div><div class="portrait picture" data-style-decorator="pilotPicture"></div></div>
                                 <div class="name"><div class="text caps pilot-name">{{pilotName}}</div><div class="data grey caps">{{pilotRank}}</div></div>
                                 <div class="skills"><div class="skill" data-for="s : skills"><div class="repair-line"><div class="label">{{s.label}}</div><div class="grow"></div><div>{{s.value}}</div></div><div class="meter"><div class="meter-fill" data-style-width="s.value + '%'"></div></div></div></div>

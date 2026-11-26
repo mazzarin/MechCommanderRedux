@@ -53,6 +53,12 @@ public:
 
     /// <summary>Q and E: <paramref name="document"/>'s tabs moved by <paramref name="step"/>; whether it has any.</summary>
     bool StepTab(Rml::ElementDocument& document, int step);
+    /// <summary>
+    /// Z and C: <paramref name="document"/>'s list switch (a switch marked <c>subtabs</c>: PURCHASING's kinds, the 'MECH
+    /// BAY's INVENTORY) moved by <paramref name="step"/>, round from its last choice to its first as Q and E's tabs;
+    /// whether one shows.
+    /// </summary>
+    bool StepSubtab(Rml::ElementDocument& document, int step);
 
     /// <summary>
     /// The frame: each attached document's focus ring, its lists' fades, its texts' reach by the keys and its hint line

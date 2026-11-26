@@ -231,17 +231,19 @@
 
 /* A 'Mech without a MechWarrior (the force's, the INVENTORY's): its name in its own case first, NO PILOT under it in
    the cards' capitals; its condition over its outline, the pilot's place an empty seat. */
-#logistics .card.pilotless .who { text-transform: none; letter-spacing: 0.01em; }
-#logistics .card.pilotless .what { text-transform: uppercase; letter-spacing: 0.04em; }
+#logistics .card.pilotless .who, #logistics .card.vehicle .who { text-transform: none; letter-spacing: 0.01em; }
+#logistics .card.pilotless .what, #logistics .card.vehicle .what { text-transform: uppercase; letter-spacing: 0.04em; }
 /* A name longer than a force card holds (LogisticsTabs' PilotlessNameLetters) in the details' size; at 16:10 and
    narrower every force card's, as its 127 units hold the details' size alone; the INVENTORY's long ones at 4:3. */
-#logistics #units .card.pilotless .who.long { font-size: 9.51dp; letter-spacing: 0; }
+#logistics #units .card.pilotless .who.long, #logistics #units .card.vehicle .who.long { font-size: 9.51dp; letter-spacing: 0; }
 @media (max-aspect-ratio: 17/10) {
-    #logistics #units .card.pilotless .who { font-size: 9.51dp; letter-spacing: 0; }
+    #logistics #units .card.pilotless .who, #logistics #units .card.vehicle .who { font-size: 9.51dp; letter-spacing: 0; }
 }
 @media (max-aspect-ratio: 3/2) {
-    #logistics #inventory .card.pilotless .who.long { font-size: 9.51dp; letter-spacing: 0; }
+    #logistics #inventory .card.pilotless .who.long, #logistics #inventory .card.vehicle .who.long { font-size: 9.51dp; letter-spacing: 0; }
 }
+/* A force card's name longer again (over MCCampaignScreen::SmallNameLetters: "AeroSpace Spotter") in Fine. */
+#logistics #units .card.unit .who.long.longer { font-size: 8.75dp; }
 /* A MechWarrior in no 'Mech: their health over their portrait, as on a unit's card; the callsign, the rank. */
 #logistics .card.good.warrior .pics { flex: 0 0 24dp; }
 #logistics .card.good.warrior .pics > .pic { flex: 0 0 32dp; width: 24dp; height: 32dp; }
@@ -254,3 +256,29 @@
     #logistics #inventory .switch { flex-wrap: wrap; padding: 0dp 1dp 1dp 0dp; }
     #logistics #inventory .switch > div { flex: 1 1 auto; text-align: center; margin-bottom: -1dp; }
 }
+
+/* ---- The user's notes, 26 Nov ---- */
+
+/* A column's switch wrapped onto a second row (16:10's INVENTORY, 4:3's columns): one frame round both rows, their right
+   edges matched. Each segment's right border lies over the next one's or, at a row's end, in the switch's 1-unit
+   padding: the last segment's too (look.rcss keeps a last segment's border inside, which left COMPONENTS a unit short
+   of the row above it). */
+@media (max-aspect-ratio: 17/10) {
+    #logistics #inventory .switch > div:last-child { margin-right: -1dp; }
+}
+@media (max-aspect-ratio: 3/2) {
+    #logistics .side .switch > div:last-child { margin-right: -1dp; }
+}
+
+/* REPAIR FORCE at the FORCE's foot (the user's, 26 Nov), as REPAIR ALL at the lab's: at the right, its price in its
+   word; 4:3's one-card column holds it at the small buttons' size. */
+#logistics .force-foot { display: flex; flex-direction: row; align-items: center; margin-top: 10dp; }
+#logistics .force-foot > * { flex: 0 0 auto; }
+#logistics .force-foot > .grow { flex: 1 1 0; }
+@media (max-aspect-ratio: 3/2) {
+    #logistics .force-foot > .button { height: 16dp; line-height: 14dp; padding: 0dp 8dp; font-size: 9.51dp; }
+}
+
+/* An owned 'Mech's damaged parts in PURCHASING's payload (the user's, 26 Nov): DAMAGED in red at the row's right, as
+   the 'MECH BAY's rows. */
+#logistics .kit-row .state { float: right; font-size: 9.51dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #f26b55; }

@@ -60,7 +60,8 @@ public:
 
     /// <summary>
     /// Where a card is: the force, the INVENTORY's MECHS (a unit stored outside the force), the store, the INVENTORY's
-    /// MECHWARRIORS or COMPONENTS (its goods), the lab's fitted parts and MechWarrior.
+    /// MECHWARRIORS or COMPONENTS (its goods), the lab's fitted parts and MechWarrior; a FORCE card's MechWarrior, by
+    /// their photo (its index the card's: the user's, 26 Nov, "pick the pilot out of the mech").
     /// </summary>
     enum class MCPlace : uint8_t
     {
@@ -70,6 +71,7 @@ public:
         Stock,
         Fitted,
         Pilot,
+        Aboard,
     };
 
     /// <summary>A thing as a card (the store's goods, the INVENTORY's parts and MechWarriors).</summary>
@@ -101,10 +103,12 @@ public:
         std::string Value;
     };
 
+    /// <summary>A row of the details' payload: how many, the part, and DAMAGED for an owned 'Mech's damaged copies.</summary>
     struct MCKitRow
     {
         int Count = 0;
         std::string Name;
+        std::string State;
     };
 
     struct MCFitRow
@@ -158,8 +162,11 @@ public:
     void Send(MCPlace place, size_t index);
     /// <summary>The lab's INTO THE FORCE: the stored unit it shows joins the force, still picked.</summary>
     void IntoTheForce();
-    /// <summary>A card dragged from <paramref name="from"/> and let go over <paramref name="onto"/>.</summary>
-    void Drop(MCPlace from, size_t index, std::optional<MCPlace> onto);
+    /// <summary>
+    /// A card dragged from <paramref name="from"/> and let go over <paramref name="onto"/> (over its card
+    /// <paramref name="card"/>, if over one: a FORCE card a MechWarrior boards).
+    /// </summary>
+    void Drop(MCPlace from, size_t index, std::optional<MCPlace> onto, std::optional<size_t> card = std::nullopt);
     /// <summary>The details' BUY or SELL.</summary>
     void PressDeal();
     /// <summary>The deal window's HOW MANY (from one).</summary>
@@ -170,6 +177,11 @@ public:
     void MoveSlider(MCMechBay::MCKnob knob, int position);
     void RepairAll();
     void RefitAll();
+    /// <summary>
+    /// The FORCE's REPAIR FORCE (the user's, 26 Nov): each force 'Mech's REPAIR ALL in the force's order, at its cost, as
+    /// far as the resource points go (short, 1998's message, as REPAIR ALL's).
+    /// </summary>
+    void RepairForce();
 
     /// <summary>What shows (the tests read it).</summary>
     MCKind Kind() const { return static_cast<MCKind>(_Kind); }
@@ -206,6 +218,11 @@ public:
     std::shared_ptr<MCLogPart> UnitAt(MCPlace place, size_t index) const;
     /// <summary>Whether the lab's 'Mech can be repaired here (a force 'Mech's, outside a match): sliders, not meters.</summary>
     bool Repairs() const { return _Repairs; }
+    /// <summary>REPAIR FORCE: whether anything in the force needs it, and its label (with what it costs).</summary>
+    bool CanRepairForce() const { return _CanRepairForce; }
+    const std::string& RepairForceWord() const { return _RepairForceWord; }
+    /// <summary>The details' payload (PURCHASING): its rows.</summary>
+    const std::vector<MCKitRow>& KitRows() const { return _Kit; }
 
 private:
     /// <summary>What a card stands for: a unit, a store's good, a spare part or a MechWarrior (one is set).</summary>
@@ -268,11 +285,23 @@ private:
     std::optional<MCThing> ThingAt(MCPlace place, size_t index) const;
     /// <summary>The card the element is in (its id: force3, store0), if any.</summary>
     static std::optional<std::pair<MCPlace, size_t>> CardOf(MCOptionalRef<const Rml::Element> element);
+    /// <summary>Where a drag is let go: the column, and the card under it if any (its index in its list).</summary>
+    struct MCSpot
+    {
+        MCPlace Place = MCPlace::Force;
+        std::optional<size_t> Card;
+    };
+
     /// <summary>
     /// The column a point (pixels) is over: the force, the INVENTORY (Stored with its MECHS shown, else Stock), the
-    /// store, the lab.
+    /// store, the lab; with the card under it.
     /// </summary>
-    std::optional<MCPlace> ColumnAt(float x, float y) const;
+    std::optional<MCSpot> SpotAt(float x, float y) const;
+    /// <summary>
+    /// The FORCE card a held MechWarrior (an INVENTORY card's, the lab's, a FORCE card's photo) would board at a point
+    /// (pixels): its edge cyan while held there, as DEPLOY's open slot.
+    /// </summary>
+    std::optional<size_t> LandingAt(float x, float y) const;
     /// <summary>The deal window opened for <paramref name="thing"/>: a buy from the store, else a sale.</summary>
     void OfferDeal(const MCThing& thing);
     /// <summary>
@@ -287,8 +316,19 @@ private:
     /// <summary>A part fitted into the lab's mech, a part taken out to the spares, a MechWarrior boarding or leaving.</summary>
     void FitPart(MCLogInventoryItem& part);
     void TakeOutPart(size_t fitted);
-    void BoardPilot(MCLogWarrior& warrior);
-    void PilotLeaves();
+    /// <summary>
+    /// <paramref name="warrior"/> (a spare) boards <paramref name="mech"/>, the MechWarrior aboard it to the INVENTORY
+    /// first; a MechWarrior leaves <paramref name="mech"/> for the INVENTORY; one moves from a 'Mech into another.
+    /// </summary>
+    void BoardPilot(MCLogWarrior& warrior, MCLogMech& mech);
+    void PilotLeaves(MCLogMech& mech);
+    void MovePilot(MCLogMech& from, MCLogMech& to);
+    /// <summary>The 'Mech of FORCE card <paramref name="index"/> (none for a vehicle's).</summary>
+    std::shared_ptr<MCLogMech> ForceMechAt(size_t index) const;
+    /// <summary>The 'Mech a held MechWarrior comes from (the lab's, a FORCE card's photo's); none from the INVENTORY.</summary>
+    std::shared_ptr<MCLogMech> PilotSource(MCPlace from, size_t index) const;
+    /// <summary>REPAIR FORCE's label and whether it can act, as the force stands.</summary>
+    void FillForceRepair();
     /// <summary>
     /// The lab's mech when it is one the player can work on (a force mech, not one stored in the INVENTORY).
     /// </summary>
@@ -302,6 +342,8 @@ private:
     std::optional<MCThing> _Hovered;
     std::optional<MCDeal> _Deal;
     std::optional<MCHold> _Hold;
+    /// <summary>The FORCE card a held MechWarrior would board (edged cyan).</summary>
+    std::optional<size_t> _Landing;
     std::weak_ptr<MCLogPart> _LabPart;
     /// <summary>The lab mech's knobs (where it arrived), read as it is picked.</summary>
     MCMechBay::MCKnobs _Knobs;
@@ -386,6 +428,10 @@ private:
     std::string _RepairAllWord;
     bool _CanRepairAll = false;
     bool _CanRefit = false;
+    /// <summary>REPAIR FORCE at the FORCE's foot: shown outside a match, its label, and whether it acts.</summary>
+    bool _ForceRepairs = false;
+    std::string _RepairForceWord;
+    bool _CanRepairForce = false;
 };
 
 namespace MCLogisticsTabsWords

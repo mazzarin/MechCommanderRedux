@@ -104,6 +104,13 @@ public:
 
     /// <summary>No picture, as a decorator (a card's bound decorators are set even where its pictures don't show).</summary>
     static constexpr std::string_view NoPicture = "none";
+    /// <summary>
+    /// The most letters of a unit's name (a vehicle's, a 'Mech's without a MechWarrior) a card's first line holds at the
+    /// cards' size on 16:9 (1998's longest of these, "Commando W", fills it): a longer one is set at the details' size,
+    /// and one longer than <see cref="SmallNameLetters"/> smaller again, in Fine ("AeroSpace Spotter"), so it fits.
+    /// </summary>
+    static constexpr size_t UnitNameLetters = 11;
+    static constexpr size_t SmallNameLetters = 15;
 
     /// <summary>A card as it shows: a unit's, or a drop slot.</summary>
     struct MCCard
@@ -135,9 +142,13 @@ public:
         /// <summary>The drop slot it is (0 to 11; -1 in READY AREA).</summary>
         int Slot = -1;
         /// <summary>
-        /// A name longer than a narrow card holds at the cards' size (the logistics' pilotless 'Mechs).
+        /// A name longer than a narrow card holds at the cards' size (the logistics' pilotless 'Mechs, a vehicle's),
+        /// and longer than it holds at the details' size (<see cref="SmallNameLetters"/>).
         /// </summary>
         bool Long = false;
+        bool Longer = false;
+        /// <summary>A vehicle: its name in its own case over VEHICLE, as a 'Mech without a MechWarrior's card.</summary>
+        bool Vehicle = false;
     };
 
     /// <summary>A drop group: its head, and its four slots.</summary>

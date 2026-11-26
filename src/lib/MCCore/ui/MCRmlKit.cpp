@@ -22,6 +22,10 @@ namespace
     constexpr const char* SwitchClass = "switch";
     /// <summary>A switch Q and E step as tabs (a screen's groups: LOAD GAME's campaigns).</summary>
     constexpr const char* TabsSwitchAttribute = "data-tabs";
+    /// <summary>
+    /// A list's switch Z and C step, as Q and E the tabs over it (PURCHASING's kinds, the 'MECH BAY's INVENTORY).
+    /// </summary>
+    constexpr const char* SubtabsClass = "subtabs";
     constexpr const char* OnClass = "on";
     /// <summary>A switch's choice held (the room's TEAM while the player is on no team): it can't be chosen.</summary>
     constexpr const char* HeldClass = "held";
@@ -539,6 +543,29 @@ bool MCRmlKit::StepTab(Rml::ElementDocument& document, int step)
 
         const int count = control->GetNumChildren();
         Play(TabSound);
+        Choose(*control, (std::max(Choice(*control), 0) + step + count) % count, true);
+        return true;
+    }
+
+    return false;
+}
+
+bool MCRmlKit::StepSubtab(Rml::ElementDocument& document, int step)
+{
+    Rml::ElementList switches;
+    document.QuerySelectorAll(switches, std::format(".{}.{}", SwitchClass, SubtabsClass));
+
+    // Port-only (the user's, 26 Nov): the screen's first shown list switch, round from its last choice to its first as
+    // Q and E's tabs; its change sounds as a click on it does.
+    for (Rml::Element* control : switches)
+    {
+        if (!control->IsVisible(true) || control->GetNumChildren() == 0 || control->IsClassSet(OffClass))
+        {
+            continue;
+        }
+
+        const int count = control->GetNumChildren();
+        Play(PressSound);
         Choose(*control, (std::max(Choice(*control), 0) + step + count) % count, true);
         return true;
     }

@@ -9,7 +9,7 @@
 namespace
 {
     /// <summary>SDL's keys the menus use, as RmlUi names them (the rest are the game's).</summary>
-    constexpr std::array<std::pair<SDL_Keycode, Rml::Input::KeyIdentifier>, 21> Keys = {{
+    constexpr std::array<std::pair<SDL_Keycode, Rml::Input::KeyIdentifier>, 22> Keys = {{
         {SDLK_UP, Rml::Input::KI_UP},
         {SDLK_DOWN, Rml::Input::KI_DOWN},
         {SDLK_LEFT, Rml::Input::KI_LEFT},
@@ -31,6 +31,7 @@ namespace
         {SDLK_C, Rml::Input::KI_C},
         {SDLK_V, Rml::Input::KI_V},
         {SDLK_X, Rml::Input::KI_X},
+        {SDLK_Z, Rml::Input::KI_Z},
     }};
 
     Rml::Input::KeyIdentifier KeyOf(SDL_Keycode key)
@@ -69,6 +70,8 @@ namespace
     constexpr const char* FocusVisible = "focus-visible";
     /// <summary>No modifier key held (RmlUi's modifiers are flags).</summary>
     constexpr int NoModifiers = 0;
+    /// <summary>The modifiers that make a letter a shortcut (Ctrl, Alt, Command), not a menu's key.</summary>
+    constexpr int ShortcutModifiers = Rml::Input::KM_CTRL | Rml::Input::KM_ALT | Rml::Input::KM_META;
     /// <summary>A text box's button that Enter in it presses (its id), and the look's class of a button that's off.</summary>
     constexpr const char* EnterAttribute = "data-enter";
     /// <summary>
@@ -219,6 +222,24 @@ bool MCRmlLayer::TakeKey(int key, int modifiers)
             if (const MCOptionalRef<Rml::ElementDocument> document = screen->Document(); document.has_value())
             {
                 return _Kit.StepTab(document->get(), key == Rml::Input::KI_Q ? -1 : 1);
+            }
+
+            return false;
+        }
+        case Rml::Input::KI_Z:
+        case Rml::Input::KI_C:
+        {
+            // Port-only (the user's, 26 Nov): Z and C step the screen's list switch as Q and E its tabs. A window that
+            // takes every key (PURCHASING's buy window) has them first; with Ctrl, Alt or Command they're shortcuts
+            // (copy, undo), never the switch.
+            if (screen->OnKey(key, modifiers) || (modifiers & ShortcutModifiers) != 0)
+            {
+                return true;
+            }
+
+            if (const MCOptionalRef<Rml::ElementDocument> document = screen->Document(); document.has_value())
+            {
+                return _Kit.StepSubtab(document->get(), key == Rml::Input::KI_Z ? -1 : 1);
             }
 
             return false;

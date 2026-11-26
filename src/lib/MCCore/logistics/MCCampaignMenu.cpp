@@ -63,6 +63,8 @@ namespace
     constexpr const char* DropId = "drop";
     constexpr std::string_view ReadyPrefix = "ready";
     constexpr std::string_view SlotPrefix = "slot";
+    /// <summary>What a vehicle's card says it is, under its name (a 'Mech without a MechWarrior's says NO PILOT).</summary>
+    constexpr std::string_view VehicleWord = "Vehicle";
 
     /// <summary>1998's sounds: a unit picked up and put down (MCMechBriefBlock's), BEGIN MISSION's, the units' limit's.</summary>
     constexpr uint32_t PickedUpSound = 0x35;
@@ -302,15 +304,15 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
                std::pair{"width", &MCZoneShown::Width}, std::pair{"height", &MCZoneShown::Height},
                std::pair{"picture", &MCZoneShown::Picture});
     // The cards' list first: the groups' rows hold their cards (RmlUi's register then knows a list of cards).
-    model.List("ready", _Ready, std::pair{"kind", &MCCard::Kind}, std::pair{"who", &MCCard::Who},
-               std::pair{"what", &MCCard::What}, std::pair{"tons", &MCCard::Tons},
-               std::pair{"outline", &MCCard::Outline}, std::pair{"pilot", &MCCard::Pilot},
-               std::pair{"piloted", &MCCard::Piloted}, std::pair{"unpiloted", &MCCard::Unpiloted},
-               std::pair{"condition", &MCCard::Condition}, std::pair{"shade", &MCCard::Shade},
-               std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
-               std::pair{"picked", &MCCard::Picked}, std::pair{"target", &MCCard::Target},
-               std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot},
-               std::pair{"long", &MCCard::Long});
+    model.List(
+        "ready", _Ready, std::pair{"kind", &MCCard::Kind}, std::pair{"who", &MCCard::Who},
+        std::pair{"what", &MCCard::What}, std::pair{"tons", &MCCard::Tons}, std::pair{"outline", &MCCard::Outline},
+        std::pair{"pilot", &MCCard::Pilot}, std::pair{"piloted", &MCCard::Piloted},
+        std::pair{"unpiloted", &MCCard::Unpiloted}, std::pair{"condition", &MCCard::Condition},
+        std::pair{"shade", &MCCard::Shade}, std::pair{"health", &MCCard::Health}, std::pair{"off", &MCCard::Off},
+        std::pair{"picked", &MCCard::Picked}, std::pair{"target", &MCCard::Target},
+        std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot},
+        std::pair{"long", &MCCard::Long}, std::pair{"longer", &MCCard::Longer}, std::pair{"vehicle", &MCCard::Vehicle});
     model.List("carried", _Carried, std::pair{"kind", &MCCard::Kind});
     model.List("groups", _Groups, std::pair{"name", &MCGroup::Name}, std::pair{"tons", &MCGroup::Tons},
                std::pair{"closed", &MCGroup::Closed}, std::pair{"cards", &MCGroup::Cards});
@@ -346,6 +348,7 @@ void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
     OnClick("deal-confirm", [this] { _Logistics->DealConfirm(); });
     OnClick("repair-all", [this] { _Logistics->RepairAll(); });
     OnClick("refit-all", [this] { _Logistics->RefitAll(); });
+    OnClick("repair-force", [this] { _Logistics->RepairForce(); });
     OnClick("into-force", [this] { _Logistics->IntoTheForce(); });
 
     // A match's chat: each place's line sent on Enter, its switch followed by the others.
@@ -665,8 +668,13 @@ MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int s
 
     if (part.PartType != 1)
     {
-        // A vehicle: its name, as 1998's tile writes it; no pilot.
+        // A vehicle: its name, as 1998's tile writes it, in its own case over VEHICLE, as a 'Mech without a MechWarrior's
+        // card (the user's, 26 Nov: REFIT TRUCK in the callsign's capitals overflowed its card); no pilot.
         card.Who = part.FileName;
+        card.What = std::string(VehicleWord);
+        card.Vehicle = true;
+        card.Long = card.Who.size() > UnitNameLetters;
+        card.Longer = card.Who.size() > SmallNameLetters;
         return card;
     }
 

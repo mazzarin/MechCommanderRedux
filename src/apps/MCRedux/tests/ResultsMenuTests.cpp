@@ -55,6 +55,7 @@ namespace
     constexpr const char* PanelId = "results";
     constexpr const char* MoveOnId = "move-on";
     constexpr const char* RematchId = "rematch";
+    constexpr const char* FiguresId = "figures";
     /// <summary>How far the panel's middle may be from the window's (a pixel's rounding).</summary>
     constexpr float MiddleSlack = 1.0f;
 
@@ -256,6 +257,36 @@ namespace
         MCScreenInput::SaveWindowShot(std::format("results_interface_{}", size));
     }
 
+    /// <summary>
+    /// Where the battle's five numbers' strip is, and each number in it ("x,y wxh", the strip's first): what the count
+    /// must leave as it was while it shows them.
+    /// </summary>
+    std::string FigurePlaces(const MCResultsScreen& results)
+    {
+        Rml::Element* strip = MCRemadeTest::Find(results, FiguresId);
+        REQUIRE(strip != nullptr);
+        const auto place = [](Rml::Element& element)
+        {
+            const Rml::Vector2f at = element.GetAbsoluteOffset(Rml::BoxArea::Border);
+            const Rml::Vector2f size = element.GetBox().GetSize(Rml::BoxArea::Border);
+            return std::format("{},{} {}x{}; ", at.x, at.y, size.x, size.y);
+        };
+
+        std::string places = place(*strip);
+
+        for (int i = 0; i < strip->GetNumChildren(); ++i)
+        {
+            Rml::Element& figure = *strip->GetChild(i);
+
+            for (int j = 0; j < figure.GetNumChildren(); ++j)
+            {
+                places += place(*figure.GetChild(j));
+            }
+        }
+
+        return places;
+    }
+
     /// <summary>The results' panel in the middle of the window over the battlefield (SPEC-menus.md, "Over the battlefield").</summary>
     void CheckCentred(const MCResultsScreen& results)
     {
@@ -319,9 +350,15 @@ TEST_CASE_ISOLATED(
     // At first nothing counted; the count shows a step at a time.
     CHECK(!results->Finished());
     CHECK(std::ranges::all_of(results->Pilots(), [](const MCResultsScreen::MCPilotRow& row) { return !row.Shown; }));
+    CHECK(
+        std::ranges::none_of(results->Figures(), [](const MCResultsScreen::MCFigure& figure) { return figure.Shown; }));
+    const std::string figuresAtFirst = FigurePlaces(*results);
     const int32_t frames = CountToTheEnd();
     CHECK(results->Finished());
     CHECK(frames > 1);
+    // The numbers showed in places held for them: the strip kept its size and nothing in it moved (in WIP 5 it grew a
+    // line as the first showed, moving all under it).
+    CHECK_EQ(FigurePlaces(*results), figuresAtFirst);
     // Every objective succeeded: their RP earned, each listed done.
     CHECK_EQ(results->Earned(), MCGroupedPoints(results->Results().ResourcePointsEarned));
     CHECK(results->Results().ResourcePointsEarned > 0);
@@ -331,8 +368,8 @@ TEST_CASE_ISOLATED(
     REQUIRE(!results->Pilots().empty());
     CHECK(std::ranges::all_of(results->Pilots(), [](const MCResultsScreen::MCPilotRow& row)
                               { return row.Shown && !row.Name.empty() && row.Skills.size() == 4; }));
-    CHECK(std::ranges::all_of(results->Figures(),
-                              [](const MCResultsScreen::MCFigure& figure) { return !figure.Number.empty(); }));
+    CHECK(std::ranges::all_of(results->Figures(), [](const MCResultsScreen::MCFigure& figure)
+                              { return figure.Shown && !figure.Number.empty(); }));
     CheckCentred(*results);
     CheckLaidOut("results_won");
 
@@ -417,8 +454,8 @@ TEST_CASE_ISOLATED("game: a match's results show every pilot by kills, the best 
     CHECK(results->Objectives().empty());
     CHECK(results->Pilots().empty());
     CHECK(!results->List().empty());
-    CHECK(std::ranges::all_of(results->Figures(),
-                              [](const MCResultsScreen::MCFigure& figure) { return !figure.Number.empty(); }));
+    CHECK(std::ranges::all_of(results->Figures(), [](const MCResultsScreen::MCFigure& figure)
+                              { return figure.Shown && !figure.Number.empty(); }));
     CheckLaidOut("results_match");
 
     MCScreenInput::RealKey(SDL_SCANCODE_RETURN);

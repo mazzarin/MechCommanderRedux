@@ -22,7 +22,7 @@
                     <div class="earned" data-if="earned != ''"><div class="eyebrow">RP earned</div><div class="title">{{earned}}</div></div>
                     <div class="data grey caps" data-if="match">Match time <span class="white">{{time}}</span></div>
                 </div>
-                <div class="battle"><div class="fig" data-for="f : figures"><div class="n">{{f.n}}</div><div class="what">{{f.what}}</div></div></div>
+                <div class="battle" id="figures"><div class="fig" data-for="f : figures"><div class="n" data-visible="f.shown">{{f.n}}</div><div class="what">{{f.what}}</div></div></div>
                 <div class="result-body" data-if="!match">
                     <div class="outcome">
                         <div class="eyebrow">Objectives</div>

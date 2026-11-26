@@ -42,7 +42,7 @@
                         <div class="scroller reading" id="orders-text">
                             <div class="split">
                                 <div>
-                                    <div class="row bottom section objectives-head" data-if="objectives.size > 0"><div class="eyebrow grow">Objectives</div><div class="data grey caps time-limit" id="time-limit" data-if="timeLimit != ''">Mission time limit <span class="white">{{timeLimit}}</span></div></div>
+                                    <div class="row bottom section objectives-head" data-if="objectives.size > 0 || dropWeight != ''"><div class="eyebrow grow"><span data-if="objectives.size > 0">Objectives</span></div><div class="limits"><div class="data grey caps time-limit" id="time-limit" data-if="timeLimit != ''">Mission time limit <span class="white">{{timeLimit}}</span></div><div class="data grey caps drop-weight" id="drop-weight" data-if="dropWeight != ''">Drop weight <span class="white">{{dropWeight}}</span></div></div></div>
                                     <div class="objective row top" data-for="line : objectives"><div class="num">{{line.num}}</div><div class="grow">{{line.text}}</div><div class="data grey caps time-limit" data-if="line.limit != ''">Time limit <span class="white">{{line.limit}}</span></div></div>
                                     <div class="row top section" data-if="fire.size > 0">
                                         <div class="eyebrow fire-label">Fire support</div>

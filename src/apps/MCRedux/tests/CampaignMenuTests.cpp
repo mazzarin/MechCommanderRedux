@@ -10,6 +10,7 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "lib/MCFile.h"
+#include "lib/MCFitIniFile.h"
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCChatView.h"
@@ -670,6 +671,76 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
     CHECK(!MCCampaignMenu::Shown());
     CHECK(MCMenuScreens::Top() == MCMenuScreens::Main());
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main"));
+}
+
+/// <summary>
+/// BRIEFING shows the drop's limit (the user's, 26 Nov: "since the deploy tab is now separate, the user has no way of
+/// knowin their drop limit until they go to deploy"): beside OBJECTIVES at its right, "DROP WEIGHT 85 TONS" for the first
+/// mission, the limit DEPLOY's free tons start from; under the mission's time limit where it has one (brf0204's 15
+/// minutes, mis0204's 400 tons), each on a line of its own at the column's right at every window the players' reports
+/// name; gone with no limit.
+/// </summary>
+TEST_CASE_ISOLATED("game: BRIEFING shows the drop's limit beside OBJECTIVES, under the time limit, as DEPLOY weighs it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t FirstMissionTons = 85;
+    constexpr int32_t TimedMissionTons = 400;
+    constexpr float Slack = 0.5f;
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    REQUIRE_EQ(MaxDeployTonnage, FirstMissionTons);
+    CHECK_EQ(screen.DropWeight(), std::string("85 tons"));
+    Rml::Element& weight = ElementOf(screen, "drop-weight");
+    CHECK(weight.IsVisible(true));
+    CHECK_EQ(weight.GetInnerRML(), std::string("Drop weight <span class=\"white\">85 tons</span>"));
+    CHECK(weight.GetComputedValues().text_transform() == Rml::Style::TextTransform::Uppercase);
+
+    // DEPLOY weighs against the same: its free tons, nothing in the drop.
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(screen.WeightFree(), std::string("85 tons free"));
+
+    // With the mission's time limit: the tons under it, both at the column's right.
+    MaxDeployTonnage = TimedMissionTons;
+    ShowBriefing(screen, "brf0204.txt");
+    REQUIRE_EQ(screen.TimeLimit(), std::string("15:00"));
+    CHECK_EQ(screen.DropWeight(), std::string("400 tons"));
+    CheckTimeLimitsOneLine(menus, screen, "briefing brf0204", 1);
+
+    for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
+    {
+        menus.SetWindow(window.Width, window.Height);
+        menus.Frame();
+        const MCTest::Scope scope{std::format("{}x{}", window.Width, window.Height)};
+        Rml::Element& limit = ElementOf(screen, "time-limit");
+        Rml::Element& tons = ElementOf(screen, "drop-weight");
+        Rml::Element* head = tons.GetParentNode() != nullptr ? tons.GetParentNode()->GetParentNode() : nullptr;
+        REQUIRE(head != nullptr);
+        REQUIRE(head->IsClassSet("objectives-head"));
+        const auto right = [](Rml::Element& element)
+        { return element.GetAbsoluteOffset(Rml::BoxArea::Border).x + element.GetBox().GetSize(Rml::BoxArea::Border).x; };
+        const auto top = [](Rml::Element& element) { return element.GetAbsoluteOffset(Rml::BoxArea::Border).y; };
+        const float headRight =
+            head->GetAbsoluteOffset(Rml::BoxArea::Content).x + head->GetBox().GetSize(Rml::BoxArea::Content).x;
+        CHECK(std::abs(right(tons) - headRight) <= Slack);
+        CHECK(std::abs(right(limit) - headRight) <= Slack);
+        CHECK(top(tons) >= top(limit) + limit.GetBox().GetSize(Rml::BoxArea::Border).y - Slack);
+        CHECK(tons.GetBox().GetSize(Rml::BoxArea::Content).y <= tons.GetLineHeight() * 1.5f);
+    }
+
+    // No limit: no line.
+    MaxDeployTonnage = 0;
+    MCTestGame::RunFrame(FlowFrame);
+    menus.Frame();
+    CHECK(screen.DropWeight().empty());
+    Rml::Element* gone = screen.Document()->get().GetElementById("drop-weight");
+    CHECK((gone == nullptr || !gone->IsVisible(true)));
 }
 
 /// <summary>
@@ -1631,6 +1702,7 @@ namespace
     constexpr std::string_view LauncherLeavePort = "28947";
     constexpr std::string_view InnerSphereZonesPort = "28937";
     constexpr std::string_view ClanZonesPort = "28939";
+    constexpr std::string_view DropShareMatchPort = "28961";
     /// <summary>The room's teams (MCRoomModel::AssignPlayer's): the first plays the Inner Sphere's side, home team 0.</summary>
     constexpr int32_t InnerSphereTeam = 1;
     constexpr int32_t ClanTeam = 2;
@@ -1649,10 +1721,11 @@ namespace
 
     /// <summary>
     /// A LAN match hosted as COMMANDER (on <paramref name="myTeam"/>, team 1 unless said) on <paramref name="port"/>
-    /// with <paramref name="ann"/> (the tests' player, on the other team), its mission's file hers too, and the room's
-    /// BEGIN PLANNING pressed: the match's remade briefing.
+    /// with <paramref name="ann"/> (the tests' player, on the other team) and, if given, <paramref name="mate"/> on
+    /// COMMANDER's, its mission's file theirs too, and the room's BEGIN PLANNING pressed: the match's remade briefing.
     /// </summary>
-    MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann, std::string_view port, int32_t myTeam = InnerSphereTeam)
+    MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann, std::string_view port, int32_t myTeam = InnerSphereTeam,
+                                MCOptionalRef<MCTestGuest::Guest> mate = std::nullopt)
     {
         REQUIRE(MCTestGame::StartLogistics());
         MCTestGuest::OpenLan();
@@ -1662,17 +1735,39 @@ namespace
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
         const uint32_t sameData = MCMissionDataHash(GamePath(SavePath, MatchMission, ".mpk"));
         REQUIRE(sameData != 0);
-        REQUIRE(ann.Join(*manager.DirectPlay, address));
-        REQUIRE(
-            MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
-        REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
-        ann.AnswerFiles(sameData);
+        std::vector<std::reference_wrapper<MCTestGuest::Guest>> guests{ann};
+
+        if (mate.has_value())
+        {
+            guests.push_back(mate->get());
+        }
+
+        for (MCTestGuest::Guest& guest : guests)
+        {
+            REQUIRE(guest.Join(*manager.DirectPlay, address));
+            REQUIRE(MCTestGuest::SettleUntil([&]
+                                             { return MCTestGuest::RoomShows(guest.Id()) && guest.SessionScreens() == 1; }));
+            REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, guest.Id()));
+            guest.AnswerFiles(sameData);
+        }
+
         MCRoomModel& room = GlobalLog()->Room;
         room.AssignPlayer(manager.MyPlayerID, myTeam, 0, false);
         room.AssignPlayer(ann.Id(), myTeam == InnerSphereTeam ? ClanTeam : InnerSphereTeam, 0, false);
+
+        if (mate.has_value())
+        {
+            room.AssignPlayer(mate->get().Id(), myTeam, 1, false);
+        }
+
         room.LoadMission(MatchMission);
-        REQUIRE(
-            MCTestGuest::SettleUntil([&] { return ann.MissionsLoaded() == 1 && MCTestGuest::DialogText().empty(); }));
+        REQUIRE(MCTestGuest::SettleUntil(
+            [&]
+            {
+                return std::ranges::all_of(guests, [](const MCTestGuest::Guest& guest)
+                                           { return guest.MissionsLoaded() == 1; }) &&
+                       MCTestGuest::DialogText().empty();
+            }));
         MCTestGuest::Settle();
         const MCGuiHandle<MCRoomScreen> remade = RoomScreen();
         REQUIRE(remade);
@@ -1958,6 +2053,43 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
              (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "ANN has left the game."}));
     CHECK(MCTestGuest::DialogText().empty());
     CHECK(MCCampaignMenu::Shown());
+}
+
+/// <summary>
+/// A match's BRIEFING shows the player's share of the drop's limit, as DEPLOY weighs it: COMMANDER and BOB on one team
+/// against ANN, each of the two has half the mission's tons (1998's equal share, MCLogistics::GetCurrentMission), on
+/// BRIEFING beside OBJECTIVES and as DEPLOY's free tons.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's BRIEFING shows the player's share of the drop's limit, as DEPLOY weighs it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    MCTestGuest::Guest bob("BOB", MCMatchRule::Supported);
+    MCCampaignScreen& screen = PlanMatch(ann, DropShareMatchPort, InnerSphereTeam, bob);
+    const std::optional<std::vector<uint32_t>> home = MultiPlayer()->PlayersOnHomeTeam();
+    REQUIRE(home.has_value());
+    REQUIRE_EQ(home->size(), size_t{2});
+
+    // The mission's own tons, read from its file.
+    MCFitIniFile file;
+    REQUIRE_EQ(file.Open(GamePath(MissionPath, GlobalLog()->MpMissionName, ".fit")), 0);
+    REQUIRE_EQ(file.SeekBlock("Campaign"), 0);
+    const MCFitResult<int32_t> missionTons = file.Read<int32_t>("MaxTonnage");
+    REQUIRE(missionTons.has_value());
+    file.Close();
+    const int32_t share = *missionTons / 2;
+    REQUIRE(share > 0);
+
+    CHECK_EQ(MaxDeployTonnage, share);
+    CHECK_EQ(screen.DropWeight(), MCCampaignMenu::TonsText(share));
+    CHECK(ElementOf(screen, "drop-weight").IsVisible(true));
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(screen.WeightFree(), std::format(MCCampaignMenu::FreeFormat, MCCampaignMenu::TonsText(share)));
 }
 
 /// <summary>

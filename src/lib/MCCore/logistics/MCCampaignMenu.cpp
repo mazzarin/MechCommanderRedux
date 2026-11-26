@@ -283,6 +283,7 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("eyebrow", _Eyebrow);
     model.Value("title", _Title);
     model.Value("timeLimit", _TimeLimit);
+    model.Value("dropWeight", _DropWeight);
     model.Value("warningsHead", _WarningsHead);
     model.Value("carriedLeft", _CarriedLeft);
     model.Value("carriedTop", _CarriedTop);
@@ -822,6 +823,8 @@ void MCCampaignScreen::FillWeight()
     const float over = weight.Total - limit;
     _WeightNow = std::to_string(Tons(weight.Total));
     _WeightOf = std::format(MCCampaignMenu::OfFormat, MCCampaignMenu::TonsText(MaxDeployTonnage));
+    // BRIEFING's line of it: the limit DEPLOY weighs against (a match's player's share of the team's), none without one.
+    _DropWeight = MaxDeployTonnage > 0 ? MCCampaignMenu::TonsText(MaxDeployTonnage) : std::string();
     _WeightFree = over > 0 ? std::format(MCCampaignMenu::OverFormat, MCCampaignMenu::TonsText(Tons(over)))
                            : std::format(MCCampaignMenu::FreeFormat, MCCampaignMenu::TonsText(Tons(-over)));
     _WeightMore = weight.Adds && weight.Total != weight.Base;

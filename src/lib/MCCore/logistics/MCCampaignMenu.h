@@ -194,6 +194,11 @@ public:
     const std::vector<MCLine>& Objectives() const { return _Objectives; }
     /// <summary>The mission's time limit ("15:00"; empty: none), at the right of OBJECTIVES.</summary>
     const std::string& TimeLimit() const { return _TimeLimit; }
+    /// <summary>
+    /// The drop's limit ("290 tons", DEPLOY's; a match's player's share; empty: none), under the time limit, so the tons
+    /// are known before DEPLOY.
+    /// </summary>
+    const std::string& DropWeight() const { return _DropWeight; }
     const std::vector<MCLine>& FireSupport() const { return _Fire; }
     const std::vector<MCLine>& Orders() const { return _Orders; }
     const std::vector<MCLine>& Warnings() const { return _Warnings; }
@@ -365,6 +370,7 @@ private:
     std::string _Title;
     std::vector<MCLine> _Objectives;
     std::string _TimeLimit;
+    std::string _DropWeight;
     /// <summary>The fire support, a line each (none: the briefing has no FIRE SUPPORT).</summary>
     std::vector<MCLine> _Fire;
     std::vector<MCLine> _Orders;

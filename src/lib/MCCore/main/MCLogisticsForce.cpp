@@ -253,6 +253,9 @@ auto MCLogistics::ReorderMechs() const -> void
         });
     RenumberRows(MechList->Mechs);
     RenumberRows(ForceMechList->Mechs);
+    // The force's rows as it now stands, which SetPilot, the drop's slots and a unit leaving read (1998's 'MECH BAY
+    // numbered them as it listed the force again, on every unit in or out).
+    NumberForce();
 }
 
 auto MCLogistics::ReorderVehicles() const -> void
@@ -271,6 +274,7 @@ auto MCLogistics::ReorderVehicles() const -> void
         });
     RenumberRows(VehicleList->Vehicles);
     RenumberRows(ForceVehicleList->Vehicles);
+    NumberForce();
 }
 
 auto MCLogistics::ReorderWarriors() const -> void

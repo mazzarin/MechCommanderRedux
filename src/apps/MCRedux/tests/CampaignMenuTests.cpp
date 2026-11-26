@@ -2928,6 +2928,75 @@ TEST_CASE_ISOLATED("game: DEPLOY's READY AREA shows a 'Mech as the 'MECH BAY lef
 }
 
 /// <summary>
+/// A MechWarrior boards the 'MECH BAY's 'Mech by their INVENTORY card's right button however the force changed before it:
+/// the second 'Mech out to SPARE (its MechWarrior to the INVENTORY) and back into the force at its head, still in the lab;
+/// its MechWarrior boards it, every other 'Mech keeps its own, and every MechWarrior taken is aboard a 'Mech.
+/// </summary>
+TEST_CASE_ISOLATED("game: a MechWarrior boards the 'MECH BAY's 'Mech after it left the force and came back")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    MCLogisticsTabs& tabs = screen.Logistics();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    REQUIRE(logistics->ForceMechList->Mechs.size() >= 2);
+    const std::shared_ptr<MCLogMech> mech = logistics->ForceMechList->Mechs[1];
+    const std::shared_ptr<MCLogWarrior> own = PilotOf(*mech);
+    REQUIRE(own != nullptr);
+    screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+    tabs.Pick(MCLogisticsTabs::MCPlace::Force, 1);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(tabs.LabUnit() == mech);
+
+    // Out to SPARE and back into the force by the right button, its MechWarrior left in the INVENTORY.
+    tabs.Send(MCLogisticsTabs::MCPlace::Force, 1);
+    MCTestGame::RunFrame(FlowFrame);
+    const std::vector<std::shared_ptr<MCLogMech>>& spares = logistics->MechList->Mechs;
+    const auto spare = std::ranges::find(spares, mech);
+    REQUIRE(spare != spares.end());
+    CHECK(!own->Assigned);
+    tabs.Send(MCLogisticsTabs::MCPlace::Spare, static_cast<size_t>(spare - spares.begin()));
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(std::ranges::contains(logistics->ForceMechList->Mechs, mech));
+    REQUIRE(tabs.LabUnit() == mech);
+    REQUIRE(PilotOf(*mech) == nullptr);
+    std::vector<std::pair<std::shared_ptr<MCLogMech>, std::shared_ptr<MCLogWarrior>>> others;
+
+    for (const std::shared_ptr<MCLogMech>& other : logistics->ForceMechList->Mechs)
+    {
+        if (other != mech)
+        {
+            others.emplace_back(other, PilotOf(*other));
+        }
+    }
+
+    // Its MechWarrior's card's right button: aboard it; the others keep theirs.
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+    MCTestGame::RunFrame(FlowFrame);
+    tabs.Send(MCLogisticsTabs::MCPlace::Stock, WarriorCard(own));
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(PilotOf(*mech) == own);
+
+    for (const auto& [other, pilot] : others)
+    {
+        const MCTest::Scope scope(other->FileName);
+        CHECK(PilotOf(*other) == pilot);
+    }
+
+    // None lost: every MechWarrior taken is aboard a force 'Mech.
+    for (const std::shared_ptr<MCLogWarrior>& warrior : logistics->AssignedWarriorList->Warriors)
+    {
+        const MCTest::Scope scope(warrior->Callsign);
+        CHECK(std::ranges::any_of(logistics->ForceMechList->Mechs, [&warrior](const std::shared_ptr<MCLogMech>& aboard)
+                                  { return PilotOf(*aboard) == warrior; }));
+    }
+}
+
+/// <summary>
 /// The 'MECH BAY lists a 'Mech's fitted parts in 1998's order (its weapon list's, MCMechBay::FittedCopies): the
 /// short-, medium- and long-range weapons, each by damage, lowest first, then the equipment, each copy's damage on its
 /// own row. Two weapons the inventory lists the other way round (by master id, the higher first) show the lower damage

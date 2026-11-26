@@ -1166,7 +1166,7 @@ auto MCLogistics::ReadCampaignBlocks(MCCampaignReading& reading) -> int32_t
     return 0;
 }
 
-auto MCLogistics::NumberForce() -> void
+auto MCLogistics::NumberForce() const -> void
 {
     int32_t index = 0;
 

@@ -395,7 +395,10 @@ public:
     /// </summary>
     void RemoveVehicleFromSlots(int32_t forceIndex);
 
-    /// <summary>Moves assigned mechs into the force list and unassigned ones back, then renumbers their rows.</summary>
+    /// <summary>
+    /// Moves assigned mechs into the force list and unassigned ones back, then renumbers their rows and the force's
+    /// (<see cref="NumberForce"/>).
+    /// </summary>
     void ReorderMechs() const;
 
     /// <summary>As <see cref="ReorderMechs"/> for vehicles.</summary>
@@ -427,9 +430,9 @@ public:
 
     /// <summary>
     /// Numbers the force's units (their <c>SlotIndex</c>: the mechs in order, then the vehicles), as the 1998 'MECH BAY's
-    /// force list did as it showed them.
+    /// force list did as it showed them, after every unit in or out (<see cref="ReorderMechs"/>).
     /// </summary>
-    void NumberForce();
+    void NumberForce() const;
 
     /// <summary>
     /// Readies the store's descriptions (each mech's variant shown, the vehicles', the components', the pilots' for

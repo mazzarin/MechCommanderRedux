@@ -8,7 +8,7 @@
 <!-- Port-only (SPEC-menus.md, "The results"; the style frames' results.rml, results_lost.rml and results_mp.rml): over
      the whole battlefield as it ended, at the mission's interface size (mission/MCResultsMenu fills it). Single player:
      the mission's name, MISSION SUCCESSFUL or MISSION FAILED and the RP earned; the battle's five numbers; the objectives
-     and the salvage at the left; every pilot who dropped at the right, a row each; each counted up a step at a time;
+     and the salvage at the left (a long salvage scrolling in the room under the objectives); every pilot who dropped at the right, a row each; each counted up a step at a time;
      NEXT MISSION or REPLAY MISSION. A match's: its numbers for the player's team, the commanders by kills, the best
      pilot, every pilot by kills; REMATCH (the host's) and DONE. -->
 <body class="over-battle" data-model="results">
@@ -36,8 +36,13 @@
                             </div>
                         </div>
                         <div class="eyebrow section" data-visible="salvageShown">Salvage</div>
-                        <div class="salvage-row" data-for="s : salvage" data-visible="salvageShown">
-                            <div class="pic" data-style-decorator="s.picture"></div><div class="grow">{{s.name}}</div><div class="t">{{s.note}}</div>
+                        <div class="scroll-box salvage-box" data-if="salvage.size > 0" data-visible="salvageShown">
+                            <div class="scroller reading" id="salvage">
+                                <div class="salvage-row" data-for="s : salvage">
+                                    <div class="pic" data-style-decorator="s.picture"></div><div class="grow">{{s.name}}</div><div class="t">{{s.note}}</div>
+                                </div>
+                            </div>
+                            <div class="fade"></div>
                         </div>
                         <div class="none" data-if="noSalvage">{{noSalvageText}}</div>
                     </div>

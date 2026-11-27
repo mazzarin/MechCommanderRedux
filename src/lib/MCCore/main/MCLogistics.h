@@ -589,6 +589,11 @@ public:
     {
         /// <summary>The team's first drop zone (the Clans' the last three); -1 in single player.</summary>
         int32_t Zone = -1;
+        /// <summary>
+        /// The mission's drop zones read (its NumDropZones, at most MaxDropZones): the positions past them are another
+        /// mission's or none, though a zone of more than four slots opens the next lance's.
+        /// </summary>
+        size_t Zones = 0;
         /// <summary>The world units to a map pixel (the 1998 briefing map's scale).</summary>
         float Scale = 0.0f;
         /// <summary>The briefing map picture's size; 0 when it can't be read.</summary>

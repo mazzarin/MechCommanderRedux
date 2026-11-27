@@ -1314,4 +1314,5 @@ auto MCLogistics::GetCurrentMission() -> void
 
     file.Close();
     ZoneMarks = ReadZoneMarks(MissionFileName);
+    ZoneMarks.Zones = std::min(static_cast<size_t>(std::max(numDropZones, 0)), MaxDropZones);
 }

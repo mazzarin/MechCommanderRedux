@@ -2103,7 +2103,7 @@ MCCampaignMenu::MCZoneMap MCCampaignMenu::DropZones()
     {
         const auto zone = static_cast<size_t>(first + group - 1);
 
-        if (zone >= logistics->DropZonePositions.size())
+        if (zone >= logistics->DropZonePositions.size() || zone >= marks.Zones)
         {
             break;
         }

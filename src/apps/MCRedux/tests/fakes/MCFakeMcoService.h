@@ -1,12 +1,17 @@
 #pragma once
 
 #include "network/MCMcoApi.h"
+#include "network/MCMcoKeys.h"
+#include "network/MCMcoRooms.h"
 #include "update/MCHttpSource.h"
 
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <chrono>
+#include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -160,6 +165,21 @@ namespace MCFakeMcoService
             if (const auto room = _Rooms.find(std::string(roomId)); host && room != _Rooms.end())
             {
                 room->second.HostClient = id;
+            }
+        }
+
+        /// <summary>
+        /// The room's host (another launcher's, as <see cref="AddPlayer"/> made it) STARTs its match, its game hosting
+        /// it: the guests hear of it from their polls' start_signal.
+        /// </summary>
+        void StartMatch(std::string_view roomId)
+        {
+            const std::scoped_lock lock(_Lock);
+
+            if (const auto room = _Rooms.find(std::string(roomId)); room != _Rooms.end())
+            {
+                MakeMatch(room->first, room->second);
+                room->second.Published = true;
             }
         }
 
@@ -378,6 +398,26 @@ namespace MCFakeMcoService
             return Error(HttpForbidden, "unknown_action", "Unknown action.");
         }
 
+        /// <summary>The room's match as create_session makes it, for the players in it now.</summary>
+        void MakeMatch(const std::string& roomId, MCRoom& room)
+        {
+            int32_t players = 0;
+
+            for (const auto& [id, each] : _Peers)
+            {
+                players += each.RoomId == roomId ? 1 : 0;
+            }
+
+            room.Match = Json{{"engine_protocol", MCMcoApi::EngineProtocol},
+                              {"session_hex", NextHex()},
+                              {"room_id", roomId},
+                              {"engine_build", room.Build},
+                              {"engine_content", room.Content},
+                              {"stock_host", RelayHost},
+                              {"stock_port", RelayPort},
+                              {"capacity", players}};
+        }
+
         Json RoomJson(const MCRoom& room) const
         {
             int32_t players = 0;
@@ -577,21 +617,7 @@ namespace MCFakeMcoService
 
             if (action == "create_session")
             {
-                int32_t players = 0;
-
-                for (const auto& [id, each] : _Peers)
-                {
-                    players += each.RoomId == room->first ? 1 : 0;
-                }
-
-                room->second.Match = Json{{"engine_protocol", MCMcoApi::EngineProtocol},
-                                          {"session_hex", NextHex()},
-                                          {"room_id", room->first},
-                                          {"engine_build", room->second.Build},
-                                          {"engine_content", room->second.Content},
-                                          {"stock_host", RelayHost},
-                                          {"stock_port", RelayPort},
-                                          {"capacity", players}};
+                MakeMatch(room->first, room->second);
                 return {HttpOk, Success(*room->second.Match)};
             }
 
@@ -648,4 +674,73 @@ namespace MCFakeMcoService
         std::map<std::pair<std::string, std::string>, MCFields> _LastFrom;
         std::vector<std::pair<std::string, std::string>> _Closed;
     };
+
+    /// <summary>The system's store as the tests keep it: in memory.</summary>
+    class MCMemoryKeys final : public MCMcoKeys
+    {
+    public:
+        std::optional<MCMcoKept> Load() override
+        {
+            const std::scoped_lock lock(_Lock);
+            return _Kept;
+        }
+
+        bool Save(const MCMcoKept& kept) override
+        {
+            const std::scoped_lock lock(_Lock);
+            _Kept = kept;
+            return true;
+        }
+
+        void Erase() override
+        {
+            const std::scoped_lock lock(_Lock);
+            _Kept.reset();
+        }
+
+        std::optional<MCMcoKept> Now() const
+        {
+            const std::scoped_lock lock(_Lock);
+            return _Kept;
+        }
+
+    private:
+        mutable std::mutex _Lock;
+        std::optional<MCMcoKept> _Kept;
+    };
+
+    /// <summary>The game data's fingerprint the tests' games have, and another's.</summary>
+    inline const std::string Content(MCMcoApi::TokenDigits, '9');
+    inline const std::string OtherContent(MCMcoApi::TokenDigits, '8');
+
+    /// <summary>
+    /// MCO in a test's game, asking <paramref name="mco"/>, its match's relay dialled by <paramref name="dial"/> (none:
+    /// no match), its polls every <paramref name="pollLeast"/> to <paramref name="pollMost"/>.
+    /// </summary>
+    inline MCMcoSetup Setup(MCService& mco, std::shared_ptr<MCMcoKeys> keys,
+                            std::function<MCMcoBridge::MCDial(const MCMcoApi::MCMatch&)> dial = {},
+                            std::string content = Content, std::chrono::milliseconds pollLeast = MCMcoSetup{}.PollLeast,
+                            std::chrono::milliseconds pollMost = MCMcoSetup{}.PollMost)
+    {
+        return MCMcoSetup{.Get = [&mco] { return std::make_unique<MCService::MCTransfer>(mco); },
+                          .Client = {.DeviceId = std::string(MCMcoApi::TokenDigits, 'e'),
+                                     .UserAgent = "MechCommanderReduxHD/test (macOS 26.5)",
+                                     .ClientOs = "{}",
+                                     .Chat = std::string(ChatUrl),
+                                     .Account = std::string(AccountUrl)},
+                          .Keys = std::move(keys),
+                          .Dial = std::move(dial),
+                          .Content = [content] { return std::expected<std::string, std::string>(content); },
+                          .PollLeast = pollLeast,
+                          .PollMost = pollMost};
+    }
+
+    /// <summary>A room another launcher hosts on MCO's stock build, with <paramref name="content"/>'s data.</summary>
+    inline MCService::MCRoom OthersRoom(std::string id, std::string name, std::string content = Content)
+    {
+        return {.RoomId = std::move(id),
+                .Name = std::move(name),
+                .Build = std::string(StockBuild),
+                .Content = std::move(content)};
+    }
 }

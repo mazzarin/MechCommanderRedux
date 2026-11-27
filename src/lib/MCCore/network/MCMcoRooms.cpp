@@ -131,6 +131,19 @@ MCMcoRooms& MCMcoRooms::Now()
     return *Current;
 }
 
+bool MCMcoRooms::InMatch()
+{
+    if (!Available())
+    {
+        return false;
+    }
+
+    const std::scoped_lock lock(Current->_Lock);
+    const MCMcoMatchStage stage = Current->_Seen.Match;
+    return stage == MCMcoMatchStage::HostGame || stage == MCMcoMatchStage::JoinGame ||
+           stage == MCMcoMatchStage::Playing;
+}
+
 MCMcoRooms::MCMcoRooms(MCMcoSetup setup)
     : _Setup(std::move(setup))
     , _Transfer(_Setup.Get())
@@ -252,6 +265,8 @@ void MCMcoRooms::DoResume()
     {
         return;
     }
+
+    _AccountKept = !kept->AccountToken.empty();
 
     if (kept->AccountToken.empty())
     {
@@ -483,12 +498,7 @@ void MCMcoRooms::DoGuest(const std::string& name)
     _Peer = std::move(guest);
     _InLobby = true;
 
-    if (_Setup.Keys &&
-        !_Setup.Keys->Save({.ClientId = _Peer.ClientId, .PeerToken = _Peer.PeerToken, .Username = _Peer.Username}))
-    {
-        SDL_Log("MechCommander Online: the guest's profile couldn't be kept in the system's store; it lasts until the "
-                "game quits");
-    }
+    KeepGuest();
 
     _NextPoll = Clock::now();
     Show(
@@ -602,15 +612,71 @@ bool MCMcoRooms::SignsOut(const MCMcoApi::MCError& error)
 
 // The lobby.
 
-void MCMcoRooms::OpenLobby()
+void MCMcoRooms::OpenLobby(std::string guestName)
 {
     Post(
-        [this]
+        [this, guestName = std::move(guestName)]
         {
             _LobbyWanted = true;
             _NextPoll = Clock::now();
             DoResume();
+
+            if (guestName.empty())
+            {
+                return;
+            }
+
+            // INTERNET signs no one in: a player with no sign-in kept plays as a guest under its name.
+            if (_Peer.PeerToken.empty() && !_AccountKept)
+            {
+                DoGuest(GuestName(guestName));
+                return;
+            }
+
+            Rename(guestName);
         });
+}
+
+void MCMcoRooms::KeepGuest()
+{
+    if (_Setup.Keys &&
+        !_Setup.Keys->Save({.ClientId = _Peer.ClientId, .PeerToken = _Peer.PeerToken, .Username = _Peer.Username}))
+    {
+        SDL_Log("MechCommander Online: the guest's profile (%s) couldn't be kept in the system's store; it lasts until "
+                "the game quits",
+                _Peer.Username.c_str());
+    }
+}
+
+std::string MCMcoRooms::GuestName(const std::string& name)
+{
+    const auto username = MCMcoApi::PlayerName(name);
+    return username ? *username : std::string(GuestNameNone);
+}
+
+void MCMcoRooms::Rename(const std::string& name)
+{
+    const std::string username = GuestName(name);
+
+    bool guest = false;
+
+    {
+        const std::scoped_lock lock(_Lock);
+        guest = _Seen.Account == MCMcoAccount::Guest;
+    }
+
+    if (!guest || username == _Peer.Username)
+    {
+        return;
+    }
+
+    // MCO takes a guest's name as each request names it (register_peer, join_room).
+    SDL_Log("MechCommander Online: the guest's name is now %s", username.c_str());
+    _Peer.Username = username;
+
+    KeepGuest();
+
+    Show([&](MCMcoSeen& seen) { seen.Username = _Peer.Username; });
 }
 
 void MCMcoRooms::CloseLobby()
@@ -736,10 +802,31 @@ bool MCMcoRooms::Prepared()
     return Registered();
 }
 
-void MCMcoRooms::Join(std::string roomId, std::string password)
+void MCMcoRooms::Join(std::string roomId, std::string password, std::string guestName)
 {
-    Post([this, roomId = std::move(roomId), password = std::move(password)]() mutable
-         { DoJoin(roomId, std::move(password)); });
+    // Busy from the ask (each way the join ends says so), the last refusal gone: a screen waits on it at once.
+    Show(
+        [&](MCMcoSeen& seen)
+        {
+            const auto listed =
+                std::ranges::find_if(seen.Rooms, [&](const MCMcoApi::MCRoom& each) { return each.RoomId == roomId; });
+            const std::string shown =
+                listed != seen.Rooms.end() ? MCMcoApi::Printable(listed->Name) : std::string(SomeRoom);
+            seen.Busy = true;
+            seen.Doing = std::vformat(JoiningFormat, std::make_format_args(shown));
+            seen.Refusal.clear();
+            seen.Left.clear();
+        });
+    Post(
+        [this, roomId = std::move(roomId), password = std::move(password), guestName = std::move(guestName)]() mutable
+        {
+            if (!guestName.empty())
+            {
+                Rename(guestName);
+            }
+
+            DoJoin(roomId, std::move(password));
+        });
 }
 
 void MCMcoRooms::DoJoin(const std::string& roomId, std::string password)
@@ -757,9 +844,30 @@ void MCMcoRooms::DoJoin(const std::string& roomId, std::string password)
         }
     }
 
-    if (_Seat || !room || !Prepared())
+    if (_Seat)
     {
         Wipe(password);
+        Show([](MCMcoSeen& seen) { seen.Busy = false; });
+        return;
+    }
+
+    if (!room)
+    {
+        Wipe(password);
+        Refused(std::string(GoneText));
+        return;
+    }
+
+    // The game's data read, the player in the lobby (Prepared says why not when its data can't be read).
+    if (!Prepared())
+    {
+        Wipe(password);
+
+        if (!_Content.empty())
+        {
+            Refused(std::string(UnreachableText));
+        }
+
         return;
     }
 
@@ -787,14 +895,6 @@ void MCMcoRooms::DoJoin(const std::string& roomId, std::string password)
         return;
     }
 
-    Show(
-        [&](MCMcoSeen& seen)
-        {
-            seen.Busy = true;
-            seen.Doing = std::vformat(JoiningFormat, std::make_format_args(shown));
-            seen.Refusal.clear();
-            seen.Left.clear();
-        });
     auto seat = _Service->JoinRoom(_Peer, *room, password, _Content, true);
     Wipe(password);
 
@@ -1372,8 +1472,7 @@ std::string MCMcoRooms::LeftText(std::string_view why, std::string_view host, bo
 
     if (why == "host_connection_lost" || why == "closed" || why == "host_closed")
     {
-        return inMatch ? std::format("{} left. The match has ended.", named)
-                       : std::format("{} left. The room has closed.", named);
+        return inMatch ? std::format(MatchEndedFormat, named) : std::format(RoomClosedFormat, named);
     }
 
     if (why == "kicked")

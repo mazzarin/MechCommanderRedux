@@ -5,7 +5,9 @@
 #include "linkup/MCSessionManager.h"
 #include "main/MCUpdater.h"
 #include "network/MCInternetGame.h"
+#include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayer.h"
+#include "platform/MCDirectPlay.h"
 
 #include <charconv>
 
@@ -49,10 +51,15 @@ namespace
     /// <summary>A guest's search for its host's room over the link: every half second, for ten seconds.</summary>
     constexpr auto JoinEvery = std::chrono::milliseconds(500);
     constexpr int32_t JoinTries = 20;
+    /// <summary>Where an MCO match's guest's bridge listens: this computer.</summary>
+    constexpr std::string_view LoopbackHost = "127.0.0.1";
     constexpr int64_t SecondsPerMinute = 60;
 
     constexpr std::string_view OpenText = "Open";
     constexpr std::string_view FullText = "Full";
+    constexpr std::string_view LockedText = "Locked";
+    /// <summary>MCO's rooms' keys, kept apart from the service's codes.</summary>
+    constexpr std::string_view McoKeyPrefix = "mco:";
     constexpr std::string_view InBattleText = "In battle";
     constexpr std::string_view InBattleForFormat = "In battle for {} min";
     constexpr std::string_view NeedsFormat = "Needs version {}";
@@ -153,7 +160,7 @@ namespace
 
 std::string MCListedGame::PlayersText() const
 {
-    return std::format(PlayersFormat, Players.size(), Max);
+    return std::format(PlayersFormat, PlayerCount(), Max);
 }
 
 std::string MCListedGame::Release() const
@@ -174,7 +181,12 @@ std::string MCListedGame::NowText() const
         return minutes > 0 ? std::format(InBattleForFormat, minutes) : std::string(InBattleText);
     }
 
-    return std::string(Full() ? FullText : OpenText);
+    if (Full())
+    {
+        return std::string(FullText);
+    }
+
+    return std::string(Locked ? LockedText : OpenText);
 }
 
 namespace
@@ -220,6 +232,13 @@ void MCGamesList::Open()
     if (_Where == MCGamesWhere::Internet)
     {
         _List = MCInternetList::Open();
+        _McoRevision = 0;
+
+        if (MCMcoRooms::Available())
+        {
+            MCMcoRooms::Now().OpenLobby(_GuestName.empty() ? std::string(MCMcoRooms::GuestNameNone) : _GuestName);
+        }
+
         return;
     }
 
@@ -232,8 +251,13 @@ void MCGamesList::Open()
 void MCGamesList::Close()
 {
     _Open = false;
-    // Its socket's close takes it off the service's count.
+    // Its socket's close takes it off the service's count; MCO's lobby is left (a room the player is in stays).
     _List.reset();
+
+    if (_Where == MCGamesWhere::Internet && MCMcoRooms::Available())
+    {
+        MCMcoRooms::Now().CloseLobby();
+    }
 }
 
 void MCGamesList::Retry()
@@ -264,7 +288,15 @@ bool MCGamesList::Update()
 
     if (_Where == MCGamesWhere::Internet)
     {
-        const bool changed = _List != nullptr && _List->Update();
+        bool changed = _List != nullptr && _List->Update();
+
+        if (const uint64_t revision = MCMcoRooms::Available() ? MCMcoRooms::Now().Revision() : 0;
+            revision != _McoRevision)
+        {
+            _McoRevision = revision;
+            changed = true;
+        }
+
         return ReadInternetGames() || changed;
     }
 
@@ -359,6 +391,10 @@ bool MCGamesList::ReadInternetGames()
         }
     }
 
+    // MCO's rooms with them, open games first (each kind's in its own order).
+    std::ranges::move(McoGames(), std::back_inserter(games));
+    std::ranges::stable_partition(games, [](const MCListedGame& game) { return !game.InBattle; });
+
     if (games == _Games)
     {
         return false;
@@ -366,6 +402,32 @@ bool MCGamesList::ReadInternetGames()
 
     _Games = std::move(games);
     return true;
+}
+
+std::vector<MCListedGame> MCGamesList::McoGames()
+{
+    std::vector<MCListedGame> games;
+
+    if (!MCMcoRooms::Available())
+    {
+        return games;
+    }
+
+    const MCMcoSeen seen = MCMcoRooms::Now().Seen();
+
+    for (const MCMcoApi::MCRoom& room : seen.Listed ? seen.Rooms : std::vector<MCMcoApi::MCRoom>())
+    {
+        games.push_back(MCListedGame{.Key = std::format("{}{}", McoKeyPrefix, room.RoomId),
+                                     .Name = MCMcoApi::Printable(room.Name),
+                                     .Players = {MCMcoApi::Printable(room.Host)},
+                                     .Max = room.MaxPlayers,
+                                     .InBattle = room.InGame || room.AdmissionClosed,
+                                     .McoRoom = room.RoomId,
+                                     .Locked = room.Locked,
+                                     .Count = room.Players});
+    }
+
+    return games;
 }
 
 MCGamesState MCGamesList::State() const
@@ -436,6 +498,23 @@ bool MCGameJoin::Begin(MCAsk ask)
     if (_Ask->Where == MCGamesWhere::Lan)
     {
         SDL_Log("Games: %s %s on this network", _Ask->Hosting ? "hosting" : "joining", _Ask->Shown.c_str());
+        return true;
+    }
+
+    // MCO's match: the game joins its guest's bridge on this computer, as a launcher's game joins, and never takes the
+    // session over (the bridge reaches only the host: SPEC-mco-rooms.md's "No rollover").
+    if (_Ask->Where == MCGamesWhere::Mco)
+    {
+        MCSessionManager& manager = *multiPlayer->SessionManager;
+        manager.ConnectTcp(std::format("{}:{}", LoopbackHost, _Ask->Port));
+
+        if (manager.DirectPlay != nullptr)
+        {
+            manager.DirectPlay->NeverTakeOver();
+        }
+
+        SDL_Log("Games: joining %s's match through MechCommander Online (port %u)", _Ask->Shown.c_str(),
+                static_cast<unsigned>(_Ask->Port));
         return true;
     }
 
@@ -532,7 +611,19 @@ auto MCGameJoin::Tend() -> MCEnd
         return _End;
     }
 
-    _End = _Ask->Where == MCGamesWhere::Lan ? TendLan() : TendInternet();
+    switch (_Ask->Where)
+    {
+        case MCGamesWhere::Lan:
+            _End = TendLan();
+            break;
+        case MCGamesWhere::Internet:
+            _End = TendInternet();
+            break;
+        case MCGamesWhere::Mco:
+            _End = TendMco();
+            break;
+    }
+
     return _End;
 }
 
@@ -644,6 +735,26 @@ auto MCGameJoin::TendInternet() -> MCEnd
     }
 
     // A guest's link is open: its host's room is looked for over it, then joined.
+    return FindAndJoin(manager, std::format(UnreachableFormat, ask.Shown), true);
+}
+
+auto MCGameJoin::TendMco() -> MCEnd
+{
+    const std::shared_ptr<MCMultiPlayer> multiPlayer = ManagedGame();
+
+    if (multiPlayer == nullptr)
+    {
+        Refuse(std::string(MCMcoRooms::NoMatchText));
+        return _End;
+    }
+
+    // The bridge carries the session query to the match's host and its answer back.
+    return FindAndJoin(*multiPlayer->SessionManager, std::string(MCMcoRooms::NoMatchText), false);
+}
+
+auto MCGameJoin::FindAndJoin(MCSessionManager& manager, const std::string& unreachable, bool canRetry) -> MCEnd
+{
+    const MCAsk& ask = *_Ask;
     const Clock::time_point now = Clock::now();
 
     if (now < _NextSearch)
@@ -655,7 +766,7 @@ auto MCGameJoin::TendInternet() -> MCEnd
 
     if (++_Searches > JoinTries)
     {
-        RefuseFor(std::nullopt);
+        Refuse(unreachable, canRetry);
         return _End;
     }
 
@@ -682,7 +793,7 @@ auto MCGameJoin::TendInternet() -> MCEnd
 
     // The host refused this game at the door, saying why, or the room can't be joined.
     const std::string refusal = manager.RefusalReason();
-    Refuse(!refusal.empty() ? LacksText(refusal) : std::format(UnreachableFormat, ask.Shown), refusal.empty());
+    Refuse(!refusal.empty() ? LacksText(refusal) : unreachable, refusal.empty() && canRetry);
     return _End;
 }
 

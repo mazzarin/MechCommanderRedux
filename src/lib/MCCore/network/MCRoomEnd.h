@@ -34,6 +34,11 @@ namespace MCRoomEnd
         None,
         Lan,
         Internet,
+        /// <summary>
+        /// MechCommander Online's match (SPEC-mco-rooms.md), joined from its room in INTERNET's list: back to that
+        /// room, which MCO keeps (network/MCMcoRooms).
+        /// </summary>
+        Mco,
     };
 
     /// <summary>What a host's MCMPMessageType::RoomEnds says (its value).</summary>

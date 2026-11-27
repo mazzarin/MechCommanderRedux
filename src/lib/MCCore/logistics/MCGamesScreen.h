@@ -12,6 +12,7 @@
 #include "ui/MCRmlScreen.h"
 
 class MCRmlModel;
+struct MCMcoSeen;
 
 /// <summary>The change of screen a join or a host runs in while it connects (the tests wait on it).</summary>
 inline constexpr std::string_view JoiningChange = "joining";
@@ -54,6 +55,33 @@ private:
     MCGamesWhere _Where;
 };
 
+/// <summary>
+/// JOIN GAME on a locked room in INTERNET's list (MechCommander Online's: SPEC-mco-rooms.md), a window over the list:
+/// the room's name over PASSWORD, CANCEL and JOIN GAME.
+/// </summary>
+class MCPasswordWindow final : public MCRmlScreen
+{
+public:
+    MCPasswordWindow();
+
+    /// <summary>Opens over the list for the room named <paramref name="roomName"/>, its box empty.</summary>
+    void OpenFor(std::string roomName);
+
+    /// <summary>What JOIN GAME does with the password typed.</summary>
+    std::function<void(std::string password)> Joining;
+
+    /// <summary>The password, as a player would type it (the tests').</summary>
+    void SetPassword(std::string_view password);
+    /// <summary>JOIN GAME, as a click would: the box emptied as the password goes.</summary>
+    void PressJoin();
+
+protected:
+    void OnLoaded(Rml::ElementDocument& document) override;
+
+private:
+    std::string _RoomName;
+};
+
 /// <summary>INTERNET or LAN (<c>ui/internet.rml</c>, <c>ui/lan.rml</c>), the games list's view.</summary>
 class MCGamesScreen final : public MCRmlScreen
 {
@@ -83,6 +111,11 @@ public:
         std::vector<std::string> PickPlayers;
         bool CanJoin = false;
         bool CanHost = false;
+        /// <summary>In MCO's room: its name, the line under it ("Waiting for Bob to start."), and each player's row.</summary>
+        bool InRoom = false;
+        std::string RoomName;
+        std::string RoomLine;
+        std::vector<std::string> RoomPlayers;
     };
 
     MCSeen Seen() const;
@@ -101,6 +134,11 @@ public:
     void PressHost();
     void PressRetry();
     void PressUpdate();
+    /// <summary>LEAVE in MCO's room (ESC does it too): back to the list.</summary>
+    void PressLeave();
+
+    /// <summary>The locked room's password window (none before a locked room was first joined).</summary>
+    MCGuiHandle<MCPasswordWindow> PasswordWindow() const { return _PasswordWindow; }
 
     /// <summary>HOST GAME's window (none before HOST GAME first opened it).</summary>
     MCGuiHandle<MCHostWindow> HostWindow() const { return _HostWindow; }
@@ -176,6 +214,20 @@ private:
     /// <summary>CANCEL on the wait: the join called off, the list staying up.</summary>
     void CallOff();
 
+    // MechCommander Online's rooms (SPEC-mco-rooms.md), in the list like any other game.
+
+    /// <summary>The password's window for MCO's locked room <paramref name="game"/>, its JOIN GAME joining it.</summary>
+    void AskPassword(const MCListedGame& game);
+    /// <summary>JOIN GAME on MCO's room <paramref name="game"/>, with its password when it's locked.</summary>
+    void JoinMco(const MCListedGame& game, std::string password);
+    /// <summary>Each frame: what MCO says, as it changes: the room, its waits, its match, its refusals.</summary>
+    void TendMco();
+    /// <summary>The room's players and line, or the list again once out of it.</summary>
+    void ShowMcoRoom(const MCMcoSeen& seen);
+    /// <summary>A wait over the list (<paramref name="text"/>) whose CANCEL leaves MCO's room.</summary>
+    void ShowMcoWait(std::string text);
+    /// <summary>MCO's match: the game joins it through the guest's bridge (its join's wait over the room).</summary>
+    void TendMcoMatch(const MCMcoSeen& seen);
     MCGamesWhere _Where;
     MCGamesList _List;
     MCGameJoin _Join;
@@ -188,6 +240,29 @@ private:
     std::optional<std::string> _PickedKey;
     MCGuiHandle<MCHostWindow> _HostWindow;
     MCHostWindow::MCHost _LastHost;
+    MCGuiHandle<MCPasswordWindow> _PasswordWindow;
+    /// <summary>The MCO room picked for the password window's JOIN GAME.</summary>
+    std::optional<MCListedGame> _Locked;
+
+    /// <summary>A room of the list in MCO's game.</summary>
+    struct MCRoomRow
+    {
+        std::string Name;
+        std::string Now;
+        bool Ready = false;
+        bool Host = false;
+
+        bool operator==(const MCRoomRow&) const = default;
+    };
+
+    // MCO, as last heard: its revision; the player has joined (or is joining) a room, so what it says is said; the wait
+    // shown; the match port the game joined; the refusal and the room's end last said (each once).
+    uint64_t _McoRevision = 0;
+    bool _McoAsked = false;
+    bool _McoWaiting = false;
+    uint16_t _McoMatchPort = 0;
+    std::string _McoRefusalSaid;
+    std::string _McoLeftSaid;
 
     // What the document binds (the model's values at its top level).
     std::unique_ptr<MCRmlModel> _Model;
@@ -205,6 +280,10 @@ private:
     std::string _Code;
     bool _CanJoin = false;
     bool _CanHost = true;
+    bool _InRoom = false;
+    std::string _RoomName;
+    std::string _RoomLine;
+    std::vector<MCRoomRow> _RoomPlayers;
 };
 
 /// <summary>INTERNET's and LAN's kinds in the screen flow (logistics/MCMenuScreens registers them).</summary>

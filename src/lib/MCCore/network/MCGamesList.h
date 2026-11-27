@@ -9,6 +9,8 @@
 
 #include "network/MCInternetLobby.h"
 
+class MCSessionManager;
+
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -41,15 +43,27 @@ struct MCListedGame
     std::optional<int64_t> BattleSeconds;
     /// <summary>Its host plays a newer release than this game's (it can't be joined without the update).</summary>
     bool NeedsNewer = false;
+    /// <summary>
+    /// MechCommander Online's room (SPEC-mco-rooms.md), listed with the service's games like any other: its room id,
+    /// joined through MCO (network/MCMcoRooms); empty for the service's games and this network's.
+    /// </summary>
+    std::string McoRoom;
+    /// <summary>MCO's room has a password: JOIN GAME asks for it.</summary>
+    bool Locked = false;
+    /// <summary>How many play, when only that is known (MCO's rooms name their host alone until joined).</summary>
+    std::optional<int32_t> Count;
 
+    /// <summary>How many play in it.</summary>
+    int32_t PlayerCount() const { return Count.value_or(static_cast<int32_t>(Players.size())); }
     /// <summary>Whether every place is taken.</summary>
-    bool Full() const { return Max > 0 && static_cast<int32_t>(Players.size()) >= Max; }
+    bool Full() const { return Max > 0 && PlayerCount() >= Max; }
     /// <summary>Whether it can be joined as it stands: open, a place free, on a version this game plays.</summary>
     bool Joinable() const { return !InBattle && !Full() && !NeedsNewer; }
     /// <summary>Its players as the list shows them: "2/6".</summary>
     std::string PlayersText() const;
     /// <summary>
-    /// What it's doing, the list's last column: "Open", "Full", "In battle", "In battle for 12 min", "Needs version 0.7.2".
+    /// What it's doing, the list's last column: "Open", "Locked", "Full", "In battle", "In battle for 12 min", "Needs
+    /// version 0.7.2".
     /// </summary>
     std::string NowText() const;
     /// <summary>The host's release alone ("0.7.2" of "0.7.2 (901)").</summary>
@@ -64,7 +78,12 @@ enum class MCGamesWhere
     /// <summary>On this network (DirectPlay's sessions, over TCP/IP).</summary>
     Lan,
     /// <summary>The service's public games.</summary>
-    Internet
+    Internet,
+    /// <summary>
+    /// MechCommander Online's match (SPEC-mco-rooms.md): its game on this computer as a launcher's, the bridge
+    /// (network/MCMcoBridge) carrying it over MCO's relay. A join's kind only: INTERNET lists MCO's rooms.
+    /// </summary>
+    Mco
 };
 
 /// <summary>What the list has to show.</summary>
@@ -113,8 +132,10 @@ public:
 
     MCGamesWhere Where() const { return _Where; }
 
-    /// <summary>Starts listening; the list starts again empty.</summary>
+    /// <summary>Starts listening (INTERNET: MCO's lobby too, its player a guest under the name set); the list starts again empty.</summary>
     void Open();
+    /// <summary>INTERNET: the player's name, under which MCO's lobby is joined as a guest.</summary>
+    void SetGuestName(std::string name) { _GuestName = std::move(name); }
     /// <summary>Stops listening; the games stay as last heard.</summary>
     void Close();
     bool IsOpen() const { return _Open; }
@@ -139,13 +160,18 @@ public:
 private:
     /// <summary>This network's games read again from the session manager (each with its players).</summary>
     bool ReadLanGames();
-    /// <summary>The service's games as the list shows them.</summary>
+    /// <summary>The service's games as the list shows them, with MCO's rooms.</summary>
     bool ReadInternetGames();
+    /// <summary>MCO's rooms as the list shows them, when it has listed them.</summary>
+    static std::vector<MCListedGame> McoGames();
 
     MCGamesWhere _Where;
     bool _Open = false;
     std::vector<MCListedGame> _Games;
     std::unique_ptr<MCInternetList> _List;
+    std::string _GuestName;
+    /// <summary>INTERNET: MCO's rooms as last read (its revision), read again as they change.</summary>
+    uint64_t _McoRevision = 0;
     /// <summary>LAN: whether this network has been asked and its answers read once (Looking until then).</summary>
     bool _LanListed = false;
     /// <summary>LAN: the next time this network's games are read (its answers come in between).</summary>
@@ -176,6 +202,8 @@ public:
         std::string GameName;
         int32_t MaxPlayers = 6;
         bool Public = true;
+        /// <summary>MCO's match: its guest's bridge's port on this computer, which the game joins.</summary>
+        uint16_t Port = 0;
     };
 
     /// <summary>How it ended.</summary>
@@ -227,6 +255,12 @@ private:
     void RefuseFor(std::optional<MCServiceRefusal> refusal);
     MCEnd TendInternet();
     MCEnd TendLan();
+    MCEnd TendMco();
+    /// <summary>
+    /// A guest's search for its host's room over the link, every JoinEvery, then the room joined; refused with
+    /// <paramref name="unreachable"/> when nothing answers or the room can't be joined.
+    /// </summary>
+    MCEnd FindAndJoin(MCSessionManager& manager, const std::string& unreachable, bool canRetry);
 
     std::optional<MCAsk> _Ask;
     MCEnd _End = MCEnd::None;

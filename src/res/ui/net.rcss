@@ -10,6 +10,8 @@
 #games > * { flex: 0 0 auto; }
 #games > .scroll-box { flex: 1 1 0; }
 #games > .empty { flex: 1 1 0; }  /* nothing in the list: its line in the list's room */
+#room-players { flex: 2 1 0; }  /* in MCO's room: its players where the games were */
+#room-players > * { flex: 0 0 auto; }
 #pick { flex: 1 1 0; padding-left: 12dp; border-left: 1dp #2a3742; }
 #pick > * { flex: 0 0 auto; }
 .c-players { flex: 0 0 52dp; }

@@ -135,6 +135,8 @@ public:
     static void Release();
     /// <summary>Whether MCO is in the game (a transfer was set up).</summary>
     static bool Available();
+    /// <summary>Whether the game is playing MCO's match (its game joining or in it): its room's end goes back to MCO's.</summary>
+    static bool InMatch();
     /// <summary>MCO in the game; only while <see cref="Available"/>.</summary>
     static MCMcoRooms& Now();
 
@@ -158,12 +160,17 @@ public:
 
     // The lobby, while INTERNET shows it: the player registered in MCO's lobby and its rooms polled; out of it after.
 
-    void OpenLobby();
+    /// <summary>
+    /// The lobby opened. With <paramref name="guestName"/> (INTERNET's player name, the screens' way: they have no
+    /// sign-in of their own), a player not signed in plays as a guest under it, and a guest takes it as their name.
+    /// </summary>
+    void OpenLobby(std::string guestName = {});
     void CloseLobby();
 
     // The room: JOIN GAME on a room (its password, when locked), HOST GAME, LEAVE, the host's START.
 
-    void Join(std::string roomId, std::string password);
+    /// <summary>JOIN GAME on a room; a guest takes <paramref name="guestName"/> as their name first, when given.</summary>
+    void Join(std::string roomId, std::string password, std::string guestName = {});
     void Host(std::string name, int32_t maxPlayers, std::string password);
     void Leave();
     void Start();
@@ -210,6 +217,13 @@ public:
     static constexpr std::string_view NoMatchText = "Couldn't connect to the match. Try again.";
     static constexpr std::string_view OtherDataText = "This room plays other game data than yours.";
     static constexpr std::string_view NoBuildText = "MechCommander Online names no build for its Redux rooms.";
+    static constexpr std::string_view GoneText = "The room has closed.";
+    /// <summary>A room the joining line can't name (gone from the list as it's asked).</summary>
+    static constexpr std::string_view SomeRoom = "the room";
+    static constexpr std::string_view RoomClosedFormat = "{} left. The room has closed.";
+    static constexpr std::string_view MatchEndedFormat = "{} left. The match has ended.";
+    /// <summary>A guest's name when INTERNET's isn't one MCO takes (MCO's launcher names every new guest so).</summary>
+    static constexpr std::string_view GuestNameNone = "Player";
 
 private:
     /// <summary>A request of the player's, run on the model's thread.</summary>
@@ -226,6 +240,12 @@ private:
     void Activated(const MCMcoApi::MCSignIn& signIn, bool takeOver);
     void SignedIn(const MCMcoApi::MCSignIn& signIn, std::string peerToken);
     void DoGuest(const std::string& name);
+    /// <summary>A guest takes <paramref name="name"/> (one MCO takes, else GuestNameNone) as their name, kept.</summary>
+    void Rename(const std::string& name);
+    /// <summary>The guest's profile kept in the system's store (said in the log when it can't be).</summary>
+    void KeepGuest();
+    /// <summary>INTERNET's <paramref name="name"/> as a guest's: MCO's own form of it, or GuestNameNone.</summary>
+    static std::string GuestName(const std::string& name);
     void DoSignOut();
     void Forget();
     bool Registered();
@@ -268,6 +288,8 @@ private:
     MCMcoApi::MCPeer _Peer;
     std::optional<MCMcoApi::MCSignIn> _Waiting;
     bool _Resumed = false;
+    /// <summary>An account's sign-in was kept: no guest is made in its place.</summary>
+    bool _AccountKept = false;
     bool _LobbyWanted = false;
     bool _InLobby = false;
     std::optional<MCMcoApi::MCSeat> _Seat;

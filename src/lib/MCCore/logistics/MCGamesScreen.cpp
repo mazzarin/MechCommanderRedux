@@ -10,6 +10,7 @@
 #include "main/MCLogistics.h"
 #include "network/MCInternetGame.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayer.h"
 #include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
@@ -25,6 +26,7 @@ namespace
     constexpr const char* InternetDocument = "internet.rml";
     constexpr const char* LanDocument = "lan.rml";
     constexpr const char* HostDocument = "host_game.rml";
+    constexpr const char* PasswordDocument = "join_password.rml";
     constexpr const char* InternetName = "internet";
     constexpr const char* LanName = "lan";
     constexpr const char* InternetPlace = "Internet";
@@ -44,6 +46,12 @@ namespace
     constexpr std::string_view NoLanGamesText = "No games on this network.";
     constexpr std::string_view PublicLine = "Public";
     constexpr std::string_view PublicHostedFormat = "Public, hosted in {}";
+    /// <summary>MCO's rooms (SPEC-mco-rooms.md): a locked one's line, its players' column, and whom the room waits for.</summary>
+    constexpr std::string_view LockedLine = "Needs a password";
+    constexpr std::string_view ReadyText = "Ready";
+    constexpr std::string_view NotReadyText = "Not ready";
+    constexpr std::string_view WaitingFormat = "Waiting for {} to start.";
+    constexpr std::string_view SomeHost = "the host";
     constexpr std::string_view LanLine = "On this network";
     constexpr std::string_view OnMissionFormat = "{}, on {}";
     constexpr std::string_view NeedsFormat = "Needs version {}";
@@ -239,12 +247,99 @@ void MCHostWindow::PressHost()
     }
 }
 
+// ---- a locked room's password ----
+
+MCPasswordWindow::MCPasswordWindow()
+{
+    SetDocument(PasswordDocument);
+    Modal = true;
+    Keys = {{"ENTER", "Join game"}, {"ESC", "Cancel"}};
+    Back = [this]
+    {
+        SetPassword({});
+        Hide();
+    };
+}
+
+void MCPasswordWindow::OnLoaded(Rml::ElementDocument& /*document*/)
+{
+    OnClick("cancel", [this] { Back(); });
+    OnClick("join", [this] { PressJoin(); });
+}
+
+void MCPasswordWindow::OpenFor(std::string roomName)
+{
+    _RoomName = std::move(roomName);
+
+    if (!Document().has_value())
+    {
+        if (const auto opened = Open(); !opened)
+        {
+            MCRmlFlow::Broken(std::format("the password's window can't open: {}", opened.error()));
+            return;
+        }
+    }
+    else
+    {
+        Show();
+    }
+
+    if (Rml::Element* room = Document()->get().GetElementById("room"); room != nullptr)
+    {
+        room->SetInnerRML(MCRmlDialog::Escape(_RoomName));
+    }
+
+    SetPassword({});
+}
+
+void MCPasswordWindow::SetPassword(std::string_view password)
+{
+    if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
+    {
+        if (Rml::Element* box = document->get().GetElementById("password"); box != nullptr)
+        {
+            box->SetAttribute(ValueAttribute, std::string(password));
+        }
+    }
+}
+
+void MCPasswordWindow::PressJoin()
+{
+    std::string password;
+
+    if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
+    {
+        if (Rml::Element* box = document->get().GetElementById("password"); box != nullptr)
+        {
+            password = ValueOf(*box);
+        }
+    }
+
+    SetPassword({});
+    Hide();
+
+    if (Joining)
+    {
+        Joining(std::move(password));
+    }
+}
+
 // ---- INTERNET and LAN ----
 
 MCGamesScreen::MCGamesScreen(MCGamesWhere where) : _Where(where), _List(where)
 {
     SetDocument(where == MCGamesWhere::Internet ? InternetDocument : LanDocument);
-    Back = [] { MCScreenFlow::Back(); };
+    // In MCO's room, ESC leaves it (the list again), never the screen with the player still in the room.
+    Back = [this]
+    {
+        if (_InRoom)
+        {
+            PressLeave();
+            return;
+        }
+
+        MCScreenFlow::Back();
+    };
 }
 
 MCGamesScreen::~MCGamesScreen() = default;
@@ -263,6 +358,11 @@ void MCGamesScreen::MakeModels(Rml::Context& context)
                std::pair{"needs", &MCRow::Needs});
     model.List("pick_lines", _PickLines, std::pair{"text", &MCLine::Text});
     model.List("pick_players", _PickPlayers, std::pair{"text", &MCPlayer::Text});
+    model.List("room_players", _RoomPlayers, std::pair{"name", &MCRoomRow::Name}, std::pair{"now", &MCRoomRow::Now},
+               std::pair{"ready", &MCRoomRow::Ready}, std::pair{"host", &MCRoomRow::Host});
+    model.Value("in_room", _InRoom);
+    model.Value("room_name", _RoomName);
+    model.Value("room_line", _RoomLine);
     model.Value("counts", _Counts);
     model.Value("empty", _Empty);
     model.Value("retry", _Retry);
@@ -312,6 +412,7 @@ void MCGamesScreen::OnLoaded(Rml::ElementDocument& /*document*/)
                     PressHost();
                 }
             });
+    OnClick("leave", [this] { PressLeave(); });
 }
 
 MCOptionalRef<Rml::Element> MCGamesScreen::FirstFocus(Rml::ElementDocument& document)
@@ -326,6 +427,13 @@ MCOptionalRef<Rml::Element> MCGamesScreen::FirstFocus(Rml::ElementDocument& docu
     }
 
     std::erase_if(rows, [](Rml::Element* row) { return !row->IsVisible(); });
+
+    // In MCO's room: LEAVE, the one thing to press while the room waits for its host.
+    if (Rml::Element* leave = document.GetElementById("leave"); _InRoom && leave != nullptr)
+    {
+        return MCOptionalRef<Rml::Element>(*leave);
+    }
+
     const size_t picked = _PickedRow >= 0 ? static_cast<size_t>(_PickedRow) : 0;
 
     if (_List.State() == MCGamesState::Listed && picked < rows.size() && !_Rows.empty())
@@ -348,6 +456,7 @@ void MCGamesScreen::OnShow()
     SDL_Log("%s: shown", Place().c_str());
     MCRmlDialogs::SetPlace(Place());
     _PlayerName = RememberedName();
+    _List.SetGuestName(_PlayerName);
     _Code.clear();
     _PickedKey.reset();
     _Entered = false;
@@ -367,6 +476,9 @@ void MCGamesScreen::OnShow()
     }
 
     _List.Open();
+    // MCO read afresh: back from its match, the player is in its room again.
+    _McoRevision = 0;
+    TendMco();
     ShowList();
 
     if (_Model != nullptr)
@@ -438,6 +550,8 @@ void MCGamesScreen::OnFrame()
         Ended(_Join.Tend());
     }
 
+    TendMco();
+
     if (_FocusFirstRow)
     {
         FocusFirstRow();
@@ -450,7 +564,7 @@ void MCGamesScreen::FocusFirstRow()
 {
     const MCOptionalRef<Rml::ElementDocument> document = Document();
 
-    if (!document.has_value() || (_Rows.empty() && !_Retry))
+    if (!document.has_value() || (_Rows.empty() && !_Retry && !_InRoom))
     {
         _FocusFirstRow = false;
         return;
@@ -585,18 +699,25 @@ void MCGamesScreen::ShowList()
     // The keys the hint line names, as the list stands.
     std::vector<MCRmlKeyHint> keys;
 
-    if (!_Rows.empty())
+    if (_InRoom)
     {
-        keys.push_back({"↑ ↓", "Pick a game"});
-        keys.push_back({"ENTER", "Join game"});
+        keys.push_back({"ESC", "Leave"});
     }
-    else if (retry)
+    else
     {
-        keys.push_back({"ENTER", "Retry"});
-    }
+        if (!_Rows.empty())
+        {
+            keys.push_back({"↑ ↓", "Pick a game"});
+            keys.push_back({"ENTER", "Join game"});
+        }
+        else if (retry)
+        {
+            keys.push_back({"ENTER", "Retry"});
+        }
 
-    keys.push_back({"TAB", "Next box"});
-    keys.push_back({"ESC", "Back"});
+        keys.push_back({"TAB", "Next box"});
+        keys.push_back({"ESC", "Back"});
+    }
 
     const auto same = [](const MCRmlKeyHint& a, const MCRmlKeyHint& b) { return a.Key == b.Key && a.Does == b.Does; };
 
@@ -629,8 +750,8 @@ void MCGamesScreen::ShowPick()
         }
         else
         {
-            lines.push_back(
-                {game->Region.empty() ? std::string(PublicLine) : std::format(PublicHostedFormat, game->Region)});
+            const std::string_view open = game->Locked ? LockedLine : PublicLine;
+            lines.push_back({game->Region.empty() ? std::string(open) : std::format(PublicHostedFormat, game->Region)});
         }
 
         if (game->InBattle)
@@ -726,12 +847,23 @@ MCGamesScreen::MCSeen MCGamesScreen::Seen() const
         shown.PickPlayers.push_back(player.Text);
     }
 
+    shown.InRoom = _InRoom;
+    shown.RoomName = _RoomName;
+    shown.RoomLine = _RoomLine;
+
+    for (const MCRoomRow& player : _RoomPlayers)
+    {
+        shown.RoomPlayers.push_back(player.Host ? std::format("{} | HOST | {}", player.Name, player.Now)
+                                                : std::format("{} | {}", player.Name, player.Now));
+    }
+
     return shown;
 }
 
 void MCGamesScreen::SetPlayerName(std::string name)
 {
     _PlayerName = std::move(name);
+    _List.SetGuestName(_PlayerName);
 
     if (_Model != nullptr)
     {
@@ -817,6 +949,19 @@ void MCGamesScreen::PressJoin()
             return;
         }
 
+        // MCO's room: joined through MCO, its password asked first when it's locked.
+        if (!picked->McoRoom.empty())
+        {
+            if (picked->Locked)
+            {
+                AskPassword(*picked);
+                return;
+            }
+
+            JoinMco(*picked, {});
+            return;
+        }
+
         ask.Key = picked->Key;
         ask.Shown = picked->Name;
     }
@@ -895,9 +1040,12 @@ void MCGamesScreen::Begin(MCGameJoin::MCAsk ask)
     // fades out and the room opens dark.
     const MCGameJoin::MCAsk& asked = *_Join.Asked();
     const std::weak_ptr<MCRmlScreen> self = weak_from_this();
+    // MCO's match: "Connecting to the match..." as MCO's own launcher's game connects.
+    const std::string waiting = asked.Where == MCGamesWhere::Mco ? std::string(MCMcoRooms::ConnectingText)
+                                : asked.Hosting                  ? std::string(MCGameJoin::HostingText)
+                                                                 : std::format(MCGameJoin::JoiningFormat, asked.Shown);
     MCRmlDialogs::Show(MCRmlDialog::MCSay{.Eyebrow = Place(),
-                                          .Text = asked.Hosting ? std::string(MCGameJoin::HostingText)
-                                                                : std::format(MCGameJoin::JoiningFormat, asked.Shown),
+                                          .Text = waiting,
                                           .Main = {},
                                           .Other = std::string(CancelWord),
                                           .OnOther = [self]
@@ -952,6 +1100,12 @@ void MCGamesScreen::Ended(MCGameJoin::MCEnd end)
             return;
         case MCGameJoin::MCEnd::Joined:
         {
+            // MCO's match: the game is in it (its room polled saying so, as MCO's launcher's).
+            if (_Join.Asked()->Where == MCGamesWhere::Mco && MCMcoRooms::Available())
+            {
+                MCMcoRooms::Now().GameInMatch();
+            }
+
             // The room set up at once (what the host says next lands in it); shown once the list is dark, by the join's
             // change, or with none (no display, a LAN game) through a change of its own.
             if (MCScreenChange::Name() == JoiningChange && MCScreenChange::Running())
@@ -971,6 +1125,14 @@ void MCGamesScreen::Ended(MCGameJoin::MCEnd end)
             if (MCScreenChange::Name() == JoiningChange && MCScreenChange::Running())
             {
                 MCScreenChange::Cancel();
+            }
+
+            // MCO's match not joined: MCO's room says so (TendMco), the player left in it.
+            if (_Join.Asked()->Where == MCGamesWhere::Mco && MCMcoRooms::Available())
+            {
+                MCRmlDialogs::Close();
+                MCMcoRooms::Now().GameFailed();
+                return;
             }
 
             SayRefusal();
@@ -1069,11 +1231,252 @@ void MCGamesScreen::CallOff()
     {
         _Join.CallOff();
         MCRmlDialogs::Close();
+
+        // MCO's match called off: out of its room too (the list again).
+        if (_Join.Asked()->Where == MCGamesWhere::Mco)
+        {
+            PressLeave();
+        }
     }
 
     if (MCScreenChange::Name() == JoiningChange && MCScreenChange::Running() && !MCScreenChange::Dark())
     {
         MCScreenChange::Cancel();
+    }
+}
+
+// ---- MechCommander Online's rooms ----
+
+void MCGamesScreen::AskPassword(const MCListedGame& game)
+{
+    _Locked = game;
+
+    if (!_PasswordWindow)
+    {
+        const std::weak_ptr<MCRmlScreen> self = weak_from_this();
+        _PasswordWindow = Layer().CreateChild<MCPasswordWindow>(
+            [self](MCPasswordWindow& made)
+            {
+                made.Joining = [self](std::string password)
+                {
+                    const std::shared_ptr<MCRmlScreen> screen = self.lock();
+
+                    if (screen == nullptr)
+                    {
+                        return;
+                    }
+
+                    auto& games = static_cast<MCGamesScreen&>(*screen);
+
+                    if (const std::optional<MCListedGame> locked = std::exchange(games._Locked, std::nullopt))
+                    {
+                        games.JoinMco(*locked, std::move(password));
+                    }
+                };
+            });
+    }
+
+    _PasswordWindow->OpenFor(game.Name);
+}
+
+void MCGamesScreen::JoinMco(const MCListedGame& game, std::string password)
+{
+    if (!MCMcoRooms::Available())
+    {
+        return;
+    }
+
+    SDL_Log("INTERNET: joining MechCommander Online's room %s", game.Name.c_str());
+    _McoAsked = true;
+    _McoRefusalSaid.clear();
+    MCMcoRooms::Now().Join(game.McoRoom, std::move(password), _PlayerName);
+    ShowMcoWait(std::format(MCMcoRooms::JoiningFormat, game.Name));
+}
+
+void MCGamesScreen::PressLeave()
+{
+    if (!MCMcoRooms::Available())
+    {
+        return;
+    }
+
+    SDL_Log("INTERNET: leaving MechCommander Online's room");
+    _McoAsked = false;
+    MCMcoRooms::Now().Leave();
+}
+
+void MCGamesScreen::ShowMcoWait(std::string text)
+{
+    const std::weak_ptr<MCRmlScreen> self = weak_from_this();
+    _McoWaiting = true;
+    MCRmlDialogs::Show(MCRmlDialog::MCSay{.Eyebrow = Place(),
+                                          .Text = std::move(text),
+                                          .Main = {},
+                                          .Other = std::string(CancelWord),
+                                          .OnOther = [self]
+                                          {
+                                              if (const std::shared_ptr<MCRmlScreen> screen = self.lock();
+                                                  screen != nullptr)
+                                              {
+                                                  auto& games = static_cast<MCGamesScreen&>(*screen);
+                                                  games._McoWaiting = false;
+                                                  games.PressLeave();
+                                              }
+                                          }});
+}
+
+void MCGamesScreen::TendMco()
+{
+    if (_Where != MCGamesWhere::Internet || !MCMcoRooms::Available() || MCMcoRooms::Now().Revision() == _McoRevision)
+    {
+        return;
+    }
+
+    const MCMcoSeen seen = MCMcoRooms::Now().Seen();
+    _McoRevision = seen.Revision;
+
+    if (seen.Room.has_value())
+    {
+        _McoAsked = true;
+    }
+
+    ShowMcoRoom(seen);
+    TendMcoMatch(seen);
+
+    // A join's or a match's wait ends with the room, or with why not.
+    if (_McoWaiting && !seen.Busy && (seen.Match == MCMcoMatchStage::None || !seen.Room.has_value()))
+    {
+        _McoWaiting = false;
+        MCRmlDialogs::Close();
+    }
+
+    // Only what the player asked of MCO is said: its lobby's trouble stays out of INTERNET's way (its rooms just
+    // aren't listed).
+    if (!_McoAsked)
+    {
+        return;
+    }
+
+    if (seen.Refusal.empty())
+    {
+        _McoRefusalSaid.clear();
+    }
+    else if (!seen.Busy && seen.Refusal != _McoRefusalSaid)
+    {
+        _McoRefusalSaid = seen.Refusal;
+        _McoAsked = seen.Room.has_value();
+        MCRmlDialogs::Show(MCRmlDialog::MCSay{.Eyebrow = Place(), .Text = seen.Refusal, .Main = std::string(OkWord)});
+    }
+
+    if (seen.Left.empty())
+    {
+        _McoLeftSaid.clear();
+    }
+    else if (seen.Left != _McoLeftSaid)
+    {
+        _McoLeftSaid = seen.Left;
+        _McoAsked = false;
+        MCRmlDialogs::Show(MCRmlDialog::MCSay{.Eyebrow = Place(),
+                                              .Text = seen.Left,
+                                              .Main = std::string(OkWord),
+                                              .OnMain = []
+                                              {
+                                                  if (MCMcoRooms::Available())
+                                                  {
+                                                      MCMcoRooms::Now().ClearLeft();
+                                                  }
+                                              }});
+    }
+}
+
+void MCGamesScreen::ShowMcoRoom(const MCMcoSeen& seen)
+{
+    std::vector<MCRoomRow> players;
+    std::string name;
+    std::string line;
+
+    if (seen.Room.has_value())
+    {
+        name = MCMcoApi::Printable(seen.Room->Name);
+        const std::string host = MCMcoApi::Printable(seen.Room->Host);
+        line = std::format(WaitingFormat, host.empty() ? SomeHost : std::string_view(host));
+
+        for (const MCMcoApi::MCRoomPlayer& player : seen.Room->Players)
+        {
+            players.push_back(MCRoomRow{.Name = MCMcoApi::Printable(player.Username),
+                                        .Now = std::string(player.Ready ? ReadyText : NotReadyText),
+                                        .Ready = player.Ready,
+                                        .Host = player.Host});
+        }
+    }
+
+    const bool entered = Keep(_InRoom, seen.Room.has_value());
+    bool changed = entered;
+    changed |= Keep(_RoomName, std::move(name));
+    changed |= Keep(_RoomLine, std::move(line));
+    changed |= Keep(_RoomPlayers, std::move(players));
+
+    if (changed && _Model != nullptr)
+    {
+        _Model->Changed("in_room");
+        _Model->Changed("room_name");
+        _Model->Changed("room_line");
+        _Model->Changed("room_players");
+    }
+
+    // In or out of the room: the hint line and the focus follow (LEAVE, or the list's first game).
+    if (entered)
+    {
+        _FocusFirstRow = true;
+        ShowList();
+    }
+}
+
+void MCGamesScreen::TendMcoMatch(const MCMcoSeen& seen)
+{
+    switch (seen.Match)
+    {
+        case MCMcoMatchStage::None:
+        {
+            _McoMatchPort = 0;
+            return;
+        }
+        case MCMcoMatchStage::Starting:
+        {
+            if (!_McoWaiting && !_Join.Pending())
+            {
+                ShowMcoWait(std::string(MCMcoRooms::ConnectingText));
+            }
+
+            return;
+        }
+        case MCMcoMatchStage::JoinGame:
+        {
+            if (_Join.Pending() || _McoMatchPort == seen.GamePort || !seen.Room.has_value())
+            {
+                return;
+            }
+
+            // The game joins the guest's bridge as a launcher's game joins, under the name MCO's launcher gives it.
+            _McoMatchPort = seen.GamePort;
+
+            if (_McoWaiting)
+            {
+                _McoWaiting = false;
+                MCRmlDialogs::Close();
+            }
+
+            Begin(MCGameJoin::MCAsk{.Where = MCGamesWhere::Mco,
+                                    .Shown = MCMcoApi::Printable(seen.Room->Name),
+                                    .PlayerName = seen.MatchName,
+                                    .Port = seen.GamePort});
+            return;
+        }
+
+        // Join-only for now: MCO's rooms are hosted by its own launcher (SPEC-mco-rooms.md).
+        case MCMcoMatchStage::HostGame:
+        case MCMcoMatchStage::Playing:
+            return;
     }
 }
 

@@ -18,6 +18,7 @@
 #include "mission/MCMission.h"
 #include "network/MCInternetGame.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "platform/MCDirectPlay.h"
@@ -474,6 +475,11 @@ auto MCRoomEnd::GamesOf() -> MCGames
         return MCGames::Internet;
     }
 
+    if (MCMcoRooms::InMatch())
+    {
+        return MCGames::Mco;
+    }
+
     const MCNetProtocol connection = game->SessionManager->CurrentConnection;
     return connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx ? MCGames::Lan : MCGames::None;
 }
@@ -483,6 +489,13 @@ auto MCRoomEnd::ShowGames(MCGames games, std::string_view line, std::function<vo
     MCLogistics& logistics = *GlobalLog();
     // Back at the games, no rematch is pending (JoinAgain has taken its own before).
     Rejoin.reset();
+
+    // MCO's match is over for this game: its player is back in MCO's room, which INTERNET shows.
+    if (games == MCGames::Mco && MCMcoRooms::Available())
+    {
+        MCMcoRooms::Now().GameEnded();
+    }
+
     RejoinHeard = false;
     JoinAfterResults = false;
 
@@ -495,13 +508,13 @@ auto MCRoomEnd::ShowGames(MCGames games, std::string_view line, std::function<vo
 
     // Port-only (SPEC-menus.md's stage 2): through the flow, with the one fade (at once on the way back from a match,
     // dark already), landing on the games with MULTIPLAYER ACCESS and the main menu under them.
-    MCScreenFlow::Land(MCMenuScreens::GamesStack(games == MCGames::Internet, false));
+    MCScreenFlow::Land(MCMenuScreens::GamesStack(games != MCGames::Lan, false));
     MCScreenFlow::Change("games",
                          [games, line = std::string(line), then = std::move(then)]
                          {
                              DropMessage(*GlobalLog());
 
-                             if (games == MCGames::Internet)
+                             if (games != MCGames::Lan)
                              {
                                  ShowInternetScreen();
                              }
@@ -669,8 +682,11 @@ auto MCRoomEnd::SessionLost() -> bool
         return true;
     }
 
-    // Said over the games list (remade: SPEC-menus.md's stage 3), in a sentence.
-    std::string line = SentenceOf(closedBy, HostName(*game, false));
+    // Said over the games list (remade: SPEC-menus.md's stage 3), in a sentence. MCO's match's link closing mid-match is
+    // its host leaving, as MCO says it (SPEC-mco-rooms.md).
+    const bool mcoMatch = games == MCGames::Mco && (game->PrepareScenarioReceived || game->InMission);
+    std::string line = mcoMatch ? std::format(MCMcoRooms::MatchEndedFormat, HostName(*game, false))
+                                : SentenceOf(closedBy, HostName(*game, false));
     SDL_Log("Room end: the room ended under this game (%s)", line.c_str());
 
     // A match: back to the games once its scenario has ended (MCRoomEnd::AfterMatch).
@@ -728,8 +744,10 @@ auto MCRoomEnd::MatchStarts() -> void
 auto MCRoomEnd::OffersRematch() -> bool
 {
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+    // MCO's matches have none: MCO's own games quit after theirs.
     return game != nullptr && game->IsHost && !LaunchedFromLobby && MatchRoom.has_value() && MatchRoom->Hosting &&
-           !Ending.has_value() && game->SessionManager->CurrentSession() != nullptr && !TakingGuests(*game).empty();
+           MatchRoom->From != MCGames::Mco && !Ending.has_value() &&
+           game->SessionManager->CurrentSession() != nullptr && !TakingGuests(*game).empty();
 }
 
 auto MCRoomEnd::Rematch() -> void
@@ -787,8 +805,9 @@ auto MCRoomEnd::LeaveToGames() -> void
     const bool fromRoom = top == MCMenuScreens::Room();
     const bool fromLanGame = (fromRoom || top == MCMenuScreens::ReadyRoom()) &&
                              (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx);
-    // Port (Redux HD): an internet game's room goes back to the INTERNET screen.
-    const bool fromInternetGame = fromRoom && MultiPlayer()->SessionManager->Internet != nullptr;
+    // Port (Redux HD): an internet game's room goes back to the INTERNET screen; MCO's match's to its MCO room there.
+    const bool fromMcoGame = fromRoom && GamesOf() == MCGames::Mco;
+    const bool fromInternetGame = fromRoom && (MultiPlayer()->SessionManager->Internet != nullptr || fromMcoGame);
     // Original behaviour (OB-167): the same timer is removed twice (team 2's is left).
     GlobalLog()->Room.StopBoxTimers();
 
@@ -808,6 +827,11 @@ auto MCRoomEnd::LeaveToGames() -> void
     {
         GlobalLog()->Room.StopTick();
         GlobalLog()->ClearChat();
+    }
+
+    if (fromMcoGame && MCMcoRooms::Available())
+    {
+        MCMcoRooms::Now().GameEnded();
     }
 
     // The room hides as the games show (MCLogistics::NoteTop).

@@ -26,8 +26,10 @@ namespace
     constexpr auto LookEvery = std::chrono::milliseconds(5);
     /// <summary>How long the host's game is waited for in these tests.</summary>
     constexpr int HostGameMs = 3000;
-    const std::string Content(64, '9');
-    const std::string OtherContent(64, '8');
+    using MCFakeMcoService::Content;
+    using MCFakeMcoService::MCMemoryKeys;
+    using MCFakeMcoService::OtherContent;
+    using MCFakeMcoService::OthersRoom;
     constexpr _GUID TestGame{0x12345678, 0x1234, 0x5678, {1, 2, 3, 4, 5, 6, 7, 8}};
 
     template <class Done> bool Within(int ms, Done&& done)
@@ -47,56 +49,13 @@ namespace
         return true;
     }
 
-    /// <summary>The system's store as these tests keep it: in memory.</summary>
-    class MCMemoryKeys final : public MCMcoKeys
-    {
-    public:
-        std::optional<MCMcoKept> Load() override
-        {
-            const std::scoped_lock lock(_Lock);
-            return Kept;
-        }
-
-        bool Save(const MCMcoKept& kept) override
-        {
-            const std::scoped_lock lock(_Lock);
-            Kept = kept;
-            return true;
-        }
-
-        void Erase() override
-        {
-            const std::scoped_lock lock(_Lock);
-            Kept.reset();
-        }
-
-        std::optional<MCMcoKept> Now() const
-        {
-            const std::scoped_lock lock(_Lock);
-            return Kept;
-        }
-
-    private:
-        mutable std::mutex _Lock;
-        std::optional<MCMcoKept> Kept;
-    };
-
     MCMcoSetup TestSetup(MCService& mco, std::shared_ptr<MCMcoKeys> keys,
                          MCOptionalRef<MCFakeMcoRelay::MCRelay> relay = std::nullopt, std::string content = Content,
                          std::function<uint16_t()> port = {})
     {
-        MCMcoSetup setup{.Get = [&mco] { return std::make_unique<MCService::MCTransfer>(mco); },
-                         .Client = {.DeviceId = std::string(MCMcoApi::TokenDigits, 'e'),
-                                    .UserAgent = "MechCommanderReduxHD/test (macOS 26.5)",
-                                    .ClientOs = "{}",
-                                    .Chat = std::string(MCFakeMcoService::ChatUrl),
-                                    .Account = std::string(MCFakeMcoService::AccountUrl)},
-                         .Keys = std::move(keys),
-                         .Content = [content] { return std::expected<std::string, std::string>(content); },
-                         .GamePort = std::move(port),
-                         .PollLeast = PollLeast,
-                         .PollMost = PollMost,
-                         .HostGameMs = HostGameMs};
+        MCMcoSetup setup = MCFakeMcoService::Setup(mco, std::move(keys), {}, std::move(content), PollLeast, PollMost);
+        setup.GamePort = std::move(port);
+        setup.HostGameMs = HostGameMs;
 
         if (relay)
         {
@@ -119,13 +78,6 @@ namespace
                       });
     }
 
-    MCService::MCRoom OthersRoom(std::string id, std::string name, std::string content = Content)
-    {
-        return {.RoomId = std::move(id),
-                .Name = std::move(name),
-                .Build = std::string(MCFakeMcoService::StockBuild),
-                .Content = std::move(content)};
-    }
 }
 
 TEST_CASE("mco rooms: signing in keeps the account's tokens in the system's store, never its password, and while "
@@ -309,6 +261,51 @@ TEST_CASE("mco rooms: a room on other game data is refused; a joined room's play
     CHECK(!rooms.Seen().Room.has_value());
     rooms.ClearLeft();
     REQUIRE(Within(HeardMs, [&] { return rooms.Seen().Left.empty(); }));
+}
+
+TEST_CASE("mco rooms: INTERNET's lobby plays as MCO's guest under its player name with no sign-in, the same guest each "
+          "start, and a new name is the guest's")
+{
+    MCService mco;
+    const std::string roomId(32, '1');
+    mco.AddRoom(OthersRoom(roomId, "Solaris Night"));
+    mco.AddPlayer(roomId, "BOB", true, true);
+    const auto keys = std::make_shared<MCMemoryKeys>();
+    std::string clientId;
+
+    {
+        MCMcoRooms rooms(TestSetup(mco, keys));
+        rooms.OpenLobby("HAWKEYE");
+        REQUIRE(Within(HeardMs, [&] { return rooms.Seen().Rooms.size() == 1; }));
+        CHECK(rooms.Seen().Account == MCMcoAccount::Guest);
+        CHECK_EQ(rooms.Seen().Username, std::string("HAWKEYE"));
+        REQUIRE(keys->Now().has_value());
+        CHECK(keys->Now()->AccountToken.empty());
+        CHECK_EQ(keys->Now()->Username, std::string("HAWKEYE"));
+        clientId = keys->Now()->ClientId;
+        CHECK_EQ(mco.LastFields("register_peer")["username"], std::string("HAWKEYE"));
+
+        // A name typed in INTERNET before JOIN GAME is the guest's in the room, and kept.
+        rooms.Join(roomId, "", "MAVERICK");
+        REQUIRE(Within(HeardMs, [&] { return rooms.Seen().Room.has_value(); }));
+        CHECK_EQ(mco.LastFields("register_peer")["username"], std::string("MAVERICK"));
+        CHECK_EQ(keys->Now()->Username, std::string("MAVERICK"));
+        rooms.Leave();
+        REQUIRE(Within(HeardMs, [&] { return !rooms.Seen().Room.has_value(); }));
+    }
+
+    // The next start: the same guest, under the name INTERNET has now.
+    MCMcoRooms again(TestSetup(mco, keys));
+    again.OpenLobby("GOOSE");
+    REQUIRE(Within(HeardMs, [&] { return again.Seen().Username == "GOOSE" && again.Seen().Rooms.size() == 1; }));
+    CHECK_EQ(keys->Now()->ClientId, clientId);
+    CHECK_EQ(mco.LastFields("register_peer")["client_id"], clientId);
+
+    // A name MCO won't take: the guest is "Player", as MCO's launcher names its new guests.
+    MCMcoRooms unnamed(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    unnamed.OpenLobby(" ");
+    REQUIRE(Within(HeardMs, [&] { return unnamed.Seen().Account == MCMcoAccount::Guest; }));
+    CHECK_EQ(unnamed.Seen().Username, std::string(MCMcoRooms::GuestNameNone));
 }
 
 TEST_CASE("mco rooms: the host's START with every guest READY carries the match: the host's game hosts on its port, "

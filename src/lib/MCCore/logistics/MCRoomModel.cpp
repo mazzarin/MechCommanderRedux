@@ -22,6 +22,7 @@
 #include "network/MCInternetGame.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMPGameConfiguration.h"
+#include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "network/MCRoomEnd.h"
@@ -362,12 +363,23 @@ auto MCRoomModel::Where() const -> MCWhere
         return MCWhere::Launcher;
     }
 
+    // MCO's match is an internet game, listed in MCO's lobby as INTERNET lists it, though its link is the bridge's.
+    if (MCMcoRooms::InMatch())
+    {
+        return MCWhere::Internet;
+    }
+
     const MCOptionalRef<MCSessionManager> manager = Manager();
     return manager.has_value() && manager->get().Internet != nullptr ? MCWhere::Internet : MCWhere::Lan;
 }
 
 auto MCRoomModel::Public() const -> bool
 {
+    if (MCMcoRooms::InMatch())
+    {
+        return true;
+    }
+
     const MCOptionalRef<MCSessionManager> manager = Manager();
     return manager.has_value() && manager->get().Internet != nullptr && manager->get().Internet->Public();
 }

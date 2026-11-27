@@ -368,7 +368,9 @@ TEST_CASE("mco rooms: the host's START with every guest READY carries the match:
     REQUIRE(Within(HeardMs, [&] { return guest.Seen().Match == MCMcoMatchStage::Playing; }));
     // Each polls its room saying its game is in the match, as MCO's launcher does (or the room drops the player).
     CHECK(Within(HeardMs, [&] { return mco.LastFieldsFrom("room_poll", "SHINOBI")["redux_process_running"] == "1"; }));
-    CHECK(mco.LastFieldsFrom("room_poll", MCFakeMcoService::AccountName)["redux_process_running"] == "1");
+    CHECK(Within(
+        HeardMs, [&]
+        { return mco.LastFieldsFrom("room_poll", MCFakeMcoService::AccountName)["redux_process_running"] == "1"; }));
     CHECK(!mco.LastFieldsFrom("room_poll", "SHINOBI")["redux_process_session"].empty());
 
     // The match over: each back in the room, the host's closed as played (with the room's engine).

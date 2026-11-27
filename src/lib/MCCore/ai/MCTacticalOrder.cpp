@@ -1400,7 +1400,24 @@ auto MCTacticalOrder::GetFixedStatus(MCMechWarrior& pilot) -> bool
                 else
                 {
                     // Repaired: power up and roll out of the bay.
-                    pilot.OrderPowerUp(UnitOrder, MCOrderOrigin::Self);
+                    // OB-197 (fixed with RepairWalkOut): the original powered up with an alarm order of the pilot's
+                    // own, which took over from this order that frame: the path out was dropped and the mech stayed
+                    // in the bay until ordered out. With RepairWalkOut the mech starts up here and this order stays,
+                    // walking out (stage 4) and letting the bay go (stage 5).
+                    if (MCRepairWalkOutInForce())
+                    {
+                        constexpr int8_t ShutDown = 5;
+
+                        if (static_cast<int8_t>(mover->Status) == ShutDown && mover->CanPowerUp() != 0)
+                        {
+                            mover->StartUp();
+                        }
+                    }
+                    else
+                    {
+                        pilot.OrderPowerUp(UnitOrder, MCOrderOrigin::Self);
+                    }
+
                     int32_t tileR = 0;
                     int32_t tileC = 0;
                     WorldCoordToMapTile(LockObject(Target)->GetPosition(), tileR, tileC);

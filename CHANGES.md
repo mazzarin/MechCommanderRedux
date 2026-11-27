@@ -287,6 +287,9 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - A mech sent somewhere as it powers up, as after a repair, no longer says "I can't get through this way" when it gets
   there. When the order ended, the original gave it again from where the mech stood, and a mech that had stopped beside
   a spot it couldn't stand on found no way to it (OB-196).
+- **Redux HD.** With `RepairWalkOut` in `PREFS.CFG`, a mech repaired at a repair bay walks out of it by itself, as the
+  original's repair order means it to. The original powered the mech up in a way that dropped its walk out, so it stayed
+  in the bay until ordered out (OB-197). Outside a match only: a match keeps the original's.
 
 ### Logistics and Menus
 

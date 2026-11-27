@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "main/MCHdSettings.h"
+#include "ai/MCRefit.h"
 #include "camera/MCCamera.h"
 #include "engine/MCCraterManager.h"
 #include "lib/MCFatal.h"
@@ -72,6 +73,8 @@ namespace
         // MoreUnits (gameplay) lets the player own 100 mechs and vehicles outside a match, not 50
         // (logistics/MCUnitLimits.h).
         MCSetting{.Key = "MoreUnits", .Value = GMoreUnits, .Gameplay = true},
+        // RepairWalkOut (gameplay) has a mech repaired at a repair bay walk out of it by itself (ai/MCRefit.h).
+        MCSetting{.Key = "RepairWalkOut", .Value = GRepairWalkOut, .Gameplay = true},
         // Reports sends reports of the computer, how the game runs, its settings and its crashes, under a random ID, once
         // the player has seen what they hold (main/MCTelemetry.h): off until then, whatever the build.
         MCSetting{.Key = "Reports", .Value = GReports, .Personal = 0, .Player = true},

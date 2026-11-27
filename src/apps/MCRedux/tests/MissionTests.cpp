@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "TestGame.h"
 #include "ai/MCMoveGeometry.h"
+#include "ai/MCRefit.h"
 #include "ai/MCMoveSystem.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -907,6 +908,77 @@ namespace
 
         return nullptr;
     }
+
+    /// <summary>One of the player's mechs repaired at the home mech bay, starting up again.</summary>
+    struct MCRepairedMech
+    {
+        std::shared_ptr<MCTreeBuilding> Bay;
+        std::shared_ptr<MCMover> Mover;
+        std::shared_ptr<MCMechWarrior> Pilot;
+    };
+
+    /// <summary>
+    /// Mission 17: the player's mech (part 513) put in front of the home mech bay with half its armor gone, ordered to
+    /// the bay as the interface orders a repair, and run until it starts up again, repaired; with RepairWalkOut as
+    /// <paramref name="walkOut"/> says (set once the mission has started, whose start reads the settings).
+    /// </summary>
+    MCRepairedMech RepairAtHomeBay(bool walkOut)
+    {
+        REQUIRE(MCTestGame::StartMission(17));
+        GRepairWalkOut = walkOut ? 1 : 0;
+        REQUIRE(MCRepairWalkOutInForce() == walkOut);
+        const std::shared_ptr<MCTreeBuilding> bay = FindHomeMechBay();
+        REQUIRE(bay != nullptr);
+        const std::shared_ptr<MCMover> mover = GetMoverFromPartId(0x201);
+        REQUIRE(mover != nullptr);
+        REQUIRE(mover->ObjectClass == MCObjectClass::BattleMech);
+        const std::shared_ptr<MCMechWarrior> pilot = mover->GetPilot();
+        REQUIRE(pilot != nullptr);
+
+        // In front of the bay (the interface offers a repair within 100 m), on the first open cell below it.
+        int32_t bayR = 0;
+        int32_t bayC = 0;
+        WorldCoordToMapTile(bay->GetPosition(), bayR, bayC);
+        MCVector3D front;
+        bool open = false;
+
+        for (int32_t down = 2; down < 6 && !open; down++)
+        {
+            front = MapTileCellToWorldPos(bayR + down, bayC, 1, 1);
+            const auto [row, col] = CellAt(front);
+            open = CellPassable(row, col);
+        }
+
+        REQUIRE(open);
+        front.Z = MCTerrain::GetTerrainElevation(front);
+        mover->SetPosition(front);
+        RunUntil(3.0f, [] { return false; });
+        REQUIRE(pilot->CurTacOrder.Code == MCTacticalOrderCode::None);
+
+        for (MCArmorLocation& armor : mover->Armor)
+        {
+            armor.CurArmor = static_cast<float>(armor.MaxArmor) * 0.5f;
+        }
+
+        // The repair, as the interface orders it.
+        MCTacticalOrder repair;
+        repair.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::GetFixed, 0);
+        repair.Target = bay;
+        repair.MoveParams.WayPath.Mode[0] = 1;
+        REQUIRE(mover->HandleTacticalOrder(repair, 1, 0) == 0);
+        constexpr int8_t ShutDown = 5;
+        bool shutDown = false;
+        const bool poweringUp = RunUntil(60.0f,
+                                         [&]
+                                         {
+                                             shutDown = shutDown || static_cast<int8_t>(mover->Status) == ShutDown;
+                                             return shutDown && static_cast<int8_t>(mover->Status) != ShutDown;
+                                         });
+        REQUIRE(poweringUp);
+        CHECK(mover->NeedsRefit(0) == 0);
+        CHECK_EQ(pilot->LastMessageType, static_cast<int32_t>(MCRadioMessageType::RefitDone));
+        return {bay, mover, pilot};
+    }
 }
 
 /// <summary>
@@ -923,57 +995,9 @@ TEST_CASE_ISOLATED("game: a mech sent on as it powers up after a repair doesn't 
         return;
     }
 
-    REQUIRE(MCTestGame::StartMission(17));
-    const std::shared_ptr<MCTreeBuilding> bay = FindHomeMechBay();
-    REQUIRE(bay != nullptr);
-    const std::shared_ptr<MCMover> mover = GetMoverFromPartId(0x201);
-    REQUIRE(mover != nullptr);
-    REQUIRE(mover->ObjectClass == MCObjectClass::BattleMech);
-    std::shared_ptr<MCMechWarrior> pilot = mover->GetPilot();
-    REQUIRE(pilot != nullptr);
-
-    // In front of the bay (the interface offers a repair within 100 m), on the first open cell below it.
-    int32_t bayR = 0;
-    int32_t bayC = 0;
-    WorldCoordToMapTile(bay->GetPosition(), bayR, bayC);
-    MCVector3D front;
-    bool open = false;
-
-    for (int32_t down = 2; down < 6 && !open; down++)
-    {
-        front = MapTileCellToWorldPos(bayR + down, bayC, 1, 1);
-        const auto [row, col] = CellAt(front);
-        open = CellPassable(row, col);
-    }
-
-    REQUIRE(open);
-    front.Z = MCTerrain::GetTerrainElevation(front);
-    mover->SetPosition(front);
-    RunUntil(3.0f, [] { return false; });
-    REQUIRE(pilot->CurTacOrder.Code == MCTacticalOrderCode::None);
-
-    for (MCArmorLocation& armor : mover->Armor)
-    {
-        armor.CurArmor = static_cast<float>(armor.MaxArmor) * 0.5f;
-    }
-
-    // The repair, as the interface orders it.
-    MCTacticalOrder repair;
-    repair.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::GetFixed, 0);
-    repair.Target = bay;
-    repair.MoveParams.WayPath.Mode[0] = 1;
-    REQUIRE(mover->HandleTacticalOrder(repair, 1, 0) == 0);
-    constexpr int8_t ShutDown = 5;
-    bool shutDown = false;
-    const bool poweringUp = RunUntil(60.0f,
-                                     [&]
-                                     {
-                                         shutDown = shutDown || static_cast<int8_t>(mover->Status) == ShutDown;
-                                         return shutDown && static_cast<int8_t>(mover->Status) != ShutDown;
-                                     });
-    REQUIRE(poweringUp);
-    CHECK(mover->NeedsRefit(0) == 0);
-    CHECK_EQ(pilot->LastMessageType, static_cast<int32_t>(MCRadioMessageType::RefitDone));
+    const MCRepairedMech repaired = RepairAtHomeBay(false);
+    const std::shared_ptr<MCMover>& mover = repaired.Mover;
+    const std::shared_ptr<MCMechWarrior>& pilot = repaired.Pilot;
 
     // A blocked cell near an open one ten tiles east.
     int32_t tileR = 0;
@@ -1037,4 +1061,65 @@ TEST_CASE_ISOLATED("game: a mech sent on as it powers up after a repair doesn't 
     CHECK(mover->DistanceFrom(goal) > MoveMarginOfError[1]);
     CHECK(!radioedBlocked);
     CHECK(pilot->TacOrderOf(MCOrderState::Player).Code == MCTacticalOrderCode::None);
+}
+
+namespace
+{
+    /// <summary>How far past the spot it was repaired on a mech that walked out of its bay is (two cells: ~14 m).</summary>
+    constexpr double WalkedOutMeters = 10.0;
+    /// <summary>How near the spot it was repaired on a mech that stayed in its bay is.</summary>
+    constexpr double StayedMeters = 1.0;
+    /// <summary>The time a repaired mech is given to walk out, or to show it stays.</summary>
+    constexpr float WalkOutSeconds = 30.0f;
+}
+
+/// <summary>
+/// Port-only (RepairWalkOut): the original's repair order walks a repaired mech out of its bay, but the original
+/// powered it up with an alarm order of the pilot's own, which took over and dropped the walk, so the mech stayed in the
+/// bay until ordered out (OB-197). With RepairWalkOut it starts up under the repair order, walks out by itself with no
+/// radio of a blocked move, and lets the bay go.
+/// </summary>
+TEST_CASE_ISOLATED("game: with RepairWalkOut a repaired mech walks out of its bay by itself (OB-197)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCRepairedMech repaired = RepairAtHomeBay(true);
+    const std::shared_ptr<MCMechWarrior>& pilot = repaired.Pilot;
+    MCVector3D inBay = repaired.Mover->GetPosition();
+    const float repairedAt = ScenarioTime;
+    bool radioedBlocked = false;
+    const bool done = RunUntil(WalkOutSeconds,
+                               [&]
+                               {
+                                   radioedBlocked =
+                                       radioedBlocked || (pilot->LastMessageType ==
+                                                              static_cast<int32_t>(MCRadioMessageType::MoveBlocked) &&
+                                                          pilot->LastMessageTime >= repairedAt);
+                                   return pilot->CurTacOrder.Code == MCTacticalOrderCode::None;
+                               });
+
+    CHECK(done);
+    CHECK(pilot->OrderState != MCOrderState::Alarm);
+    CHECK(repaired.Mover->DistanceFrom(inBay) > WalkedOutMeters);
+    CHECK(repaired.Bay->RefitBuddy.lock() == nullptr);
+    CHECK(repaired.Mover->RefitBuddy.lock() == nullptr);
+    CHECK(!radioedBlocked);
+    GRepairWalkOut = 0;
+}
+
+/// <summary>Without RepairWalkOut (upstream's default) a repaired mech stays in its bay, as the original's (OB-197).</summary>
+TEST_CASE_ISOLATED("game: without RepairWalkOut a repaired mech stays in its bay, as the original's")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCRepairedMech repaired = RepairAtHomeBay(false);
+    MCVector3D inBay = repaired.Mover->GetPosition();
+    RunUntil(WalkOutSeconds, [] { return false; });
+    CHECK(repaired.Mover->DistanceFrom(inBay) < StayedMeters);
 }

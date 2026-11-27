@@ -7,7 +7,15 @@
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
 #include "object/MCMechWarrior.h"
+#include "network/MCMultiPlayer.h"
 #include "sound/MCSoundSystem.h"
+
+int GRepairWalkOut = 0;
+
+auto MCRepairWalkOutInForce() -> bool
+{
+    return GRepairWalkOut != 0 && MultiPlayer() == nullptr;
+}
 
 namespace
 {

@@ -386,7 +386,7 @@ void MCGamesScreen::MakeModels(Rml::Context& context)
     model.Event("update", [this](const Rml::VariantList&) { PressUpdate(); });
 }
 
-void MCGamesScreen::OnLoaded(Rml::ElementDocument& /*document*/)
+void MCGamesScreen::OnLoaded(Rml::ElementDocument& document)
 {
     OnClick("back",
             [this]
@@ -412,7 +412,12 @@ void MCGamesScreen::OnLoaded(Rml::ElementDocument& /*document*/)
                     PressHost();
                 }
             });
-    OnClick("leave", [this] { PressLeave(); });
+
+    // LEAVE: INTERNET's only (MCO's room); LAN has none.
+    if (document.GetElementById("leave") != nullptr)
+    {
+        OnClick("leave", [this] { PressLeave(); });
+    }
 }
 
 MCOptionalRef<Rml::Element> MCGamesScreen::FirstFocus(Rml::ElementDocument& document)

@@ -391,9 +391,15 @@ bool MCGamesList::ReadInternetGames()
         }
     }
 
-    // MCO's rooms with them, open games first (each kind's in its own order).
-    std::ranges::move(McoGames(), std::back_inserter(games));
-    std::ranges::stable_partition(games, [](const MCListedGame& game) { return !game.InBattle; });
+    // MCO's rooms among them, the service's order kept: MCO's open rooms before the first game in battle, its rooms
+    // in battle last (each in MCO's order).
+    std::vector<MCListedGame> mco = McoGames();
+    const auto mcoInBattle =
+        std::ranges::stable_partition(mco, [](const MCListedGame& game) { return !game.InBattle; }).begin();
+    const auto firstInBattle = std::ranges::find_if(games, [](const MCListedGame& game) { return game.InBattle; });
+    const std::ptrdiff_t at = firstInBattle - games.begin();
+    games.insert(games.begin() + at, std::make_move_iterator(mco.begin()), std::make_move_iterator(mcoInBattle));
+    games.insert(games.end(), std::make_move_iterator(mcoInBattle), std::make_move_iterator(mco.end()));
 
     if (games == _Games)
     {

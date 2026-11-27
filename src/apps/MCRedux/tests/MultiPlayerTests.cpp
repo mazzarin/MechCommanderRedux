@@ -946,10 +946,10 @@ TEST_CASE("network: the log names a player's rules, a whole group by its name")
     CHECK_EQ(MCRulesText(MCMatchRule::MechBraking | MCMatchRule::DataHash), std::string("MechBraking DataHash"));
     CHECK_EQ(MCRulesText(MCMatchRule::WeaponBans), std::string("WeaponBans"));
     CHECK_EQ(MCRulesText(MCMatchRule::NoLrms | MCMatchRule::NoPpcs), std::string("NoLrms NoPpcs"));
-    CHECK_EQ(MCRulesText(MCMatchRule::MatchWeather | (1u << 29)), std::string("MatchWeather 0x20000000"));
+    CHECK_EQ(MCRulesText(MCMatchRule::MatchWeather | (1u << 30)), std::string("MatchWeather 0x40000000"));
     CHECK_EQ(MCRulesText(MCMatchRule::Supported),
              std::string("MechBraking WeatherRules TimeOfDayRules NoArtillery NoSensors NoMines NoProbes PilotRanks "
-                         "WeaponBans DataHash RejoinsHost NightLights MechHandover Rematch"));
+                         "WeaponBans DataHashV2 RejoinsHost NightLights MechHandover Rematch BrakingV2"));
 }
 
 /// <summary>

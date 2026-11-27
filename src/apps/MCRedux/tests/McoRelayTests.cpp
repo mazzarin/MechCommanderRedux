@@ -917,7 +917,7 @@ TEST_CASE("mco relay: the bridges carry a guest's game to the host's through the
 
     // The guest's game ending its sending side: the host's game reads its end, and what the host's still sends reaches
     // the guest's (as MCO's helper carries each side on its own).
-    CHECK(MCSocket::EndSending(guestTcp));
+    CHECK(sockets.EndSending(guestTcp));
     CHECK(ClosedWithin(sockets, hostTcp));
     CHECK(Within(ArrivesMs, [&] { return relay.Passed(MCFrameType::StreamClose) == 1; }));
     CHECK(MCFakeMcoRelay::SendAll(sockets, hostTcp, BytesOf("last words"), ArrivesMs).has_value());

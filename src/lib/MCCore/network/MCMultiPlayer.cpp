@@ -727,10 +727,12 @@ namespace
         MCRuleName{MCMatchRule::NoMachineGuns, "NoMachineGuns"},
         MCRuleName{MCMatchRule::NoLongToms, "NoLongToms"},
         MCRuleName{MCMatchRule::DataHash, "DataHash"},
+        MCRuleName{MCMatchRule::DataHashV2, "DataHashV2"},
         MCRuleName{MCMatchRule::RejoinsHost, "RejoinsHost"},
         MCRuleName{MCMatchRule::NightLights, "NightLights"},
         MCRuleName{MCMatchRule::MechHandover, "MechHandover"},
         MCRuleName{MCMatchRule::Rematch, "Rematch"},
+        MCRuleName{MCMatchRule::BrakingV2, "BrakingV2"},
         MCRuleName{MCMatchRule::BrakingFromPrefs, "BrakingFromPrefs"},
     };
 } // namespace

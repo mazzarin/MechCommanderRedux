@@ -403,7 +403,7 @@ namespace
                         _PeerClosed = true;
                         Note("the other game closed its side");
 
-                        if (_GameDone || !MCSocket::EndSending(_Tcp))
+                        if (_GameDone || !_Sockets.EndSending(_Tcp))
                         {
                             CloseGameTcp();
                         }

@@ -5,7 +5,7 @@
     <link type="text/rcss" href="campaign.rcss"/>
     <link type="text/rcss" href="video.rcss"/>
 </head>
-<!-- Port-only (SPEC-menus.md, BRIEFING): the operation's video docked at the foot of the orders, where PLAY is, the
+<!-- Port-only (SPEC-menus.md, BRIEFING): the operation's video docked at the foot of the orders, the
      briefing around it as it was (the user's, 26 Nov: "a really small pop-out that downplays"; logistics/
      MCOperationVideo): the picture 1998's own size, under 1998's scan lines when HD; beside it the operation, how far
      along, PAUSE and CLOSE; the operation's picture while Betty says "incoming transmission". SPACE pauses, ESC closes;

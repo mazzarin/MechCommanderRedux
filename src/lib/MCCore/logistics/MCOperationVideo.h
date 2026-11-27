@@ -1,7 +1,7 @@
 #pragma once
 
 // Port-only (SPEC-menus.md's stage 8, BRIEFING): the operation's video in a window docked at the foot of the remade
-// briefing's orders. PLAY (or Space) on BRIEFING opens it there, 1998's own size, the briefing around it as it was (the
+// briefing's orders. Space on BRIEFING opens it there, 1998's own size, the briefing around it as it was (the
 // user's, 26 Nov: "a really small pop-out that downplays"): the mission's OperationCinema (a Smacker movie in
 // data\movies\, with its sound) after Betty's "incoming transmission" over the operation's picture, as 1998's operation
 // tab played it, each frame shown from the HD art pack's when the 1998 window would show it, under 1998's scan lines;

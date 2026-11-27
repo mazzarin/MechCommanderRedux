@@ -55,6 +55,8 @@ namespace MCPrefsDefaults
     inline constexpr bool StretchToFit = false;
     inline constexpr bool SoftwareCursor = false;
     inline constexpr bool ShowFps = false;
+    /// <summary>"DeployMap": DEPLOY's briefing map shown.</summary>
+    inline constexpr bool DeployMap = true;
     /// <summary>"UIResolution": native.</summary>
     inline constexpr int32_t UiResolution = 0;
     inline constexpr int32_t Difficulty = 1;

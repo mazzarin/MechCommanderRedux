@@ -115,12 +115,12 @@ public:
     /// </summary>
     bool TakeKey(int key, int modifiers);
 
+    /// <summary>Whether a text box has the focus (its letters are typed, not keys).</summary>
+    bool Typing() const;
+
 private:
     /// <summary>TakeKey's for one screen.</summary>
     bool TakeKeyOn(MCRmlScreen& screen, int key, int modifiers);
-
-    /// <summary>Whether a text box has the focus (its letters are typed, not keys).</summary>
-    bool Typing() const;
 
     Rml::Context& _Context;
     MCKind _Kind;

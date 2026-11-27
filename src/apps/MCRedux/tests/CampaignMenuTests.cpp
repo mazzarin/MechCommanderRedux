@@ -45,6 +45,8 @@
 #include "main/MCLogWarriorList.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
+#include "main/MCPrefs.h"
+#include "main/MCSystemConfig.h"
 #include "mission/MCMission.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
@@ -59,6 +61,7 @@
 #include "platform/MCDirectPlay.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "ui/MCRmlChecks.h"
 #include "ui/MCRmlDialog.h"
@@ -343,12 +346,15 @@ namespace
         return window;
     }
 
-    /// <summary>The drop zone tags BRIEFING's map shows, in the document's order (F1 to F3).</summary>
-    std::vector<Rml::Element*> ZoneTagsShown(const MCCampaignScreen& screen)
+    /// <summary>
+    /// The drop zone tags a map shows (<paramref name="map"/>: BRIEFING's, or DEPLOY's <c>#mini-map</c>), in the
+    /// document's order (F1 to F3).
+    /// </summary>
+    std::vector<Rml::Element*> ZoneTagsShown(const MCCampaignScreen& screen, std::string_view map = "#map")
     {
         REQUIRE(screen.Document().has_value());
         Rml::ElementList tags;
-        screen.Document()->get().QuerySelectorAll(tags, "#map .zone-tag");
+        screen.Document()->get().QuerySelectorAll(tags, std::format("{} .zone-tag", map));
         std::erase_if(tags, [](Rml::Element* tag) { return !tag->IsVisible(true); });
         return tags;
     }
@@ -867,9 +873,9 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY draw the same on every machine")
     };
 
     constexpr std::array<MCDrawn, 3> Drawn = {{
-        {"briefing", {0xb4f5e466, 0x659f9d61, 0x100fcdac}},
-        {"deploy", {0xd212a618, 0xf551684e, 0xb28ea3e0}},
-        {"deploy_heavy", {0xaa7e3835, 0x2936d178, 0x904bae86}},
+        {"briefing", {0x94641024, 0x7a84e2c5, 0x44e86ba9}},
+        {"deploy", {0x9b936731, 0x4cb27866, 0x41cd895a}},
+        {"deploy_heavy", {0xd805ed84, 0x0b4948f8, 0x007a6990}},
     }};
 
     const auto drawEach = [&display, &clock](const MCDrawn& drawn)
@@ -967,6 +973,132 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY lay out and read at every window t
     CHECK(screen.Groups()[0].Cards[1].Refuse);
     checkEach("deploy held");
     screen.PutBack();
+}
+
+namespace
+{
+    /// <summary>What the hint line says <paramref name="key"/> does (empty: it isn't named).</summary>
+    std::string KeyDoes(const MCCampaignScreen& screen, const std::string& key)
+    {
+        const auto hint = std::ranges::find(screen.Keys, key, &MCRmlKeyHint::Key);
+        return hint != screen.Keys.end() ? hint->Does : std::string();
+    }
+}
+
+/// <summary>
+/// DEPLOY's briefing map (the user's, 27 Nov: "On the deploy tab, it might be good to have a mini-version of the
+/// briefing map so people can remember where things are deployed, it should be toggleable just like the operation
+/// briefing video. I imagine it'll take up the bottom left."): BRIEFING's picture at READY AREA's foot, shown at first,
+/// the hint line naming M; a cyan ring on it where the group of the slot in view drops (the one a carried unit is over);
+/// M, HIDE and SHOW BRIEFING MAP hide and show it; the choice kept on another tab and in PREFS ("DeployMap", written
+/// only when hidden); M on BRIEFING nothing. Saved with --shots as deploy_map, deploy_map_carry (a unit carried by the keys over the drop's second slot)
+/// and deploy_map_hidden at the frames' windows, 1920x1080 and 3440x1440.
+/// </summary>
+TEST_CASE_ISOLATED("game: DEPLOY's briefing map shows at READY AREA's foot and hides by its buttons and M")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::array<MCMenusPictures::MCWindowSize, 2> MoreShots = {{{1920, 1080}, {3440, 1440}}};
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+    std::vector<MCMenusPictures::MCWindowSize> shots(MCMenusPictures::FrameWindows.begin(),
+                                                     MCMenusPictures::FrameWindows.end());
+    shots.insert(shots.end(), MoreShots.begin(), MoreShots.end());
+
+    const auto shotEach = [&display, &shots](std::string_view what)
+    {
+        for (const MCMenusPictures::MCWindowSize& size : shots)
+        {
+            REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
+            Shot(what);
+        }
+    };
+
+    const auto pressM = []
+    {
+        MCScreenInput::RealKey(SDL_SCANCODE_M);
+        MCTestGame::RunFrame(FlowFrame);
+    };
+
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    screen.SendReady(0, std::nullopt);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(MCDeploy::SlotUnit(0) != nullptr);
+    CHECK(screen.MapShown());
+    CHECK(ElementOf(screen, "mini").IsVisible(true));
+    CHECK(!ElementOf(screen, "show-map").IsVisible(true));
+    CHECK_EQ(ElementOf(screen, "mini-map").GetProperty<Rml::String>("decorator").empty(), false);
+    CHECK_EQ(KeyDoes(screen, "M"), std::string("Hide map"));
+    shotEach("deploy_map");
+
+    // A unit carried by the keys over the drop's second slot.
+    screen.PickUpReady(0, true);
+    MCTestGame::RunFrame(FlowFrame);
+    ElementOf(screen, "slot1").Focus();
+    screen.HoldOver(1);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(screen.Carried() != nullptr);
+    CHECK(screen.RingShown());
+    const Rml::Vector2f mapSize = ElementOf(screen, "mini-map").GetBox().GetSize(Rml::BoxArea::Content);
+    const float ringLeft = std::stof(screen.RingLeft());
+    const float ringTop = std::stof(screen.RingTop());
+    CHECK(ringLeft > 0.0f);
+    CHECK(ringLeft < mapSize.x);
+    CHECK(ringTop > 0.0f);
+    CHECK(ringTop < mapSize.y);
+    shotEach("deploy_map_carry");
+    screen.PutBack();
+    MCTestGame::RunFrame(FlowFrame);
+
+    // M hides it: SHOW BRIEFING MAP in its place, the hint line saying M shows it.
+    pressM();
+    CHECK(!screen.MapShown());
+    CHECK(!screen.RingShown());
+    CHECK(!ElementOf(screen, "mini").IsVisible(true));
+    CHECK(ElementOf(screen, "show-map").IsVisible(true));
+    CHECK_EQ(KeyDoes(screen, "M"), std::string("Show map"));
+    shotEach("deploy_map_hidden");
+
+    // The mouse: SHOW BRIEFING MAP, then HIDE.
+    ClickOn(ElementOf(screen, "show-map"));
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(screen.MapShown());
+    ClickOn(ElementOf(screen, "hide-map"));
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!screen.MapShown());
+
+    // Kept on another tab; M there does nothing; M on DEPLOY shows it again.
+    MCScreenInput::RealKey(SDL_SCANCODE_E);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
+    pressM();
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!screen.MapShown());
+    pressM();
+    CHECK(screen.MapShown());
+    CHECK(ElementOf(screen, "mini").IsVisible(true));
+
+    // Kept between launches: hidden, PREFS says so; shown again, the key is gone (the default).
+    const auto savedMap = []
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::SettingsToWrite(PrefsFile)), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        return prefs.Read<bool>("DeployMap").value_or(MCPrefsDefaults::DeployMap);
+    };
+
+    CHECK(savedMap());
+    pressM();
+    CHECK(!DeployMapShown);
+    CHECK(!savedMap());
+    pressM();
+    CHECK(DeployMapShown);
 }
 
 /// <summary>
@@ -1182,10 +1314,11 @@ TEST_CASE_ISOLATED("game: the loading screen draws the same on every machine and
 /// BRIEFING's operation video (a campaign mission's, OPVID1 here: 176x128, 732 frames at 15 a second): Space opens it
 /// over the briefing, after Betty's "incoming transmission"; its frames come as the clock reaches them, how far along
 /// beside it; Space holds it (no frame comes, its time stays) and lets it go on; Escape closes it, back to BRIEFING as it
-/// was; the mouse's PLAY and CLOSE do the same. Docked at the orders' foot, not over the briefing (the user's, 26 Nov):
-/// the briefing's own keys and mouse reach it as it plays, E or a click on a tab going to another, which closes it.
+/// was; the mouse's CLOSE does the same. No button plays it (the user's, 27 Nov: "just the keyboard command is fine"):
+/// the keys' line names Space. Docked at the orders' foot, not over the briefing (the user's, 26 Nov): the briefing's
+/// own keys and mouse reach it as it plays, E or a click on a tab going to another, which closes it.
 /// </summary>
-TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space holds it and Escape closes it")
+TEST_CASE_ISOLATED("game: BRIEFING's Space opens the operation's video, Space holds it and Escape closes it")
 {
     if (!MCTestGame::Available())
     {
@@ -1197,6 +1330,8 @@ TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space hol
     StartFirstBriefing();
     MCCampaignScreen& screen = Shown();
     REQUIRE(screen.HasVideo());
+    CHECK(screen.Document()->get().GetElementById("play") == nullptr);
+    CHECK_EQ(KeyDoes(screen, "Space"), std::string("Play operation briefing video"));
     // Before its first frame (Betty's line), the operation's picture (held there, saved with --shots).
     screen.PlayVideo();
     REQUIRE(MCVideoMenu::Shown());
@@ -1248,8 +1383,8 @@ TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space hol
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > campaign"));
 
-    // The mouse: PLAY, then CLOSE.
-    ClickOn(ElementOf(screen, "play"));
+    // Space, then the mouse's CLOSE.
+    MCScreenInput::RealKey(SDL_SCANCODE_SPACE);
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE(MCVideoMenu::Shown());
     ClickOn(ElementOf(MCVideoMenu::Window()->get(), "close"));
@@ -1262,7 +1397,7 @@ TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space hol
     {
         screen.ChooseTab(MCCampaignScreen::MCTab::Briefing);
         MCTestGame::RunFrame(FlowFrame);
-        ClickOn(ElementOf(screen, "play"));
+        MCScreenInput::RealKey(SDL_SCANCODE_SPACE);
         MCTestGame::RunFrame(FlowFrame);
         REQUIRE(MCVideoMenu::Shown());
 
@@ -1286,16 +1421,15 @@ TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space hol
 }
 
 /// <summary>
-/// OB-191 on the remade BRIEFING: PLAY pressed again at once, as a quick second click comes, plays the operation's video
-/// once, from its start, and on. A second click where PLAY is lands on the video window's veil; PLAY's own press while
-/// the window shows (MCCampaignScreen::PlayVideo, as a click or Space reaching it would) leaves the video as it is, at
-/// once and once its frames come; CLOSE at once leaves BRIEFING with nothing to start later. 1998's operation tab armed a
+/// OB-191 on the remade BRIEFING: the operation's video asked for again at once, as Space reaching BRIEFING while its
+/// AutoPlay starts it would (MCCampaignScreen::PlayVideo), plays once, from its start, and on: asked for while the
+/// window shows, at once and once its frames come, it leaves the video as it is; CLOSE at once leaves BRIEFING with
+/// nothing to start later. 1998's operation tab armed a
 /// start for each click, the later one stopping the movie the first had started, and the mission tab clicked just after
 /// left a start waiting, which flipped back to the movie (OB-191, fixed on the 1998 briefing and gone with it).
 /// </summary>
 TEST_CASE_ISOLATED(
-    "game: BRIEFING's PLAY pressed again at once plays the operation's video once, from its start, and on "
-    "(OB-191)")
+    "game: BRIEFING's operation video asked for again at once plays once, from its start, and on (OB-191)")
 {
     if (!MCTestGame::Available())
     {
@@ -1309,7 +1443,6 @@ TEST_CASE_ISOLATED(
     StartFirstBriefing();
     MCCampaignScreen& screen = Shown();
     REQUIRE(screen.HasVideo());
-    const Rml::Element& play = ElementOf(screen, "play");
     const auto playing = []() -> const MCOperationVideo*
     {
         const MCOptionalRef<MCOperationVideoWindow> window = MCVideoMenu::Window();
@@ -1322,22 +1455,23 @@ TEST_CASE_ISOLATED(
         return &window->get().Video()->get();
     };
 
-    // PLAY, then its press again at once: one video, from its start (the docked video covers PLAY once it opens).
-    ClickOn(play);
+    // Space, then asked for again at once: one video, from its start.
+    MCScreenInput::RealKey(SDL_SCANCODE_SPACE);
+    MCTestGame::RunFrame(FlowFrame);
     const MCOperationVideo* const video = playing();
     REQUIRE(video != nullptr);
     screen.PlayVideo();
     REQUIRE_EQ(playing(), video);
     CHECK(!video->Paused());
 
-    // PLAY's press again at once: the same video, not started again.
+    // Asked for again at once: the same video, not started again.
     const uint32_t started = video->Shown();
     screen.PlayVideo();
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE_EQ(playing(), video);
     CHECK(video->Shown() >= started);
 
-    // Its frames come; PLAY's press while they do: it plays on, none shown again.
+    // Its frames come; asked for while they do: it plays on, none shown again.
     for (int32_t frame = 0; frame < MostFrames && video->Shown() < FramesPlayed; frame++)
     {
         MCTestGame::RunFrame(FlowFrame);
@@ -1355,7 +1489,7 @@ TEST_CASE_ISOLATED(
     CHECK(video->Shown() > FramesPlayed);
     CHECK(!video->Paused());
 
-    // CLOSE, then PLAY and Escape at once: BRIEFING, and nothing starts later.
+    // CLOSE, then asked for and Escape at once: BRIEFING, and nothing starts later.
     ClickOn(ElementOf(MCVideoMenu::Window()->get(), "close"));
     REQUIRE(playing() == nullptr);
     screen.PlayVideo();
@@ -2442,8 +2576,14 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
     REQUIRE(!screen.ChatLines().empty());
     CHECK_EQ(screen.ChatLines().back(),
              (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "Good luck, all."}));
-    DrawnEach(*display, clock, "deploy_mp", {0xde6522ec, 0xcc805d31, 0xe9cd015b});
+    DrawnEach(*display, clock, "deploy_mp", {0x9f8ec02a, 0x06aa6e6d, 0x8b2be3e5});
     CheckLaidOut(menus, "deploy mp");
+    // M typed in the chat is a letter, not the briefing map's key.
+    const bool mapShown = screen.MapShown();
+    TypeLine(screen, "say-deploy", "Meet me at F1.");
+    CHECK_EQ(screen.MapShown(), mapShown);
+    REQUIRE(!screen.ChatLines().empty());
+    CHECK_EQ(screen.ChatLines().back().Text, std::string("Meet me at F1."));
 
     // ANN leaves: gone from the bar, the chat saying so as the room's does (the host's line,
     // MCMultiPlayer::PlayerLeftGame); no dialog (the 1998 one's "Returning you to the Main Menu" returned nowhere).
@@ -2498,7 +2638,8 @@ TEST_CASE_ISOLATED("game: a match's BRIEFING shows the player's share of the dro
 /// <summary>
 /// A match's BRIEFING (briefing_b_mp_zones_hdtags) on the Inner Sphere's side (the room's team 1, home team 0): its
 /// map tags the side's drop zones, the mission's first three, F1 to F3 as the HD briefing maps tag 1998's flags, each
-/// tail on its zone at every window (<see cref="CheckZoneTags"/>). DEPLOY shows none; BRIEFING again shows the same.
+/// tail on its zone at every window (<see cref="CheckZoneTags"/>). DEPLOY's own small map shows the same three, the
+/// second group's slot in view ringing F2; BRIEFING again shows the same.
 /// </summary>
 TEST_CASE_ISOLATED("game: a match's BRIEFING tags the Inner Sphere's three drop zones on its map")
 {
@@ -2513,9 +2654,25 @@ TEST_CASE_ISOLATED("game: a match's BRIEFING tags the Inner Sphere's three drop 
     CheckZoneTags(screen, 0, "briefing_mp_zones");
 
     const std::vector<MCCampaignScreen::MCZoneShown> placed = screen.ZonesShown();
+    constexpr int SecondGroup = 2;
     screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
     MCTestGame::RunFrame(FlowFrame);
     CHECK(ZoneTagsShown(screen).empty());
+    // (The small map's tags are placed once it is laid out, the frame after DEPLOY shows.)
+    ElementOf(screen, std::format("slot{}", MCDeploy::GroupSlots)).Focus();
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(ZoneTagsShown(screen, "#mini-map").size(), size_t{3});
+    CHECK_EQ(screen.MiniZonesShown().size(), placed.size());
+    REQUIRE(screen.RingShown());
+    const MCCampaignMenu::MCZoneMap& zones = screen.ZoneMap();
+    REQUIRE(zones.Width > 0.0f);
+    REQUIRE(zones.Height > 0.0f);
+    const Rml::Vector2f box = ElementOf(screen, "mini-map").GetBox().GetSize(Rml::BoxArea::Content);
+    const float scale = std::min(box.x / zones.Width, box.y / zones.Height);
+    const auto second = std::ranges::find(zones.Tags, SecondGroup, &MCCampaignMenu::MCZoneTag::Group);
+    REQUIRE(second != zones.Tags.end());
+    CHECK_EQ(std::stof(screen.RingLeft()), std::round(second->X * scale));
+    CHECK_EQ(std::stof(screen.RingTop()), std::round(second->Y * scale));
     screen.ChooseTab(MCCampaignScreen::MCTab::Briefing);
     MCTestGame::RunFrame(FlowFrame);
     CHECK_EQ(ZoneTagsShown(screen).size(), size_t{3});
@@ -5832,9 +5989,9 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
         {"repair_first_mech_out", [&] { DragTo(ElementOf(screen, "force0"), ElementOf(screen, "inventory")); },
          0xaae0aecf},
         {"briefing_after_repair",
-         [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xb9a0ae24},
+         [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0x49b49e44},
         {"deploy_after_repair", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Deploy)); },
-         0xc898b6bf},
+         0xe3f9085b},
     }};
 
     for (size_t index = 0; index < steps.size(); index++)
@@ -5848,7 +6005,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x04162b4eu);
+    CHECK_EQ(frames, 0x8f04768eu);
 }
 
 /// <summary>

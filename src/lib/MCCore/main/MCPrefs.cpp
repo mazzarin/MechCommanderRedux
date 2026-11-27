@@ -17,6 +17,7 @@ int32_t GameDifficulty = 1;
 bool Only45Pixel = false;
 bool Force32MB = false;
 bool Force16MB = false;
+bool DeployMapShown = MCPrefsDefaults::DeployMap;
 
 namespace
 {
@@ -87,6 +88,7 @@ void SavePrefs()
     WriteChanged(prefs, "ScrollSpeed", GScrollSpeed, AutoScrollSpeed);
     WriteChanged(prefs, "InterfaceSize", GInterfaceSize, AutoInterfaceSize);
     WriteChanged(prefs, "ShowFps", GShowFpsPreference != 0, MCPrefsDefaults::ShowFps);
+    WriteChanged(prefs, "DeployMap", DeployMapShown, MCPrefsDefaults::DeployMap);
     // Port: never a debug console's art mode (MCArtModes.h), but the player's own.
     {
         const MCPlayersArtScope playersArt;

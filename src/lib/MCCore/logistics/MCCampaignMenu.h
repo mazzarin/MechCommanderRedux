@@ -265,10 +265,26 @@ public:
     /// <summary>BEGIN MISSION pressed.</summary>
     void PressBegin();
 
-    /// <summary>BRIEFING's PLAY (or Space): the operation's video in its window over the briefing.</summary>
+    /// <summary>
+    /// BRIEFING's Space (and its AutoPlay): the operation's video in its window over the briefing. No button plays it
+    /// (the user's, 27 Nov: "just the keyboard command is fine"); the keys' line names Space.
+    /// </summary>
     void PlayVideo();
     /// <summary>Whether BRIEFING has the operation's video to play (a campaign mission naming one).</summary>
     bool HasVideo() const { return _Video; }
+
+    /// <summary>
+    /// DEPLOY's briefing map (the user's, 27 Nov), at READY AREA's foot: shown or hidden by its buttons or M, the choice
+    /// kept between launches (PREFS "DeployMap"); whether it shows (a mission with a map), its drop zone tags (a
+    /// match's) and the ring round the zone of the group a unit is carried over, or the slot with the focus is in.
+    /// </summary>
+    void ToggleMap();
+    bool MapShown() const { return _HasMap && _DeployMap; }
+    const std::vector<MCZoneShown>& MiniZonesShown() const { return _MiniZones; }
+    /// <summary>The ring's centre in pixels from the map's corner ("57px"), while one shows.</summary>
+    bool RingShown() const { return _RingShown; }
+    const std::string& RingLeft() const { return _RingLeft; }
+    const std::string& RingTop() const { return _RingTop; }
 
     bool OnKey(int key, int modifiers) override;
     void OnFrame() override;
@@ -348,10 +364,15 @@ private:
     /// <summary>The carried card's place over the drop (pixels from its corner).</summary>
     void PlaceCarried();
     /// <summary>
-    /// The drop zones' tags placed over the map as it is laid out now (the picture drawn to fit its box, at its left and
-    /// top: the tags at its scale); whether they moved.
+    /// The drop zones' tags placed over the map <paramref name="id"/> as it is laid out now (the picture drawn to fit its
+    /// box, at its left and top: the tags at its scale) into <paramref name="shown"/>, <paramref name="placed"/> the box
+    /// they were placed in; whether they moved.
     /// </summary>
-    bool PlaceZoneTags();
+    bool PlaceZoneTags(const char* id, SDL_FPoint& placed, std::vector<MCZoneShown>& shown) const;
+    /// <summary>The ring on DEPLOY's map placed round the zone of the group in view; whether it moved.</summary>
+    bool PlaceRing();
+    /// <summary>The drop group a unit carried is over, or the slot with the keys' focus is in; none for neither.</summary>
+    std::optional<size_t> GroupInView() const;
     /// <summary>The ramp's lit and cyan lengths moved along to the weight's (its timings); whether a segment changed.</summary>
     bool StepRamp(double now);
     /// <summary>A match's players in the bar, read again; whether they changed.</summary>
@@ -402,6 +423,18 @@ private:
     std::vector<MCZoneShown> _Zones;
     /// <summary>The map's box (pixels) the tags were last placed in.</summary>
     SDL_FPoint _ZoneBox{};
+    /// <summary>
+    /// DEPLOY's briefing map: whether the mission has one, whether it shows, its tags and box as BRIEFING's, the
+    /// player's drop zones on it (a campaign's too) and the ring round one.
+    /// </summary>
+    bool _HasMap = false;
+    bool _DeployMap = true;
+    std::vector<MCZoneShown> _MiniZones;
+    SDL_FPoint _MiniBox{};
+    MCCampaignMenu::MCZoneMap _DropZones;
+    bool _RingShown = false;
+    std::string _RingLeft;
+    std::string _RingTop;
     bool _Video = false;
     /// <summary>Whether the operation's video is docked at BRIEFING's orders' foot (they end above it).</summary>
     bool _VideoDocked = false;
@@ -466,6 +499,12 @@ namespace MCCampaignMenu
     /// placed as 1998's briefing marked it; outside a match, none.
     /// </summary>
     MCZoneMap ZoneTags();
+
+    /// <summary>
+    /// The player's drop zones on the briefing map, placed as <see cref="ZoneTags"/> places a match's: a match's team's
+    /// three, or a campaign mission's zones whose group the player may fill (its map has their flags painted in).
+    /// </summary>
+    MCZoneMap DropZones();
 
     /// <summary>A tag's picture, as the app's art names it (<c>art/zone_tag_F1_br.png</c>; its HD copy in art/hd).</summary>
     std::string ZoneTagSource(const MCZoneTag& tag);

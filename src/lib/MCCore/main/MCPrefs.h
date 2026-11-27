@@ -17,6 +17,12 @@ extern bool Force32MB;
 extern bool Force16MB;
 
 /// <summary>
+/// Port-only: DEPLOY's briefing map shown (PREFS "DeployMap"): the player's last choice, kept between launches (the
+/// user's, 27 Nov); its M and buttons save it.
+/// </summary>
+extern bool DeployMapShown;
+
+/// <summary>
 /// Port-only: writes the settings as they are now to prefs.cfg (the settings' ACCEPT; the in-mission interface size
 /// keys save through it too): its format (<see cref="PrefsVersion"/>), then only the settings that differ from their
 /// defaults (<see cref="MCPrefsDefaults"/>, <see cref="MCHdSettings::Default"/>), so a missing key follows the build.

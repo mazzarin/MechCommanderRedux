@@ -50,12 +50,6 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
     .night .content { flex: 0 1 1115dp; }
 }
 
-/* BRIEFING's operation video, one an operation and seen once: a quiet row under the orders, PLAY opening it. */
-.video-row { flex: 0 0 auto; margin-top: 8dp; }
-.video-row > * { flex: 0 0 auto; }
-.video-row > .grow { flex: 1 1 0; }
-.video-label { line-height: 20dp; margin-right: 8dp; }
-
 /* An objective, numbered as its pin on the map (the pins' red). */
 .objective { margin-top: 4dp; font-size: 11.63dp; line-height: 15dp; }
 .objective .num { flex: 0 0 14dp; font-weight: 700; color: #f26b55; }
@@ -156,9 +150,9 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
 #orders > * { flex: 0 0 auto; }
 #orders > .scroll-box { flex: 1 1 0; }
 /* The operation's video docked at the orders' foot (video.rcss): the orders end above its strip, read on above it. */
-#orders.docked > .scroll-box { margin-bottom: 117dp; }
+#orders.docked > .scroll-box { margin-bottom: 145dp; }
 @media (max-aspect-ratio: 3/2) {
-    #orders.docked > .scroll-box { margin-bottom: 177dp; }
+    #orders.docked > .scroll-box { margin-bottom: 205dp; }
 }
 .split { display: flex; flex-direction: column; }
 .split > * { flex: 0 0 auto; }

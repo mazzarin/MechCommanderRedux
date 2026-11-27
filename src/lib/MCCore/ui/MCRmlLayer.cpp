@@ -9,7 +9,7 @@
 namespace
 {
     /// <summary>SDL's keys the menus use, as RmlUi names them (the rest are the game's).</summary>
-    constexpr std::array<std::pair<SDL_Keycode, Rml::Input::KeyIdentifier>, 22> Keys = {{
+    constexpr std::array<std::pair<SDL_Keycode, Rml::Input::KeyIdentifier>, 23> Keys = {{
         {SDLK_UP, Rml::Input::KI_UP},
         {SDLK_DOWN, Rml::Input::KI_DOWN},
         {SDLK_LEFT, Rml::Input::KI_LEFT},
@@ -27,6 +27,7 @@ namespace
         {SDLK_SPACE, Rml::Input::KI_SPACE},
         {SDLK_Q, Rml::Input::KI_Q},
         {SDLK_E, Rml::Input::KI_E},
+        {SDLK_M, Rml::Input::KI_M},
         {SDLK_A, Rml::Input::KI_A},
         {SDLK_C, Rml::Input::KI_C},
         {SDLK_V, Rml::Input::KI_V},

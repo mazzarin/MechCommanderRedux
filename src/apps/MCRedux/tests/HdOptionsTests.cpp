@@ -281,6 +281,7 @@ TEST_CASE_ISOLATED("game: PREFS keeps only what differs from the defaults, so a 
     GScrollSpeed = AutoScrollSpeed;
     GInterfaceSize = AutoInterfaceSize;
     GShowFpsPreference = MCPrefsDefaults::ShowFps ? 1 : 0;
+    DeployMapShown = MCPrefsDefaults::DeployMap;
     SavePrefs();
 
     // Every key the saved PREFS holds, by name.
@@ -370,6 +371,7 @@ TEST_CASE_ISOLATED("game: PREFS is written byte for byte as the 1998 preferences
     GScrollSpeed = ScrollSpeedChoice;
     GInterfaceSize = InterfaceSizeChoice;
     GShowFpsPreference = MCPrefsDefaults::ShowFps ? 0 : 1;
+    DeployMapShown = !MCPrefsDefaults::DeployMap;
     GHdLighting = static_cast<int>(HdLightingNight);
     MCKeyBindings::MCKeyTable keys = MCKeyBindings::Player();
     MCKeyBindings::Bind(keys, MCKeyCommand::Jump, JumpKey | KeyCtrl);
@@ -406,6 +408,7 @@ TEST_CASE_ISOLATED("game: PREFS is written byte for byte as the 1998 preferences
                                          "l ScrollSpeed=200\r\n"
                                          "l InterfaceSize=150\r\n"
                                          "b ShowFps=TRUE\r\n"
+                                         "b DeployMap=FALSE\r\n"
                                          "l HDLighting=3\r\n"
                                          "b Reports=FALSE\r\n"
                                          "\r\n"

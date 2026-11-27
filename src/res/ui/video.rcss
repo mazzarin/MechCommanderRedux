@@ -1,5 +1,5 @@
-/* Port-only (SPEC-menus.md, BRIEFING): the operation's video docked at the foot of BRIEFING's orders, where its PLAY
-   row is (the user's, 26 Nov: "a really small pop-out that downplays", B of the two mocked): a strip across the orders'
+/* Port-only (SPEC-menus.md, BRIEFING): the operation's video docked at the foot of BRIEFING's orders (the
+   user's, 26 Nov: "a really small pop-out that downplays", B of the two mocked): a strip across the orders'
    column over a rule, as a match's chat sits there; the picture 1998's own size (176x128 units) at its left, beside it
    the operation, the time, how far along, PAUSE and CLOSE; the orders end above it (campaign.rcss, #orders.docked);
    nothing dimmed. The window passes the mouse through to the briefing everywhere but the strip and the hint line. */

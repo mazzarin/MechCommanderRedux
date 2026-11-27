@@ -32,6 +32,7 @@
 #include "ui/MCRmlMenus.h"
 #include "ui/MCRmlModel.h"
 #include "logistics/MCDeploy.h"
+#include "main/MCPrefs.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -60,6 +61,16 @@ namespace
     constexpr int32_t ReadyLight = 2;
     constexpr const char* TabsId = "tabs";
     constexpr const char* MapId = "map";
+    /// <summary>DEPLOY's briefing map, at READY AREA's foot.</summary>
+    constexpr const char* MiniMapId = "mini-map";
+    /// <summary>A briefing map's picture drawn to fit its box with its own shape, at its left and top.</summary>
+    constexpr std::string_view MapPictureFormat = "image({} contain left top)";
+    /// <summary>DEPLOY's key for its briefing map, and what the hint line says it does.</summary>
+    constexpr std::string_view MapKey = "M";
+    constexpr std::string_view ShowMapWords = "Show map";
+    constexpr std::string_view HideMapWords = "Hide map";
+    /// <summary>The modifiers that make a letter a shortcut (Cmd+M minimizes), never DEPLOY's map key.</summary>
+    constexpr int ShortcutModifiers = Rml::Input::KM_CTRL | Rml::Input::KM_ALT | Rml::Input::KM_META;
     constexpr const char* DropId = "drop";
     constexpr std::string_view ReadyPrefix = "ready";
     constexpr std::string_view SlotPrefix = "slot";
@@ -266,6 +277,10 @@ MCCampaignScreen::MCCampaignScreen()
         const float height = LowestSegment + (1.0f - LowestSegment) * static_cast<float>(segment) / (Segments - 1);
         _Ramp.push_back(MCSegment{.Height = std::format("{:.1f}%", height * WholePercent)});
     }
+
+    // DEPLOY's ring hidden at the map's corner until a group is in view (its style read all the same).
+    _RingLeft = std::format(PixelsFormat, 0.0f);
+    _RingTop = _RingLeft;
 }
 
 MCCampaignScreen::~MCCampaignScreen() = default;
@@ -296,8 +311,12 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("weightMore", _WeightMore);
     model.Value("weightOver", _WeightOver);
     model.Value("canBegin", _CanBegin);
-    model.Value("video", _Video);
     model.Value("keysCarry", _KeysCarry);
+    model.Value("hasMap", _HasMap);
+    model.Value("deployMap", _DeployMap);
+    model.Value("ringShown", _RingShown);
+    model.Value("ringLeft", _RingLeft);
+    model.Value("ringTop", _RingTop);
     model.List("objectives", _Objectives, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number},
                std::pair{"limit", &MCLine::Limit});
     model.List("fire", _Fire, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number},
@@ -307,6 +326,9 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.List("warnings", _Warnings, std::pair{"text", &MCLine::Text}, std::pair{"num", &MCLine::Number},
                std::pair{"limit", &MCLine::Limit});
     model.List("zones", _Zones, std::pair{"left", &MCZoneShown::Left}, std::pair{"top", &MCZoneShown::Top},
+               std::pair{"width", &MCZoneShown::Width}, std::pair{"height", &MCZoneShown::Height},
+               std::pair{"picture", &MCZoneShown::Picture});
+    model.List("miniZones", _MiniZones, std::pair{"left", &MCZoneShown::Left}, std::pair{"top", &MCZoneShown::Top},
                std::pair{"width", &MCZoneShown::Width}, std::pair{"height", &MCZoneShown::Height},
                std::pair{"picture", &MCZoneShown::Picture});
     // The cards' list first: the groups' rows hold their cards (RmlUi's register then knows a list of cards).
@@ -339,7 +361,8 @@ void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
 {
     OnClick("mainmenu", [] { MCMenuScreens::LeaveCampaign(); });
     OnClick("begin", [this] { PressBegin(); });
-    OnClick("play", [this] { PlayVideo(); });
+    OnClick("show-map", [this] { ToggleMap(); });
+    OnClick("hide-map", [this] { ToggleMap(); });
     OnChange(TabsId, [this](int tab) { ChooseTab(static_cast<MCTab>(tab)); });
     // PURCHASING's and the 'MECH BAY's controls.
     OnChange("kinds", [this](int kind) { _Logistics->ChooseKind(static_cast<MCLogisticsTabs::MCKind>(kind)); });
@@ -452,6 +475,7 @@ void MCCampaignScreen::SetUp(MCTab tab)
     _WhyCard.reset();
     _Tab = static_cast<int>(tab);
     _Multiplayer = MultiPlayer() != nullptr;
+    _DeployMap = DeployMapShown;
     ReadBriefing();
     FillBar();
     FillPlayers();
@@ -530,39 +554,58 @@ void MCCampaignScreen::ReadBriefing()
                         ? std::format(MCCampaignMenu::VideoEyebrowFormat, mission.Operation, mission.OperationName)
                         : mission.OperationName;
 
-    if (const MCOptionalRef<Rml::Element> map = ElementById(MapId); map.has_value())
+    _HasMap = !_MapSource.empty();
+    const std::string picture = _HasMap ? std::format(MapPictureFormat, _MapSource) : std::string();
+
+    // BRIEFING's map and DEPLOY's, the same picture.
+    for (const char* id : {MapId, MiniMapId})
     {
-        if (_MapSource.empty())
+        const MCOptionalRef<Rml::Element> map = ElementById(id);
+
+        if (!map.has_value())
+        {
+            continue;
+        }
+
+        if (picture.empty())
         {
             map->get().RemoveProperty("decorator");
         }
         else
         {
-            map->get().SetProperty("decorator", std::format("image({} contain left top)", _MapSource));
+            map->get().SetProperty("decorator", picture);
         }
     }
 
-    // A match's map has no flags painted in: the team's drop zones are tagged over it (a campaign's has its own).
+    // A match's map has no flags painted in: the team's drop zones are tagged over it (a campaign's has its own), on
+    // BRIEFING's map and DEPLOY's.
     _ZoneMap = _Multiplayer ? MCCampaignMenu::ZoneTags() : MCCampaignMenu::MCZoneMap{};
+    _DropZones = MCCampaignMenu::DropZones();
     _Zones.clear();
     _ZoneBox = {};
-    PlaceZoneTags();
+    _MiniZones.clear();
+    _MiniBox = {};
+    _RingShown = false;
+    _RingLeft = std::format(PixelsFormat, 0.0f);
+    _RingTop = _RingLeft;
+    PlaceZoneTags(MapId, _ZoneBox, _Zones);
+    PlaceZoneTags(MiniMapId, _MiniBox, _MiniZones);
 }
 
-bool MCCampaignScreen::PlaceZoneTags()
+bool MCCampaignScreen::PlaceZoneTags(const char* id, SDL_FPoint& placed, std::vector<MCZoneShown>& shown) const
 {
-    const MCOptionalRef<Rml::Element> map = ElementById(MapId);
+    const MCOptionalRef<Rml::Element> map = ElementById(id);
     const Rml::Vector2f box =
         map.has_value() ? map->get().GetBox().GetSize(Rml::BoxArea::Content) : Rml::Vector2f(0, 0);
 
-    // The map not laid out (another tab shows): the tags stay as they were placed; nor moved, they stay.
-    if (box.x <= 0 || box.y <= 0 || (box.x == _ZoneBox.x && box.y == _ZoneBox.y))
+    // The map not laid out (another tab shows, DEPLOY's hidden): the tags stay as they were placed; nor moved, they stay.
+    if (box.x <= 0 || box.y <= 0 || (box.x == placed.x && box.y == placed.y))
     {
         return false;
     }
 
-    _ZoneBox = SDL_FPoint{box.x, box.y};
-    std::vector<MCZoneShown> shown;
+    placed = SDL_FPoint{box.x, box.y};
+    std::vector<MCZoneShown> tags;
 
     // The picture drawn to fit the box with its own shape (contain), at its left and top; each tag at its scale, on
     // whole pixels, its tail's tip on the zone.
@@ -576,21 +619,86 @@ bool MCCampaignScreen::PlaceZoneTags()
             const float height = std::round(tag.Height * scale);
             const float left = std::round(tag.X * scale - (tag.X - tag.Left) * width / tag.Width);
             const float top = std::round(tag.Y * scale - (tag.Y - tag.Top) * height / tag.Height);
-            shown.push_back(MCZoneShown{.Left = std::format(PixelsFormat, left),
-                                        .Top = std::format(PixelsFormat, top),
-                                        .Width = std::format(PixelsFormat, width),
-                                        .Height = std::format(PixelsFormat, height),
-                                        .Picture = std::format(ZoneTagPicture, MCCampaignMenu::ZoneTagSource(tag))});
+            tags.push_back(MCZoneShown{.Left = std::format(PixelsFormat, left),
+                                       .Top = std::format(PixelsFormat, top),
+                                       .Width = std::format(PixelsFormat, width),
+                                       .Height = std::format(PixelsFormat, height),
+                                       .Picture = std::format(ZoneTagPicture, MCCampaignMenu::ZoneTagSource(tag))});
         }
     }
 
-    if (shown == _Zones)
+    if (tags == shown)
     {
         return false;
     }
 
-    _Zones = std::move(shown);
+    shown = std::move(tags);
     return true;
+}
+
+std::optional<size_t> MCCampaignScreen::GroupInView() const
+{
+    if (_Carry.has_value())
+    {
+        return _Carry->Over.has_value() ? std::optional(*_Carry->Over / MCDeploy::GroupSlots) : std::nullopt;
+    }
+
+    const std::optional<size_t> slot = FocusedSlot();
+    return slot.has_value() ? std::optional(*slot / MCDeploy::GroupSlots) : std::nullopt;
+}
+
+bool MCCampaignScreen::PlaceRing()
+{
+    // Hidden, at the map's corner (its style read all the same).
+    bool shown = false;
+    std::string left = std::format(PixelsFormat, 0.0f);
+    std::string top = left;
+    const MCOptionalRef<Rml::Element> map = ElementById(MiniMapId);
+    const Rml::Vector2f box =
+        map.has_value() ? map->get().GetBox().GetSize(Rml::BoxArea::Content) : Rml::Vector2f(0, 0);
+    const std::optional<size_t> group = GroupInView();
+
+    // The zone of the group in view, at the map's scale as its picture is drawn (contain, at its left and top).
+    if (MapShown() && group.has_value() && box.x > 0 && box.y > 0 && _DropZones.Width > 0 && _DropZones.Height > 0)
+    {
+        const float scale = std::min(box.x / _DropZones.Width, box.y / _DropZones.Height);
+
+        for (const MCCampaignMenu::MCZoneTag& zone : _DropZones.Tags)
+        {
+            if (static_cast<size_t>(zone.Group - 1) == *group)
+            {
+                shown = true;
+                left = std::format(PixelsFormat, std::round(zone.X * scale));
+                top = std::format(PixelsFormat, std::round(zone.Y * scale));
+            }
+        }
+    }
+
+    if (shown == _RingShown && left == _RingLeft && top == _RingTop)
+    {
+        return false;
+    }
+
+    _RingShown = shown;
+    _RingLeft = std::move(left);
+    _RingTop = std::move(top);
+    return true;
+}
+
+void MCCampaignScreen::ToggleMap()
+{
+    if (!_HasMap)
+    {
+        return;
+    }
+
+    _DeployMap = !_DeployMap;
+    DeployMapShown = _DeployMap;
+    SavePrefs();
+    // Laid out afresh as it shows (the window may have changed while it was hidden).
+    _MiniBox = {};
+    SetKeys();
+    Changed();
 }
 
 bool MCCampaignScreen::FillBar()
@@ -910,6 +1018,13 @@ void MCCampaignScreen::SetKeys()
     {
         Keys = {{"← → ↑ ↓", "Move to a slot"}, {"Space", "Put down"}, {"Esc", "Put back"}, {"Q E", "Change tab"}};
     }
+    else if (Tab() == MCTab::Deploy && _HasMap)
+    {
+        Keys = {{"Enter", "Into the first open slot"},
+                {"Space", "Carry"},
+                {std::string(MapKey), std::string(_DeployMap ? HideMapWords : ShowMapWords)},
+                {"Q E", "Change tab"}};
+    }
     else if (Tab() == MCTab::Deploy)
     {
         Keys = {{"Enter", "Into the first open slot"}, {"Space", "Carry"}, {"Q E", "Change tab"}};
@@ -920,7 +1035,7 @@ void MCCampaignScreen::SetKeys()
     }
     else if (_Video)
     {
-        Keys = {{"Space", "Play video"}, {"Q E", "Change tab"}};
+        Keys = {{"Space", "Play operation briefing video"}, {"Q E", "Change tab"}};
     }
     else
     {
@@ -1514,8 +1629,9 @@ void MCCampaignScreen::OnMouse(Rml::Event& event)
 
 void MCCampaignScreen::PlayVideo()
 {
-    // OB-191 (fixed): PLAY again while the operation's video shows does nothing, so it plays once, from its start. The
-    // original's tab stopped the movie on a quick second click, and MISSION BRIEFING just after it flipped back to it.
+    // OB-191 (fixed): asked for again while the operation's video shows (Space, its AutoPlay) it does nothing, so it plays
+    // once, from its start. The original's tab stopped the movie on a quick second click, and MISSION BRIEFING just after
+    // it flipped back to it.
     if (!_Video || MCVideoMenu::Shown())
     {
         return;
@@ -1524,7 +1640,7 @@ void MCCampaignScreen::PlayVideo()
     MCVideoMenu::Open(GlobalLog()->OperationCinema, _VideoEyebrow);
 }
 
-bool MCCampaignScreen::OnKey(int key, int /*modifiers*/)
+bool MCCampaignScreen::OnKey(int key, int modifiers)
 {
     // BRIEFING: Space plays the operation's video, wherever the focus is.
     if (Tab() == MCTab::Briefing)
@@ -1552,6 +1668,17 @@ bool MCCampaignScreen::OnKey(int key, int /*modifiers*/)
 
     switch (key)
     {
+        case Rml::Input::KI_M:
+        {
+            // M shows or hides the briefing map, as its buttons do: not a letter typed in a match's chat, nor a shortcut.
+            if (Layer().Typing() || (modifiers & ShortcutModifiers) != 0 || !_HasMap)
+            {
+                return false;
+            }
+
+            ToggleMap();
+            return true;
+        }
         case Rml::Input::KI_SPACE:
         {
             // Space picks up the card with the focus, and puts it down where the focus is.
@@ -1661,8 +1788,9 @@ void MCCampaignScreen::OnFrame()
     if (_Multiplayer)
     {
         changed = FillPlayers() || changed;
-        // The map's drop zone tags follow its box (a window resized, BRIEFING shown again).
-        changed = PlaceZoneTags() || changed;
+        // The maps' drop zone tags follow their boxes (a window resized, BRIEFING shown again, DEPLOY's map shown).
+        changed = PlaceZoneTags(MapId, _ZoneBox, _Zones) || changed;
+        changed = PlaceZoneTags(MiniMapId, _MiniBox, _MiniZones) || changed;
 
         if (_Model != nullptr)
         {
@@ -1708,6 +1836,11 @@ void MCCampaignScreen::OnFrame()
     {
         HoldOver(FocusedSlot());
         PlaceCarried();
+    }
+
+    if (Tab() == MCTab::Deploy)
+    {
+        changed = PlaceRing() || changed;
     }
 
     changed = StepRamp(now) || changed;
@@ -1936,18 +2069,25 @@ MCCampaignMenu::MCZoneTag MCCampaignMenu::ZoneTag(int group, float x, float y, f
 
 MCCampaignMenu::MCZoneMap MCCampaignMenu::ZoneTags()
 {
+    return MultiPlayer() != nullptr ? DropZones() : MCZoneMap{};
+}
+
+MCCampaignMenu::MCZoneMap MCCampaignMenu::DropZones()
+{
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
-    if (logistics == nullptr || MultiPlayer() == nullptr)
+    if (logistics == nullptr)
     {
         return {};
     }
 
-    // 1998's marks, worked out as logistics read the match's mission (MCLogistics::ZoneMarks): the team's first zone
-    // (the Clans' the last three), the world units to a map pixel, the map picture's size.
+    // 1998's marks, worked out as logistics read the mission (MCLogistics::ZoneMarks): a match's team's first zone (the
+    // Clans' the last three; a campaign's the first), the world units to a map pixel, the map picture's size.
     const MCLogistics::MCZoneMarks& marks = logistics->ZoneMarks;
+    const bool match = MultiPlayer() != nullptr;
+    const int32_t first = match ? marks.Zone : 0;
 
-    if (marks.Zone < 0 || !(marks.Scale > 0))
+    if (first < 0 || !(marks.Scale > 0))
     {
         return {};
     }
@@ -1961,11 +2101,17 @@ MCCampaignMenu::MCZoneMap MCCampaignMenu::ZoneTags()
 
     for (int group = 1; group <= ZoneGroups; ++group)
     {
-        const auto zone = static_cast<size_t>(marks.Zone + group - 1);
+        const auto zone = static_cast<size_t>(first + group - 1);
 
         if (zone >= logistics->DropZonePositions.size())
         {
             break;
+        }
+
+        // A campaign mission's zones are the groups it opens slots in (a zone a group); a match's team has all three.
+        if (!match && !MCDeploy::Open((static_cast<size_t>(group) - 1) * MCDeploy::GroupSlots))
+        {
+            continue;
         }
 
         // Where 1998 marked it on its screen, in the picture it stretched over the map area.

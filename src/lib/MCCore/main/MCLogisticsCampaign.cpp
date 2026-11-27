@@ -272,12 +272,13 @@ namespace
         const auto metersPerVertex = ReadTerrainEntry<float>(terrainFile, "MetersPerVertex");
         terrainFile.Close();
         MCLogistics::MCZoneMarks marks;
+        // Port: the scale in a campaign too, for DEPLOY's briefing map (its zones' flags are painted in the picture).
+        const auto side = static_cast<double>(blocksMapSide * verticesBlockSide);
+        marks.Scale = static_cast<float>(std::sqrt(side * side + side * side) * metersPerVertex *
+                                         static_cast<double>(MarkerScalePerMeter));
 
         if (MultiPlayer() != nullptr)
         {
-            const auto side = static_cast<double>(blocksMapSide * verticesBlockSide);
-            marks.Scale = static_cast<float>(std::sqrt(side * side + side * side) * metersPerVertex *
-                                             static_cast<double>(MarkerScalePerMeter));
             marks.Zone = MultiPlayer()->HomeTeam == ClanHomeTeam ? ClanFirstZone : 0;
         }
 

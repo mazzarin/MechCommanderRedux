@@ -582,7 +582,8 @@ public:
 
     /// <summary>
     /// Port-only (SPEC-menus.md's stage 9): where a match's briefing marks its team's drop zones
-    /// (MCCampaignMenu::ZoneTags), as 1998's briefing worked it out from the mission's map (<see cref="GetCurrentMission"/>).
+    /// (MCCampaignMenu::ZoneTags), and DEPLOY's briefing map a campaign's or a match's (MCCampaignMenu::DropZones), as
+    /// 1998's briefing worked it out from the mission's map (<see cref="GetCurrentMission"/>).
     /// </summary>
     struct MCZoneMarks
     {

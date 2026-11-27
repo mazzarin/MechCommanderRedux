@@ -196,6 +196,8 @@ void ReadPreferences(MCFitIniFile& file)
     const bool showFps = file.Read<bool>("ShowFps").value_or(MCPrefsDefaults::ShowFps);
     GShowFpsPreference = showFps ? 1 : 0;
     GShowFps = showFps ? 1 : GShowFps;
+    // Port-only: DEPLOY's briefing map shown, as the player last left it.
+    DeployMapShown = file.Read<bool>("DeployMap").value_or(MCPrefsDefaults::DeployMap);
     // Port-only: the HD settings, from HDArt to MoreUnits (main/MCHdSettings.h).
     MCHdSettings::Read(file);
 

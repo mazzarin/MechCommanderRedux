@@ -59,11 +59,6 @@
                         </div>
                         <div class="fade"></div>
                     </div>
-                    <div class="row video-row" data-if="video">
-                        <div class="data grey caps nowrap video-label">Operation briefing video</div>
-                        <div class="button small" id="play" data-hint="Play">Play</div>
-                        <div class="grow"></div>
-                    </div>
                     <div id="brief-foot" data-if="mp"><div class="chat foot"><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game" data-class-team="line.team"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-brief" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-brief" maxlength="255" data-line="" data-value="say"/></div></div></div>
                 </div>
                 <div class="side-place" data-if="mp"><div class="chat side"><div class="row bottom head"><div class="heading caps grow">Chat</div></div><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game" data-class-team="line.team"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-brief-side" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-brief-side" maxlength="255" data-line="" data-value="say"/></div></div></div>
@@ -92,6 +87,15 @@
                             </div>
                         </div>
                         <div class="fade"></div>
+                    </div>
+                    <div class="row map-row" data-if="hasMap &amp;&amp; !deployMap"><div class="button small" id="show-map" data-hint="Show briefing map">Show briefing map</div><div class="grow"></div></div>
+                    <div id="mini" class="row" data-if="hasMap &amp;&amp; deployMap">
+                        <div id="mini-map" class="picture"><div class="zone-tag" data-for="z : miniZones" data-style-left="z.left" data-style-top="z.top" data-style-width="z.width" data-style-height="z.height" data-style-decorator="z.picture"></div><div class="zone-ring" data-if="ringShown" data-style-left="ringLeft" data-style-top="ringTop"></div></div>
+                        <div class="column info">
+                            <div class="eyebrow">Briefing map</div>
+                            <div class="grow"></div>
+                            <div class="row map-controls"><div class="grow"></div><div class="button small" id="hide-map" data-hint="Hide briefing map">Hide</div></div>
+                        </div>
                     </div>
                 </div>
 

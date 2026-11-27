@@ -71,6 +71,7 @@ namespace
             std::tie(DisplayWidth, DisplayHeight, LanguageOffset, GameDifficulty, MusicVolume, RadioVolume, SfxVolume,
                      InterfaceVolume) = _Numbers;
             GScrollSpeed = _ScrollSpeed;
+            DeployMapShown = _DeployMap;
         }
 
         SavedSettings(const SavedSettings&) = delete;
@@ -87,6 +88,7 @@ namespace
             DisplayWidth, DisplayHeight, LanguageOffset, GameDifficulty,
             MusicVolume,  RadioVolume,   SfxVolume,      InterfaceVolume};
         int _ScrollSpeed{GScrollSpeed};
+        bool _DeployMap{DeployMapShown};
     };
 
     /// <summary>SYSTEM.CFG as the retail game ships it, with <paramref name="extraBlocks"/> before the ABL block.</summary>
@@ -252,11 +254,14 @@ TEST_CASE("system config: PREFS.CFG gives the display, difficulty and volumes, w
     CHECK_EQ(RadioVolume, 0x40);
     CHECK_EQ(SfxVolume, 0x60);
     CHECK_EQ(InterfaceVolume, 0x60);
+    CHECK_EQ(DeployMapShown, MCPrefsDefaults::DeployMap);
 
-    // The port's key, when there.
-    ReadPrefsText("FITini\r\n[MechCommander]\r\nl SFXVolume=100\r\nl InterfaceVolume=12\r\nFITend\r\n");
+    // The port's keys, when there.
+    ReadPrefsText("FITini\r\n[MechCommander]\r\nl SFXVolume=100\r\nl InterfaceVolume=12\r\nb DeployMap=FALSE\r\n"
+                  "FITend\r\n");
     CHECK_EQ(SfxVolume, 100);
     CHECK_EQ(InterfaceVolume, 12);
+    CHECK(!DeployMapShown);
     CHECK_EQ(GScrollSpeed, AutoScrollSpeed);
 
     // SCROLL SPEED: one of its choices, else AUTO (100 percent of the original's pace is AUTO's).

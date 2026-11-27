@@ -1,6 +1,7 @@
 /* Port-only (SPEC-menus.md, stage 8): the game's copy of tools/menus-frames/frames/deploy.rcss, with DEPLOY's own rules
    (the frames' style blocks). DEPLOY's drop weight (with campaign.rcss): the groups along the top of the drop, the weight along its foot with
-   BEGIN MISSION, as 1998 sets its bar beside the launch button. The mission's map and objectives are BRIEFING's alone.
+   BEGIN MISSION, as 1998 sets its bar beside the launch button. The mission's objectives are BRIEFING's alone; its map
+   also shows small at READY AREA's foot, shown or hidden.
    The meter is look.rcss's ramp at its full 52 units. */
 
 /* A group's head: its name, then its tons while it has a slot of the player's (1998's "FORCE GROUP 1 0 T."), beside
@@ -49,6 +50,32 @@
    so the drop's groups keep a card's width (136 units and the scroll bar's room). */
 @media (max-aspect-ratio: 3/2) {
     #ready { flex: 0 0 148dp; }
+}
+
+/* Port-only (the user's, 27 Nov: "a mini-version of the briefing map so people can remember where things are
+   deployed, it should be toggleable just like the operation briefing video. I imagine it'll take up the bottom left"):
+   BRIEFING's map at READY AREA's foot, over a rule as the docked video sits at the orders' foot, its name and HIDE
+   beside it; READY AREA's cards scroll above it. Hidden, a quiet SHOW BRIEFING MAP row in its place. */
+.map-row { margin-top: 8dp; }
+.map-row > * { flex: 0 0 auto; }
+.map-row > .grow { flex: 1 1 0; }
+#mini { margin-top: 8dp; padding-top: 8dp; border-top: 1dp #2a3742; align-items: stretch; }
+#mini > * { flex: 0 0 auto; }
+#mini-map { position: relative; width: 184dp; height: 184dp; }
+#mini > .info { flex: 1 1 0; display: flex; flex-direction: column; margin-left: 12dp; }
+#mini > .info > * { flex: 0 0 auto; }
+#mini > .info > .grow { flex: 1 1 0; }
+.map-controls { align-items: center; }
+.map-controls > * { flex: 0 0 auto; }
+.map-controls > .grow { flex: 1 1 0; }
+/* Where the unit carried, or the slot with the focus, drops: its group's zone ringed in cyan, the colour of what a
+   move would do. */
+.zone-ring { position: absolute; width: 16dp; height: 16dp; margin-left: -8dp; margin-top: -8dp; border: 1.5dp #7cd4ec; border-radius: 8dp; }
+/* 4:3 and 5:4: the column (148 units) just holds the map: its name and HIDE under it. */
+@media (max-aspect-ratio: 3/2) {
+    #mini { flex-direction: column; }
+    #mini-map { width: 140dp; height: 140dp; }
+    #mini > .info { flex: 0 0 auto; margin-left: 0; margin-top: 6dp; flex-direction: row; align-items: center; }
 }
 /* A match's DEPLOY: under the groups the chat (its room kept, this being a social game) and beside it the weight, a
    column: the number, the meter, BEGIN MISSION under it. At 21:9 the chat a column of its own, READY AREA three cards a

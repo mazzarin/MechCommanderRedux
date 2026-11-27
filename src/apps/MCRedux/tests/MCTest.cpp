@@ -25,6 +25,7 @@
 
 #include "iface/MCKeyBindings.h"
 #include "lib/MCFatal.h"
+#include "logistics/MCCampaignMenu.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCUtf8Path.h"
 
@@ -576,6 +577,9 @@ int main(int argc, char** argv)
     // A fatal error fails the test process; a message box would wait for someone to click it. A crash (or a CRT
     // assertion) prints its stack and writes mc_tests.dmp instead of showing a dialog.
     MCNoMessageBoxes = true;
+    // The tests start campaigns at the first mission, whose briefing plays the operation's video by itself (1998's
+    // AutoPlay): off but where a test of it turns it on, so each briefing opens as it shows.
+    MCCampaignMenu::AutoPlaysVideo = false;
     MCCrashTrace::Install();
     // A failed Assert fails the test it happens in (the game only logs it), unless the test expects it.
     MCAssertHook = [](std::string_view report, const std::source_location& where)

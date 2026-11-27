@@ -1003,6 +1003,7 @@
     <ClInclude Include="ui\MCRmlArt.h" />
     <ClInclude Include="ui\MCRmlChecks.h" />
     <ClInclude Include="ui\MCRmlDialog.h" />
+    <ClInclude Include="ui\MCRmlFigures.h" />
     <ClInclude Include="ui\MCRmlFlow.h" />
     <ClInclude Include="ui\MCRmlKit.h" />
     <ClInclude Include="ui\MCRmlLayer.h" />

@@ -17,15 +17,21 @@
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCResultsMenu.h"
+#include "mission/MCResultsReads.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
+#include "object/MCMasterComponent.h"
+#include "object/MCMover.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
+#include "terrain/MCTacticalMap.h"
+#include "terrain/MCTerrain.h"
 #include "ui/MCRmlChecks.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
 
 #include <RmlUi/Core/Box.h>
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 
 // Port-only (SPEC-menus.md's stage 9, step 1): the results remade over the battlefield (mission/MCResultsMenu): a
@@ -55,7 +61,9 @@ namespace
     constexpr const char* PanelId = "results";
     constexpr const char* MoveOnId = "move-on";
     constexpr const char* RematchId = "rematch";
+    constexpr const char* RetryId = "retry";
     constexpr const char* FiguresId = "figures";
+    constexpr const char* SalvageId = "salvage";
     /// <summary>How far the panel's middle may be from the window's (a pixel's rounding).</summary>
     constexpr float MiddleSlack = 1.0f;
 
@@ -345,6 +353,8 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(results->Title(), std::string(MCResultsMenu::WonTitle));
     CHECK_EQ(results->MoveOnWord(), std::string(MCResultsMenu::NextMissionWord));
     CHECK(!results->RematchShown());
+    CHECK(!results->RetryShown());
+    CHECK(!MCRemadeTest::Visible(*results, RetryId));
     CHECK_EQ(MCRemadeTest::Words(*results, MoveOnId), std::string(MCResultsMenu::NextMissionWord));
 
     // At first nothing counted; the count shows a step at a time.
@@ -399,6 +409,8 @@ TEST_CASE_ISOLATED(
     REQUIRE(results != nullptr);
     CHECK_EQ(results->Title(), std::string(MCResultsMenu::LostTitle));
     CHECK_EQ(results->MoveOnWord(), std::string(MCResultsMenu::ReplayMissionWord));
+    CHECK(results->RetryShown());
+    CHECK_EQ(MCRemadeTest::Words(*results, RetryId), std::string(MCResultsMenu::RetryWord));
     CHECK(results->Earned().empty());
     CHECK(!results->Finished());
 
@@ -419,6 +431,121 @@ TEST_CASE_ISOLATED(
     ClickOn(*results, MoveOnId);
     RunWhileChanging();
     CheckOnBriefing(0);
+}
+
+/// <summary>
+/// A long salvage (the user's, 26 Nov: "the salvage bar overflows": mission 6's six 'Mechs and five parts ran past the
+/// panel's foot, over the HUD strip): every 'Mech on mission 1's map salvaged and thirty parts, more rows than the room
+/// under the objectives holds at any window. At the frames' windows, 16:9 and 21:9 the list scrolls inside that room,
+/// its foot over the panel's, nothing spilling or cut; Up from NEXT MISSION takes the keys' focus to it, Down scrolls it
+/// to its last row, shown whole, and Down at its end goes on to NEXT MISSION.
+/// </summary>
+TEST_CASE_ISOLATED("game: a long salvage scrolls inside the results' panel, every row reached from the keys")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr size_t Parts = 30;
+    constexpr int32_t MostKeys = 200;
+    constexpr float Slack = 0.5f;
+    constexpr std::array<MCWindowSize, 5> Windows = {
+        {{640, 480}, {1280, 720}, {1280, 1024}, {1920, 1080}, {3440, 1440}}};
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCTestGame::StartCampaignMission());
+    const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+    REQUIRE(map != nullptr);
+
+    for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; partId++)
+    {
+        if (const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+            mover != nullptr && mover->ObjectClass == MCObjectClass::BattleMech)
+        {
+            map->AddSalvage(mover);
+        }
+    }
+
+    const std::vector<std::shared_ptr<MCGameObject>> mechs = MCResultsReads::Salvage();
+    REQUIRE(!mechs.empty());
+    size_t parts = 0;
+
+    for (int32_t id = 1; id < NumMasterComponents() && parts < Parts; id++)
+    {
+        if (!MasterComponentList[id].Name.empty())
+        {
+            mechs.front()->AddSalvage(static_cast<uint8_t>(id), 1);
+            parts++;
+        }
+    }
+
+    REQUIRE_EQ(parts, Parts);
+
+    for (int32_t i = 0; i < Scenario()->Objectives.Count(); i++)
+    {
+        Scenario()->Objectives[i].Status = MCScenarioObjective::Succeeded;
+    }
+
+    EndMission(Won, false);
+    std::shared_ptr<MCResultsScreen> results = TheResults();
+    REQUIRE(results != nullptr);
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    RunFrames(SettleFrames);
+    REQUIRE(results->Finished());
+    REQUIRE_EQ(results->Salvage().size(), mechs.size() + Parts);
+
+    Rml::Element* list = MCRemadeTest::Find(*results, SalvageId);
+    Rml::Element* moveOn = MCRemadeTest::Find(*results, MoveOnId);
+    REQUIRE(list != nullptr);
+    REQUIRE(moveOn != nullptr);
+    REQUIRE(list->GetParentNode() != nullptr);
+    REQUIRE(moveOn->GetParentNode() != nullptr);
+    Rml::Element& box = *list->GetParentNode();
+    Rml::Element& foot = *moveOn->GetParentNode();
+    const auto top = [](Rml::Element& element) { return element.GetAbsoluteOffset(Rml::BoxArea::Border).y; };
+    const auto bottom = [&top](Rml::Element& element)
+    { return top(element) + element.GetBox().GetSize(Rml::BoxArea::Border).y; };
+
+    for (const MCWindowSize& window : Windows)
+    {
+        REQUIRE(SetWindowPixels(window.Width, window.Height));
+        RunFrames(SettleFrames);
+        const std::string where = std::format("{}x{}: ", window.Width, window.Height);
+        CHECK_EQ(where + Problems(Menus().Mission()), where);
+        // Inside the panel, over its foot, and longer than its room: it scrolls.
+        CHECK(bottom(box) <= top(foot) + Slack);
+        CHECK(list->GetScrollHeight() > list->GetClientHeight() + Slack);
+        CHECK(list->IsClassSet("long"));
+        MCScreenInput::SaveWindowShot(std::format("results_salvage_{}x{}", window.Width, window.Height));
+    }
+
+    // From the keys: Up from NEXT MISSION to the list, Down through it to its last row, then on to NEXT MISSION.
+    Rml::Context& context = Menus().Mission().Context();
+    moveOn->Focus(true);
+    MCScreenInput::RealKey(SDL_SCANCODE_UP);
+    RunFrames(1);
+    REQUIRE(context.GetFocusElement() == list);
+    const auto atEnd = [list]
+    { return list->GetScrollTop() + list->GetClientHeight() >= list->GetScrollHeight() - Slack; };
+
+    for (int32_t key = 0; key < MostKeys && !atEnd(); key++)
+    {
+        MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
+    }
+
+    RunFrames(1);
+    CHECK(atEnd());
+    CHECK(context.GetFocusElement() == list);
+    Rml::ElementList rows;
+    list->QuerySelectorAll(rows, ".salvage-row");
+    // (RmlUi keeps the rows' pattern among them, never shown.)
+    std::erase_if(rows, [](Rml::Element* row) { return !row->IsVisible(true); });
+    REQUIRE_EQ(rows.size(), mechs.size() + Parts);
+    CHECK(bottom(*rows.back()) <= top(*list) + list->GetClientHeight() + Slack);
+    MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
+    RunFrames(1);
+    CHECK(context.GetFocusElement() == moveOn);
 }
 
 /// <summary>
@@ -450,6 +577,8 @@ TEST_CASE_ISOLATED("game: a match's results show every pilot by kills, the best 
     CHECK_EQ(results->MoveOnWord(), std::string(MCResultsMenu::DoneWord));
     CHECK(!results->RematchShown());
     CHECK(!MCRemadeTest::Visible(*results, RematchId));
+    CHECK(!results->RetryShown());
+    CHECK(!MCRemadeTest::Visible(*results, RetryId));
     CHECK_EQ(results->MatchTime().size(), 5u);
     CHECK(results->Objectives().empty());
     CHECK(results->Pilots().empty());

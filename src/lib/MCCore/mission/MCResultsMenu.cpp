@@ -32,6 +32,7 @@ namespace
     /// <summary>The document's buttons (ui/results.rml).</summary>
     constexpr const char* MoveOnId = "move-on";
     constexpr const char* RematchId = "rematch";
+    constexpr const char* RetryId = "retry";
 
     /// <summary>The game's words: buffer, the warriors' ranks, an empty salvage, the best pilot's side.</summary>
     constexpr int StringBuffer = 0xfe;
@@ -145,6 +146,7 @@ void MCResultsScreen::MakeModels(Rml::Context& context)
     model.Value("earned", _Earned);
     model.Value("moveOn", _MoveOn);
     model.Value("rematch", _RematchShown);
+    model.Value("retry", _RetryShown);
     model.Value("time", _MatchTime);
     model.Value("salvageShown", _SalvageShown);
     model.Value("noSalvage", _NoSalvage);
@@ -188,6 +190,7 @@ void MCResultsScreen::OnLoaded(Rml::ElementDocument& /*document*/)
 {
     OnClick(MoveOnId, [this] { MoveOn(); });
     OnClick(RematchId, [this] { Rematch(); });
+    OnClick(RetryId, [this] { Retry(); });
 }
 
 void MCResultsScreen::OnDestroy()
@@ -238,6 +241,8 @@ void MCResultsScreen::SetUp()
     MCMissionEnd::SayResult();
     MCMissionEnd::LeaveBattle();
     _RematchShown = _Match && MCRoomEnd::OffersRematch();
+    // Port-only (SPEC-menus.md's RETRY): beside REPLAY MISSION, a loss's quick way back into the same mission.
+    _RetryShown = !_Match && Mission()->CanRetry();
     _ClosesAt = MCMissionEnd::TimesOut()
                     ? std::optional<double>(RmlNow() + static_cast<double>(MCMissionEnd::MatchTimeout) / MsASecond)
                     : std::nullopt;
@@ -559,6 +564,14 @@ void MCResultsScreen::Rematch()
     }
 
     MCRoomEnd::Rematch();
+}
+
+void MCResultsScreen::Retry()
+{
+    if (_RetryShown)
+    {
+        Mission()->Retry();
+    }
 }
 
 bool MCResultsScreen::Finished() const

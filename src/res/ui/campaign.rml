@@ -17,9 +17,9 @@
             <div class="content">
                 <div class="row gap4 tabs-row">
                     <div class="button small" id="mainmenu" data-hint="Main menu">Main menu</div>
-                    <div class="tabs row" id="tabs"><div class="tab now">Briefing</div><div class="tab">Purchasing</div><div class="tab">'Mech bay</div><div class="tab">Deploy</div></div>
+                    <div class="tabs row" id="tabs"><div class="tab now">Briefing</div><div class="tab">Purchasing</div><div class="tab">Mech bay</div><div class="tab">Deploy</div></div>
                     <div class="grow"></div>
-                    <div class="status"><div class="eyebrow" data-if="rp != ''">RP</div><div class="money points" data-if="rp != ''">{{rp}}</div><div class="vrule" data-if="rp != ''"></div><div class="money">{{clock}}</div></div>
+                    <div class="status"><div class="eyebrow" data-if="rp != ''">RP</div><div class="money points figures" data-if="rp != ''"><span data-for="g : rpFigures" data-class-digit="g.digit">{{g.text}}</span></div><div class="vrule" data-if="rp != ''"></div><div class="money figures"><span data-for="g : clockFigures" data-class-digit="g.digit">{{g.text}}</span></div></div>
                 </div>
                 <div class="players" data-if="mp">
                     <div class="team" data-if="ours.size > 0"><div class="team-name">Your team</div><div class="player" data-for="p : ours"><div class="light" data-class-ready="p.ready"></div><span data-attr-class="p.colour">{{p.name}}</span></div></div>
@@ -42,7 +42,7 @@
                         <div class="scroller reading" id="orders-text">
                             <div class="split">
                                 <div>
-                                    <div class="row bottom section objectives-head" data-if="objectives.size > 0"><div class="eyebrow grow">Objectives</div><div class="data grey caps time-limit" id="time-limit" data-if="timeLimit != ''">Mission time limit <span class="white">{{timeLimit}}</span></div></div>
+                                    <div class="row bottom section objectives-head" data-if="objectives.size > 0 || dropWeight != ''"><div class="eyebrow grow"><span data-if="objectives.size > 0">Objectives</span></div><div class="limits"><div class="data grey caps time-limit" id="time-limit" data-if="timeLimit != ''">Mission time limit <span class="white">{{timeLimit}}</span></div><div class="data grey caps drop-weight" id="drop-weight" data-if="dropWeight != ''">Drop weight <span class="white">{{dropWeight}}</span></div></div></div>
                                     <div class="objective row top" data-for="line : objectives"><div class="num">{{line.num}}</div><div class="grow">{{line.text}}</div><div class="data grey caps time-limit" data-if="line.limit != ''">Time limit <span class="white">{{line.limit}}</span></div></div>
                                     <div class="row top section" data-if="fire.size > 0">
                                         <div class="eyebrow fire-label">Fire support</div>

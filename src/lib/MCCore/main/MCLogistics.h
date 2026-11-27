@@ -669,7 +669,10 @@ public:
     std::string OperationCinema;
     /// <summary>Set when the mission file has a HammerDown1 block (or by the cheat): the drop tonnage limit is not enforced.</summary>
     bool HammerDown = false;
-    /// <summary>The mission's AutoPlay: the briefing screen starts the operation movie when first shown.</summary>
+    /// <summary>
+    /// The mission's AutoPlay (the campaign file's, on each operation's first mission): the briefing starts the operation
+    /// movie when first shown, and clears it (the remade BRIEFING's MCCampaignScreen::OnFrame).
+    /// </summary>
     bool AutoPlayMovie = false;
     /// <summary>The mechs allowed in multiplayer (<c>netmechs.rsp</c>; three variants per name).</summary>
     std::vector<std::string> NetMechNames;

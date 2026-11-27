@@ -621,7 +621,7 @@ namespace
             }
         }
 
-        return "the 'MECH BAY lists no other mech";
+        return "the MECH BAY lists no other mech";
     }
 
     /// <summary>The campaign screen's tab <typeparamref name="Tab"/> chosen, as its button chooses it.</summary>
@@ -821,6 +821,8 @@ namespace
                 if (MCMenuScreens::Top() == MCMenuScreens::Main())
                 {
                     MCFrameLog::Note("benchmark: a new campaign");
+                    // The tour times the tabs: the first mission's video doesn't play by itself over them.
+                    MCCampaignMenu::AutoPlaysVideo = false;
                     NewCampaign();
                     run.Phase = MCBriefingPhase::Opening;
                 }

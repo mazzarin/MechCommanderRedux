@@ -165,4 +165,21 @@ namespace MCDeploy
 
     /// <summary>The ready lock set or let go (a load lets it go), the count bumped.</summary>
     void SetLocked(bool locked);
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's RETRY): the drop going into mission <paramref name="mission"/> kept, each slot's unit
+    /// by what the mission's start file (written as it loads: MCLogistics::PrepareScenario; REPLAY MISSION loads it)
+    /// gives back: a 'Mech by its name and its pilot's, a vehicle by its name and state.
+    /// </summary>
+    void Keep(int32_t mission);
+
+    /// <summary>Whether a drop is kept for mission <paramref name="mission"/> (<see cref="Keep"/>).</summary>
+    bool Kept(int32_t mission);
+
+    /// <summary>
+    /// RETRY's drop, on REPLAY MISSION's load of the start file: each unit of the drop kept found in the force and put
+    /// into its slot again, as the player put it (<see cref="Lift"/>, then <see cref="Place"/>). False when one doesn't
+    /// go back (not in the force, its slot shut, or refused): those put back are taken out again, the drop empty.
+    /// </summary>
+    bool PutBackKept();
 }

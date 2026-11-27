@@ -278,9 +278,14 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.Value("mp", _Multiplayer);
     model.Value("rp", _Points);
     model.Value("clock", _Clock);
+    model.List("rpFigures", _PointsFigures, std::pair{"text", &MCFigureGlyph::Text},
+               std::pair{"digit", &MCFigureGlyph::Digit});
+    model.List("clockFigures", _ClockFigures, std::pair{"text", &MCFigureGlyph::Text},
+               std::pair{"digit", &MCFigureGlyph::Digit});
     model.Value("eyebrow", _Eyebrow);
     model.Value("title", _Title);
     model.Value("timeLimit", _TimeLimit);
+    model.Value("dropWeight", _DropWeight);
     model.Value("warningsHead", _WarningsHead);
     model.Value("carriedLeft", _CarriedLeft);
     model.Value("carriedTop", _CarriedTop);
@@ -601,6 +606,8 @@ bool MCCampaignScreen::FillBar()
 
     _Points = points;
     _Clock = clock;
+    _PointsFigures = MCHeldFigures(_Points);
+    _ClockFigures = MCHeldFigures(_Clock);
     return true;
 }
 
@@ -844,6 +851,8 @@ void MCCampaignScreen::FillWeight()
     const float over = weight.Total - limit;
     _WeightNow = std::to_string(Tons(weight.Total));
     _WeightOf = std::format(MCCampaignMenu::OfFormat, MCCampaignMenu::TonsText(MaxDeployTonnage));
+    // BRIEFING's line of it: the limit DEPLOY weighs against (a match's player's share of the team's), none without one.
+    _DropWeight = MaxDeployTonnage > 0 ? MCCampaignMenu::TonsText(MaxDeployTonnage) : std::string();
     _WeightFree = over > 0 ? std::format(MCCampaignMenu::OverFormat, MCCampaignMenu::TonsText(Tons(over)))
                            : std::format(MCCampaignMenu::FreeFormat, MCCampaignMenu::TonsText(Tons(-over)));
     _WeightMore = weight.Adds && weight.Total != weight.Base;
@@ -1616,6 +1625,17 @@ void MCCampaignScreen::OnFrame()
     if (!Shown() || GlobalLog() == nullptr)
     {
         return;
+    }
+
+    // 1998's AutoPlay (the campaign file's, on each operation's first mission): the operation's video plays by itself
+    // once BRIEFING shows whole (the change's fade in over, nothing said over it), once: the flag cleared as it starts,
+    // as 1998's SetUpOperation cleared it, so BRIEFING shown again (a tab, RETURN TO GAME) doesn't play it again. The
+    // campaign file sets it again each time a briefing is read (a save loaded at that mission, REPLAY MISSION), as 1998's.
+    if (MCCampaignMenu::AutoPlaysVideo && GlobalLog()->AutoPlayMovie && _Video && Tab() == MCTab::Briefing &&
+        !MCScreenChange::Running() && !MCRmlDialogs::Shown() && !MCVideoMenu::Shown())
+    {
+        GlobalLog()->AutoPlayMovie = false;
+        PlayVideo();
     }
 
     bool changed = FillBar();

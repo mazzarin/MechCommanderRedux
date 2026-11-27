@@ -10,6 +10,7 @@
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCChatView.h"
 #include "logistics/MCDeploy.h"
+#include "ui/MCRmlFigures.h"
 #include "ui/MCRmlScreen.h"
 
 namespace Rml
@@ -220,6 +221,11 @@ public:
     const std::vector<MCLine>& Objectives() const { return _Objectives; }
     /// <summary>The mission's time limit ("15:00"; empty: none), at the right of OBJECTIVES.</summary>
     const std::string& TimeLimit() const { return _TimeLimit; }
+    /// <summary>
+    /// The drop's limit ("290 tons", DEPLOY's; a match's player's share; empty: none), under the time limit, so the tons
+    /// are known before DEPLOY.
+    /// </summary>
+    const std::string& DropWeight() const { return _DropWeight; }
     const std::vector<MCLine>& FireSupport() const { return _Fire; }
     const std::vector<MCLine>& Orders() const { return _Orders; }
     const std::vector<MCLine>& Warnings() const { return _Warnings; }
@@ -384,10 +390,14 @@ private:
     bool _Multiplayer = false;
     std::string _Points;
     std::string _Clock;
+    /// <summary>RP and the clock a character each, their digits held in places of one width (MCHeldFigures).</summary>
+    std::vector<MCFigureGlyph> _PointsFigures;
+    std::vector<MCFigureGlyph> _ClockFigures;
     std::string _Eyebrow;
     std::string _Title;
     std::vector<MCLine> _Objectives;
     std::string _TimeLimit;
+    std::string _DropWeight;
     /// <summary>The fire support, a line each (none: the briefing has no FIRE SUPPORT).</summary>
     std::vector<MCLine> _Fire;
     std::vector<MCLine> _Orders;
@@ -511,6 +521,13 @@ namespace MCCampaignMenu
 
     /// <summary>The screen, while the menus have it.</summary>
     MCOptionalRef<MCCampaignScreen> Screen();
+
+    /// <summary>
+    /// Whether BRIEFING plays the operation's video by itself where the campaign says to (1998's AutoPlay, on each
+    /// operation's first mission): on in play; off for the briefing benchmark's tour, which times the tabs, and in the
+    /// tests but theirs of it (theirs start campaigns at its first mission, and would each open on the video).
+    /// </summary>
+    inline bool AutoPlaysVideo = true;
 
     /// <summary>Whether it shows, and whether its first frame is whole (the flow's "campaign" kind's).</summary>
     bool Shown();

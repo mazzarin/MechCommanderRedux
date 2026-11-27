@@ -4,11 +4,13 @@
 #include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "fakes/MCManualClock.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScreenChange.h"
 #include "gui/MCScreenFlow.h"
 #include "lib/MCFile.h"
+#include "lib/MCFitIniFile.h"
 #include "logistics/MCBriefingText.h"
 #include "logistics/MCCampaignMenu.h"
 #include "logistics/MCChatView.h"
@@ -37,12 +39,14 @@
 #include "main/MCLogMech.h"
 #include "main/MCLogMechList.h"
 #include "main/MCLogPart.h"
+#include "main/MCLogVehicle.h"
 #include "main/MCLogVehicleList.h"
 #include "main/MCLogWarrior.h"
 #include "main/MCLogWarriorList.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
+#include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "linkup/MCFidpMessage.h"
 #include "linkup/MCFidpPlayer.h"
@@ -673,6 +677,79 @@ TEST_CASE_ISOLATED("game: a new campaign's briefing shows the remade BRIEFING, r
 }
 
 /// <summary>
+/// BRIEFING shows the drop's limit (the user's, 26 Nov: "since the deploy tab is now separate, the user has no way of
+/// knowin their drop limit until they go to deploy"): beside OBJECTIVES at its right, "DROP WEIGHT 85 TONS" for the first
+/// mission, the limit DEPLOY's free tons start from; under the mission's time limit where it has one (brf0204's 15
+/// minutes, mis0204's 400 tons), each on a line of its own at the column's right at every window the players' reports
+/// name; gone with no limit.
+/// </summary>
+TEST_CASE_ISOLATED("game: BRIEFING shows the drop's limit beside OBJECTIVES, under the time limit, as DEPLOY weighs it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t FirstMissionTons = 85;
+    constexpr int32_t TimedMissionTons = 400;
+    constexpr float Slack = 0.5f;
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    REQUIRE_EQ(MaxDeployTonnage, FirstMissionTons);
+    CHECK_EQ(screen.DropWeight(), std::string("85 tons"));
+    Rml::Element& weight = ElementOf(screen, "drop-weight");
+    CHECK(weight.IsVisible(true));
+    CHECK_EQ(weight.GetInnerRML(), std::string("Drop weight <span class=\"white\">85 tons</span>"));
+    CHECK(weight.GetComputedValues().text_transform() == Rml::Style::TextTransform::Uppercase);
+
+    // DEPLOY weighs against the same: its free tons, nothing in the drop.
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(screen.WeightFree(), std::string("85 tons free"));
+
+    // With the mission's time limit: the tons under it, both at the column's right.
+    MaxDeployTonnage = TimedMissionTons;
+    ShowBriefing(screen, "brf0204.txt");
+    REQUIRE_EQ(screen.TimeLimit(), std::string("15:00"));
+    CHECK_EQ(screen.DropWeight(), std::string("400 tons"));
+    CheckTimeLimitsOneLine(menus, screen, "briefing brf0204", 1);
+
+    for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
+    {
+        menus.SetWindow(window.Width, window.Height);
+        menus.Frame();
+        const MCTest::Scope scope{std::format("{}x{}", window.Width, window.Height)};
+        Rml::Element& limit = ElementOf(screen, "time-limit");
+        Rml::Element& tons = ElementOf(screen, "drop-weight");
+        Rml::Element* head = tons.GetParentNode() != nullptr ? tons.GetParentNode()->GetParentNode() : nullptr;
+        REQUIRE(head != nullptr);
+        REQUIRE(head->IsClassSet("objectives-head"));
+        const auto right = [](Rml::Element& element)
+        {
+            return element.GetAbsoluteOffset(Rml::BoxArea::Border).x + element.GetBox().GetSize(Rml::BoxArea::Border).x;
+        };
+
+        const auto top = [](Rml::Element& element) { return element.GetAbsoluteOffset(Rml::BoxArea::Border).y; };
+        const float headRight =
+            head->GetAbsoluteOffset(Rml::BoxArea::Content).x + head->GetBox().GetSize(Rml::BoxArea::Content).x;
+        CHECK(std::abs(right(tons) - headRight) <= Slack);
+        CHECK(std::abs(right(limit) - headRight) <= Slack);
+        CHECK(top(tons) >= top(limit) + limit.GetBox().GetSize(Rml::BoxArea::Border).y - Slack);
+        CHECK(tons.GetBox().GetSize(Rml::BoxArea::Content).y <= tons.GetLineHeight() * 1.5f);
+    }
+
+    // No limit: no line.
+    MaxDeployTonnage = 0;
+    MCTestGame::RunFrame(FlowFrame);
+    menus.Frame();
+    CHECK(screen.DropWeight().empty());
+    Rml::Element* gone = screen.Document()->get().GetElementById("drop-weight");
+    CHECK((gone == nullptr || !gone->IsVisible(true)));
+}
+
+/// <summary>
 /// DEPLOY moves units by 1998's rules (MCDeploy): the right button sends a READY AREA card into the first open slot and
 /// a slot's unit back; a left drag puts one in the slot it's dropped on, swapping with the one there; held over a slot
 /// with too few tons free it's refused, the slot and its card red with the reason, and let go it goes back; BEGIN
@@ -789,9 +866,9 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY draw the same on every machine")
     };
 
     constexpr std::array<MCDrawn, 3> Drawn = {{
-        {"briefing", {0xe4dd27aa, 0x80962bef, 0x2d853936}},
-        {"deploy", {0xbd2d819c, 0x04fc616e, 0xfcccccb7}},
-        {"deploy_heavy", {0x82d60484, 0xa957cff2, 0xaa3f831f}},
+        {"briefing", {0xb4f5e466, 0x659f9d61, 0x100fcdac}},
+        {"deploy", {0x104d5470, 0x39cb2b77, 0x00f5c57f}},
+        {"deploy_heavy", {0x94d9dcb8, 0x8d1382ff, 0xdb8138ab}},
     }};
 
     const auto drawEach = [&display, &clock](const MCDrawn& drawn)
@@ -1299,7 +1376,7 @@ TEST_CASE_ISOLATED("game: the operation's video draws the same on every machine 
     MCRmlMenus& menus = MCRmlMenus::Running()->get();
     double clock = 0.0;
     menus.SetClock([&clock] { return clock; });
-    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0x85d74366, 0xa01e34b1, 0x8a673fae};
+    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xa61b5a95, 0x9b51ff70, 0x1b8fa7e5};
 
     for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
     {
@@ -1560,6 +1637,314 @@ TEST_CASE_ISOLATED("game: the results' NEXT MISSION and REPLAY MISSION go back t
     CHECK_EQ(MCScreenFlow::StackText(), std::string("main > solo missions"));
 }
 
+namespace
+{
+    /// <summary>A part's type: a 'Mech (MCLogPart::PartType).</summary>
+    constexpr int32_t MechPart = 1;
+
+    /// <summary>A 'Mech's name with its pilot's ("Commando · Lt. Ace"), as the campaign has them.</summary>
+    std::string WithPilot(const MCLogistics& logistics, const MCLogMech& mech)
+    {
+        std::shared_ptr<MCLogWarrior> pilot;
+        logistics.AssignedWarriorList->GetWarriorInfo(mech.PilotIndex, pilot);
+        return std::format("{} · {}", mech.FileName, pilot != nullptr ? pilot->Name : std::string("no pilot"));
+    }
+
+    /// <summary>
+    /// The drop as DEPLOY holds it, slot by slot, group by group: each unit's name (a 'Mech's with its pilot's), "-" for
+    /// an empty slot, a unit not marked in the drop said so.
+    /// </summary>
+    std::vector<std::string> DropNow()
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        REQUIRE(logistics != nullptr);
+        std::vector<std::string> drop;
+
+        for (size_t slot = 0; slot < MCDeploy::Slots; slot++)
+        {
+            const std::shared_ptr<MCLogPart> part = MCDeploy::SlotUnit(slot);
+
+            if (part == nullptr)
+            {
+                drop.emplace_back("-");
+                continue;
+            }
+
+            const std::string unit = part->PartType == MechPart
+                                         ? WithPilot(*logistics, static_cast<const MCLogMech&>(*part))
+                                         : part->FileName;
+            drop.push_back(part->Deployed ? unit : unit + " (not in the drop)");
+        }
+
+        return drop;
+    }
+
+    /// <summary>
+    /// What a mission's start puts back: the RP, the force's 'Mechs with their pilots and its vehicles (in no order: a
+    /// load puts each unit it reads at its list's front).
+    /// </summary>
+    std::string CampaignNow()
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        REQUIRE(logistics != nullptr);
+        std::vector<std::string> units;
+
+        for (const std::shared_ptr<MCLogMech>& mech : logistics->ForceMechList->Mechs)
+        {
+            units.push_back(WithPilot(*logistics, *mech));
+        }
+
+        for (const std::shared_ptr<MCLogVehicle>& vehicle : logistics->ForceVehicleList->Vehicles)
+        {
+            units.push_back(vehicle->FileName);
+        }
+
+        std::ranges::sort(units);
+        std::string campaign = std::format("{} RP", ResourcePoints);
+
+        for (const std::string& unit : units)
+        {
+            campaign += "; " + unit;
+        }
+
+        return campaign;
+    }
+
+    /// <summary>
+    /// The campaign saved as it stands, at mission <paramref name="mission"/>, as <paramref name="name"/>, and that save
+    /// loaded from the main menu's LOAD GAME: the mission's briefing.
+    /// </summary>
+    void SaveAtAndLoad(int32_t mission, std::string_view name)
+    {
+        GlobalLog()->CurrentMission = mission;
+        REQUIRE_EQ(MCLogistics::SaveCampaign(name), 0);
+        MCMenuScreens::LeaveCampaign();
+        RunWhileChanging();
+        REQUIRE(MCScreenFlow::Open(MCMenuScreens::Load()));
+        RunWhileChanging();
+        REQUIRE(MCSavesMenu::Screen().has_value());
+        MCSavesScreen& load = MCSavesMenu::Screen()->get();
+        const auto saved = std::ranges::find(load.Saves(), std::string(name));
+        REQUIRE(saved != load.Saves().end());
+        load.Pick(static_cast<int>(saved - load.Saves().begin()));
+        load.PressMain();
+        RunWhileChanging();
+        REQUIRE(MCCampaignMenu::Shown());
+        REQUIRE_EQ(GlobalLog()->CurrentMission, mission);
+    }
+
+    /// <summary>The mission playing lost (the player's ABORT MISSION), run until its results are up.</summary>
+    MCResultsScreen& LoseToResults()
+    {
+        ScenarioResult = Lost;
+        Mission()->EndScenarioRequested = -1;
+
+        for (int32_t frame = 0; frame < MostFramesToResults && Mission()->State != MCMissionState::Results; frame++)
+        {
+            MCTestGame::RunFrame(MissionFrame);
+        }
+
+        REQUIRE(Mission()->State == MCMissionState::Results);
+        REQUIRE(MCResultsMenu::Screen().has_value());
+        return MCResultsMenu::Screen()->get();
+    }
+}
+
+/// <summary>
+/// A lost mission's RETRY (the user's, 26 Nov: "a replay button just to quickstart back with the same load out"): beside
+/// REPLAY MISSION, Left from it and Enter. The campaign goes back as REPLAY MISSION puts it (the mission's start: its RP,
+/// its force), the same drop goes back in its slots (the same 'Mechs with the same pilots and the same vehicle, in the
+/// same groups and places, the gaps kept), and the mission loads behind the loading screen with no briefing or tab
+/// showing between. The drop spans the three groups of the campaign's fifth mission, out of order, and its vehicle is the
+/// force's first while the second waits: the load of the mission's start file gives the force back in another order
+/// (each unit it reads at its list's front), so the drop goes back by its units, not their places. Lost again, REPLAY
+/// MISSION: its briefing, the campaign as RETRY put it back, the drop empty, as before.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lost mission's RETRY drops the same force straight back into it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The campaign's fifth mission: its drop opens all three groups (ten slots, 240 tons).
+    constexpr int32_t ThreeGroups = 4;
+    constexpr std::string_view SaveName = "n26bretry";
+    constexpr size_t Vehicles = 2;
+    // READY AREA's three 'Mechs and the force's first vehicle, each into its slot: group 3's second, group 2's first,
+    // group 1's third, group 2's third.
+    constexpr std::array<size_t, 4> Places = {9, 4, 2, 6};
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+    RunWhileChanging();
+    SaveAtAndLoad(ThreeGroups, SaveName);
+
+    // Two vehicles from the store join the force (bought and joined, as the store and the MECH BAY do).
+    MCLogistics& logistics = *GlobalLog();
+    REQUIRE(logistics.PurVehicleList != nullptr);
+    REQUIRE(logistics.PurVehicleList->Vehicles.size() >= Vehicles);
+
+    for (size_t i = 0; i < Vehicles; i++)
+    {
+        const std::shared_ptr<MCLogVehicle> vehicle =
+            logistics.VehicleList->AddVehicle(logistics.PurVehicleList->Vehicles[i]->Data->FileName, false, true, true);
+        REQUIRE(vehicle != nullptr);
+        vehicle->Assigned = true;
+    }
+
+    logistics.ReorderVehicles();
+    REQUIRE_EQ(logistics.ForceVehicleList->Vehicles.size(), Vehicles);
+    const std::vector<std::shared_ptr<MCLogPart>> ready = MCDeploy::ReadyUnits();
+    REQUIRE(ready.size() > Places.size());
+
+    for (size_t i = 0; i < Places.size(); i++)
+    {
+        REQUIRE(MCDeploy::Lift(*ready[i]) == MCDeploy::MCRefusal::None);
+        REQUIRE(MCDeploy::Place(*ready[i], Places[i]) == MCDeploy::MCRefusal::None);
+    }
+
+    REQUIRE(ready[Places.size() - 1].get() == logistics.ForceVehicleList->Vehicles.front().get());
+    const std::vector<std::string> drop = DropNow();
+    MCCampaignScreen& screen = Shown();
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(screen.CanBegin());
+    ClickOn(ElementOf(screen, "begin"));
+
+    for (int32_t frame = 0; frame < MostFramesToResults * 10 && !Playing(); frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+    }
+
+    REQUIRE(Playing());
+
+    // Lost: RETRY beside REPLAY MISSION, Left from it.
+    MCResultsScreen& results = LoseToResults();
+    CHECK(results.RetryShown());
+    CHECK_EQ(results.MoveOnWord(), std::string(MCResultsMenu::ReplayMissionWord));
+    Rml::Context& context = MCRmlMenus::Running()->get().Mission().Context();
+    const auto focused = [&context]
+    { return context.GetFocusElement() != nullptr ? context.GetFocusElement()->GetId() : std::string(); };
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(focused(), std::string("move-on"));
+    MCScreenInput::RealKey(SDL_SCANCODE_LEFT);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(focused(), std::string("retry"));
+
+    // Enter: dark, the campaign put back, the drop with it; the loading screen, then the mission. Neither the briefing
+    // nor a tab shows on the way.
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    std::vector<std::string> dropAgain;
+    std::string campaignAgain;
+    bool briefingSeen = false;
+
+    for (int32_t frame = 0; frame < MostFramesToResults * 10 && !Playing(); frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+        briefingSeen = briefingSeen || (MCCampaignMenu::Shown() && !MCScreenChange::Dark());
+
+        if (GlobalLog() != nullptr && MCLoadingMenu::Shown())
+        {
+            dropAgain = DropNow();
+            campaignAgain = CampaignNow();
+            CHECK(!GlobalLog()->AutoPlayMovie);
+        }
+    }
+
+    REQUIRE(Playing());
+    CHECK(!briefingSeen);
+    CHECK_EQ(Mission()->CurrentScenario, ThreeGroups);
+    CHECK(dropAgain == drop);
+    REQUIRE(!campaignAgain.empty());
+
+    // Lost again, REPLAY MISSION: the briefing, the campaign as RETRY put it back, the drop empty.
+    MCResultsScreen& again = LoseToResults();
+    CHECK(again.RetryShown());
+    MCTestGame::RunFrame(FlowFrame);
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    RunWhileChanging();
+    REQUIRE(MCCampaignMenu::Shown());
+    CHECK_EQ(GlobalLog()->CurrentMission, ThreeGroups);
+    CHECK_EQ(CampaignNow(), campaignAgain);
+    CHECK(std::ranges::all_of(DropNow(), [](const std::string& unit) { return unit == "-"; }));
+}
+
+/// <summary>
+/// The operation's video plays by itself on each operation's first briefing, as 1998's did (the campaign file's
+/// AutoPlay; the user's, 26 Nov: "I just finished Op2 and loaded up Op3Mis1, and no briefing video played"). A new
+/// campaign's first briefing: none while its change runs, then OPVID1 once BRIEFING shows whole; closed, BRIEFING shown
+/// again (another tab, RETURN TO GAME) plays nothing. The user's way: a save made before the third operation (at the
+/// second's last mission) loaded, its briefing with no video (AutoPlay is the operation's first mission's), its mission
+/// won, NEXT MISSION: the third operation's first briefing, OPVID3 playing by itself.
+/// </summary>
+TEST_CASE_ISOLATED("game: an operation's first briefing plays its video by itself, from a save made before it too")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The second operation's last mission, the third's first (the campaign's 12th and 13th, from 0).
+    constexpr int32_t SecondOperationLast = 11;
+    constexpr int32_t ThirdOperationFirst = 12;
+    constexpr int32_t ThirdOperation = 3;
+    constexpr std::string_view SaveName = "n26bbeforeop3";
+    MCCampaignMenu::AutoPlaysVideo = true;
+    std::optional<MCTestGame::PinnedSaves> pinned;
+    REQUIRE(MCTestGame::StartLogistics([&pinned] { pinned.emplace(); }));
+    RunWhileChanging();
+    NewCampaign();
+
+    for (int32_t frame = 0; frame < MostChangeFrames && MCScreenChange::Running(); frame++)
+    {
+        MCTestGame::RunFrame(FlowFrame);
+        CHECK(!MCVideoMenu::Shown());
+    }
+
+    RunWhileChanging();
+    CheckRemadeBriefing(FirstEyebrow, FirstTitle);
+    REQUIRE(MCVideoMenu::Shown());
+    CHECK(!GlobalLog()->AutoPlayMovie);
+    CHECK_EQ(GlobalLog()->Operation, 1);
+    REQUIRE(MCVideoMenu::Window().has_value());
+    CHECK(MCVideoMenu::Window()->get().Video().has_value());
+
+    // Closed: BRIEFING again plays nothing, from another tab or the main menu's RETURN TO GAME.
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!MCVideoMenu::Shown());
+    Shown().ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+    MCTestGame::RunFrame(FlowFrame);
+    Shown().ChooseTab(MCCampaignScreen::MCTab::Briefing);
+    RunWhileChanging();
+    CHECK(!MCVideoMenu::Shown());
+    MCMenuScreens::LeaveCampaign();
+    RunWhileChanging();
+    MCScreenFlow::Via("return to game", ReturnToGame)();
+    RunWhileChanging();
+    CheckRemadeBriefing(FirstEyebrow, FirstTitle);
+    CHECK(!MCVideoMenu::Shown());
+
+    // A save made before the third operation, at the second's last mission, loaded from LOAD GAME: no video there.
+    SaveAtAndLoad(SecondOperationLast, SaveName);
+    CHECK(!MCVideoMenu::Shown());
+
+    // Its mission won, NEXT MISSION: the third operation's first briefing, its video by itself.
+    BeginFromDeploy();
+    EndAndCloseResults(Won);
+    REQUIRE(MCCampaignMenu::Shown());
+    CHECK_EQ(GlobalLog()->CurrentMission, ThirdOperationFirst);
+    CHECK_EQ(GlobalLog()->Operation, ThirdOperation);
+    CHECK(Shown().Tab() == MCCampaignScreen::MCTab::Briefing);
+    CHECK(MCVideoMenu::Shown());
+    CHECK(!GlobalLog()->AutoPlayMovie);
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(!MCVideoMenu::Shown());
+}
+
 /// <summary>
 /// A solo mission's PLAY (SOLO MISSIONS' first, picked as it opens) opens its remade briefing: its name (its
 /// briefing's STARCOM line, as two of the expansion's solo missions write it), no force yet (BEGIN MISSION dark), the
@@ -1631,6 +2016,7 @@ namespace
     constexpr std::string_view LauncherLeavePort = "28947";
     constexpr std::string_view InnerSphereZonesPort = "28937";
     constexpr std::string_view ClanZonesPort = "28939";
+    constexpr std::string_view DropShareMatchPort = "28961";
     /// <summary>The room's teams (MCRoomModel::AssignPlayer's): the first plays the Inner Sphere's side, home team 0.</summary>
     constexpr int32_t InnerSphereTeam = 1;
     constexpr int32_t ClanTeam = 2;
@@ -1649,10 +2035,11 @@ namespace
 
     /// <summary>
     /// A LAN match hosted as COMMANDER (on <paramref name="myTeam"/>, team 1 unless said) on <paramref name="port"/>
-    /// with <paramref name="ann"/> (the tests' player, on the other team), its mission's file hers too, and the room's
-    /// BEGIN PLANNING pressed: the match's remade briefing.
+    /// with <paramref name="ann"/> (the tests' player, on the other team) and, if given, <paramref name="mate"/> on
+    /// COMMANDER's, its mission's file theirs too, and the room's BEGIN PLANNING pressed: the match's remade briefing.
     /// </summary>
-    MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann, std::string_view port, int32_t myTeam = InnerSphereTeam)
+    MCCampaignScreen& PlanMatch(MCTestGuest::Guest& ann, std::string_view port, int32_t myTeam = InnerSphereTeam,
+                                MCOptionalRef<MCTestGuest::Guest> mate = std::nullopt)
     {
         REQUIRE(MCTestGame::StartLogistics());
         MCTestGuest::OpenLan();
@@ -1662,17 +2049,39 @@ namespace
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
         const uint32_t sameData = MCMissionDataHash(GamePath(SavePath, MatchMission, ".mpk"));
         REQUIRE(sameData != 0);
-        REQUIRE(ann.Join(*manager.DirectPlay, address));
-        REQUIRE(
-            MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
-        REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
-        ann.AnswerFiles(sameData);
+        std::vector<std::reference_wrapper<MCTestGuest::Guest>> guests{ann};
+
+        if (mate.has_value())
+        {
+            guests.push_back(mate->get());
+        }
+
+        for (MCTestGuest::Guest& guest : guests)
+        {
+            REQUIRE(guest.Join(*manager.DirectPlay, address));
+            REQUIRE(MCTestGuest::SettleUntil(
+                [&] { return MCTestGuest::RoomShows(guest.Id()) && guest.SessionScreens() == 1; }));
+            REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, guest.Id()));
+            guest.AnswerFiles(sameData);
+        }
+
         MCRoomModel& room = GlobalLog()->Room;
         room.AssignPlayer(manager.MyPlayerID, myTeam, 0, false);
         room.AssignPlayer(ann.Id(), myTeam == InnerSphereTeam ? ClanTeam : InnerSphereTeam, 0, false);
+
+        if (mate.has_value())
+        {
+            room.AssignPlayer(mate->get().Id(), myTeam, 1, false);
+        }
+
         room.LoadMission(MatchMission);
-        REQUIRE(
-            MCTestGuest::SettleUntil([&] { return ann.MissionsLoaded() == 1 && MCTestGuest::DialogText().empty(); }));
+        REQUIRE(MCTestGuest::SettleUntil(
+            [&]
+            {
+                return std::ranges::all_of(guests, [](const MCTestGuest::Guest& guest)
+                                           { return guest.MissionsLoaded() == 1; }) &&
+                       MCTestGuest::DialogText().empty();
+            }));
         MCTestGuest::Settle();
         const MCGuiHandle<MCRoomScreen> remade = RoomScreen();
         REQUIRE(remade);
@@ -1931,7 +2340,7 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
     REQUIRE(display != nullptr);
     REQUIRE(display->RendererKind() == MCRendererKind::Software);
     HideClock(screen);
-    DrawnEach(*display, clock, "briefing_mp", {0x96594925, 0xa331a8ce, 0x4137a67e});
+    DrawnEach(*display, clock, "briefing_mp", {0xc0973f2d, 0x3d65e4f5, 0x69db0cad});
     CheckLaidOut(menus, "briefing mp");
 
     // DEPLOY: ALL chosen under the groups holds in every place; a line then goes to all.
@@ -1952,7 +2361,7 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
     REQUIRE(!screen.ChatLines().empty());
     CHECK_EQ(screen.ChatLines().back(),
              (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "Good luck, all."}));
-    DrawnEach(*display, clock, "deploy_mp", {0xaa3f01ec, 0x6c4921bc, 0xdb231337});
+    DrawnEach(*display, clock, "deploy_mp", {0xde6522ec, 0xcc805d31, 0xe9cd015b});
     CheckLaidOut(menus, "deploy mp");
 
     // ANN leaves: gone from the bar, the chat saying so as the room's does (the host's line,
@@ -1966,6 +2375,43 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
              (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "ANN has left the game."}));
     CHECK(MCTestGuest::DialogText().empty());
     CHECK(MCCampaignMenu::Shown());
+}
+
+/// <summary>
+/// A match's BRIEFING shows the player's share of the drop's limit, as DEPLOY weighs it: COMMANDER and BOB on one team
+/// against ANN, each of the two has half the mission's tons (1998's equal share, MCLogistics::GetCurrentMission), on
+/// BRIEFING beside OBJECTIVES and as DEPLOY's free tons.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's BRIEFING shows the player's share of the drop's limit, as DEPLOY weighs it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    MCTestGuest::Guest bob("BOB", MCMatchRule::Supported);
+    MCCampaignScreen& screen = PlanMatch(ann, DropShareMatchPort, InnerSphereTeam, bob);
+    const std::optional<std::vector<uint32_t>> home = MultiPlayer()->PlayersOnHomeTeam();
+    REQUIRE(home.has_value());
+    REQUIRE_EQ(home->size(), size_t{2});
+
+    // The mission's own tons, read from its file.
+    MCFitIniFile file;
+    REQUIRE_EQ(file.Open(GamePath(MissionPath, GlobalLog()->MpMissionName, ".fit")), 0);
+    REQUIRE_EQ(file.SeekBlock("Campaign"), 0);
+    const MCFitResult<int32_t> missionTons = file.Read<int32_t>("MaxTonnage");
+    REQUIRE(missionTons.has_value());
+    file.Close();
+    const int32_t share = *missionTons / 2;
+    REQUIRE(share > 0);
+
+    CHECK_EQ(MaxDeployTonnage, share);
+    CHECK_EQ(screen.DropWeight(), MCCampaignMenu::TonsText(share));
+    CHECK(ElementOf(screen, "drop-weight").IsVisible(true));
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(screen.WeightFree(), std::format(MCCampaignMenu::FreeFormat, MCCampaignMenu::TonsText(share)));
 }
 
 /// <summary>
@@ -2098,7 +2544,7 @@ TEST_CASE_ISOLATED("game: a launcher's match ends when a player leaves its remad
 /// players' reports name.
 /// </summary>
 TEST_CASE_ISOLATED(
-    "game: a match's PURCHASING and 'MECH BAY stand on the chat, the store unlimited, a sale the full price")
+    "game: a match's PURCHASING and MECH BAY stand on the chat, the store unlimited, a sale the full price")
 {
     if (!MCTestGame::Available())
     {
@@ -2155,7 +2601,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(screen.ChatLines().back().Text, std::string("Lasers for everyone"));
     CHECK(screen.ChatLines().back().Team);
     CHECK_EQ(ElementOf(screen, "say-logistics").GetAttribute<Rml::String>("value", "unread"), std::string());
-    DrawnEach(*display, clock, "purchase_mp", {0x68c58561, 0xcc3de1a4, 0x02156308});
+    DrawnEach(*display, clock, "purchase_mp", {0xd19723ad, 0x1199d595, 0xf53caf5c});
     CheckLaidOut(menus, "purchase mp");
 
     // Z and C pressed in the chat's box are its letters, not the list's keys.
@@ -2187,7 +2633,7 @@ TEST_CASE_ISOLATED(
     CHECK(tabs.LabUnit() != nullptr);
     CHECK(!tabs.Repairs());
     CHECK(!RepairForceShown(screen));
-    DrawnEach(*display, clock, "mechbay_mp", {0x0e22e19f, 0x9f97606c, 0x51ccee3f});
+    DrawnEach(*display, clock, "mechbay_mp", {0x8b571c86, 0xf8ab83d8, 0xa96bcadc});
     CheckLaidOut(menus, "mechbay mp");
 }
 
@@ -2689,7 +3135,7 @@ TEST_CASE_ISOLATED("game: PURCHASING's right button on an INVENTORY 'Mech opens 
 /// REFIT ALL works only with a weapon, equipment or jammer damaged, as 1998's button (its CanRepairItems): with none, the
 /// 'Mech stays in the drop; with one, it leaves it for the refit.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY's REFIT ALL does nothing with nothing damaged")
+TEST_CASE_ISOLATED("game: the MECH BAY's REFIT ALL does nothing with nothing damaged")
 {
     if (!MCTestGame::Available())
     {
@@ -2737,7 +3183,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's REFIT ALL does nothing with nothing da
 /// do, ten steps back refunds it all; short of points it stops where they run out; the engine a level a step; REPAIR ALL
 /// the rest at 1998's prices.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY's sliders repair and undo point by point as 1998's knobs")
+TEST_CASE_ISOLATED("game: the MECH BAY's sliders repair and undo point by point as 1998's knobs")
 {
     if (!MCTestGame::Available())
     {
@@ -2847,7 +3293,7 @@ namespace
 /// the right: after every step, each slider's value (where RmlUi draws its knob) is the model's knob. 1998's structure
 /// and engine knobs, dragged left, were drawn again only after the repair (gone with the 1998 screens).
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY's structure and engine sliders draw their knobs where each move leaves them")
+TEST_CASE_ISOLATED("game: the MECH BAY's structure and engine sliders draw their knobs where each move leaves them")
 {
     if (!MCTestGame::Available())
     {
@@ -2906,7 +3352,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's structure and engine sliders draw thei
 /// INVENTORY, its tons freed; ENTER on its INVENTORY card fits it back; a part too heavy is dim with its reason and
 /// stays; the MechWarrior out by the right button joins the INVENTORY's MechWarriors and boards again by its card.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY fits and takes out parts and moves MechWarriors as 1998's drags")
+TEST_CASE_ISOLATED("game: the MECH BAY fits and takes out parts and moves MechWarriors as 1998's drags")
 {
     if (!MCTestGame::Available())
     {
@@ -3029,7 +3475,7 @@ namespace
 /// its armour halved, its bar short and yellow once its MechWarrior boards again; REPAIR ALL makes it whole, and its FORCE
 /// card's bar whole and green at once, not only once it leaves the force and comes back.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY's REPAIR ALL shows on the 'Mech's card at once")
+TEST_CASE_ISOLATED("game: the MECH BAY's REPAIR ALL shows on the 'Mech's card at once")
 {
     if (!MCTestGame::Available())
     {
@@ -3075,7 +3521,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY's REPAIR ALL shows on the 'Mech's card a
 /// screen showed has its card on DEPLOY as on the 'MECH BAY (its outline coloured, its bar short); repaired there by
 /// REPAIR ALL, its READY AREA card whole at once.
 /// </summary>
-TEST_CASE_ISOLATED("game: DEPLOY's READY AREA shows a 'Mech as the 'MECH BAY left it")
+TEST_CASE_ISOLATED("game: DEPLOY's READY AREA shows a 'Mech as the MECH BAY left it")
 {
     if (!MCTestGame::Available())
     {
@@ -3132,7 +3578,7 @@ TEST_CASE_ISOLATED("game: DEPLOY's READY AREA shows a 'Mech as the 'MECH BAY lef
 /// its head, picked in the lab; its MechWarrior boards it, every other 'Mech keeps its own, and every MechWarrior taken
 /// is aboard a 'Mech.
 /// </summary>
-TEST_CASE_ISOLATED("game: a MechWarrior boards the 'MECH BAY's 'Mech after it left the force and came back")
+TEST_CASE_ISOLATED("game: a MechWarrior boards the MECH BAY's 'Mech after it left the force and came back")
 {
     if (!MCTestGame::Available())
     {
@@ -3241,16 +3687,31 @@ namespace
     /// <summary>
     /// Where the first line of <paramref name="element"/>'s own words stands (its baseline), in pixels.
     /// </summary>
-    float BaselineOf(Rml::Element& element)
+    /// <summary>The first words in <paramref name="element"/> or under it (a held number's are its digits' places').</summary>
+    Rml::ElementText* FirstWords(Rml::Element& element)
     {
         for (int child = 0; child < element.GetNumChildren(); child++)
         {
-            auto* text = dynamic_cast<Rml::ElementText*>(element.GetChild(child));
-
-            if (text != nullptr && !text->GetLines().empty())
+            if (auto* text = dynamic_cast<Rml::ElementText*>(element.GetChild(child));
+                text != nullptr && !text->GetLines().empty())
             {
-                return text->GetAbsoluteOffset(Rml::BoxArea::Border).y + text->GetLines().front().position.y;
+                return text;
             }
+
+            if (Rml::ElementText* under = FirstWords(*element.GetChild(child)); under != nullptr)
+            {
+                return under;
+            }
+        }
+
+        return nullptr;
+    }
+
+    float BaselineOf(Rml::Element& element)
+    {
+        if (Rml::ElementText* text = FirstWords(element); text != nullptr)
+        {
+            return text->GetAbsoluteOffset(Rml::BoxArea::Border).y + text->GetLines().front().position.y;
         }
 
         FAIL(std::format("{} has no words", element.GetAddress()));
@@ -3350,7 +3811,7 @@ namespace
 /// them. With Command they're a shortcut (copy), not the list; the buy window open takes them as every key. (A chat's
 /// box keeps them as typing: the match's logistics test.)
 /// </summary>
-TEST_CASE_ISOLATED("game: Z and C change PURCHASING's and the 'MECH BAY's list, round from either end")
+TEST_CASE_ISOLATED("game: Z and C change PURCHASING's and the MECH BAY's list, round from either end")
 {
     if (!MCTestGame::Available())
     {
@@ -3511,7 +3972,7 @@ TEST_CASE_ISOLATED("game: a FORCE card's MechWarrior leaves by their photo, drag
 /// onto another FORCE card moves its MechWarrior there. By the keys: Tab reaches the lab's portrait, and Enter on it sends
 /// the MechWarrior to the INVENTORY, as its right button.
 /// </summary>
-TEST_CASE_ISOLATED("game: a MechWarrior dragged from the 'MECH BAY's INVENTORY onto a FORCE card boards it")
+TEST_CASE_ISOLATED("game: a MechWarrior dragged from the MECH BAY's INVENTORY onto a FORCE card boards it")
 {
     if (!MCTestGame::Available())
     {
@@ -3855,7 +4316,7 @@ TEST_CASE_ISOLATED("game: a vehicle's card reads as a 'Mech's without a MechWarr
 /// the force from there by its card's right button, by ENTER on it and by a drag onto the force, each picked in the lab
 /// and counted in the FORCE head ("4 / 15"); a force card's right button sends its unit back to the INVENTORY.
 /// </summary>
-TEST_CASE_ISOLATED("game: a 'Mech in the 'MECH BAY's INVENTORY joins the force by either button or ENTER, picked there")
+TEST_CASE_ISOLATED("game: a 'Mech in the MECH BAY's INVENTORY joins the force by either button or ENTER, picked there")
 {
     if (!MCTestGame::Available())
     {
@@ -3942,7 +4403,7 @@ TEST_CASE_ISOLATED("game: a 'Mech in the 'MECH BAY's INVENTORY joins the force b
 /// The force holds 1998's most, MCMechBay::ForceUnits (15, the FORCE head's "15 / 15"): one more sent from the 'MECH
 /// BAY's INVENTORY is turned back with 1998's message, and stays in the INVENTORY.
 /// </summary>
-TEST_CASE_ISOLATED("game: a full force turns back a unit from the 'MECH BAY's INVENTORY with its message")
+TEST_CASE_ISOLATED("game: a full force turns back a unit from the MECH BAY's INVENTORY with its message")
 {
     if (!MCTestGame::Available())
     {
@@ -3990,7 +4451,7 @@ TEST_CASE_ISOLATED("game: a full force turns back a unit from the 'MECH BAY's IN
 /// one aboard goes back to the INVENTORY's MECHWARRIORS; the 'Mech they came from stays without a pilot.
 /// </summary>
 TEST_CASE_ISOLATED(
-    "game: a MechWarrior dragged onto the 'MECH BAY's piloted 'Mech boards it, the one aboard to the INVENTORY")
+    "game: a MechWarrior dragged onto the MECH BAY's piloted 'Mech boards it, the one aboard to the INVENTORY")
 {
     if (!MCTestGame::Available())
     {
@@ -4094,12 +4555,131 @@ TEST_CASE_ISOLATED("game: the bar's rule stands between RP and the clock, its wo
 }
 
 /// <summary>
+/// The bar's RP and clock hold still (the user's, 26 Nov: "The clock in the top right moves the RP and clock fields
+/// slightly as the fonts change, they shouldnt"): at every window the players' reports name (4:3, 16:9 and 21:9 among
+/// them), as the clock ticks through its seconds, minutes and hours and RP changes, the rule, RP's right edge and the
+/// clock's two edges stay where they were, each digit's place one width and its digit inside it.
+/// </summary>
+TEST_CASE_ISOLATED("game: the bar's RP and clock hold still as their digits change, the rule between them put")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    StartFirstBriefing();
+    MCCampaignScreen& screen = Shown();
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    REQUIRE(screen.Document().has_value());
+    Rml::ElementDocument& document = screen.Document()->get();
+    auto& clock = dynamic_cast<MCManualClock&>(MCGameContext::Current().Clock());
+    constexpr float Slack = 0.01f;
+    constexpr uint64_t Second = 1'000'000'000ull;
+    // A second at a time through the seconds' digits, then an hour, a minute and a second at a time through the rest.
+    constexpr int32_t Seconds = 12;
+    constexpr int32_t Hours = 12;
+    constexpr uint64_t HourMinuteSecond = 3661 * Second;
+    // RP of six figures each, its digits the face's narrowest and widest among them.
+    constexpr std::array<int32_t, 4> Points = {111'111, 888'888, 104'815, 999'990};
+
+    struct MCPlaces
+    {
+        float Rule = 0;
+        float PointsRight = 0;
+        float ClockLeft = 0;
+        float ClockRight = 0;
+        std::vector<float> Digits;
+    };
+
+    const auto left = [](Rml::Element& element) { return element.GetAbsoluteOffset(Rml::BoxArea::Border).x; };
+    const auto width = [](Rml::Element& element) { return element.GetBox().GetSize(Rml::BoxArea::Border).x; };
+
+    for (const MCMenusPictures::MCWindowSize& window : MCMenusPictures::PlayersWindows)
+    {
+        menus.SetWindow(window.Width, window.Height);
+        const MCTest::Scope scope{std::format("{}x{}", window.Width, window.Height)};
+        std::optional<MCPlaces> first;
+        std::set<std::string> clocks;
+        std::set<std::string> shownPoints;
+
+        const auto measure = [&]
+        {
+            MCTestGame::RunFrame(FlowFrame);
+            menus.Frame();
+            Rml::Element* status = document.QuerySelector("#topbar .status");
+            REQUIRE(status != nullptr);
+            REQUIRE_EQ(status->GetNumChildren(), 4);
+            Rml::Element& points = *status->GetChild(1);
+            Rml::Element& rule = *status->GetChild(2);
+            Rml::Element& shownClock = *status->GetChild(3);
+            clocks.insert(shownClock.GetInnerRML());
+            shownPoints.insert(points.GetInnerRML());
+            MCPlaces places{.Rule = left(rule),
+                            .PointsRight = left(points) + width(points),
+                            .ClockLeft = left(shownClock),
+                            .ClockRight = left(shownClock) + width(shownClock)};
+            Rml::ElementList digits;
+            status->QuerySelectorAll(digits, ".digit");
+            REQUIRE(!digits.empty());
+
+            for (Rml::Element* digit : digits)
+            {
+                places.Digits.push_back(left(*digit));
+                CHECK(std::abs(width(*digit) - width(*digits.front())) <= Slack);
+                Rml::ElementText* words = FirstWords(*digit);
+                REQUIRE(words != nullptr);
+                CHECK(static_cast<float>(words->GetLines().front().width) <= width(*digit) + Slack);
+            }
+
+            if (!first.has_value())
+            {
+                first = places;
+                return;
+            }
+
+            CHECK(std::abs(places.Rule - first->Rule) <= Slack);
+            CHECK(std::abs(places.PointsRight - first->PointsRight) <= Slack);
+            CHECK(std::abs(places.ClockLeft - first->ClockLeft) <= Slack);
+            CHECK(std::abs(places.ClockRight - first->ClockRight) <= Slack);
+            REQUIRE_EQ(places.Digits.size(), first->Digits.size());
+
+            for (size_t at = 0; at < places.Digits.size(); ++at)
+            {
+                CHECK(std::abs(places.Digits[at] - first->Digits[at]) <= Slack);
+            }
+        };
+
+        for (const int32_t shown : Points)
+        {
+            ResourcePoints = shown;
+
+            for (int32_t tick = 0; tick < Seconds; ++tick)
+            {
+                clock.Advance(Second);
+                measure();
+            }
+
+            for (int32_t tick = 0; tick < Hours; ++tick)
+            {
+                clock.Advance(HourMinuteSecond);
+                measure();
+            }
+        }
+
+        // The clock and RP did change under it.
+        CHECK(clocks.size() > static_cast<size_t>(Seconds));
+        CHECK_EQ(shownPoints.size(), Points.size());
+    }
+}
+
+/// <summary>
 /// The 'MECH BAY lists a 'Mech's fitted parts in 1998's order (its weapon list's, MCMechBay::FittedCopies): the
 /// short-, medium- and long-range weapons, each by damage, lowest first, then the equipment, each copy's damage on its
 /// own row. Two weapons the inventory lists the other way round (by master id, the higher first) show the lower damage
 /// first.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY lists a 'Mech's weapons as 1998's, by range, each by damage, lowest first")
+TEST_CASE_ISOLATED("game: the MECH BAY lists a 'Mech's weapons as 1998's, by range, each by damage, lowest first")
 {
     if (!MCTestGame::Available())
     {
@@ -4198,7 +4778,7 @@ TEST_CASE_ISOLATED("game: the 'MECH BAY lists a 'Mech's weapons as 1998's, by ra
 /// window at 640x480, 1280x720 and 1280x1024, the hashes recorded: the Mac's and Windows' alike with the game's data.
 /// With <c>--shots</c> each is saved.
 /// </summary>
-TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every machine")
+TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY draw the same on every machine")
 {
     if (!MCTestGame::Available())
     {
@@ -4219,21 +4799,21 @@ TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every ma
 
     screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
-    DrawnEach(*display, clock, "purchase", {0x0ea01d50, 0x6cbf23d5, 0x0c6eb19c});
+    DrawnEach(*display, clock, "purchase", {0xa1476088, 0x0781c9a4, 0xd886b784});
     tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, FirstInStore(tabs));
-    DrawnEach(*display, clock, "purchase_parts", {0x691b6346, 0xd93bbf97, 0xbfecb62a});
+    DrawnEach(*display, clock, "purchase_parts", {0xdb92758e, 0xb47a7eda, 0x2cb37df2});
     tabs.PressDeal();
     REQUIRE(tabs.DealOpen());
-    DrawnEach(*display, clock, "purchase_buy", {0x7c4a162a, 0x0d2ffbea, 0xe0501948});
+    DrawnEach(*display, clock, "purchase_buy", {0xc62ba02f, 0x72bca6e7, 0xd37288c3});
     tabs.DealCancel();
 
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
-    DrawnEach(*display, clock, "mechbay", {0x1ff9d487, 0x066945e0, 0xc03588b9});
+    DrawnEach(*display, clock, "mechbay", {0xedf82532, 0x64cc537c, 0xe451d10a});
     ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
-    DrawnEach(*display, clock, "mechbay_repair", {0x65718b4c, 0x32208918, 0xd56bbd58});
+    DrawnEach(*display, clock, "mechbay_repair", {0x9fc62d81, 0xe264aba0, 0x134b4583});
 }
 
 /// <summary>
@@ -4243,7 +4823,7 @@ TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY draw the same on every ma
 /// 'Mech picked from its MECHS: every element inside the window, no two siblings overlapping, no text spilling or cut
 /// (MCRmlChecks::BoxProblems); every text at least 8 units high, at its contrast (MCRmlChecks::Illegible).
 /// </summary>
-TEST_CASE_ISOLATED("game: PURCHASING and the 'MECH BAY lay out and read at every window the players' reports name")
+TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY lay out and read at every window the players' reports name")
 {
     if (!MCTestGame::Available())
     {
@@ -4419,7 +4999,7 @@ namespace
 /// (wrapped between them at 4:3, where the store is one card wide).
 /// </summary>
 TEST_CASE_ISOLATED(
-    "game: PURCHASING's and the 'MECH BAY's columns near-equal, each list's switch on one row with Z and C")
+    "game: PURCHASING's and the MECH BAY's columns near-equal, each list's switch on one row with Z and C")
 {
     if (!MCTestGame::Available())
     {
@@ -4817,7 +5397,7 @@ namespace
 /// none; no line under the bar, no payload ramp. FORCE's head its count, its tons and the mission's drop limit (its count
 /// alone at 4:3). Laid out at every window the players' reports name.
 /// </summary>
-TEST_CASE_ISOLATED("game: the 'MECH BAY's SPEED, COMBAT EFFECTIVENESS with a MechWarrior's penalty, FORCE's tons")
+TEST_CASE_ISOLATED("game: the MECH BAY's SPEED, COMBAT EFFECTIVENESS with a MechWarrior's penalty, FORCE's tons")
 {
     if (!MCTestGame::Available())
     {
@@ -4998,7 +5578,7 @@ namespace
 /// window on the software renderer at 1280x720 once settled, its hash recorded, and every frame on the way folded into
 /// one more. With <c>--shots</c> each step is saved.
 /// </summary>
-TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logistics recording's steps")
+TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistics recording's steps")
 {
     if (!MCTestGame::Available())
     {
@@ -5052,9 +5632,9 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Purchasing));
              CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
          },
-         0x115d1d6a},
-        {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory")); }, 0x4e344cc6},
-        {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0xf91b49e7},
+         0xbc291deb},
+        {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory")); }, 0x517540b3},
+        {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0x4b98896e},
         {"purchase_accept",
          [&]
          {
@@ -5063,66 +5643,66 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              REQUIRE(!logistics->MechList->Mechs.empty());
              boughtMech = logistics->MechList->Mechs.back();
          },
-         0x984b4802},
-        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x1deca537},
+         0x2ac2dc7f},
+        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x9fd78afe},
         {"purchase_variant",
          [&]
          {
              ClickOn(ElementOf(screen, "store0"));
              ClickOn(ElementOf(screen, "variant1"));
          },
-         0x293d9b6f},
+         0xb7b8ce12},
         {"purchase_scroll",
          [&]
          {
              Hover(ElementOf(screen, "store0"));
              MCScreenInput::RealWheel(-1);
          },
-         0x918be4d6},
+         0x349c1eb7},
         {"purchase_too_poor",
          [&]
          {
              ResourcePoints = 0;
              DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory"));
          },
-         0x672bbd71},
-        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0x27638744},
-        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0xa3029dfc},
+         0x8bc9f160},
+        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0x64ddb3a5},
+        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x317d5f11},
         {"purchase_pilots_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0xae4837d6},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0xf8842ceb},
         {"purchase_components_tab",
          [&]
          {
              ResourcePoints = RecordedPoints;
              ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Components));
          },
-         0xb51b56de},
+         0x2c4e5a33},
         {"purchase_component_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "inventory")); },
-         0x6e5d1219},
-        {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x873ac0d4},
+         0xb3ae6f84},
+        {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x08cc192d},
         {"purchase_vehicles_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0x406e968a},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0xd79e1fcf},
         {"purchase_vehicle_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "inventory")); },
-         0x2f75f40d},
-        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xc68c2b26},
+         0xa22f9e3c},
+        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xf00e3847},
         {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
-         0x3d1770b2},
+         0xd30b5ee3},
         {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
-         0xf69c3677},
-        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xb8bba4d3},
-        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0x5d618b7e},
-        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x69836e93},
-        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0x4a763da0},
-        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0xbd187c72},
-        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0xdcd0d5a9},
+         0x2d4ea89b},
+        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0x74de45d7},
+        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0x8073cada},
+        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x49de9077},
+        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0xe2fa3324},
+        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x846f296e},
+        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x582e8c25},
         {"repair_mount_laser",
          [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
-         0x2ab3bf3f},
+         0xd26e6b27},
         {"repair_pilots_tab", [&]
-         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x39cf149b},
-        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x05dfd8ab},
+         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0xbbef5fb3},
+        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x23e169a3},
         {"repair_vehicles_tab",
          [&]
          {
@@ -5131,27 +5711,27 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
              ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::Mechs));
              ClickOn(ElementOf(screen, UnitCardId(tabs, logistics->VehicleList->Vehicles.back())));
          },
-         0x0c0f8ee7},
-        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x224edde8},
-        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x224edde8},
+         0x8643d9bf},
+        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x0cdffc54},
+        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x0cdffc54},
         {"repair_mech_into_force",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0xc3ea7e2d},
-        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0xc3ea7e2d},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0xbef39aa9},
+        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0xbef39aa9},
         {"repair_mech_out",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "inventory")); }, 0x48404d95},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "inventory")); }, 0xb6ead1c5},
         {"repair_weapon_list_scroll",
          [&]
          {
              Hover(ElementOf(screen, "fit0"));
              MCScreenInput::RealWheel(-1);
          },
-         0x65d3abf1},
+         0xc50e4a81},
         {"repair_first_mech_out", [&] { DragTo(ElementOf(screen, "force0"), ElementOf(screen, "inventory")); },
-         0xfe10bca4},
+         0xde5be714},
         {"briefing_after_repair",
-         [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xc4a45a12},
+         [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xb9a0ae24},
         {"deploy_after_repair", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Deploy)); },
-         0xe202085a},
+         0xff98cc3b},
     }};
 
     for (size_t index = 0; index < steps.size(); index++)
@@ -5165,7 +5745,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and 'MECH BAY record the logisti
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0xc8de400cu);
+    CHECK_EQ(frames, 0xe290c9d0u);
 }
 
 /// <summary>
@@ -5320,7 +5900,7 @@ TEST_CASE_ISOLATED("game: the remade menus walked from the start, through a camp
 
     for (const auto& [tab, name] : {std::pair{MCCampaignScreen::MCTab::Briefing, "BRIEFING"},
                                     std::pair{MCCampaignScreen::MCTab::Purchasing, "PURCHASING"},
-                                    std::pair{MCCampaignScreen::MCTab::MechBay, "'MECH BAY"},
+                                    std::pair{MCCampaignScreen::MCTab::MechBay, "MECH BAY"},
                                     std::pair{MCCampaignScreen::MCTab::Deploy, "DEPLOY"}})
     {
         Shown().ChooseTab(tab);

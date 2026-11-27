@@ -106,6 +106,21 @@ public:
     void LeaveResults();
 
     /// <summary>
+    /// Port-only (SPEC-menus.md's RETRY): whether the results offer RETRY: a campaign's mission (or a solo one) lost, its
+    /// drop kept as it went in (MCDeploy::Keep). Not in a match, which has REMATCH.
+    /// </summary>
+    bool CanRetry() const;
+
+    /// <summary>
+    /// Port-only (SPEC-menus.md's RETRY): the player's RETRY on a loss's results, as <see cref="LeaveResults"/> in change
+    /// "out of the mission": dark, REPLAY MISSION's way back puts the campaign back as it was at the mission's start, the
+    /// same drop goes back in its slots (MCDeploy::PutBackKept), and the loading screen goes up in the briefing's place,
+    /// the mission's load following as BEGIN MISSION's (<see cref="StartIntoTheBattle"/>). Where the drop doesn't go
+    /// back, REPLAY MISSION's briefing shows.
+    /// </summary>
+    void Retry();
+
+    /// <summary>
     /// Port-only: starts the tactical interface on the scenario loaded (MCTacticalInterface::StartScenario), the HD copies
     /// of what it makes (the lance icons' pictures and their mechs' diagrams: MCMechIcon::AttachHdArt) read as the
     /// load's and kept, rather than in the scenario's first frame.
@@ -289,6 +304,18 @@ private:
     /// back (the scenario ended, the menus made again), then what a fade into the screen it shows does (IntoScreenPieces).
     /// </summary>
     std::vector<MCScreenChange::MCPiece> ResultsClosing();
+    /// <summary>
+    /// Port-only: <see cref="ResultsClosing"/>'s and <see cref="RetryClosing"/>'s first pieces: the scenario ended, the
+    /// way back done (EndScenarioLeavingWayBack's), and what the results lead to (<see cref="AfterResults"/>).
+    /// </summary>
+    std::vector<MCScreenChange::MCPiece> ResultsWayBack();
+    /// <summary>
+    /// Port-only (SPEC-menus.md's RETRY): <see cref="Retry"/>'s work in the dark: <see cref="ResultsWayBack"/>, then the
+    /// drop put back and the loading screen up (or, the drop not back, <see cref="NextScreenPieces"/>).
+    /// </summary>
+    std::vector<MCScreenChange::MCPiece> RetryClosing();
+    /// <summary>Port-only: what a fade into the screen shown does (IntoScreenPieces), a piece each.</summary>
+    static std::vector<MCScreenChange::MCPiece> NextScreenPieces();
     /// <summary>Port-only (stage 9): the scenario's end shown: the remade results (MCResultsMenu::Show).</summary>
     void ShowResults();
     /// <summary>Port-only (stage 9): whichever results are up taken down, the game's cursor back.</summary>
@@ -310,6 +337,8 @@ private:
 
     /// <summary>Port-only: the way back from the results (EndScenarioLeavingWayBack's), between the change's pieces.</summary>
     std::function<void()> _WayBack;
+    /// <summary>Port-only (RETRY): the drop put back and the loading screen up, the mission's load next (<see cref="Retry"/>).</summary>
+    bool _Retrying = false;
 };
 
 /// <summary>The mission (null before the game's start-up makes it).</summary>

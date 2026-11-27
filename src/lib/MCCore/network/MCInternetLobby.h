@@ -16,6 +16,19 @@
 #include <thread>
 #include <vector>
 
+/// <summary>
+/// Port-only (Redux HD; SPEC-mco-hosting.md's "The switch"): MechCommander Online in INTERNET, as the service's list says
+/// it to a screen as it opens: <see cref="Rooms"/> shows MCO's rooms in INTERNET, <see cref="Hosts"/> hosts INTERNET's
+/// games on MCO too.
+/// </summary>
+struct MCMcoSwitchSaid
+{
+    bool Rooms = true;
+    bool Hosts = true;
+
+    bool operator==(const MCMcoSwitchSaid&) const = default;
+};
+
 /// <summary>The service's list of public games and its counts, as the INTERNET screen shows them.</summary>
 struct MCInternetListing
 {
@@ -89,6 +102,11 @@ public:
     const std::optional<MCInternetListing>& Listing() const { return _Listing; }
     /// <summary>The week's busiest hours, as the service sent them with its first list (empty before).</summary>
     const MCBusiestHours& Busiest() const { return _Busiest; }
+    /// <summary>
+    /// Port-only (Redux HD): MCO's switch, as the service last said it (with its first list to each socket); none until
+    /// it has.
+    /// </summary>
+    const std::optional<MCMcoSwitchSaid>& McoSwitch() const { return _McoSwitch; }
     /// <summary>Why the service turned it away for good (another protocol, a ban): none while it lives.</summary>
     std::optional<MCServiceRefusal> Refusal() const { return _Refusal; }
     /// <summary>
@@ -112,6 +130,7 @@ private:
     std::unique_ptr<MCWebSocket> _Ws;
     std::optional<MCInternetListing> _Listing;
     MCBusiestHours _Busiest;
+    std::optional<MCMcoSwitchSaid> _McoSwitch;
     std::optional<MCServiceRefusal> _Refusal;
     std::optional<std::string> _Trouble;
     Clock::time_point _LastPing;

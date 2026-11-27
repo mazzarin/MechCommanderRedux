@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "network/MCMcoSeats.h"
+#include "network/MCMcoSwitch.h"
 #include "network/MCMultiPlayer.h"
 
 #include <chrono>
@@ -171,4 +172,33 @@ TEST_CASE("mco seats: who waits in the host's MCO room reaches its guests whole,
     bad = message;
     bad.Players[0].Ready = 2;
     CHECK(!MCMcoSeats::WaitingSaidIn(LinkupBytes(bad)).has_value());
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "The switch": its hosts part is the host's MCO room's (off until the list says), its rooms part
+/// INTERNET's, kept in the user folder for the next start.
+/// </summary>
+TEST_CASE("mco seats: the switch's hosts part turns hosting on MCO on or off, and its rooms part is kept for the next "
+          "start")
+{
+    // As a game that has heard nothing, however the test ends.
+    struct MCRestore
+    {
+        MCRestore() = default;
+        MCRestore(const MCRestore&) = delete;
+        MCRestore& operator=(const MCRestore&) = delete;
+        ~MCRestore() { MCMcoSwitch::Heard({.Rooms = true, .Hosts = false}); }
+    } restore;
+
+    MCMcoSwitch::Heard({.Rooms = false, .Hosts = true});
+    CHECK(!MCMcoSwitch::RoomsOn());
+    CHECK(MCMcoSeats::HostsOn());
+    MCMcoSwitch::ReadAgainForTests();
+    CHECK(!MCMcoSwitch::RoomsOn());
+
+    MCMcoSwitch::Heard({.Rooms = true, .Hosts = false});
+    CHECK(MCMcoSwitch::RoomsOn());
+    CHECK(!MCMcoSeats::HostsOn());
+    MCMcoSwitch::ReadAgainForTests();
+    CHECK(MCMcoSwitch::RoomsOn());
 }

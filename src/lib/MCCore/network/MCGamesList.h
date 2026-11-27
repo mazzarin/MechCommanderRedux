@@ -164,6 +164,11 @@ private:
     bool ReadInternetGames();
     /// <summary>MCO's rooms as the list shows them, when it has listed them.</summary>
     static std::vector<MCListedGame> McoGames();
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "The switch"): INTERNET in MCO's lobby while the switch shows MCO's
+    /// rooms (MCMcoSwitch::RoomsOn), out of it otherwise; whether that changed.
+    /// </summary>
+    bool KeepMcoLobby();
 
     MCGamesWhere _Where;
     bool _Open = false;
@@ -172,6 +177,9 @@ private:
     std::string _GuestName;
     /// <summary>INTERNET: MCO's rooms as last read (its revision), read again as they change.</summary>
     uint64_t _McoRevision = 0;
+    /// <summary>INTERNET: whether this list opened MCO's lobby, and MCO's switch as it last applied it.</summary>
+    bool _McoLobby = false;
+    std::optional<MCMcoSwitchSaid> _McoSwitch;
     /// <summary>LAN: whether this network has been asked and its answers read once (Looking until then).</summary>
     bool _LanListed = false;
     /// <summary>LAN: the next time this network's games are read (its answers come in between).</summary>

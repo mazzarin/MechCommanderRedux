@@ -6,6 +6,7 @@
 #include "main/MCUpdater.h"
 #include "network/MCInternetGame.h"
 #include "network/MCMcoRooms.h"
+#include "network/MCMcoSwitch.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCRemove.h"
 #include "platform/MCDirectPlay.h"
@@ -244,12 +245,8 @@ void MCGamesList::Open()
     {
         _List = MCInternetList::Open();
         _McoRevision = 0;
-
-        if (MCMcoRooms::Available())
-        {
-            MCMcoRooms::Now().OpenLobby(_GuestName.empty() ? std::string(MCMcoRooms::GuestNameNone) : _GuestName);
-        }
-
+        _McoSwitch.reset();
+        KeepMcoLobby();
         return;
     }
 
@@ -265,10 +262,35 @@ void MCGamesList::Close()
     // Its socket's close takes it off the service's count; MCO's lobby is left (a room the player is in stays).
     _List.reset();
 
-    if (_Where == MCGamesWhere::Internet && MCMcoRooms::Available())
+    if (_McoLobby && MCMcoRooms::Available())
     {
         MCMcoRooms::Now().CloseLobby();
     }
+
+    _McoLobby = false;
+}
+
+bool MCGamesList::KeepMcoLobby()
+{
+    const bool wanted = _Open && MCMcoRooms::Available() && MCMcoSwitch::RoomsOn();
+
+    if (wanted == _McoLobby)
+    {
+        return false;
+    }
+
+    _McoLobby = wanted;
+
+    if (wanted)
+    {
+        MCMcoRooms::Now().OpenLobby(_GuestName.empty() ? std::string(MCMcoRooms::GuestNameNone) : _GuestName);
+    }
+    else if (MCMcoRooms::Available())
+    {
+        MCMcoRooms::Now().CloseLobby();
+    }
+
+    return true;
 }
 
 void MCGamesList::Retry()
@@ -300,6 +322,14 @@ bool MCGamesList::Update()
     if (_Where == MCGamesWhere::Internet)
     {
         bool changed = _List != nullptr && _List->Update();
+
+        // MCO's switch as the service says it: MCO's rooms shown or not, INTERNET's games hosted there or not.
+        if (_List != nullptr && _List->McoSwitch().has_value() && _List->McoSwitch() != _McoSwitch)
+        {
+            _McoSwitch = _List->McoSwitch();
+            MCMcoSwitch::Heard(*_McoSwitch);
+            changed |= KeepMcoLobby();
+        }
 
         if (const uint64_t revision = MCMcoRooms::Available() ? MCMcoRooms::Now().Revision() : 0;
             revision != _McoRevision)
@@ -425,7 +455,7 @@ std::vector<MCListedGame> MCGamesList::McoGames()
 {
     std::vector<MCListedGame> games;
 
-    if (!MCMcoRooms::Available())
+    if (!MCMcoRooms::Available() || !MCMcoSwitch::RoomsOn())
     {
         return games;
     }

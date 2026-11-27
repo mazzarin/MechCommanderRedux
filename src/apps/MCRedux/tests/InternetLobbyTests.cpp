@@ -201,6 +201,53 @@ TEST_CASE("internet lobby: the list as the service sends it, a game that isn't o
     CHECK(script.ClosedByGame);
 }
 
+/// <summary>
+/// Port-only (Redux HD; SPEC-mco-hosting.md's "The switch"): MCO's switch comes with a socket's first list and stays
+/// through the lists after it; one that isn't one leaves the last.
+/// </summary>
+TEST_CASE("internet lobby: MCO's switch as the service says it with its first list, kept through the lists after it")
+{
+    ListScript script;
+    LobbySetupScope scope(script, nullptr);
+    std::unique_ptr<MCInternetList> list = MCInternetList::Open();
+    REQUIRE(list != nullptr);
+    const auto listed = [](int online, Json mco)
+    {
+        Json message{{"t", "list"}, {"online", online}, {"inGames", 0}, {"games", Json::array()}};
+
+        if (!mco.is_null())
+        {
+            message["mco"] = std::move(mco);
+        }
+
+        return message;
+    };
+
+    const std::optional<MCMcoSwitchSaid> roomsOff = MCMcoSwitchSaid{.Rooms = false, .Hosts = true};
+
+    // Nothing said yet; then the first list's.
+    script.Send(listed(3, nullptr));
+    CHECK(list->Update());
+    CHECK(!list->McoSwitch().has_value());
+    script.Send(listed(4, {{"rooms", false}, {"hosts", true}}));
+    CHECK(list->Update());
+    CHECK(list->McoSwitch() == roomsOff);
+
+    // The lists after it say none: it's kept. One that isn't one (a part not true or false, not an object) is ignored.
+    script.Send(listed(5, nullptr));
+    script.Send(listed(6, {{"rooms", "yes"}, {"hosts", true}}));
+    script.Send(listed(7, {{"rooms", true}}));
+    script.Send(listed(8, true));
+    CHECK(list->Update());
+    CHECK_EQ(list->Listing()->Online, 8);
+    CHECK(list->McoSwitch() == roomsOff);
+
+    // Each part as said.
+    script.Send(listed(9, {{"rooms", true}, {"hosts", false}}));
+    CHECK(list->Update());
+    CHECK(list->McoSwitch() == std::optional(MCMcoSwitchSaid{.Rooms = true, .Hosts = false}));
+}
+
 TEST_CASE("internet lobby: the count asked once by the service's plain request, a failure saying nothing")
 {
     ListScript script;

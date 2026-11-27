@@ -14,6 +14,8 @@
 #include "logistics/MCRoomScreen.h"
 #include "network/MCMcoBridge.h"
 #include "network/MCMcoRooms.h"
+#include "network/MCMcoSeats.h"
+#include "network/MCMcoSwitch.h"
 #include "network/MCMultiPlayer.h"
 #include "ui/MCRmlDialog.h"
 
@@ -405,4 +407,64 @@ TEST_CASE_ISOLATED("game: a player removed from a MechCommander Online room is t
     Settle();
     CHECK(DialogText().empty());
     CHECK(OnInternet());
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "The switch", in INTERNET: MCO's rooms show while its rooms part is on (on until the service has
+/// said), hidden and out of MCO's lobby while it's off, the last said kept for the next start; INTERNET's games are hosted
+/// on MCO only once the service has said its hosts part is on.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: INTERNET shows MechCommander Online's rooms only while the service's switch says so, and hosts "
+    "there only once it has said")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // As a game that has heard nothing, however the test ends (the user folder is the next test's).
+    struct MCRestore
+    {
+        MCRestore() = default;
+        MCRestore(const MCRestore&) = delete;
+        MCRestore& operator=(const MCRestore&) = delete;
+        ~MCRestore() { MCMcoSwitch::Heard({.Rooms = true, .Hosts = false}); }
+    } restore;
+
+    MCServiceScript::ListScript list;
+    std::string asked;
+    MCServiceScript::SetupScope scope(MCServiceScript::ListOpener(list),
+                                      MCServiceScript::Answering(R"({"online":3})", asked), Service,
+                                      MCInternetSpots::Version);
+    MCFakeMcoService::MCService mco;
+    ThreeRooms(mco);
+    const MCMcoScope mcoScope(MCFakeMcoService::Setup(mco, std::make_shared<MCFakeMcoService::MCMemoryKeys>(), {},
+                                                      MCFakeMcoService::Content, PollLeast, PollMost));
+    REQUIRE(MCTestGame::StartLogistics());
+
+    // A list that says nothing of the switch: MCO's rooms show, and nothing is hosted there.
+    MCGamesScreen& screen = OpenWithRooms(list, 4);
+    CHECK(!MCMcoSeats::HostsOn());
+    const auto withSwitch = [](bool rooms, bool hosts)
+    {
+        Json listing = MCInternetSpots::Listing(
+            {MCServiceScript::ListedGame("K7QF", "Bob's game", {"Bob", "Ann"}, 6, nullptr, MCInternetSpots::Version)},
+            3, 0);
+        listing["mco"] = {{"rooms", rooms}, {"hosts", hosts}};
+        return listing;
+    };
+
+    // MCO's rooms off: the service's game alone; hosting on MCO on. Kept for the next start.
+    list.Send(withSwitch(false, true));
+    REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 1; }));
+    CHECK((screen.Seen().Rows == Rows{"Bob's game | 2/6 | Europe | Open"}));
+    CHECK(MCMcoSeats::HostsOn());
+    MCMcoSwitch::ReadAgainForTests();
+    CHECK(!MCMcoSwitch::RoomsOn());
+
+    // On again: MCO's rooms back; hosting there off.
+    list.Send(withSwitch(true, false));
+    REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 4; }));
+    CHECK(!MCMcoSeats::HostsOn());
 }

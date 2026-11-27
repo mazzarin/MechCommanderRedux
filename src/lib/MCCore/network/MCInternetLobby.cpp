@@ -241,6 +241,32 @@ namespace
         return hours;
     }
 
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "The switch"): MCO's switch in a list message, {"rooms", "hosts"} each
+    /// true or false; none when it has none, or it isn't one (said in the log).
+    /// </summary>
+    std::optional<MCMcoSwitchSaid> McoSwitchIn(const Json& message)
+    {
+        const auto found = message.find("mco");
+
+        if (found == message.end())
+        {
+            return std::nullopt;
+        }
+
+        const auto rooms = found->is_object() ? found->find("rooms") : found->end();
+        const auto hosts = found->is_object() ? found->find("hosts") : found->end();
+
+        if (!found->is_object() || rooms == found->end() || hosts == found->end() || !rooms->is_boolean() ||
+            !hosts->is_boolean())
+        {
+            SDL_Log("MCInternetList: the service's MCO switch isn't one; the last is kept");
+            return std::nullopt;
+        }
+
+        return MCMcoSwitchSaid{.Rooms = rooms->get<bool>(), .Hosts = hosts->get<bool>()};
+    }
+
     /// <summary>The mean of the values present; none when none is.</summary>
     std::optional<double> MeanOf(std::span<const std::optional<double>> values)
     {
@@ -592,6 +618,12 @@ bool MCInternetList::Hear(const MCWebSocket::Message& message)
         if (std::optional<MCBusiestHours> busiest = BusiestIn(parsed); busiest.has_value() && *busiest != _Busiest)
         {
             _Busiest = std::move(*busiest);
+            changed = true;
+        }
+
+        if (const std::optional<MCMcoSwitchSaid> mco = McoSwitchIn(parsed); mco.has_value() && mco != _McoSwitch)
+        {
+            _McoSwitch = mco;
             changed = true;
         }
 

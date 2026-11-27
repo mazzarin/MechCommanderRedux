@@ -787,6 +787,9 @@
     <ClCompile Include="network\MCMcoRelay.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCMcoRooms.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMechHandover.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -2238,7 +2241,13 @@
     <ClInclude Include="network\MCMcoContent.h">
       <Filter>network</Filter>
     </ClInclude>
+    <ClInclude Include="network\MCMcoKeys.h">
+      <Filter>network</Filter>
+    </ClInclude>
     <ClInclude Include="network\MCMcoRelay.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCMcoRooms.h">
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCMechHandover.h">

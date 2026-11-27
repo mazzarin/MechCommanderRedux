@@ -41,6 +41,9 @@ namespace MCMcoBridge
     /// <summary>Opens a connection to the relay.</summary>
     using MCDial = std::function<std::expected<std::unique_ptr<MCStream>, std::string>()>;
 
+    /// <summary>How long a connection to the relay and its handshake may take.</summary>
+    inline constexpr int RelayConnectMs = 10000;
+
     /// <summary>Connections to MCO's relay: TLS with <paramref name="settings"/> (their ALPN the relay's).</summary>
     MCDial TlsDial(MCTlsLink::MCSettings settings);
 
@@ -137,6 +140,9 @@ namespace MCMcoBridge
 
         std::unique_ptr<MCState> _State;
     };
+
+    /// <summary>A port free for both the host game's TCP and UDP on every interface, or 0.</summary>
+    uint16_t FreeGamePort();
 
     /// <summary>
     /// Whether the game hosting on 127.0.0.1:<paramref name="gamePort"/> answers its session query (as MCO's launcher

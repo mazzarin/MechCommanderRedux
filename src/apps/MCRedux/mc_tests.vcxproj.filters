@@ -227,6 +227,9 @@
     <ClCompile Include="tests\McoRelayTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\McoRoomsTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\MCTest.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -416,6 +419,9 @@
       <Filter>tests\fakes</Filter>
     </ClInclude>
     <ClInclude Include="tests\fakes\MCFakeMcoRelay.h">
+      <Filter>tests\fakes</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\fakes\MCFakeMcoService.h">
       <Filter>tests\fakes</Filter>
     </ClInclude>
     <ClInclude Include="tests\fakes\MCFakeMemorySystem.h">

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "../MCHttpGet.h"
 #include "MCTest.h"
+#include "fakes/MCFakeMcoService.h"
 #include "lib/MCSha256.h"
 #include "network/MCMcoApi.h"
 #include "platform/MCSocket.h"
@@ -45,46 +46,7 @@ namespace
     const std::string NewPeerToken = Hex('d', MCMcoApi::TokenDigits);
     const std::string DeviceId = Hex('e', MCMcoApi::TokenDigits);
 
-    /// <summary>A form's body as its fields, in order (its encoding undone).</summary>
-    std::vector<std::pair<std::string, std::string>> FormFields(std::string_view body)
-    {
-        const auto decode = [](std::string_view text)
-        {
-            std::string decoded;
-
-            for (size_t i = 0; i < text.size(); i++)
-            {
-                if (text[i] == '+')
-                {
-                    decoded += ' ';
-                }
-                else if (text[i] == '%' && i + 2 < text.size())
-                {
-                    decoded += static_cast<char>(std::stoi(std::string(text.substr(i + 1, 2)), nullptr, 16));
-                    i += 2;
-                }
-                else
-                {
-                    decoded += text[i];
-                }
-            }
-
-            return decoded;
-        };
-
-        std::vector<std::pair<std::string, std::string>> fields;
-
-        while (!body.empty())
-        {
-            const size_t end = std::min(body.find('&'), body.size());
-            const std::string_view field = body.substr(0, end);
-            const size_t equals = field.find('=');
-            fields.emplace_back(decode(field.substr(0, equals)), decode(field.substr(equals + 1)));
-            body.remove_prefix(std::min(end + 1, body.size()));
-        }
-
-        return fields;
-    }
+    using MCFakeMcoService::FormFields;
 
     /// <summary>A form field's value, or none.</summary>
     std::optional<std::string> Field(std::string_view body, std::string_view name)

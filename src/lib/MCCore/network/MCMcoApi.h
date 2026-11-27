@@ -218,6 +218,20 @@ namespace MCMcoApi
     /// </summary>
     std::expected<std::string, std::string> PlayerName(std::string_view name);
 
+    /// <summary>
+    /// <paramref name="username"/> as MCO's launcher hands it to the game (`-player`): its control characters (C0, DEL,
+    /// C1) dropped, its first <see cref="MatchNameMost"/> characters; <see cref="MatchNameNone"/> when none are left.
+    /// </summary>
+    std::string MatchName(std::string_view username);
+    inline constexpr size_t MatchNameMost = 40;
+    inline constexpr std::string_view MatchNameNone = "MCO Player";
+
+    /// <summary>The host's game's session for a match, as the launcher names it: "MCO " and its first 12 hex digits.</summary>
+    std::string MatchSession(std::string_view sessionHex);
+
+    /// <summary>A match's capacity as the host's game takes it (the launcher's: held to 2-6).</summary>
+    int32_t MatchCapacity(int32_t capacity);
+
     /// <summary>Whether <paramref name="text"/> is <paramref name="digits"/> hex digits (either case).</summary>
     bool IsHex(std::string_view text, size_t digits);
 
@@ -262,6 +276,18 @@ namespace MCMcoApi
         /// </summary>
         MCResult<MCSignIn> Create(const MCPeer& guest, std::string_view username, std::string_view email,
                                   std::string_view password);
+
+        /// <summary>
+        /// The account a kept token is for, at a later start (session): its player, the token as given, held to the
+        /// account <paramref name="clientId"/> it was kept for. Activate it after, as a sign-in.
+        /// </summary>
+        MCResult<MCSignIn> Resume(std::string_view accountToken, std::string_view clientId);
+
+        /// <summary>
+        /// SECURE PROFILE (secure): <paramref name="guest"/>'s profile (registered, its peer token) kept as an account
+        /// with the email and password; the account as a sign-in's. Activate it after.
+        /// </summary>
+        MCResult<MCSignIn> Secure(const MCPeer& guest, std::string_view email, std::string_view password);
 
         /// <summary>Ends the account's session (logout): its token is no longer good.</summary>
         MCResult<void> Logout(std::string_view accountToken);

@@ -477,4 +477,67 @@ namespace MCFakeMcoRelay
         std::vector<std::string> _Closing;
         std::thread _Thread;
     };
+
+    /// <summary>A session's answer as the game writes it: the magic, kind 2, its port (little-endian), the session.</summary>
+    inline std::vector<uint8_t> SessionAnswer(uint16_t port, std::string_view session)
+    {
+        std::vector<uint8_t> answer(MCMcoRelay::GameMagic.begin(), MCMcoRelay::GameMagic.end());
+        answer.push_back(2);
+        answer.push_back(static_cast<uint8_t>(port & 0xff));
+        answer.push_back(static_cast<uint8_t>(port >> 8));
+        answer.insert(answer.end(), session.begin(), session.end());
+        return answer;
+    }
+
+    /// <summary>A host game's session answers on 127.0.0.1, each naming <paramref name="named"/> as its port.</summary>
+    class MCAnsweringGame
+    {
+    public:
+        explicit MCAnsweringGame(std::optional<uint16_t> named = std::nullopt)
+        {
+            _Udp = _Sockets.OpenUdpOn(MCSocket::LoopbackIp, 0);
+            _Port = _Sockets.LocalPort(_Udp);
+            _Named = named.value_or(_Port);
+            _Thread = std::thread(
+                [this]
+                {
+                    while (!_Stopping)
+                    {
+                        std::array<MCSocketTransport::MCWaiting, 1> waiting{MCSocketTransport::MCWaiting{_Udp}};
+                        MCSocketTransport::Wait(waiting, LoopMs);
+                        std::array<uint8_t, MCMcoRelay::DatagramMost> datagram{};
+                        MCSocket::Address from;
+
+                        for (int size = _Sockets.ReceiveFrom(_Udp, datagram, from); size > 0;
+                             size = _Sockets.ReceiveFrom(_Udp, datagram, from))
+                        {
+                            if (MCMcoRelay::IsQuery(std::span(datagram).first(static_cast<size_t>(size))))
+                            {
+                                _Sockets.SendTo(_Udp, from, SessionAnswer(_Named, "Solaris"));
+                            }
+                        }
+                    }
+                });
+        }
+
+        ~MCAnsweringGame()
+        {
+            _Stopping = true;
+            _Thread.join();
+            _Sockets.Close(_Udp);
+        }
+
+        MCAnsweringGame(const MCAnsweringGame&) = delete;
+        MCAnsweringGame& operator=(const MCAnsweringGame&) = delete;
+
+        uint16_t Port() const { return _Port; }
+
+    private:
+        MCSocketTransport _Sockets;
+        MCSocket::Handle _Udp = MCSocket::InvalidHandle;
+        uint16_t _Port = 0;
+        uint16_t _Named = 0;
+        std::atomic<bool> _Stopping = false;
+        std::thread _Thread;
+    };
 }

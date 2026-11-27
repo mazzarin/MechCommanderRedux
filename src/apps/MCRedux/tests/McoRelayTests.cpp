@@ -144,17 +144,6 @@ namespace
         return Within(ArrivesMs, [&] { return sockets.Receive(tcp, bytes) < 0; });
     }
 
-    /// <summary>A session's answer as the game writes it: the magic, kind 2, its port (little-endian), the session.</summary>
-    std::vector<uint8_t> Answer(uint16_t port, std::string_view session)
-    {
-        std::vector<uint8_t> answer(MCMcoRelay::GameMagic.begin(), MCMcoRelay::GameMagic.end());
-        answer.push_back(2);
-        answer.push_back(static_cast<uint8_t>(port & 0xff));
-        answer.push_back(static_cast<uint8_t>(port >> 8));
-        answer.insert(answer.end(), session.begin(), session.end());
-        return answer;
-    }
-
     std::vector<uint8_t> ControlFrame(std::string_view json)
     {
         return MCMcoRelay::Frame(MCFrameType::Control, BytesOf(json));
@@ -296,7 +285,7 @@ TEST_CASE("mco relay: only the game's session query and answer pass, the answer'
     otherMagic[3] = '2';
     CHECK(!MCMcoRelay::IsQuery(otherMagic));
 
-    std::vector<uint8_t> answer = Answer(28800, "Solaris");
+    std::vector<uint8_t> answer = MCFakeMcoRelay::SessionAnswer(28800, "Solaris");
     CHECK(MCMcoRelay::IsAnswer(answer));
     CHECK(!MCMcoRelay::IsQuery(answer));
     CHECK_EQ(MCMcoRelay::AnswerPort(answer), uint16_t{28800});
@@ -306,13 +295,15 @@ TEST_CASE("mco relay: only the game's session query and answer pass, the answer'
     CHECK_EQ(MCMcoRelay::AnswerPort(answer), uint16_t{0x1234});
     CHECK_EQ(TextOf(std::span(answer).subspan(MCMcoRelay::AnswerLeast)), std::string("Solaris"));
 
-    const std::vector<uint8_t> least = Answer(1, "");
+    const std::vector<uint8_t> least = MCFakeMcoRelay::SessionAnswer(1, "");
     CHECK_EQ(least.size(), MCMcoRelay::AnswerLeast);
     CHECK(MCMcoRelay::IsAnswer(least));
     CHECK(!MCMcoRelay::IsAnswer(std::span(least).first(MCMcoRelay::AnswerLeast - 1)));
-    const std::vector<uint8_t> most = Answer(1, std::string(MCMcoRelay::DatagramMost - MCMcoRelay::AnswerLeast, 's'));
+    const std::vector<uint8_t> most =
+        MCFakeMcoRelay::SessionAnswer(1, std::string(MCMcoRelay::DatagramMost - MCMcoRelay::AnswerLeast, 's'));
     CHECK(MCMcoRelay::IsAnswer(most));
-    CHECK(!MCMcoRelay::IsAnswer(Answer(1, std::string(MCMcoRelay::DatagramMost - MCMcoRelay::AnswerLeast + 1, 's'))));
+    CHECK(!MCMcoRelay::IsAnswer(
+        MCFakeMcoRelay::SessionAnswer(1, std::string(MCMcoRelay::DatagramMost - MCMcoRelay::AnswerLeast + 1, 's'))));
 }
 
 namespace
@@ -875,7 +866,7 @@ TEST_CASE("mco relay: the bridges carry a guest's game to the host's through the
     CHECK(MCSocket::IsLoopback(asker.Ip));
 
     // Its answer, naming the game's port, reaches the guest's game naming the guest's.
-    sockets.SendTo(gameUdp, asker, Answer(gamePort, "Solaris"));
+    sockets.SendTo(gameUdp, asker, MCFakeMcoRelay::SessionAnswer(gamePort, "Solaris"));
     MCSocket::Address answerer;
     const auto answered = ReceiveWithin(sockets, guestGame, answerer);
     REQUIRE(answered.has_value());
@@ -1006,71 +997,16 @@ TEST_CASE("mco relay: a refusal, a bad epoch or a frame out of place ends the br
     CHECK(Within(ArrivesMs, [&] { return (*host)->Guests() == 0; }));
 }
 
-namespace
-{
-    /// <summary>A host game's session answers on 127.0.0.1, each naming <paramref name="named"/> as its port.</summary>
-    class MCAnsweringGame
-    {
-    public:
-        explicit MCAnsweringGame(std::optional<uint16_t> named = std::nullopt)
-        {
-            _Udp = _Sockets.OpenUdpOn(MCSocket::LoopbackIp, 0);
-            _Port = _Sockets.LocalPort(_Udp);
-            _Named = named.value_or(_Port);
-            _Thread = std::thread(
-                [this]
-                {
-                    while (!_Stopping)
-                    {
-                        std::array<MCSocketTransport::MCWaiting, 1> waiting{MCSocketTransport::MCWaiting{_Udp}};
-                        MCSocketTransport::Wait(waiting, MCFakeMcoRelay::LoopMs);
-                        std::array<uint8_t, MCMcoRelay::DatagramMost> datagram{};
-                        MCSocket::Address from;
-
-                        for (int size = _Sockets.ReceiveFrom(_Udp, datagram, from); size > 0;
-                             size = _Sockets.ReceiveFrom(_Udp, datagram, from))
-                        {
-                            if (MCMcoRelay::IsQuery(std::span(datagram).first(static_cast<size_t>(size))))
-                            {
-                                _Sockets.SendTo(_Udp, from, Answer(_Named, "Solaris"));
-                            }
-                        }
-                    }
-                });
-        }
-
-        ~MCAnsweringGame()
-        {
-            _Stopping = true;
-            _Thread.join();
-            _Sockets.Close(_Udp);
-        }
-
-        MCAnsweringGame(const MCAnsweringGame&) = delete;
-        MCAnsweringGame& operator=(const MCAnsweringGame&) = delete;
-
-        uint16_t Port() const { return _Port; }
-
-    private:
-        MCSocketTransport _Sockets;
-        MCSocket::Handle _Udp = MCSocket::InvalidHandle;
-        uint16_t _Port = 0;
-        uint16_t _Named = 0;
-        std::atomic<bool> _Stopping = false;
-        std::thread _Thread;
-    };
-}
-
 TEST_CASE("mco relay: the host's bridge waits for its game's answer, one naming the game's own port")
 {
     const std::atomic<bool> going = false;
     {
-        const MCAnsweringGame game;
+        const MCFakeMcoRelay::MCAnsweringGame game;
         CHECK(MCMcoBridge::WaitForHostGame(game.Port(), ArrivesMs, going));
     }
 
     {
-        const MCAnsweringGame elsewhere(uint16_t{1});
+        const MCFakeMcoRelay::MCAnsweringGame elsewhere(uint16_t{1});
         const Clock::time_point start = Clock::now();
         CHECK(!MCMcoBridge::WaitForHostGame(elsewhere.Port(), HostWaitMs, going));
         CHECK(Clock::now() - start >= std::chrono::milliseconds(HostWaitMs));
@@ -1079,7 +1015,7 @@ TEST_CASE("mco relay: the host's bridge waits for its game's answer, one naming 
 
     {
         const std::atomic<bool> cancelled = true;
-        const MCAnsweringGame game;
+        const MCFakeMcoRelay::MCAnsweringGame game;
         CHECK(!MCMcoBridge::WaitForHostGame(game.Port(), ArrivesMs, cancelled));
     }
 }

@@ -27,13 +27,8 @@ namespace
 
     /// <summary>The room polled about once a second, as MCO's launcher polls it (850-1150 ms).</summary>
     constexpr auto PollEvery = std::chrono::seconds(1);
-    /// <summary>How long a relay connection and its handshake may take.</summary>
-    constexpr int RelayConnectMs = 10000;
     /// <summary>How long the host's game has to answer its session query before the ticket is asked (the launcher's).</summary>
     constexpr int HostGameMs = 45000;
-    /// <summary>The match's session as the game names it: "MCO " and the session's first 12 hex digits (the launcher's).</summary>
-    constexpr std::string_view SessionPrefix = "MCO ";
-    constexpr size_t SessionDigits = 12;
     /// <summary>The game's log, in the save folder, for each match's copy.</summary>
     constexpr std::string_view GameLog = "mco-game.log";
     /// <summary>The words typed in a room.</summary>
@@ -53,11 +48,6 @@ namespace
     constexpr auto MatchRetryEvery = std::chrono::seconds(3);
     /// <summary>The room's polls that may fail in a row (MCO unreachable, busy) before the room is given up.</summary>
     constexpr int PollFailuresMost = 10;
-    /// <summary>The player's name as the launcher hands it to the game: no controls, at most this long, or this.</summary>
-    constexpr size_t GameNameMost = 40;
-    constexpr std::string_view GameNameNone = "MCO Player";
-    /// <summary>The match's players as the host's game takes them (the launcher's: its capacity, held to 2-6).</summary>
-    constexpr int32_t GamePlayersFewest = MCMcoApi::MatchFewest;
     /// <summary>What a relay or MCO says of a match whose session has gone (the launcher reports it, report_session_missing).</summary>
     constexpr std::string_view SessionGoneText = "no longer available";
 
@@ -169,46 +159,6 @@ namespace
                            : std::format("You're no longer in the room ({}).", Shown(why));
     }
 
-    /// <summary>
-    /// <paramref name="username"/> as the launcher hands it to the game (`-player`): its control characters (C0, DEL,
-    /// C1) dropped, its first <see cref="GameNameMost"/> characters; <see cref="GameNameNone"/> when none are left.
-    /// </summary>
-    std::string GameName(std::string_view username)
-    {
-        constexpr unsigned char Delete = 0x7f;
-        constexpr unsigned char C1Lead = 0xc2;
-        constexpr unsigned char C1Last = 0x9f;
-        constexpr unsigned char ContinuationMask = 0xc0;
-        constexpr unsigned char Continuation = 0x80;
-        std::string name;
-        size_t characters = 0;
-
-        for (size_t i = 0; i < username.size() && characters <= GameNameMost; i++)
-        {
-            const auto byte = static_cast<unsigned char>(username[i]);
-
-            // A C1 control is U+0080-U+009F: 0xC2 then 0x80-0x9F in UTF-8.
-            if (byte < ' ' || byte == Delete ||
-                (byte == C1Lead && i + 1 < username.size() && static_cast<unsigned char>(username[i + 1]) <= C1Last))
-            {
-                i += byte == C1Lead ? 1 : 0;
-                continue;
-            }
-
-            const bool starts = (byte & ContinuationMask) != Continuation;
-            characters += starts ? 1 : 0;
-
-            if (starts && characters > GameNameMost)
-            {
-                break;
-            }
-
-            name += static_cast<char>(byte);
-        }
-
-        return name.empty() ? std::string(GameNameNone) : name;
-    }
-
     /// <summary>Whether <paramref name="text"/> says a match's session has gone (any case).</summary>
     bool SaysSessionGone(std::string_view text)
     {
@@ -216,18 +166,6 @@ namespace
         std::ranges::transform(lower, lower.begin(),
                                [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; });
         return lower.contains(SessionGoneText);
-    }
-
-    /// <summary>A port free for both the host game's TCP and UDP on every interface, or 0.</summary>
-    uint16_t FreeGamePort()
-    {
-        MCSocketTransport sockets;
-        const MCSocket::Handle tcp = sockets.ListenTcpOn(0, 0);
-        const uint16_t port = tcp == MCSocket::InvalidHandle ? 0 : sockets.LocalPort(tcp);
-        const MCSocket::Handle udp = port == 0 ? MCSocket::InvalidHandle : sockets.OpenUdpOn(0, port);
-        sockets.Close(tcp);
-        sockets.Close(udp);
-        return udp == MCSocket::InvalidHandle ? 0 : port;
     }
 
     /// <summary>A room's matches, played as the options say.</summary>
@@ -577,7 +515,7 @@ namespace
         {
             MCTlsLink::MCSettings settings{.Host = match.RelayHost,
                                            .Port = match.RelayPort,
-                                           .TimeoutMs = RelayConnectMs,
+                                           .TimeoutMs = MCMcoBridge::RelayConnectMs,
                                            .AnchorPem = _Options.RelayAnchor};
 
             if (_Options.RelayAnchor.empty())
@@ -591,7 +529,7 @@ namespace
         /// <summary>The game's words: the match's (host or join), then the player's name and the folders given.</summary>
         std::vector<std::string> GameWords(std::vector<std::string> match) const
         {
-            match.insert(match.end(), {"-player", GameName(_Peer.Username)});
+            match.insert(match.end(), {"-player", MCMcoApi::MatchName(_Peer.Username)});
 
             if (_Options.DataGiven)
             {
@@ -827,7 +765,7 @@ namespace
             std::cout << std::format("Asking the relay {}:{} for its epoch... ", match->RelayHost, match->RelayPort)
                       << std::flush;
             const auto epoch = MCMcoBridge::Probe(dial);
-            const uint16_t port = epoch ? FreeGamePort() : 0;
+            const uint16_t port = epoch ? MCMcoBridge::FreeGamePort() : 0;
 
             if (!epoch || port == 0)
             {
@@ -838,10 +776,10 @@ namespace
             }
 
             Say("done.");
-            const std::string session = std::string(SessionPrefix) + match->SessionHex.substr(0, SessionDigits);
-            const std::unique_ptr<MCGameCopy> game = StartGame(
-                GameWords({"-host", std::to_string(port), "-session", session, "-maxplayers",
-                           std::to_string(std::clamp(match->Capacity, GamePlayersFewest, MCMcoApi::RoomMost))}));
+            const std::string session = MCMcoApi::MatchSession(match->SessionHex);
+            const std::unique_ptr<MCGameCopy> game =
+                StartGame(GameWords({"-host", std::to_string(port), "-session", session, "-maxplayers",
+                                     std::to_string(MCMcoApi::MatchCapacity(match->Capacity))}));
 
             if (_Options.Launch && game == nullptr)
             {

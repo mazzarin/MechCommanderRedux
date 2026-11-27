@@ -5,9 +5,12 @@
 #include "MCGameFolder.h"
 #include "MCHttpGet.h"
 #include "MCIceTrial.h"
+#include "MCMcoClient.h"
+#include "MCMcoKeysStore.h"
 #include "MCMcoProbe.h"
 #include "MCMemorySystem.h"
 #include "MCRestart.h"
+#include "MCSystemTrust.h"
 #include "MCTelemetryBackend.h"
 #include "MCVersion.h"
 #include "MCWebSocketOpen.h"
@@ -21,6 +24,8 @@
 #include "lib/MCFatal.h"
 #include "lib/MCThreadKeeper.h"
 #include "network/MCInternetGame.h"
+#include "network/MCMcoContent.h"
+#include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCIntroNote.h"
 #include "network/MCRejoinNote.h"
@@ -634,6 +639,37 @@ namespace
                      module != nullptr ? std::string(abl->FileName()).c_str() : "?", abl->StatementCount(),
                      abl->CallDepth());
     }
+
+    /// <summary>
+    /// MechCommander Online in the game (SPEC-mco-rooms.md): this copy as MCO's client, its sign-in kept in the system's
+    /// store, its matches over MCO's relay checked by this computer's trust, the room's data fingerprinted as MCO's
+    /// launcher does (the game's data overlaid by the user folder's).
+    /// </summary>
+    void SetupMco(const MCLaunchOptions& options)
+    {
+        auto client = MCMcoThisClient(options.UserFolder);
+
+        if (!client)
+        {
+            SDL_Log("MechCommander Online isn't in this game: %s", client.error().c_str());
+            return;
+        }
+
+        const std::shared_ptr<const MCTlsLink::MCTrust> trust = MCMakeSystemTrust();
+        MCMcoRooms::Setup({.Get = MCMakeHttpGet,
+                           .Client = std::move(*client),
+                           .Keys = MCMakeMcoKeys(),
+                           .Dial =
+                               [trust](const MCMcoApi::MCMatch& match)
+                           {
+                               return MCMcoBridge::TlsDial({.Host = match.RelayHost,
+                                                            .Port = match.RelayPort,
+                                                            .TimeoutMs = MCMcoBridge::RelayConnectMs,
+                                                            .Trust = std::cref(*trust)});
+                           },
+                           .Content = [game = options.DataFolder, user = options.UserFolder]
+                           { return MCMcoContent::Fingerprint(game, user); }});
+    }
 }
 
 #ifdef _WIN32
@@ -936,8 +972,11 @@ int main(int argc, char** argv)
     // The HD art frames kept, in memory and on the GPU, by what this machine says it can spare.
     MCMemoryRoom::SetSystem(MCMakeMemorySystem());
     MCInternetGame::Setup({.Open = MCOpenWebSocket, .Get = MCMakeHttpGet, .Version = MC_VERSION_SHOWN});
+    SetupMco(*options);
     // An internet game's leaving reaches the service before the GUI stops (RunGame ends it, waiting up to this).
     const int result = RunGame(options->GameCommandLine, InternetLeaveWait);
+    // MechCommander Online's thread ends (a player whose polls stop drops out of its lobby and rooms).
+    MCMcoRooms::Release();
 
     // The threads let go of as their objects went (a socket's finishing its close, a request's stopping) are joined:
     // each ends within its own wait (a socket's close a second at most).

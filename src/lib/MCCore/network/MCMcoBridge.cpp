@@ -1065,6 +1065,18 @@ namespace MCMcoBridge
         }
     }
 
+    /// <summary>A port free for both the host game's TCP and UDP on every interface, or 0.</summary>
+    uint16_t FreeGamePort()
+    {
+        MCSocketTransport sockets;
+        const MCSocket::Handle tcp = sockets.ListenTcpOn(0, 0);
+        const uint16_t port = tcp == MCSocket::InvalidHandle ? 0 : sockets.LocalPort(tcp);
+        const MCSocket::Handle udp = port == 0 ? MCSocket::InvalidHandle : sockets.OpenUdpOn(0, port);
+        sockets.Close(tcp);
+        sockets.Close(udp);
+        return udp == MCSocket::InvalidHandle ? 0 : port;
+    }
+
     bool WaitForHostGame(uint16_t gamePort, int timeoutMs, const std::atomic<bool>& cancel)
     {
         MCSocketTransport sockets;

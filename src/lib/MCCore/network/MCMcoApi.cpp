@@ -593,6 +593,54 @@ namespace MCMcoApi
         return line;
     }
 
+    std::string MatchName(std::string_view username)
+    {
+        constexpr unsigned char Delete = 0x7f;
+        constexpr unsigned char C1Lead = 0xc2;
+        constexpr unsigned char C1Last = 0x9f;
+        constexpr unsigned char ContinuationMask = 0xc0;
+        constexpr unsigned char Continuation = 0x80;
+        std::string name;
+        size_t characters = 0;
+
+        for (size_t i = 0; i < username.size() && characters <= MatchNameMost; i++)
+        {
+            const auto byte = static_cast<unsigned char>(username[i]);
+
+            // A C1 control is U+0080-U+009F: 0xC2 then 0x80-0x9F in UTF-8.
+            if (byte < ' ' || byte == Delete ||
+                (byte == C1Lead && i + 1 < username.size() && static_cast<unsigned char>(username[i + 1]) <= C1Last))
+            {
+                i += byte == C1Lead ? 1 : 0;
+                continue;
+            }
+
+            const bool starts = (byte & ContinuationMask) != Continuation;
+            characters += starts ? 1 : 0;
+
+            if (starts && characters > MatchNameMost)
+            {
+                break;
+            }
+
+            name += static_cast<char>(byte);
+        }
+
+        return name.empty() ? std::string(MatchNameNone) : name;
+    }
+
+    std::string MatchSession(std::string_view sessionHex)
+    {
+        constexpr std::string_view Prefix = "MCO ";
+        constexpr size_t Digits = 12;
+        return std::format("{}{}", Prefix, sessionHex.substr(0, Digits));
+    }
+
+    int32_t MatchCapacity(int32_t capacity)
+    {
+        return std::clamp(capacity, MatchFewest, RoomMost);
+    }
+
     MCService::MCService(MCHttpSource::MCGet& transfer, MCClient client)
         : _Transfer(transfer), _Client(std::move(client))
     {
@@ -660,6 +708,55 @@ namespace MCMcoApi
                                                     {"peer_token", guest.PeerToken},
                                                     {"account_token", guest.AccountToken},
                                                     {"username", username},
+                                                    {"email", email},
+                                                    {"password", password}}));
+
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+
+        return SignInFrom(answer->Object);
+    }
+
+    MCResult<MCSignIn> MCService::Resume(std::string_view accountToken, std::string_view clientId)
+    {
+        const auto answer = AskAccount(AccountBody("session", _Client.DeviceId, {{"account_token", accountToken}}));
+
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+
+        // As the launcher holds it: the account must be the one the token was kept for.
+        const auto account = answer->Object.find("account");
+
+        if (account == answer->Object.end() || !account->is_object() ||
+            !SameId(TextOf(*account, "client_id"), clientId))
+        {
+            return std::unexpected(MCError{.Message = "The account service sent another account for the kept sign-in.",
+                                           .Code = std::string(InvalidResponseCode)});
+        }
+
+        MCSignIn signIn{.AccountToken = std::string(accountToken),
+                        .ClientId = TextOf(*account, "client_id"),
+                        .Username = std::string(DefaultUsername)};
+
+        if (const auto profile = answer->Object.find("profile");
+            profile != answer->Object.end() && profile->is_object())
+        {
+            signIn.Username = TextOf(*profile, "username", DefaultUsername);
+            signIn.PlayerId = NumberOf(*profile, "player_id", 0);
+        }
+
+        return signIn;
+    }
+
+    MCResult<MCSignIn> MCService::Secure(const MCPeer& guest, std::string_view email, std::string_view password)
+    {
+        const auto answer = AskAccount(AccountBody("secure", _Client.DeviceId,
+                                                   {{"client_id", guest.ClientId},
+                                                    {"peer_token", guest.PeerToken},
                                                     {"email", email},
                                                     {"password", password}}));
 

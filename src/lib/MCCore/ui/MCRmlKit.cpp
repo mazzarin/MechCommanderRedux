@@ -829,12 +829,21 @@ void MCRmlKit::Update(Rml::Context& context)
         std::string right;
         std::string group;
 
+        // Each the nearest's: a card with only a right button's (the room's REMOVE) keeps it under its parents.
         for (Rml::Element* under = hover; under != nullptr && under->GetOwnerDocument() == document && hint.empty();
              under = under->GetParentNode())
         {
             hint = under->GetAttribute<Rml::String>(HintAttribute, "");
-            right = under->GetAttribute<Rml::String>(RightHintAttribute, "");
-            group = under->GetAttribute<Rml::String>(GroupHintAttribute, "");
+
+            if (right.empty())
+            {
+                right = under->GetAttribute<Rml::String>(RightHintAttribute, "");
+            }
+
+            if (group.empty())
+            {
+                group = under->GetAttribute<Rml::String>(GroupHintAttribute, "");
+            }
         }
 
         // The right button's first (as DEPLOY's frames: the send, the send to a group, then the drag), each a hint.

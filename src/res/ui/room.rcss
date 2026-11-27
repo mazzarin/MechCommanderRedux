@@ -197,6 +197,10 @@
 .person:hover { background-color: #1b2c38; border-left-color: #1b2c38; }
 .person.me:hover { border-left-color: #7cd4ec; }
 .slot.drop, .pool-drop.drop { background-color: #12222e; }
+/* Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): the host's keys reach every other player's card, for REMOVE's
+   Enter; a card with the keys shows its TEAM 1 and TEAM 2, as one under the pointer does. */
+.person.removable { tab-index: auto; nav: auto; focus: auto; }
+.person.removable:focus-visible .button.small { opacity: 1; }
 
 /* The RP box the host types in: its number in the data's cream, as the frames have it. */
 input.text.field.small.rp-box { width: 48dp; color: #fcfcb8; }

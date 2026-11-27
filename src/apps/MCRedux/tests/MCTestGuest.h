@@ -1253,9 +1253,10 @@ namespace MCTestGuest
 
     /// <summary>
     /// A player's click on the middle of <paramref name="element"/> of a remade screen: SDL's mouse move, button down
-    /// and up in the window's points (the menus' context is in its pixels), a frame after each.
+    /// and up in the window's points (the menus' context is in its pixels), a frame after each; the left button, or
+    /// <paramref name="mouseButton"/> (SDL's: the room's REMOVE is a right-click).
     /// </summary>
-    inline void RealClickOn(Rml::Element& element)
+    inline void RealClickOn(Rml::Element& element, uint8_t mouseButton = SDL_BUTTON_LEFT)
     {
         SDL_Window& window = MCInput::Display()->Window();
         const float density = std::max(SDL_GetWindowPixelDensity(&window), 1.0f);
@@ -1275,7 +1276,7 @@ namespace MCTestGuest
             SDL_Event button{};
             button.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
             button.button.windowID = SDL_GetWindowID(&window);
-            button.button.button = SDL_BUTTON_LEFT;
+            button.button.button = mouseButton;
             button.button.down = down;
             button.button.clicks = 1;
             button.button.x = x;

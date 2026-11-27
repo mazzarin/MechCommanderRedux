@@ -17,6 +17,7 @@
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMcoSeats.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRemove.h"
 #include "ui/MCRmlArt.h"
 #include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
@@ -63,6 +64,23 @@ namespace
     constexpr std::string_view SomeWaitFormat = "{} are waiting in MechCommander Online.";
     constexpr std::string_view GetReadyFormat = "Waiting for {} to get ready.";
     constexpr std::string_view LetInFailedFormat = "Couldn't let {} in. Try again.";
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): the host's REMOVE on another player's card (room.rml's
+    /// removable cards in the teams' column: a player's id, or MCO's waiting player's name), asked first.
+    /// </summary>
+    constexpr const char* TeamsId = "teams";
+    constexpr const char* RemovableClass = "removable";
+    constexpr const char* RemoveAttribute = "data-remove";
+    constexpr const char* RemoveNameAttribute = "data-remove-name";
+    constexpr std::string_view RemoveQuestionFormat = "Remove {} from the game?";
+    constexpr std::string_view RemoveWord = "Remove";
+    /// <summary>RmlUi's mouse buttons' numbers: the right one's.</summary>
+    constexpr int RightButton = 1;
+    /// <summary>The hint line's keys: ENTER says the chat's line, or removes the player whose card has the keys.</summary>
+    constexpr std::string_view EnterKey = "ENTER";
+    constexpr std::string_view EscapeKey = "ESC";
+    constexpr std::string_view SayWord = "Say";
+    constexpr std::string_view LeaveWord = "Leave";
 
     /// <summary>The kit's choices of the tech base switch: Inner Sphere, then Clan.</summary>
     constexpr int InnerSphereChoice = 0;
@@ -143,7 +161,7 @@ namespace
 MCRoomScreen::MCRoomScreen()
 {
     SetDocument(RoomDocument);
-    Keys = {{"ENTER", "Say"}, {"ESC", "Leave"}};
+    Keys = {{std::string(EnterKey), std::string(SayWord)}, {std::string(EscapeKey), std::string(LeaveWord)}};
     Back = [] { MCScreenFlow::Back(); };
 }
 
@@ -237,6 +255,25 @@ void MCRoomScreen::OnLoaded(Rml::ElementDocument& /*document*/)
     OnClick("change-map", [this] { PressChooseMap(); });
     OnClick("view-options", [this] { PressOptions(); });
     OnClick("update", [this] { PressUpdate(); });
+    // Port-only (Redux HD): the host's REMOVE on another player's card, by its right-click (Enter: OnKey).
+    Listen(TeamsId, Rml::EventId::Mousedown,
+           [this](Rml::Event& event)
+           {
+               if (event.GetParameter<int>("button", 0) != RightButton)
+               {
+                   return;
+               }
+
+               for (const Rml::Element* card = event.GetTargetElement(); card != nullptr; card = card->GetParentNode())
+               {
+                   if (card->IsClassSet(RemovableClass))
+                   {
+                       RemoveCard(*card);
+                       return;
+                   }
+               }
+           });
+    TakeKeysFirst();
 
     for (const int8_t team : {MCRoomModel::Team1, MCRoomModel::Team2})
     {
@@ -304,10 +341,20 @@ void MCRoomScreen::OnHide()
 {
     SDL_Log("Room: hidden");
     _Dragged.reset();
+
+    if (const std::shared_ptr<MCQuestionWindow> question = _Question.Lock(); question != nullptr)
+    {
+        question->Close();
+    }
 }
 
 void MCRoomScreen::OnDestroy()
 {
+    if (const std::shared_ptr<MCQuestionWindow> question = _Question.Lock(); question != nullptr)
+    {
+        question->Close();
+    }
+
     _Model.reset();
     MCRmlScreen::OnDestroy();
 }
@@ -323,6 +370,146 @@ void MCRoomScreen::OnFrame()
     Room().Tend();
     ShowRoom();
     ShowControls();
+    ShowCardKeys();
+}
+
+bool MCRoomScreen::OnKey(int key, int /*modifiers*/)
+{
+    if (key != Rml::Input::KI_RETURN && key != Rml::Input::KI_NUMPADENTER)
+    {
+        return false;
+    }
+
+    const MCOptionalRef<const Rml::Element> card = CardWithKeys();
+
+    if (!card.has_value())
+    {
+        return false;
+    }
+
+    RemoveCard(card->get());
+    return true;
+}
+
+MCOptionalRef<const Rml::Element> MCRoomScreen::CardWithKeys() const
+{
+    const MCOptionalRef<Rml::ElementDocument> document = Document();
+    const Rml::Element* focused = document.has_value() && document->get().GetContext() != nullptr
+                                      ? document->get().GetContext()->GetFocusElement()
+                                      : nullptr;
+
+    // Only the card itself: its TEAM 1 and TEAM 2 take their own Enter.
+    return focused != nullptr && focused->IsClassSet(RemovableClass) ? MCOptionalRef<const Rml::Element>(*focused)
+                                                                     : std::nullopt;
+}
+
+void MCRoomScreen::PressRemove(uint32_t playerId)
+{
+    const std::optional<std::string> name = OtherPlayerName(playerId);
+
+    if (!name.has_value())
+    {
+        SDL_Log("Room: REMOVE on player %u, who has no other player's card here", playerId);
+        return;
+    }
+
+    AskRemove(*name,
+              [playerId, name = *name]
+              {
+                  if (!MCRemove::Player(playerId))
+                  {
+                      SDL_Log("Room: %s couldn't be removed (gone, or the room's battle begun)", name.c_str());
+                  }
+              });
+}
+
+void MCRoomScreen::PressRemoveWaiting(const std::string& name)
+{
+    if (std::ranges::none_of(_Waiting, [&name](const MCWaitingCard& card) { return card.Name == name; }))
+    {
+        SDL_Log("Room: REMOVE on %s, who isn't waiting here", name.c_str());
+        return;
+    }
+
+    AskRemove(name,
+              [name]
+              {
+                  if (!MCRemove::Waiting(name))
+                  {
+                      SDL_Log("Room: %s couldn't be removed (no longer in MCO's room)", name.c_str());
+                  }
+              });
+}
+
+void MCRoomScreen::AskRemove(std::string_view name, std::function<void()> remove)
+{
+    if (!_Hosting || _Question.Lock() != nullptr)
+    {
+        return;
+    }
+
+    SDL_Log("Room: REMOVE asked of %.*s", static_cast<int>(name.size()), name.data());
+    _Question = MCQuestionWindow::Ask(*this, std::format(RemoveQuestionFormat, name), std::string(RemoveWord),
+                                      std::move(remove), {});
+}
+
+void MCRoomScreen::RemoveCard(const Rml::Element& card)
+{
+    if (const std::string name = card.GetAttribute<Rml::String>(RemoveNameAttribute, ""); !name.empty())
+    {
+        PressRemoveWaiting(name);
+        return;
+    }
+
+    if (const int playerId = card.GetAttribute<int>(RemoveAttribute, 0); playerId > 0)
+    {
+        PressRemove(static_cast<uint32_t>(playerId));
+    }
+}
+
+std::optional<std::string> MCRoomScreen::OtherPlayerName(uint32_t playerId) const
+{
+    const auto other = [playerId](const auto& card)
+    {
+        if constexpr (requires { card.Open; })
+        {
+            if (card.Open)
+            {
+                return false;
+            }
+        }
+
+        return !card.Me && std::cmp_equal(card.Id, playerId);
+    };
+
+    const auto in = [&other](const auto& cards) -> std::optional<std::string>
+    {
+        const auto found = std::ranges::find_if(cards, other);
+        return found != cards.end() ? std::optional(found->Name) : std::nullopt;
+    };
+
+    if (std::optional<std::string> name = in(_Slots1))
+    {
+        return name;
+    }
+
+    if (std::optional<std::string> name = in(_Slots2))
+    {
+        return name;
+    }
+
+    return in(_Pool);
+}
+
+void MCRoomScreen::ShowCardKeys()
+{
+    const std::string_view enter = CardWithKeys().has_value() ? RemoveWord : SayWord;
+
+    if (Keys.empty() || Keys.front().Does != enter)
+    {
+        Keys = {{std::string(EnterKey), std::string(enter)}, {std::string(EscapeKey), std::string(LeaveWord)}};
+        ShowKeys();
+    }
 }
 
 template <typename T> void MCRoomScreen::Keep(const char* name, T& value, T now)

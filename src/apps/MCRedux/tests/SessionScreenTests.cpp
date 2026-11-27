@@ -4,6 +4,7 @@
 #include "ScreenInput.h"
 #include "MCScratchFolder.h"
 #include "MCTestGuest.h"
+#include "RemadeScreens.h"
 #include "logistics/MCMatchMaps.h"
 #include "logistics/MCChooseMapWindow.h"
 #include "MCMenusPictures.h"
@@ -22,6 +23,7 @@
 #include "logistics/MCMatchOptionRows.h"
 #include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCMenuScreens.h"
+#include "logistics/MCQuestionWindow.h"
 #include "logistics/MCRoomScreen.h"
 #include "main/MCWeaponBans.h"
 #include "logistics/MCLogChat.h"
@@ -33,6 +35,7 @@
 #include "network/MCGameDataHash.h"
 #include "network/MCMcoSeats.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRemove.h"
 #include "network/MCRoomEnd.h"
 #include "platform/MCDirectPlay.h"
 #include "platform/MCDisplay.h"
@@ -1223,6 +1226,129 @@ TEST_CASE_ISOLATED("game: a room shows MCO's waiting players, and its host lets 
     MCMcoSeats::SetWaitingForTests(std::vector{ClannerReady});
     Settle();
     CHECK_EQ(room.Seen().Status, std::string("Clanner is waiting in MechCommander Online."));
+}
+
+namespace
+{
+    /// <summary>The REMOVE test's host's address, beside the MCO waiting test's (--jobs).</summary>
+    constexpr std::string_view RemoveHostAddress = "127.0.0.1:29013";
+
+    /// <summary>REMOVE's question over the room: its heading; empty while none shows.</summary>
+    std::string RemoveQuestion()
+    {
+        const std::shared_ptr<MCQuestionWindow> question = MCRemadeTest::OnTop<MCQuestionWindow>();
+        return question != nullptr ? MCRemadeTest::Words(*question, "heading") : std::string();
+    }
+
+    /// <summary>REMOVE's question answered with its REMOVE.</summary>
+    void PressRemoveAnswer()
+    {
+        const std::shared_ptr<MCQuestionWindow> question = MCRemadeTest::OnTop<MCQuestionWindow>();
+        REQUIRE(question != nullptr);
+        REQUIRE(MCRemadeTest::Press(*question, "yes"));
+        Settle();
+    }
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "REMOVE", in the host's room: a right-click on another player's card, or Enter with the keys
+/// on it, asks "Remove Ann from the game?" first; Escape keeps them, REMOVE takes them out (MCRemove). A left click
+/// asks nothing (it's the drag's). MCO's waiting player's card the same; the host's own card has no REMOVE. While the
+/// keys are on a card the hint line says ENTER removes. Drawn at the frames' windows (--shots saves them).
+/// </summary>
+TEST_CASE_ISOLATED("game: the host's REMOVE on a room's card asks first, by a right-click or Enter, then takes the "
+                   "player out")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    using MCMenusPictures::CheckMenusFrames;
+    REQUIRE(MCTestGame::StartLogistics());
+    const MCTestsMcoGoes mcoGoes;
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.ConnectTcp(RemoveHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Steel Rain", 6);
+    Settle();
+    REQUIRE(manager.DirectPlay != nullptr);
+    Guest ann("Ann");
+    REQUIRE(ann.Join(*manager.DirectPlay, RemoveHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()); }));
+    MCMcoSeats::SetWaitingForTests(std::vector{ClannerReady});
+    Settle();
+    REQUIRE(RoomScreenShown());
+    MCRoomScreen& room = *RoomScreen();
+    const MCOptionalRef<Rml::ElementDocument> document = room.Document();
+    REQUIRE(document.has_value());
+    // The room's cards are made again as it changes: each found as it's used.
+    const auto cardOf = [&document](const std::string& attribute, const std::string& value) -> Rml::Element*
+    {
+        Rml::ElementList cards;
+        document->get().QuerySelectorAll(cards, ".person.removable");
+        const auto found = std::ranges::find_if(cards, [&](const Rml::Element* card)
+                                                { return card->GetAttribute<Rml::String>(attribute, "") == value; });
+        return found != cards.end() ? *found : nullptr;
+    };
+
+    const std::string annId = std::to_string(ann.Id());
+
+    // The host's own card has none; Ann's says what its right button does.
+    Rml::Element* mine = document->get().QuerySelector(".person.me");
+    REQUIRE(mine != nullptr);
+    CHECK(!mine->IsClassSet("removable"));
+    REQUIRE(cardOf("data-remove", annId) != nullptr);
+    CHECK_EQ(cardOf("data-remove", annId)->GetAttribute<Rml::String>("data-hint-right", ""), std::string("Remove"));
+
+    // A left click asks nothing; a right-click asks, and Escape keeps Ann.
+    MCTestGuest::RealClickOn(*cardOf("data-remove", annId));
+    Settle();
+    CHECK_EQ(RemoveQuestion(), std::string());
+    MCTestGuest::RealClickOn(*cardOf("data-remove", annId), SDL_BUTTON_RIGHT);
+    Settle();
+    CHECK_EQ(RemoveQuestion(), std::string("Remove Ann from the game?"));
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    Settle();
+    CHECK_EQ(RemoveQuestion(), std::string());
+    CHECK(MCTestGuest::RoomShows(ann.Id()));
+    CHECK(ann.RoomEnds().empty());
+
+    // The keys on Ann's card (from the chat's box, as a Tab brings them; the click left them there without the ring):
+    // its ring, TEAM 1 and TEAM 2 shown, the hint line's ENTER removes, and Enter asks; REMOVE takes Ann out.
+    Rml::Element* say = MCTestGuest::ElementOf(room, "say");
+    REQUIRE(say != nullptr);
+    say->Focus(true);
+    Settle();
+    cardOf("data-remove", annId)->Focus(true);
+    Settle();
+    CHECK(cardOf("data-remove", annId)->IsPseudoClassSet("focus-visible"));
+    REQUIRE(!room.Keys.empty());
+    CHECK_EQ(room.Keys.front().Does, std::string("Remove"));
+    CheckMenusFrames("room remove card", {0xd4b9cd6b, 0x25396bce, 0x7f8289c5});
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    Settle();
+    REQUIRE_EQ(RemoveQuestion(), std::string("Remove Ann from the game?"));
+    CheckMenusFrames("room remove", {0x4c51b991, 0x9a2155ea, 0x1ef3c148});
+    PressRemoveAnswer();
+    REQUIRE(SettleUntil([&] { return ann.Lost(); }));
+    Settle();
+    CHECK((ann.RoomEnds() == std::vector<int32_t>{std::to_underlying(MCRoomEnd::MCHow::Removed)}));
+    CHECK(!MCTestGuest::RoomShows(ann.Id()));
+    CHECK(cardOf("data-remove", annId) == nullptr);
+
+    // MCO's waiting Clanner: asked the same way; REMOVE takes Clanner out of MCO's room.
+    REQUIRE(cardOf("data-remove-name", "Clanner") != nullptr);
+    cardOf("data-remove-name", "Clanner")->Focus(true);
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    Settle();
+    REQUIRE_EQ(RemoveQuestion(), std::string("Remove Clanner from the game?"));
+    PressRemoveAnswer();
+    CHECK(room.Seen().Waiting.empty());
+    CHECK_EQ(RemoveQuestion(), std::string());
+    CHECK_EQ(room.Keys.front().Does, std::string("Say"));
+    MCRemove::SetClockForTests({});
 }
 
 /// <summary>

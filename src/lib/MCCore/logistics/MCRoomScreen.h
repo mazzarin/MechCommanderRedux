@@ -5,12 +5,14 @@
 // players on no team as cards the host drags onto a team or sends with TEAM 1 and TEAM 2; the map with CHOOSE MAP, the
 // match options as played with VIEW or CHANGE; the chat; along the foot LEAVE, whom the room waits for and the host's
 // BEGIN PLANNING. Port-only (Redux HD; SPEC-mco-hosting.md): MCO's players waiting in an internet game's room as WAITING
-// cards after the players on no team, said along the foot, the host's LET IN in BEGIN PLANNING's place while they wait.
+// cards after the players on no team, said along the foot, the host's LET IN in BEGIN PLANNING's place while they wait;
+// the host's REMOVE on any other player's card, waiting ones too (a right-click on it, or Enter with the keys on it).
 // It shows in the 1998 session screen's place (MCSessionScreen::ShowGuiWindow), which stays logistics'
 // screen, hidden, while its logic moves into the model: the flow's "room" kind is the same, what is sent is unchanged.
 
 #include "logistics/MCChatView.h"
 #include "logistics/MCChooseMapWindow.h"
+#include "logistics/MCQuestionWindow.h"
 #include "logistics/MCRoomModel.h"
 #include "ui/MCRmlScreen.h"
 
@@ -85,8 +87,18 @@ public:
     void PressChooseMap();
     void PressOptions();
     void PressUpdate();
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): the host's REMOVE on another player's card (a right-click
+    /// on it, or Enter with the keys on it), asked first: "Remove Ann from the game?", its REMOVE taking them out
+    /// (MCRemove::Player). Nothing for a guest, or on the host's own card.
+    /// </summary>
+    void PressRemove(uint32_t playerId);
+    /// <summary>The host's REMOVE on the card of MCO's waiting player <paramref name="name"/>, asked the same way.</summary>
+    void PressRemoveWaiting(const std::string& name);
 
     void OnFrame() override;
+    /// <summary>Enter with the keys on a card the host removes asks REMOVE's question (the chat's box keeps its Enter).</summary>
+    bool OnKey(int key, int modifiers) override;
     void OnDestroy() override;
 
 protected:
@@ -154,6 +166,16 @@ private:
     std::string McoLine(const std::vector<MCMcoSeats::MCWaiting>& waiting) const;
     /// <summary>The host's switches and points boxes set from the model (not a box being typed in).</summary>
     void ShowControls();
+    /// <summary>Port-only (Redux HD): REMOVE's question for <paramref name="name"/>, its REMOVE running <paramref name="remove"/>.</summary>
+    void AskRemove(std::string_view name, std::function<void()> remove);
+    /// <summary>REMOVE on the card <paramref name="card"/> (a removable one: another player's, the host's room).</summary>
+    void RemoveCard(const Rml::Element& card);
+    /// <summary>The name on another player's card in the room, <paramref name="playerId"/>'s; none without one.</summary>
+    std::optional<std::string> OtherPlayerName(uint32_t playerId) const;
+    /// <summary>The card the keys are on, when the host removes it (not its TEAM 1 or TEAM 2); none otherwise.</summary>
+    MCOptionalRef<const Rml::Element> CardWithKeys() const;
+    /// <summary>The hint line's keys: ENTER removes while the keys are on a card the host removes, else says a line.</summary>
+    void ShowCardKeys();
     /// <summary>The model's value <paramref name="name"/> set to <paramref name="now"/>, said when it changed.</summary>
     template <typename T> void Keep(const char* name, T& value, T now);
 
@@ -205,6 +227,8 @@ private:
     bool _CanLetIn = false;
     std::string _StartWord;
     bool _StartOn = false;
+    /// <summary>Port-only (Redux HD): REMOVE's question while it shows (closed with the room).</summary>
+    MCGuiHandle<MCQuestionWindow> _Question;
 };
 
 /// <summary>

@@ -10,7 +10,8 @@
      the host's CHANGE, the match options as played, VIEW or CHANGE opening MATCH OPTIONS) and the chat; along the
      bottom LEAVE, whom the room waits for and the host's BEGIN PLANNING. The room's model (logistics/MCRoomModel).
      Port-only (Redux HD; SPEC-mco-hosting.md): MCO's players waiting as WAITING cards after the players on no team,
-     never placed; the foot's line says who waits, and the host's button is LET IN while they do. -->
+     never placed; the foot's line says who waits, and the host's button is LET IN while they do. The host's REMOVE on
+     any other player's card (a right-click, or Enter with the keys on it), asked first (MCRoomScreen). -->
 <body class="night" data-model="room">
     <div class="stage16">
         <div id="room" class="content">
@@ -34,6 +35,8 @@
                         <div data-for="slot, s : slots1">
                             <div class="slot" data-if="slot.open" data-event-dragdrop="drop(1, s)">Open</div>
                             <div class="person in-team" data-if="!slot.open" data-class-me="slot.me" data-class-drags="can_teams"
+                                 data-class-removable="hosting &amp;&amp; !slot.me" data-attr-data-remove="slot.id"
+                                 data-attr-data-hint-right="hosting &amp;&amp; !slot.me ? 'Remove' : ''"
                                  data-event-dragstart="drag(slot.id)" data-event-dragdrop="drop(1, s)">
                                 <div data-attr-class="'name ' + slot.colour">{{slot.name}}</div>
                                 <div class="host" data-if="slot.host">Host</div>
@@ -54,6 +57,8 @@
                         <div data-for="slot, s : slots2">
                             <div class="slot" data-if="slot.open" data-event-dragdrop="drop(2, s)">Open</div>
                             <div class="person in-team" data-if="!slot.open" data-class-me="slot.me" data-class-drags="can_teams"
+                                 data-class-removable="hosting &amp;&amp; !slot.me" data-attr-data-remove="slot.id"
+                                 data-attr-data-hint-right="hosting &amp;&amp; !slot.me ? 'Remove' : ''"
                                  data-event-dragstart="drag(slot.id)" data-event-dragdrop="drop(2, s)">
                                 <div data-attr-class="'name ' + slot.colour">{{slot.name}}</div>
                                 <div class="host" data-if="slot.host">Host</div>
@@ -65,6 +70,8 @@
                     <div class="pool-drop" id="pool" data-if="pool.size > 0 || waiting.size > 0" data-event-dragdrop="drop(0, 0)">
                         <div class="pool-head"><div class="pool-name">Not on a team</div><div class="grow"></div><div class="note" data-if="can_teams &amp;&amp; pool.size > 0">Drag a player onto a team.</div></div>
                         <div class="person" data-for="card : pool" data-class-me="card.me" data-class-drags="can_teams"
+                             data-class-removable="hosting &amp;&amp; !card.me" data-attr-data-remove="card.id"
+                             data-attr-data-hint-right="hosting &amp;&amp; !card.me ? 'Remove' : ''"
                              data-event-dragstart="drag(card.id)">
                             <div data-attr-class="'name ' + card.colour">{{card.name}}</div>
                             <div class="host" data-if="card.host">Host</div>
@@ -72,7 +79,8 @@
                             <div class="button small" data-if="can_teams" data-class-off="full1" data-event-click="join(card.id, 1)" data-hint="To team 1">Team 1</div>
                             <div class="button small" data-if="can_teams" data-class-off="full2" data-event-click="join(card.id, 2)" data-hint="To team 2">Team 2</div>
                         </div>
-                        <div class="person waiting" data-for="wait : waiting">
+                        <div class="person waiting" data-for="wait : waiting" data-class-removable="hosting"
+                             data-attr-data-remove-name="wait.name" data-attr-data-hint-right="hosting ? 'Remove' : ''">
                             <div class="name grey">{{wait.name}}</div>
                             <div class="note">{{wait.mark}}</div>
                             <div class="grow"></div>

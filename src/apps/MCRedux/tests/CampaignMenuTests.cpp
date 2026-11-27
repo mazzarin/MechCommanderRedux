@@ -867,8 +867,8 @@ TEST_CASE_ISOLATED("game: BRIEFING and DEPLOY draw the same on every machine")
 
     constexpr std::array<MCDrawn, 3> Drawn = {{
         {"briefing", {0xb4f5e466, 0x659f9d61, 0x100fcdac}},
-        {"deploy", {0x104d5470, 0x39cb2b77, 0x00f5c57f}},
-        {"deploy_heavy", {0x94d9dcb8, 0x8d1382ff, 0xdb8138ab}},
+        {"deploy", {0xd212a618, 0xf551684e, 0xb28ea3e0}},
+        {"deploy_heavy", {0xaa7e3835, 0x2936d178, 0x904bae86}},
     }};
 
     const auto drawEach = [&display, &clock](const MCDrawn& drawn)
@@ -2633,7 +2633,7 @@ TEST_CASE_ISOLATED(
     CHECK(tabs.LabUnit() != nullptr);
     CHECK(!tabs.Repairs());
     CHECK(!RepairForceShown(screen));
-    DrawnEach(*display, clock, "mechbay_mp", {0x8b571c86, 0xf8ab83d8, 0xa96bcadc});
+    DrawnEach(*display, clock, "mechbay_mp", {0xf532a67e, 0x8f4ec99f, 0x870381c9});
     CheckLaidOut(menus, "mechbay mp");
 }
 
@@ -4799,7 +4799,7 @@ TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY draw the same on every mac
 
     screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
-    DrawnEach(*display, clock, "purchase", {0xa1476088, 0x0781c9a4, 0xd886b784});
+    DrawnEach(*display, clock, "purchase", {0x2e1daaea, 0xb90fc3a6, 0xca358f5c});
     tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, FirstInStore(tabs));
     DrawnEach(*display, clock, "purchase_parts", {0xdb92758e, 0xb47a7eda, 0x2cb37df2});
@@ -4809,11 +4809,11 @@ TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY draw the same on every mac
     tabs.DealCancel();
 
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
-    DrawnEach(*display, clock, "mechbay", {0xedf82532, 0x64cc537c, 0xe451d10a});
+    DrawnEach(*display, clock, "mechbay", {0xbd037dae, 0x4b701986, 0xa8e970aa});
     ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
-    DrawnEach(*display, clock, "mechbay_repair", {0x9fc62d81, 0xe264aba0, 0x134b4583});
+    DrawnEach(*display, clock, "mechbay_repair", {0x8393a1d1, 0x79200992, 0xbe3ae2a7});
 }
 
 /// <summary>
@@ -5064,11 +5064,21 @@ TEST_CASE_ISOLATED(
 
 namespace
 {
-    /// <summary>The chip <paramref name="card"/>'s line <paramref name="line"/> (".who", ".what") draws: its letter, none without.</summary>
-    std::string ChipOn(Rml::Element& card, const std::string& line)
+    /// <summary>
+    /// The variant letter <paramref name="card"/>'s line <paramref name="line"/> (".who", ".what") draws after its name,
+    /// plain (no box): its letter, none without.
+    /// </summary>
+    std::string LetterOn(Rml::Element& card, const std::string& line)
     {
-        Rml::Element* chip = card.QuerySelector(line + " .vchip");
-        return chip != nullptr && chip->IsVisible(true) ? chip->GetInnerRML() : std::string();
+        Rml::Element* letter = card.QuerySelector(line + " .vchip");
+
+        if (letter == nullptr || !letter->IsVisible(true))
+        {
+            return std::string();
+        }
+
+        CHECK_EQ(letter->GetProperty<float>("border-left-width"), 0.0f);
+        return letter->GetInnerRML();
     }
 
     /// <summary>A store card's pips as drawn: a letter each, "s" shown, "o" none left, "c" in store (cream).</summary>
@@ -5092,14 +5102,16 @@ namespace
 }
 
 /// <summary>
-/// The user's variants A of 26 Nov: a 'Mech's variant letter in a chip after its chassis on every card (the store's,
-/// the INVENTORY's, FORCE's, DEPLOY's) and the lab's heading; three pips under a store 'Mech's picture (cream in store,
+/// The user's variants A of 26 Nov: a 'Mech's variant letter after its chassis, plain (the user's, 26 Nov: no box), on
+/// the INVENTORY's, FORCE's and DEPLOY's cards and the lab's heading, none on the store's cards (the user's, 26 Nov);
+/// three pips under a store 'Mech's picture (cream in store,
 /// an empty box none left, the one shown cyan); the details' VARIANT rows for 1998's variant buttons (the letter, the
 /// word, what it changes in its description's own words, how many are left; none left dim), a click or the keys
 /// (Down, ENTER) choosing as the buttons did; the description without the sentence the rows say. Laid out at every
 /// window the players' reports name.
 /// </summary>
-TEST_CASE_ISOLATED("game: a 'Mech's variant letter in a chip on every card, the store's pips and the VARIANT rows")
+TEST_CASE_ISOLATED(
+    "game: a 'Mech's variant letter after its name on the cards but the store's, its pips and the VARIANT rows")
 {
     if (!MCTestGame::Available())
     {
@@ -5124,7 +5136,7 @@ TEST_CASE_ISOLATED("game: a 'Mech's variant letter in a chip on every card, the 
         menus.Frame();
     };
 
-    // FORCE: each 'Mech's chassis under its MechWarrior's callsign, its letter in a chip after it.
+    // FORCE: each 'Mech's chassis under its MechWarrior's callsign, its letter after it.
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
     tabs.ChooseStock(MCLogisticsTabs::MCStock::Mechs);
     MCTestGame::RunFrame(FlowFrame);
@@ -5136,20 +5148,18 @@ TEST_CASE_ISOLATED("game: a 'Mech's variant letter in a chip on every card, the 
         const MCCampaignScreen::MCCard& card = tabs.ForceCards()[at];
         REQUIRE(card.Piloted);
         CHECK_EQ(card.What + " " + card.Letter, name);
-        CHECK_EQ(ChipOn(ForceCard(screen, at), ".what"), card.Letter);
-        CHECK_EQ(ChipOn(ForceCard(screen, at), ".who"), "");
+        CHECK_EQ(LetterOn(ForceCard(screen, at), ".what"), card.Letter);
+        CHECK_EQ(LetterOn(ForceCard(screen, at), ".who"), "");
     }
 
-    // The lab's heading: the chassis, the chip.
+    // The lab's heading: the chassis, the letter.
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     MCTestGame::RunFrame(FlowFrame);
     CHECK_EQ(tabs.LabName() + " " + tabs.ForceCards()[0].Letter, logistics->ForceMechList->Mechs[0]->FileName);
-    Rml::Element* labChip = ElementOf(screen, "lab").QuerySelector(".head .vchip");
-    REQUIRE(labChip != nullptr);
-    CHECK_EQ(labChip->GetInnerRML(), tabs.ForceCards()[0].Letter);
+    CHECK_EQ(LetterOn(ElementOf(screen, "lab"), ".head"), tabs.ForceCards()[0].Letter);
     laidOut("variants mechbay");
 
-    // The INVENTORY's MECHS: a 'Mech without a MechWarrior, its chassis first with the chip, NO PILOT under it.
+    // The INVENTORY's MECHS: a 'Mech without a MechWarrior, its chassis first with the letter, NO PILOT under it.
     const std::string sentName = logistics->ForceMechList->Mechs[1]->FileName;
     tabs.Send(MCLogisticsTabs::MCPlace::Force, 1);
     MCTestGame::RunFrame(FlowFrame);
@@ -5158,10 +5168,10 @@ TEST_CASE_ISOLATED("game: a 'Mech's variant letter in a chip on every card, the 
     CHECK(stored.Unpiloted);
     CHECK_EQ(stored.Who + " " + stored.Letter, sentName);
     CHECK_EQ(stored.What, std::string(MCCampaignScreen::NoPilotWord));
-    CHECK_EQ(ChipOn(ElementOf(screen, "stored0"), ".who"), stored.Letter);
+    CHECK_EQ(LetterOn(ElementOf(screen, "stored0"), ".who"), stored.Letter);
 
-    // PURCHASING: the store's first 'Mech its W sold out; its card the chassis and A's chip, its pips A shown, W none
-    // left, J in store.
+    // PURCHASING: the store's first 'Mech its W sold out; its card the chassis alone, its pips A shown, W none left, J
+    // in store.
     screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
     tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
     const std::shared_ptr<MCPurMech> purMech = logistics->PurMechList->Mechs.front();
@@ -5172,8 +5182,8 @@ TEST_CASE_ISOLATED("game: a 'Mech's variant letter in a chip on every card, the 
     MCTestGame::RunFrame(FlowFrame);
     const MCCampaignMenu::MCVariantName shownName = MCCampaignMenu::VariantName(purMech->Variants[0]->Name);
     CHECK_EQ(tabs.StoreGoods()[0].Who, shownName.Chassis);
-    CHECK_EQ(tabs.StoreGoods()[0].Letter, std::string("A"));
-    CHECK_EQ(ChipOn(ElementOf(screen, "store0"), ".who"), "A");
+    CHECK(tabs.StoreGoods()[0].Letter.empty());
+    CHECK_EQ(LetterOn(ElementOf(screen, "store0"), ".who"), "");
     CHECK_EQ(PipsOn(ElementOf(screen, "store0")), "soc");
 
     // Its details: the chassis, a VARIANT row each in 1998's order, what each changes in its description's words.
@@ -5202,12 +5212,12 @@ TEST_CASE_ISOLATED("game: a 'Mech's variant letter in a chip on every card, the 
     CHECK(!description->GetInnerRML().empty());
     CHECK(!description->GetInnerRML().contains("variant has"));
 
-    // A click on J's row shows J, as 1998's button: the store card's chip and pips follow.
+    // A click on J's row shows J, as 1998's button: the store card's pips follow.
     ClickOn(ElementOf(screen, "variant2"));
     MCTestGame::RunFrame(FlowFrame);
     CHECK_EQ(purMech->CurVariant, 2);
-    CHECK_EQ(tabs.StoreGoods()[0].Letter, std::string("J"));
-    CHECK_EQ(ChipOn(ElementOf(screen, "store0"), ".who"), "J");
+    CHECK(tabs.StoreGoods()[0].Letter.empty());
+    CHECK_EQ(LetterOn(ElementOf(screen, "store0"), ".who"), "");
     CHECK_EQ(PipsOn(ElementOf(screen, "store0")), "cos");
     CHECK(ElementOf(screen, "variant2").IsClassSet("on"));
 
@@ -5222,7 +5232,7 @@ TEST_CASE_ISOLATED("game: a 'Mech's variant letter in a chip on every card, the 
     CHECK(tabs.StoreGoods()[0].Off);
     CHECK_EQ(PipsOn(ElementOf(screen, "store0")), "coc");
 
-    // DEPLOY: each READY AREA card's chassis under its callsign, the chip after it.
+    // DEPLOY: each READY AREA card's chassis under its callsign, the letter after it.
     screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE(!screen.ReadyCards().empty());
@@ -5231,7 +5241,7 @@ TEST_CASE_ISOLATED("game: a 'Mech's variant letter in a chip on every card, the 
     {
         const MCCampaignScreen::MCCard& card = screen.ReadyCards()[at];
         CHECK(!card.Letter.empty());
-        CHECK_EQ(ChipOn(ElementOf(screen, std::format("ready{}", at)), ".what"), card.Letter);
+        CHECK_EQ(LetterOn(ElementOf(screen, std::format("ready{}", at)), ".what"), card.Letter);
     }
 
     laidOut("variants deploy");
@@ -5632,9 +5642,9 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
              ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Purchasing));
              CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
          },
-         0xbc291deb},
-        {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory")); }, 0x517540b3},
-        {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0x4b98896e},
+         0x75ced697},
+        {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory")); }, 0x920a17ef},
+        {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0xf7ef94b2},
         {"purchase_accept",
          [&]
          {
@@ -5643,31 +5653,31 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
              REQUIRE(!logistics->MechList->Mechs.empty());
              boughtMech = logistics->MechList->Mechs.back();
          },
-         0x2ac2dc7f},
-        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x9fd78afe},
+         0x650297b9},
+        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x169d8867},
         {"purchase_variant",
          [&]
          {
              ClickOn(ElementOf(screen, "store0"));
              ClickOn(ElementOf(screen, "variant1"));
          },
-         0xb7b8ce12},
+         0x03a46b85},
         {"purchase_scroll",
          [&]
          {
              Hover(ElementOf(screen, "store0"));
              MCScreenInput::RealWheel(-1);
          },
-         0x349c1eb7},
+         0x9dba50e0},
         {"purchase_too_poor",
          [&]
          {
              ResourcePoints = 0;
              DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory"));
          },
-         0x8bc9f160},
-        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0x64ddb3a5},
-        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x317d5f11},
+         0x557a336a},
+        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0xa5f73862},
+        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x7987da13},
         {"purchase_pilots_tab",
          [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0xf8842ceb},
         {"purchase_components_tab",
@@ -5682,27 +5692,27 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
          0xb3ae6f84},
         {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x08cc192d},
         {"purchase_vehicles_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0xd79e1fcf},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0xe8b39f8b},
         {"purchase_vehicle_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "inventory")); },
-         0xa22f9e3c},
-        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xf00e3847},
+         0x4104e53c},
+        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xfbb45f73},
         {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
-         0xd30b5ee3},
+         0xb18ccaf2},
         {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
-         0x2d4ea89b},
-        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0x74de45d7},
-        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0x8073cada},
-        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x49de9077},
-        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0xe2fa3324},
-        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x846f296e},
-        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x582e8c25},
+         0xd2706c5d},
+        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xfe70e5c9},
+        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0xf971d4a9},
+        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xa0cbeec4},
+        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0xa87b97b7},
+        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0xe663f415},
+        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x161ad3d2},
         {"repair_mount_laser",
          [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
-         0xd26e6b27},
+         0x546d5c74},
         {"repair_pilots_tab", [&]
-         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0xbbef5fb3},
-        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x23e169a3},
+         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0xde680d64},
+        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xec01d32c},
         {"repair_vehicles_tab",
          [&]
          {
@@ -5711,27 +5721,27 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
              ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::Mechs));
              ClickOn(ElementOf(screen, UnitCardId(tabs, logistics->VehicleList->Vehicles.back())));
          },
-         0x8643d9bf},
-        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x0cdffc54},
-        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x0cdffc54},
+         0xf0b44ed6},
+        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x60f3483a},
+        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x60f3483a},
         {"repair_mech_into_force",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0xbef39aa9},
-        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0xbef39aa9},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0xdec4f0df},
+        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0xdec4f0df},
         {"repair_mech_out",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "inventory")); }, 0xb6ead1c5},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "inventory")); }, 0x2378c657},
         {"repair_weapon_list_scroll",
          [&]
          {
              Hover(ElementOf(screen, "fit0"));
              MCScreenInput::RealWheel(-1);
          },
-         0xc50e4a81},
+         0x4dd97ff3},
         {"repair_first_mech_out", [&] { DragTo(ElementOf(screen, "force0"), ElementOf(screen, "inventory")); },
-         0xde5be714},
+         0xfd43fc0b},
         {"briefing_after_repair",
          [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xb9a0ae24},
         {"deploy_after_repair", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Deploy)); },
-         0xff98cc3b},
+         0xc898b6bf},
     }};
 
     for (size_t index = 0; index < steps.size(); index++)
@@ -5745,7 +5755,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0xe290c9d0u);
+    CHECK_EQ(frames, 0x26135c70u);
 }
 
 /// <summary>

@@ -202,7 +202,6 @@
 /* Picked but out of reach (a sold-out good, a variant none are left of): its words lighter on the teal, still dim. */
 #logistics .card.picked.off .who, #logistics .card.picked.off .what, #logistics .card.picked.off .t,
 #logistics .card.picked.off .row-t, #logistics .switch > .on.off { color: #a4b0bc; }
-#logistics .card.picked.off .vchip { border-color: #a4b0bc; color: #a4b0bc; }
 /* A good's name longer than the frames' (LogisticsTabs' LongName) in the details' size, so it fits its card. */
 #logistics .good .who.long, .card.lifted .who.long { font-size: 9.51dp; letter-spacing: 0; }
 /* The INVENTORY's switch a little tighter than the kit's, so MECHS, MECHWARRIORS and COMPONENTS fit its 204 units at
@@ -360,7 +359,7 @@
    room's map text. */
 #logistics .desc { padding-right: 1px; }
 
-/* ---- The user's variants A (26 Nov mocks): the letter in a chip (campaign.rcss), pips, the VARIANT rows ---- */
+/* ---- The user's variants A (26 Nov mocks): the letter after a name (campaign.rcss), pips, the VARIANT rows ---- */
 
 /* A store 'Mech's variants: three pips under its picture, cream for one in store, an empty box for one none are left
    of, the one shown cyan. */
@@ -382,8 +381,10 @@
 #logistics .vrow > .grow { flex: 1 1 0; }
 #logistics .vrow:hover { background-color: #1b2c38; }
 #logistics .vrow.on { background-color: #045454; }
-/* One chip width, so the words line up. */
-#logistics .vrow .vchip { width: 12dp; text-align: center; padding: 0dp; margin-left: 0dp; margin-right: 6dp; }
+/* A row's letter in a chip, one width, so the words line up. */
+#logistics .vrow .vchip { display: inline-block; box-sizing: border-box; width: 12dp; height: 12dp; margin-left: 0dp;
+                          margin-right: 6dp; border: 1dp #7cd4ec; font-size: 9.51dp; line-height: 10dp; font-weight: 600;
+                          letter-spacing: 0; text-align: center; text-transform: uppercase; color: #fcfcfc; }
 #logistics .vrow .vword { width: 54dp; font-size: 9.51dp; line-height: 18dp; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 #logistics .vrow .vsays { font-size: 8.75dp; line-height: 18dp; color: #a4b0bc; }
 #logistics .vrow.on .vsays { color: #c4ccd4; }

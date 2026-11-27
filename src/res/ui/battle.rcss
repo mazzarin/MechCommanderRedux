@@ -93,6 +93,9 @@ body.over-battle { background-color: transparent; }
    objectives (mission 6's six 'Mechs and five parts, the user's, 26 Nov), it scrolls there, its rail at its right and
    the keys reaching it as a text to read's (look.rcss), so every row is there to read and none runs past the panel. */
 .solo > .outcome > .salvage-box { flex: 1 1 0; }
+/* Its rail in the gap beside it, so its rows stay as wide as the objectives over them (the user's, 26 Nov). */
+.salvage-box > .scroller.long { right: -8dp; }
+.salvage-box > .fade { right: 0; }
 .salvage-row { display: flex; flex-direction: row; align-items: center; gap: 8dp; height: 26dp; border-bottom: 1dp #141e26; font-size: 11.63dp; line-height: 26dp; }
 .salvage-row > * { flex: 0 0 auto; }
 .salvage-row > .grow { flex: 1 1 0; }

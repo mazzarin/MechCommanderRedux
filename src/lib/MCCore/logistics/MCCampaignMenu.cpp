@@ -699,26 +699,26 @@ MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int s
     }
 
     // The name the store and the 'MECH BAY give it (the string table's), not its file's short one (COM-A): its chassis,
-    // the variant's letter in a chip after it (the user's variants A, 26 Nov).
+    // the variant's letter after it as plain text ("Raven A"; the user's, 26 Nov: the chip's box taken off).
     MCCampaignMenu::MCVariantName name = MCCampaignMenu::VariantName(mech.FileName);
     card.Letter = std::move(name.Letter);
 
-    const bool chip = !card.Letter.empty();
+    const size_t letter = card.Letter.empty() ? 0 : LetterLetters;
 
     if (warrior != nullptr)
     {
-        // Under the callsign (its line at the details' size already), a long chassis beside its chip in Fine.
+        // Under the callsign (its line at the details' size already), a long name in Fine.
         card.Who = warrior->Callsign;
         card.What = std::move(name.Chassis);
-        card.Long = chip && card.What.size() > ChipSmallNameLetters;
+        card.Long = card.What.size() + letter > SmallNameLetters;
     }
     else
     {
         // Without a MechWarrior: its name first, in its own case, NO PILOT under it; a long one smaller.
         card.Who = std::move(name.Chassis);
         card.What = std::string(NoPilotWord);
-        card.Long = card.Who.size() > (chip ? ChipNameLetters : UnitNameLetters);
-        card.Longer = card.Who.size() > (chip ? ChipSmallNameLetters : SmallNameLetters);
+        card.Long = card.Who.size() + letter > UnitNameLetters;
+        card.Longer = card.Who.size() + letter > SmallNameLetters;
     }
 
     card.Pilot = warrior != nullptr ? Pictured(PilotSource(warrior->Picture)) : std::string(NoPicture);

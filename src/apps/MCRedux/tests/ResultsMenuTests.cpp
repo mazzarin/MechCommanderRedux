@@ -437,7 +437,8 @@ TEST_CASE_ISOLATED(
 /// A long salvage (the user's, 26 Nov: "the salvage bar overflows": mission 6's six 'Mechs and five parts ran past the
 /// panel's foot, over the HUD strip): every 'Mech on mission 1's map salvaged and thirty parts, more rows than the room
 /// under the objectives holds at any window. At the frames' windows, 16:9 and 21:9 the list scrolls inside that room,
-/// its foot over the panel's, nothing spilling or cut; Up from NEXT MISSION takes the keys' focus to it, Down scrolls it
+/// its foot over the panel's, nothing spilling or cut, its rows as wide as the objectives over them (its rail in the gap
+/// beside it: the user's, 26 Nov, "why is salvage scroll a little narrower"); Up from NEXT MISSION takes the keys' focus to it, Down scrolls it
 /// to its last row, shown whole, and Down at its end goes on to NEXT MISSION.
 /// </summary>
 TEST_CASE_ISOLATED("game: a long salvage scrolls inside the results' panel, every row reached from the keys")
@@ -517,6 +518,7 @@ TEST_CASE_ISOLATED("game: a long salvage scrolls inside the results' panel, ever
         CHECK(bottom(box) <= top(foot) + Slack);
         CHECK(list->GetScrollHeight() > list->GetClientHeight() + Slack);
         CHECK(list->IsClassSet("long"));
+        CHECK(list->GetClientWidth() >= box.GetClientWidth() - Slack);
         MCScreenInput::SaveWindowShot(std::format("results_salvage_{}x{}", window.Width, window.Height));
     }
 

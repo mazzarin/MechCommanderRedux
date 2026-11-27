@@ -105,7 +105,7 @@ public:
         std::string Picture{MCCampaignScreen::NoPicture};
         std::string Who;
         std::string What;
-        /// <summary>A 'Mech's variant letter, in a chip after its chassis (Who).</summary>
+        /// <summary>An owned 'Mech's variant letter, plain after its chassis (Who); none on the store's cards.</summary>
         std::string Letter;
         /// <summary>A store 'Mech's variants, as pips under its picture (none for anything else).</summary>
         std::vector<MCVariantRow> Variants;
@@ -438,7 +438,7 @@ private:
     // The lab.
     int _LabKind = 0;
     std::string _LabName;
-    /// <summary>The lab's 'Mech's variant letter, in a chip after its chassis.</summary>
+    /// <summary>The lab's 'Mech's variant letter, plain after its chassis.</summary>
     std::string _LabLetter;
     std::string _LabWhat;
     std::string _LabSpeed;

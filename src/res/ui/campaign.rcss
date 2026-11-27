@@ -190,15 +190,9 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
 #deploy .card.unit.pilotless .what { text-transform: uppercase; letter-spacing: 0.04em; }
 #deploy .card.pilotless .who.long { font-size: 9.51dp; letter-spacing: 0; }
 #deploy .card.pilotless .who.long.longer { font-size: 8.75dp; }
-/* A 'Mech's variant letter in a chip after its chassis (the user's variants A, 26 Nov): on every card (the store's, the
-   INVENTORY's, FORCE's, DEPLOY's), a heading's and the details' VARIANT rows alike; dim on a dim card. */
-.vchip { display: inline-block; box-sizing: border-box; height: 12dp; padding: 0dp 2dp; margin-left: 3dp;
-         border: 1dp #7cd4ec; font-size: 9.51dp; line-height: 10dp; font-weight: 600; letter-spacing: 0;
-         text-transform: uppercase; color: #fcfcfc; vertical-align: top; }
-.card .who .vchip { margin-top: 1dp; }
-.card .what .vchip { height: 11dp; line-height: 9dp; margin-top: 0.5dp; }
-.card.off .vchip { border-color: #6c7a88; color: #6c7a88; }
-/* A unit card's chip in Fine, closer to its name (the cards' 126-unit lines hold Firestarter beside it so); a long
-   chassis under a callsign in Fine too (MCCampaignScreen::ChipSmallNameLetters). */
-.card.unit .vchip { padding: 0dp 1dp; margin-left: 2dp; font-size: 8.75dp; }
+/* A 'Mech's variant letter after its chassis, plain, as its name's own ("Raven A"; the user's, 26 Nov: the variants'
+   chip without its box): on the INVENTORY's, FORCE's and DEPLOY's cards and the details' and lab's headings; none on
+   the store's cards (their pips say it). The details' VARIANT rows keep the box (logistics.rcss). */
+.vchip { margin-left: 0.28em; }
+/* A long name under a callsign in Fine (MCCampaignScreen::LetterLetters counted). */
 .card.unit .what.long { font-size: 8.75dp; letter-spacing: 0; }

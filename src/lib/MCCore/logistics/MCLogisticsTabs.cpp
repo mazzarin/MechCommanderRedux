@@ -108,10 +108,10 @@ namespace
     /// <summary>The longest name the frames' cards hold at their size ("Light Autocannon"); longer ones are set smaller.</summary>
     constexpr size_t LongNameLetters = 16;
 
-    /// <summary>Whether a good's name, with its variant's chip, is longer than a card's name holds at its own size.</summary>
+    /// <summary>Whether a good's name, with its variant's letter, is longer than a card's name holds at its own size.</summary>
     bool LongName(const MCLogisticsTabs::MCGood& good)
     {
-        return good.Who.size() + (good.Letter.empty() ? 0 : MCCampaignScreen::ChipLetters) > LongNameLetters;
+        return good.Who.size() + (good.Letter.empty() ? 0 : MCCampaignScreen::LetterLetters) > LongNameLetters;
     }
 
     /// <summary>The skills in the order 1998's bars show them (the array's: Piloting, Jumping, Sensors, Gunnery).</summary>
@@ -329,7 +329,7 @@ namespace
         return rest;
     }
 
-    /// <summary>An owned unit's name as a heading: a 'Mech's chassis with its variant's chip; a vehicle's whole.</summary>
+    /// <summary>An owned unit's name as a heading: a 'Mech's chassis with its variant's letter; a vehicle's whole.</summary>
     MCCampaignMenu::MCVariantName UnitName(const MCLogPart& unit)
     {
         return unit.PartType == 1 ? MCCampaignMenu::VariantName(unit.FileName)
@@ -966,13 +966,13 @@ void MCLogisticsTabs::FillStore()
                     continue;
                 }
 
-                // Its chassis, the variant shown in a chip after it, its variants as pips under its picture.
+                // Its chassis alone (the user's, 26 Nov: no variant letter on the store's cards), its variants as pips
+                // under its picture.
                 const MCPurMechData& data = *shownData;
                 MCCampaignMenu::MCVariantName name = MCCampaignMenu::VariantName(data.Name);
                 add(MCGood{.Picture = MCCampaignMenu::Pictured(MCRmlArt::WholeUnitSource(true, data.NameIndex)),
                            .Who = std::move(name.Chassis),
                            .What = TonsAndClass(data.CurTonnage),
-                           .Letter = std::move(name.Letter),
                            .Variants = VariantsOf(*purMech, false),
                            .Price = Points(data.Cost),
                            .Note = data.NumAvailable == 0 ? std::string(SoldOutNote) : LeftNote(data.NumAvailable),
@@ -1640,7 +1640,7 @@ void MCLogisticsTabs::OnMouse(Rml::Event& event)
                              _Hold->Index < cards.size())
                     {
                         const MCCampaignScreen::MCCard& card = cards[_Hold->Index];
-                        // Its first line as its card's: a callsign, or a 'Mech's chassis with its variant's chip.
+                        // Its first line as its card's: a callsign, or a 'Mech's chassis with its variant's letter.
                         lifted = {.Picture = card.Outline,
                                   .Who = card.Who.empty() ? card.What : card.Who,
                                   .What = card.Tons,

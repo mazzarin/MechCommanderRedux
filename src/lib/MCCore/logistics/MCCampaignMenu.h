@@ -112,14 +112,8 @@ public:
     /// </summary>
     static constexpr size_t UnitNameLetters = 11;
     static constexpr size_t SmallNameLetters = 15;
-    /// <summary>The room a variant's chip takes after a name, in its letters (the mocks': the name with its letter, and two).</summary>
-    static constexpr size_t ChipLetters = 4;
-    /// <summary>
-    /// The most letters of a chassis a unit card's line holds beside its variant's chip: at the cards' size (a longer
-    /// one, Commando's 8, at the details' size), and at the details' size (a longer one, Firestarter's 11, in Fine).
-    /// </summary>
-    static constexpr size_t ChipNameLetters = 7;
-    static constexpr size_t ChipSmallNameLetters = 9;
+    /// <summary>The room a variant's letter takes after a name, in its letters: a space and the letter ("Raven A", 1998's own).</summary>
+    static constexpr size_t LetterLetters = 2;
     /// <summary>A 'Mech without a MechWarrior, under its name.</summary>
     static constexpr std::string_view NoPilotWord = "No pilot";
 
@@ -130,7 +124,7 @@ public:
         std::string Who;
         std::string What;
         /// <summary>
-        /// A 'Mech's variant letter, in a chip after its chassis (after What under a MechWarrior's callsign, after Who
+        /// A 'Mech's variant letter, plain after its chassis (after What under a MechWarrior's callsign, after Who
         /// without one); none for a vehicle.
         /// </summary>
         std::string Letter;
@@ -159,8 +153,8 @@ public:
         int Slot = -1;
         /// <summary>
         /// A name longer than a narrow card holds at the cards' size (a vehicle's, a 'Mech's without a MechWarrior),
-        /// and longer than it holds at the details' size (<see cref="SmallNameLetters"/>; with a chip the Chip
-        /// lengths); under a callsign, Long is the chassis beside its chip longer than its line holds (Fine).
+        /// and longer than it holds at the details' size (<see cref="SmallNameLetters"/>), its variant's letter counted
+        /// (<see cref="LetterLetters"/>); under a callsign, Long is the name longer than its line holds (Fine).
         /// </summary>
         bool Long = false;
         bool Longer = false;
@@ -543,7 +537,7 @@ namespace MCCampaignMenu
     /// <summary><paramref name="tons"/> in words: "1 ton", "25 tons".</summary>
     std::string TonsText(int32_t tons);
 
-    /// <summary>A 'Mech's name as the cards draw it: its chassis, and its variant's letter for a chip after it.</summary>
+    /// <summary>A 'Mech's name as the cards draw it: its chassis, and its variant's letter after it.</summary>
     struct MCVariantName
     {
         std::string Chassis;

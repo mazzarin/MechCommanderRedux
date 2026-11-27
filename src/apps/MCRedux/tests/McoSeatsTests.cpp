@@ -1,9 +1,11 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "logistics/MCLogChat.h"
 #include "network/MCMcoSeats.h"
 #include "network/MCMultiPlayer.h"
 
 #include <chrono>
+#include <set>
 
 #include <string>
 #include <vector>
@@ -171,4 +173,57 @@ TEST_CASE("mco seats: who waits in the host's MCO room reaches its guests whole,
     bad = message;
     bad.Players[0].Ready = 2;
     CHECK(!MCMcoSeats::WaitingSaidIn(LinkupBytes(bad)).has_value());
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "The chat": the host brings in only MCO's waiting players' lines and MCO's own about them, each
+/// once; its own, a seated guest's and a player's let in stay out.
+/// </summary>
+TEST_CASE("mco seats: MCO's room lines the host brings into the session: its waiting players' and MCO's own about them")
+{
+    const std::vector<MCMcoChatLine> chat{
+        {.Id = 1, .Name = "ANN", .Text = "hi all", .SenderId = "host"},
+        {.Id = 2, .Text = "CLANNER joined the room.", .Event = "joined", .About = "CLANNER"},
+        {.Id = 3, .Name = "CLANNER", .Text = "anyone up for a match", .SenderId = "clanner"},
+        {.Id = 4, .Name = "BOB", .Text = "on my way", .SenderId = "bob"},
+        {.Id = 5, .Text = "CLANNER sent a GIF.", .SenderId = "clanner"},
+        {.Id = 6, .Text = "BOB joined the room.", .Event = "joined", .About = "BOB"},
+        {.Id = 7, .Text = "ANN renamed the room.", .Event = "name_changed", .About = "ANN"},
+        {.Id = 8, .Text = "SHINOBI lost their connection.", .Event = "disconnected", .About = "SHINOBI"},
+        {.Id = 9, .Text = "KERENSKY left the room.", .Event = "left", .About = "KERENSKY"},
+        {.Name = "ANN", .Text = "on its way", .RequestId = "r1"},
+    };
+
+    // CLANNER waits; SHINOBI waited and has gone; KERENSKY waited and was let in; BOB is a seated guest.
+    const std::set<std::string> waitingIds{"clanner"};
+    const std::set<std::string> waitingNames{"CLANNER"};
+    const std::set<std::string> waited{"CLANNER", "SHINOBI"};
+    CHECK((MCMcoSeats::SessionLinesOf(chat, 0, waitingIds, waitingNames, waited) ==
+           std::vector<std::string>{"CLANNER joined.", "CLANNER: anyone up for a match", "CLANNER sent a GIF.",
+                                    "SHINOBI left."}));
+
+    // Those looked at already, once each.
+    CHECK((MCMcoSeats::SessionLinesOf(chat, 3, waitingIds, waitingNames, waited) ==
+           std::vector<std::string>{"CLANNER sent a GIF.", "SHINOBI left."}));
+    CHECK(MCMcoSeats::SessionLinesOf(chat, 9, waitingIds, waitingNames, waited).empty());
+    // No one waiting: nothing.
+    CHECK(MCMcoSeats::SessionLinesOf(chat, 0, {}, {}, {}).empty());
+}
+
+TEST_CASE("mco seats: a line of the host's MCO room reaches its guests whole, never with the chat's codes")
+{
+    MCMPMcoChatMessage message = MCMcoSeats::ChatMessage("CLANNER: anyone up for a match");
+    CHECK(MCMcoSeats::ChatSaidIn(LinkupBytes(message)) == std::optional<std::string>("CLANNER: anyone up for a match"));
+
+    // Cut to the chat's longest.
+    MCMPMcoChatMessage longest = MCMcoSeats::ChatMessage(std::string(300, 'x'));
+    CHECK(MCMcoSeats::ChatSaidIn(LinkupBytes(longest)) == std::optional(std::string(MCLogChat::MaxLength, 'x')));
+
+    // Empty, unterminated, or with a colour code: none.
+    MCMPMcoChatMessage bad = MCMcoSeats::ChatMessage("");
+    CHECK(!MCMcoSeats::ChatSaidIn(LinkupBytes(bad)).has_value());
+    bad.Line.fill('x');
+    CHECK(!MCMcoSeats::ChatSaidIn(LinkupBytes(bad)).has_value());
+    bad = MCMcoSeats::ChatMessage("%fc3CLANNER: hi");
+    CHECK(!MCMcoSeats::ChatSaidIn(LinkupBytes(bad)).has_value());
 }

@@ -5,6 +5,7 @@
 #include "logistics/MCLogChat.h"
 #include "logistics/MCRoomModel.h"
 #include "main/MCLogistics.h"
+#include "network/MCMcoSeats.h"
 #include "network/MCMultiPlayer.h"
 #include "ui/MCRmlDialog.h"
 #include "ui/MCRmlModel.h"
@@ -170,6 +171,13 @@ void MCChatView::Say(std::string_view text, bool toTeam)
 
     game->SendChat(toTeam ? game->HomeTeamGroupID : 0, line);
     chat->ProcessChatString(game->SessionManager->MyPlayer()->Id, line, toTeam ? TeamColour : AllColour);
+
+    // Port-only (Redux HD; SPEC-mco-hosting.md's "The chat"): a line to all said in the internet game's MCO room too,
+    // from this game's own seat there, as the session got it; a team's stays in the session.
+    if (!toTeam)
+    {
+        MCMcoSeats::Said(AsUtf8(line));
+    }
 }
 
 std::string MCChatView::AsChatBytes(std::string_view typed)

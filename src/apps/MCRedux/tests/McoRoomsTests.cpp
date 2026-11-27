@@ -625,6 +625,53 @@ TEST_CASE("mco rooms: an internet game's guest sits quietly in its host's room, 
     CHECK(!guest.Seen().Room.has_value());
 }
 
+/// <summary>
+/// SPEC-mco-hosting.md's "The chat": the internet game's room lines said in MCO's room from each game's own seat, the
+/// host's and a guest's quiet one, nothing of it shown; a game with no such seat says nothing there.
+/// </summary>
+TEST_CASE("mco rooms: an internet game's lines are said in its MCO room from the host's seat and a guest's quiet one, "
+          "and nowhere without a seat")
+{
+    MCService mco;
+    MCMcoRooms host(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    MCMcoRooms guest(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    host.OpenLobby("ANN");
+    guest.OpenLobby("BOB");
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Listed && guest.Seen().Listed; }));
+
+    // No seat yet: nothing said.
+    guest.SayBoth("too early");
+    host.HostBoth(SteelRain());
+    REQUIRE(Within(HeardMs, [&] { return !OnlyRoom(mco).empty(); }));
+    const std::string roomId = OnlyRoom(mco);
+    guest.CloseLobby();
+    guest.Sit(roomId, "Steel Rain", 6, "K7QF");
+    REQUIRE(Within(HeardMs, [&] { return guest.Seen().Seated; }));
+    const auto saidBy = [&](std::string_view name, std::string_view text)
+    {
+        const std::vector<Json> said = mco.MessagesIn(roomId);
+        return std::ranges::any_of(said, [&](const Json& line)
+                                   { return line.value("username", "") == name && line.value("message", "") == text; });
+    };
+
+    host.SayBoth("  gl hf  ");
+    guest.SayBoth("on my way");
+    REQUIRE(Within(HeardMs, [&] { return saidBy("ANN", "gl hf") && saidBy("BOB", "on my way"); }));
+    CHECK(!saidBy("BOB", "too early"));
+    CHECK_EQ(mco.Asked("send_message"), size_t{2});
+    // Nothing shown as said: the quiet seat has no room, and the host's lines are MCO's copies only.
+    CHECK(!guest.Seen().Room.has_value());
+    CHECK(std::ranges::none_of(host.Seen().Room->Chat, [](const MCMcoChatLine& line) { return line.Id == 0; }));
+
+    // A blank line isn't sent; nor one MCO refuses said anywhere.
+    host.SayBoth("   ");
+    mco.ChatRefused = true;
+    guest.SayBoth("can anyone hear me");
+    REQUIRE(Within(HeardMs, [&] { return mco.Asked("send_message") == 3; }));
+    CHECK(!guest.Seen().Room.has_value());
+    CHECK(guest.Seen().Seated);
+}
+
 TEST_CASE("mco rooms: an internet game's room starts on MCO at LET IN, its bridge open on the game's own port, closes "
           "played at the match's end, and leaves MCO quietly for a battle MCO won't start")
 {

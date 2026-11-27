@@ -102,6 +102,11 @@ struct MCMcoChatLine
     std::string Text;
     /// <summary>The player's own line's request id, by which MCO's copy of it takes its place.</summary>
     std::string RequestId;
+    /// <summary>Its sayer's MCO id; empty for MCO's own line.</summary>
+    std::string SenderId;
+    /// <summary>MCO's own line: what happened (its room_event: "joined", "left"...) and to whom; empty otherwise.</summary>
+    std::string Event;
+    std::string About;
     bool operator==(const MCMcoChatLine&) const = default;
 };
 
@@ -249,6 +254,12 @@ public:
     /// one MCO refuses gives way to why.
     /// </summary>
     void Say(std::string text);
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "The chat"): <paramref name="text"/>, a line of the internet game's
+    /// room, said in its MCO room too from this game's own seat there (the host's room on both, or a guest's quiet seat):
+    /// nothing shown, a refusal only logged. Nothing without such a seat.
+    /// </summary>
+    void SayBoth(std::string text);
 
     // The match, as the game plays it (the screens act on MCMcoSeen::Match and say how it went).
 

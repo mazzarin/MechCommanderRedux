@@ -1331,6 +1331,22 @@ namespace MCTestGuest
         ClickOn(MCMainPanel::Multiplayer, "lan");
     }
 
+    /// <summary>The most players INTERNET's games are hosted for in the tests.</summary>
+    inline constexpr int32_t HostedPlayers = 4;
+
+    /// <summary>INTERNET's HOST GAME, then its window's HOST GAME for <see cref="HostedPlayers"/>: the room. The game's name.</summary>
+    inline std::string HostFrom(MCGamesScreen& screen)
+    {
+        screen.PressHost();
+        REQUIRE(screen.HostWindow());
+        MCHostWindow::MCHost host = screen.HostWindow()->Choices();
+        host.MaxPlayers = HostedPlayers;
+        screen.HostWindow()->SetChoices(host);
+        screen.HostWindow()->PressHost();
+        REQUIRE(SettleUntil(InRoom));
+        return host.GameName;
+    }
+
     /// <summary>
     /// The LAN games as a player opens them: MULTIPLAYER (the network taken as there: the room tests play on the
     /// loopback), then its LAN.

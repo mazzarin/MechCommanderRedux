@@ -1330,6 +1330,25 @@ void MCMcoRooms::Say(std::string text)
     }
 }
 
+void MCMcoRooms::SayBoth(std::string text)
+{
+    text = Trimmed(text, SayMost);
+
+    if (text.empty())
+    {
+        return;
+    }
+
+    Post(
+        [this, text = std::move(text)]
+        {
+            if (_Seat && (_Both || _Silent))
+            {
+                DoSay(text, MCMcoApi::NewClientId());
+            }
+        });
+}
+
 void MCMcoRooms::DoSay(const std::string& text, const std::string& requestId)
 {
     if (!_Seat)
@@ -1432,11 +1451,13 @@ void MCMcoRooms::TakeMessages(const std::vector<MCMcoApi::MCRoomMessage>& messag
 
 std::optional<MCMcoChatLine> MCMcoRooms::ChatLineOf(const MCMcoApi::MCRoomMessage& message)
 {
-    MCMcoChatLine line{.Id = message.Id, .RequestId = message.RequestId};
+    MCMcoChatLine line{.Id = message.Id, .RequestId = message.RequestId, .SenderId = message.SenderId};
 
     if (message.System)
     {
         const std::string player = MCMcoApi::Printable(message.EventPlayer);
+        line.Event = message.Event;
+        line.About = player;
         const auto said = std::ranges::find(EventsSaid, std::string_view(message.Event), &MCEventSaid::Event);
 
         if (!player.empty() && said != EventsSaid.end())
@@ -1553,8 +1574,7 @@ void MCMcoRooms::PollRoom()
         return;
     }
 
-    TakeMessages(state->Messages);
-
+    // The players first: a line's sayer, or the player MCO's own line is about, is in the room by the time it shows.
     Show(
         [&](MCMcoSeen& seen)
         {
@@ -1580,6 +1600,7 @@ void MCMcoRooms::PollRoom()
                 seen.Room->Host = named;
             }
         });
+    TakeMessages(state->Messages);
 
     // A guest plays the host's match once (its start signal stays while the match runs), trying again a few times
     // when the relay or the host wasn't ready for it.

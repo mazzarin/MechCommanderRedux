@@ -117,7 +117,12 @@ enum class MCMPMessageType : uint16_t
     /// Port-only (Redux HD): MCO's players waiting in the host's internet game's room (<c>MCMPMcoWaitingMessage</c>), to
     /// each guest told the room as they change: the room's WAITING cards.
     /// </summary>
-    McoWaiting = 58
+    McoWaiting = 58,
+    /// <summary>
+    /// Port-only (Redux HD): a line of the host's MCO room in its session's chat (<c>MCMPMcoChatMessage</c>), to each
+    /// Redux HD guest: a waiting player's line, or MCO's own about one (SPEC-mco-hosting.md's "The chat").
+    /// </summary>
+    McoChat = 59
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>
@@ -211,6 +216,18 @@ struct MCMPMcoWaitingMessage : public MCFIGuaranteedMessageHeader
 };
 
 static_assert(sizeof(MCMPMcoWaitingMessage) == 0x75);
+
+/// <summary>
+/// Port-only (Redux HD): MCMPMessageType::McoChat: the line as the chat holds it (the 1998 bytes, no SMUTI codes),
+/// zero-terminated: the chat's longest (MCLogChat::MaxLength) and its zero.
+/// </summary>
+/// <remarks>Fixed layout.</remarks>
+struct MCMPMcoChatMessage : public MCFIGuaranteedMessageHeader
+{
+    std::array<char, 256> Line{};
+};
+
+static_assert(sizeof(MCMPMcoChatMessage) == 0x108);
 
 /// <summary>Check-in receipt (guaranteed, to the server): the check-in id; also end scenario: the result.</summary>
 /// <remarks>Fixed layout.</remarks>

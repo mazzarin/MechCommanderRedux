@@ -51,6 +51,7 @@
 using namespace MCScreenInput;
 using MCTestGuest::DialogText;
 using MCTestGuest::ElementOf;
+using MCTestGuest::HostFrom;
 using MCTestGuest::InRoom;
 using MCTestGuest::OnAccess;
 using MCTestGuest::OnInternet;
@@ -107,19 +108,6 @@ namespace
         MCGamesScreen& screen = Internet();
         screen.SetPlayerName("Commander");
         return screen;
-    }
-
-    /// <summary>HOST GAME, then its window's HOST GAME for 4 players: the room. The game's name.</summary>
-    std::string HostFrom(MCGamesScreen& screen)
-    {
-        screen.PressHost();
-        REQUIRE(screen.HostWindow());
-        MCHostWindow::MCHost host = screen.HostWindow()->Choices();
-        host.MaxPlayers = 4;
-        screen.HostWindow()->SetChoices(host);
-        screen.HostWindow()->PressHost();
-        REQUIRE(SettleUntil(InRoom));
-        return host.GameName;
     }
 
     /// <summary>No games, 3 players online, and the week's hours busiest on Saturday evening (the service's time).</summary>

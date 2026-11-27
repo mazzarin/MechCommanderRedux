@@ -1902,6 +1902,13 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
             break;
         }
 
+        case MCMPMessageType::McoChat:
+        {
+            // Port-only (Redux HD): a line of the host's MCO room, in the room's chat (network/MCMcoSeats.h).
+            MCMcoSeats::HostSaidChat(fromID, bytes);
+            break;
+        }
+
         case MCMPMessageType::McoSeat:
         {
             // Port-only (Redux HD): a guest's seat in the host's MCO room (network/MCMcoSeats.h).

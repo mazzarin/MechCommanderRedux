@@ -9,6 +9,8 @@
 #include "fakes/MCFakeMcoService.h"
 #include "fakes/MCServiceScript.h"
 #include "linkup/MCSessionManager.h"
+#include "logistics/MCChatView.h"
+#include "logistics/MCLogChat.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCRoomScreen.h"
@@ -28,6 +30,7 @@
 // back to the room. Against a stand-in MCO (tests/fakes/MCFakeMcoService.h). --shots saves each step's screen.
 
 using MCTestGuest::DialogText;
+using MCTestGuest::HostFrom;
 using MCTestGuest::InRoom;
 using MCTestGuest::OnInternet;
 using MCTestGuest::PressDialogOk;
@@ -101,16 +104,14 @@ namespace
     }
 
     /// <summary>
-    /// INTERNET's stand-ins for the scope's time: the service's scripted list (its count three online), and MCO's lobby
-    /// with <see cref="ThreeRooms"/>, its player MCO's guest.
+    /// INTERNET's stand-ins for the scope's time: the service's scripted list, its games' stand-in (for a game hosted),
+    /// and MCO's lobby with <see cref="ThreeRooms"/>, its player MCO's guest.
     /// </summary>
     struct MCStandIns
     {
         MCServiceScript::ListScript List;
-        std::string Asked;
-        MCServiceScript::SetupScope Scope{MCServiceScript::ListOpener(List),
-                                          MCServiceScript::Answering(R"({"online":3})", Asked), Service,
-                                          MCInternetSpots::Version};
+        MCFakeGames::MCFakeGamesService Games;
+        MCInternetSpots::MCServicesScope Scope{List, Games};
         MCFakeMcoService::MCService Mco;
         std::optional<MCMcoScope> McoScope;
 
@@ -621,4 +622,93 @@ TEST_CASE_ISOLATED("game: INTERNET keeps MechCommander Online's rooms hidden pas
     listing["mco"] = {{"rooms", true}, {"hosts", false}};
     standIns.List.Send(listing);
     REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 4; }));
+}
+
+namespace
+{
+    /// <summary>How many of the room's chat lines hold <paramref name="text"/>.</summary>
+    size_t ChatLinesWith(std::string_view text)
+    {
+        return static_cast<size_t>(std::ranges::count_if(
+            GlobalLog()->Chat->Lines, [&](const MCLogChat::HistoryLine& line) { return line.Text.contains(text); }));
+    }
+
+    /// <summary>MCO's own line in a room's chat: <paramref name="event"/> (its room_event) of <paramref name="player"/>.</summary>
+    Json McoEvent(std::string_view event, std::string_view player)
+    {
+        return {{"sender_client_id", ""},
+                {"username", "System"},
+                {"message", ""},
+                {"room_event", event},
+                {"event_player", player}};
+    }
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "The chat": a game hosted from INTERNET on both brings MCO's room lines into its room only from
+/// MCO's waiting players, with MCO's own about them ("KERENSKY joined.", "KERENSKY left."); its own line is said in MCO's
+/// room from its seat there, and never comes back.
+/// </summary>
+TEST_CASE_ISOLATED("game: an internet game hosted on MechCommander Online too has its room's chat both ways, no line "
+                   "twice")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCSwitchRestore restore;
+    MCStandIns standIns;
+    REQUIRE(MCTestGame::StartLogistics());
+    MCMcoSeats::SetHostsOn(true);
+    MCGamesScreen& screen = OpenWithRooms(standIns.List, 4);
+    const std::string player = screen.PlayerName();
+    HostFrom(screen);
+
+    // Its MCO room: the one beside the lobby's three, the host's seat in it.
+    std::string roomId;
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            for (const std::string& id : standIns.Mco.RoomIds())
+            {
+                roomId = id != SolarisId && id != BunkerId && id != RaidId ? id : roomId;
+            }
+
+            const MCMcoSeen seen = MCMcoRooms::Now().Seen();
+            return !roomId.empty() && seen.Room.has_value() && seen.Room->RoomId == roomId;
+        }));
+
+    // KERENSKY (not the lobby's CLANNER: the stand-in names a line's sayer by name) waits in it and says something: both
+    // in the room, once.
+    standIns.Mco.AddPlayer(roomId, "KERENSKY", false);
+    standIns.Mco.AddLine(roomId, McoEvent("joined", "KERENSKY"));
+    standIns.Mco.Say(roomId, "KERENSKY", "anyone up for a match");
+    REQUIRE(SettleUntil([] { return ChatLinesWith("KERENSKY: anyone up for a match") == 1; }));
+    CHECK_EQ(ChatLinesWith("KERENSKY joined."), size_t{1});
+    Shot("mco internet 11 waiting player's lines");
+
+    // The host's line: in MCO's room from its seat, and MCO's copy never back in the room.
+    MCChatView::Say("gl hf", false);
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            const std::optional<MCMcoRoomSeen> room = MCMcoRooms::Now().Seen().Room;
+            return room.has_value() && std::ranges::any_of(room->Chat, [](const MCMcoChatLine& line)
+                                                           { return line.Id != 0 && line.Text == "gl hf"; });
+        }));
+    const std::vector<Json> said = standIns.Mco.MessagesIn(roomId);
+    CHECK(
+        std::ranges::any_of(said, [&](const Json& line)
+                            { return line.value("username", "") == player && line.value("message", "") == "gl hf"; }));
+    Settle();
+    CHECK_EQ(ChatLinesWith("gl hf"), size_t{1});
+    CHECK_EQ(ChatLinesWith("KERENSKY: anyone up for a match"), size_t{1});
+
+    // KERENSKY taken out of MCO's room: gone, said once.
+    standIns.Mco.Kick(roomId, "KERENSKY", player);
+    REQUIRE(SettleUntil([] { return ChatLinesWith("KERENSKY left.") == 1; }));
+    Settle();
+    CHECK_EQ(ChatLinesWith("KERENSKY left."), size_t{1});
+    CHECK_EQ(ChatLinesWith("KERENSKY joined."), size_t{1});
 }

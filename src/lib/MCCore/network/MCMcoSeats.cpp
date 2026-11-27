@@ -3,6 +3,8 @@
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
+#include "logistics/MCChatView.h"
+#include "logistics/MCLogChat.h"
 #include "main/MCLogistics.h"
 #include "network/MCInternetGame.h"
 #include "network/MCMcoRooms.h"
@@ -11,13 +13,26 @@
 #include "platform/MCDirectPlay.h"
 #include <algorithm>
 #include <array>
+#include <format>
 #include <iterator>
 #include <map>
 #include <utility>
 
+static_assert(std::tuple_size_v<decltype(MCMPMcoChatMessage::Line)> == MCLogChat::MaxLength + 1);
+
 namespace
 {
     using Clock = std::chrono::steady_clock;
+
+    /// <summary>MCO's room lines as the session shows them (SPEC-mco-hosting.md's "The chat").</summary>
+    constexpr std::string_view McoLineFormat = "{}: {}";
+    constexpr std::string_view JoinedFormat = "{} joined.";
+    constexpr std::string_view LeftFormat = "{} left.";
+    constexpr std::string_view JoinedEvent = "joined";
+    /// <summary>MCO's events of a player gone from its room, each said as its leaving.</summary>
+    constexpr std::array<std::string_view, 4> GoneEvents = {"left", "removed", "disconnected", "lease_expired"};
+    /// <summary>The chat's code character (its SMUTI colours): never in a line passed on, whose colour is the game's.</summary>
+    constexpr char ChatCode = '%';
 
     /// <summary>A host's MCO room for its internet game, as far as it has gone.</summary>
     struct MCHostSide
@@ -48,6 +63,13 @@ namespace
         std::map<uint32_t, std::vector<MCMcoSeats::MCWaiting>> ToldWaiting;
         /// <summary>Each removed player's seat kicked, by its MCO id: the room's revision then (once a poll).</summary>
         std::map<std::string, uint64_t> Kicked;
+        /// <summary>
+        /// The room's chat as last heard, the newest of its ids looked at for the session, and the names of MCO's players
+        /// who have waited in it (as its lines name them).
+        /// </summary>
+        std::vector<MCMcoChatLine> Chat;
+        int64_t ChatSeen = 0;
+        std::set<std::string> Waited;
     };
 
     /// <summary>A guest's seat in its host's MCO room.</summary>
@@ -162,14 +184,17 @@ namespace
             const bool ours = seen.Room.has_value() && seen.Room->Both && seen.Room->Hosting;
             std::string roomId = ours ? seen.Room->RoomId : std::string();
 
-            // A new room is described afresh.
+            // A new room is described afresh, its chat its own.
             if (roomId != Host.RoomId)
             {
                 Host.Described.reset();
+                Host.ChatSeen = 0;
+                Host.Waited.clear();
             }
 
             Host.RoomId = std::move(roomId);
             Host.RoomSeats = ours ? seen.Room->Players : std::vector<MCMcoApi::MCRoomPlayer>();
+            Host.Chat = ours ? seen.Room->Chat : std::vector<MCMcoChatLine>();
             Host.Live = ours && seen.Match != MCMcoMatchStage::None;
         }
     }
@@ -284,6 +309,77 @@ namespace
             }));
     }
 
+    /// <summary><paramref name="line"/> (UTF-8) in the session's chat: the host's own, and each Redux HD guest's.</summary>
+    void SayInSession(MCMultiPlayer& game, MCSessionManager& manager, std::string_view line)
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        const std::string bytes = MCChatView::AsChatBytes(line);
+
+        if (logistics == nullptr || logistics->Chat == nullptr || bytes.empty())
+        {
+            return;
+        }
+
+        logistics->Chat->AddLine(bytes);
+        MCMPMcoChatMessage message = MCMcoSeats::ChatMessage(bytes);
+
+        for (const uint32_t guest : GuestsOf(manager))
+        {
+            if (const auto rules = game.PlayerRules.find(guest);
+                rules != game.PlayerRules.end() && ReduxHd(rules->second))
+            {
+                manager.SendPlainMessage(guest, LinkupBytes(message));
+            }
+        }
+    }
+
+    /// <summary>
+    /// MCO's room lines from its waiting players (<paramref name="seats"/>' of them), and MCO's own about them, into the
+    /// session once each (MCMcoSeats::SessionLinesOf). None while MCO's session is on: its players are in the session,
+    /// talking through it.
+    /// </summary>
+    void BringChatIn(MCMultiPlayer& game, MCSessionManager& manager, const std::vector<MCMcoApi::MCRoomPlayer>& seats)
+    {
+        std::set<std::string> waitingIds;
+        std::set<std::string> waitingNames;
+
+        for (const MCMcoSeats::MCWaiting& one : Host.Waiting)
+        {
+            waitingNames.insert(MCMcoApi::Printable(one.Name));
+        }
+
+        for (const MCMcoApi::MCRoomPlayer& seat : seats)
+        {
+            if (std::ranges::any_of(Host.Waiting,
+                                    [&](const MCMcoSeats::MCWaiting& one) { return one.Name == seat.Username; }))
+            {
+                waitingIds.insert(seat.ClientId);
+            }
+        }
+
+        Host.Waited.insert(waitingNames.begin(), waitingNames.end());
+        std::set<std::string> waited = Host.Waited;
+
+        for (const std::string& name : NamesOf(manager))
+        {
+            waited.erase(MCMcoApi::Printable(name));
+        }
+
+        const std::vector<std::string> lines =
+            Host.Live ? std::vector<std::string>()
+                      : MCMcoSeats::SessionLinesOf(Host.Chat, Host.ChatSeen, waitingIds, waitingNames, waited);
+
+        for (const MCMcoChatLine& line : Host.Chat)
+        {
+            Host.ChatSeen = std::max(Host.ChatSeen, line.Id);
+        }
+
+        for (const std::string& line : lines)
+        {
+            SayInSession(game, manager, line);
+        }
+    }
+
     void TendHost(MCMultiPlayer& game, MCSessionManager& manager)
     {
         MCInternetGame& internet = *manager.Internet;
@@ -352,6 +448,7 @@ namespace
             Host.Live ? std::vector<MCMcoSeats::MCWaiting>() : MCMcoSeats::WaitingIn(seats, seated, NamesOf(manager));
         manager.DirectPlay->SetReserved(static_cast<uint32_t>(Host.Waiting.size()));
         TellWaiting(manager);
+        BringChatIn(game, manager, seats);
 
         // The mission picked is the room's description; MCO takes no more players than the game has room for.
         const std::string mission =
@@ -634,6 +731,109 @@ void MCMcoSeats::HostSaidWaiting(uint32_t fromId, std::span<const uint8_t> bytes
     {
         SDL_Log("MCO seats: the host's word of who waits in its MCO room isn't one; it's left as it was");
     }
+}
+
+void MCMcoSeats::Said(std::string_view text)
+{
+    const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+
+    // In the room only: a battle's chat stays in the game.
+    if (game == nullptr || game->InMission || game->PrepareScenarioReceived)
+    {
+        return;
+    }
+
+    if (game->SessionManager->IsHost ? !Host.RoomId.empty() : !Guest.RoomId.empty())
+    {
+        MCMcoRooms::Now().SayBoth(std::string(text));
+    }
+}
+
+void MCMcoSeats::HostSaidChat(uint32_t fromId, std::span<const uint8_t> bytes)
+{
+    const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+    const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+    if (game == nullptr || game->SessionManager->IsHost || fromId != game->SessionManager->ServerID ||
+        logistics == nullptr || logistics->Chat == nullptr)
+    {
+        return;
+    }
+
+    if (const std::optional<std::string> line = ChatSaidIn(bytes))
+    {
+        logistics->Chat->AddLine(*line);
+    }
+    else
+    {
+        SDL_Log("MCO seats: the host's line from its MCO room isn't one; it's left out");
+    }
+}
+
+std::vector<std::string> MCMcoSeats::SessionLinesOf(std::span<const MCMcoChatLine> chat, int64_t after,
+                                                    const std::set<std::string>& waitingIds,
+                                                    const std::set<std::string>& waitingNames,
+                                                    const std::set<std::string>& waited)
+{
+    std::vector<std::string> lines;
+
+    for (const MCMcoChatLine& line : chat)
+    {
+        // Those looked at already, and the player's own line on its way (no id yet).
+        if (line.Id <= after)
+        {
+            continue;
+        }
+
+        if (line.Event.empty())
+        {
+            // A waiting player's line; a picture's is said as what it was, its sayer named in it.
+            if (waitingIds.contains(line.SenderId))
+            {
+                lines.push_back(line.Name.empty() ? line.Text : std::format(McoLineFormat, line.Name, line.Text));
+            }
+        }
+        else if (line.Event == JoinedEvent)
+        {
+            if (waitingNames.contains(line.About))
+            {
+                lines.push_back(std::format(JoinedFormat, line.About));
+            }
+        }
+        else if (std::ranges::find(GoneEvents, std::string_view(line.Event)) != GoneEvents.end() &&
+                 waited.contains(line.About))
+        {
+            lines.push_back(std::format(LeftFormat, line.About));
+        }
+    }
+
+    return lines;
+}
+
+MCMPMcoChatMessage MCMcoSeats::ChatMessage(std::string_view line)
+{
+    MCMPMcoChatMessage message{};
+    message.Header = PlainHeader(MCMPMessageType::McoChat);
+    Put(message.Line, line);
+    return message;
+}
+
+std::optional<std::string> MCMcoSeats::ChatSaidIn(std::span<const uint8_t> bytes)
+{
+    if (bytes.size() < sizeof(MCMPMcoChatMessage))
+    {
+        return std::nullopt;
+    }
+
+    std::optional<std::string> line = Got(ReadLinkupMessage<MCMPMcoChatMessage>(bytes).Line);
+
+    // A line as the chat holds it: some text, none of the chat's codes.
+    if (!line || line->empty() || line->find(ChatCode) != std::string::npos)
+    {
+        return std::nullopt;
+    }
+
+    return line;
 }
 
 void MCMcoSeats::LetIn()

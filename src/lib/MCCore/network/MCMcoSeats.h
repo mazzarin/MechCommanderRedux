@@ -8,6 +8,7 @@
 // of it shows on the screens: a room or a seat MCO refuses is only logged, and the game plays on our service alone.
 
 #include "network/MCMcoApi.h"
+#include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "platform/MCServiceSignaling.h"
 #include <chrono>
@@ -51,6 +52,15 @@ namespace MCMcoSeats
 
     /// <summary>A guest: the host <paramref name="fromId"/> says who waits in its MCO room.</summary>
     void HostSaidWaiting(uint32_t fromId, std::span<const uint8_t> bytes);
+
+    /// <summary>
+    /// SPEC-mco-hosting.md's "The chat": <paramref name="text"/> (UTF-8), a line to all in the internet game's room,
+    /// said in its MCO room too from this game's seat there (MCMcoRooms::SayBoth); nothing in a battle, or without a
+    /// seat.
+    /// </summary>
+    void Said(std::string_view text);
+    /// <summary>A guest: the host <paramref name="fromId"/> passes on a line of its MCO room (McoChat), put in the chat.</summary>
+    void HostSaidChat(uint32_t fromId, std::span<const uint8_t> bytes);
 
     /// <summary>A guest: the host <paramref name="fromId"/> says its game is an MCO room too: the guest sits in it.</summary>
     void HostSaidRoom(uint32_t fromId, std::span<const uint8_t> bytes);
@@ -191,6 +201,22 @@ namespace MCMcoSeats
     /// </summary>
     std::vector<std::string> KeptOutSeats(const std::vector<MCMcoApi::MCRoomPlayer>& seats,
                                           const std::vector<MCKeptOut>& kept);
+
+    /// <summary>
+    /// The session's lines for MCO's room lines (<paramref name="chat"/>) after the id <paramref name="after"/>: a waiting
+    /// player's line (<paramref name="waitingIds"/>, their MCO ids) as "Clanner: text"; MCO's own of one joining that
+    /// waits (<paramref name="waitingNames"/>) as "Clanner joined.", and of one gone (left, removed, its connection lost)
+    /// that waited and isn't in the session (<paramref name="waited"/>) as "Clanner left."; the rest (the host's, a seated
+    /// guest's, a player's let in, MCO's other sentences) left out.
+    /// </summary>
+    std::vector<std::string> SessionLinesOf(std::span<const MCMcoChatLine> chat, int64_t after,
+                                            const std::set<std::string>& waitingIds,
+                                            const std::set<std::string>& waitingNames,
+                                            const std::set<std::string>& waited);
+
+    /// <summary>The McoChat for <paramref name="line"/> (cut to its field), and what one says (none: it isn't one).</summary>
+    MCMPMcoChatMessage ChatMessage(std::string_view line);
+    std::optional<std::string> ChatSaidIn(std::span<const uint8_t> bytes);
 
     /// <summary>The McoWaiting for <paramref name="waiting"/> (its first six), and what one says (none: it isn't one).</summary>
     MCMPMcoWaitingMessage WaitingMessage(const std::vector<MCWaiting>& waiting);

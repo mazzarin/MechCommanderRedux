@@ -119,6 +119,20 @@ TEST_CASE("mco seats: MCO's waiting players are the room's seats that aren't the
     CHECK((MCMcoSeats::WaitingIn(seats, {}, {}) == both));
 }
 
+TEST_CASE("mco seats: our list counts MCO's waiting players in the host's room, never past its most")
+{
+    using MCMcoSeats::MCWaiting;
+    const std::vector<MCWaiting> waiting{{.Name = "CLANNER", .Ready = true}, {.Name = "KERENSKY"}};
+    const std::vector<std::string> all{"ANN", "BOB", "CLANNER", "KERENSKY"};
+    CHECK((MCMcoSeats::RoomPlayers({"ANN", "BOB"}, waiting, 6) == all));
+    // A join meanwhile filled the places the door held: the room the service gets is never over its most.
+    const std::vector<std::string> three{"ANN", "BOB", "CLANNER"};
+    CHECK((MCMcoSeats::RoomPlayers({"ANN", "BOB"}, waiting, 3) == three));
+    const std::vector<std::string> full{"ANN", "BOB"};
+    CHECK((MCMcoSeats::RoomPlayers({"ANN", "BOB"}, waiting, 2) == full));
+    CHECK((MCMcoSeats::RoomPlayers({"ANN", "BOB"}, {}, 6) == full));
+}
+
 TEST_CASE("mco seats: who waits in the host's MCO room reaches its guests whole, six at most")
 {
     using MCMcoSeats::MCWaiting;

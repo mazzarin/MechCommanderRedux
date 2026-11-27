@@ -160,6 +160,13 @@ namespace MCMcoSeats
     std::vector<MCWaiting> WaitingIn(const std::vector<MCMcoApi::MCRoomPlayer>& seats,
                                      const std::set<std::string>& seated, const std::set<std::string>& names);
 
+    /// <summary>
+    /// The players our service's list counts in a host's room: the session's <paramref name="players"/>, then MCO's
+    /// <paramref name="waiting"/> players while the room has room (<paramref name="most"/>).
+    /// </summary>
+    std::vector<std::string> RoomPlayers(std::vector<std::string> players, const std::vector<MCWaiting>& waiting,
+                                         int32_t most);
+
     /// <summary>The McoWaiting for <paramref name="waiting"/> (its first six), and what one says (none: it isn't one).</summary>
     MCMPMcoWaitingMessage WaitingMessage(const std::vector<MCWaiting>& waiting);
     std::optional<std::vector<MCWaiting>> WaitingSaidIn(std::span<const uint8_t> bytes);

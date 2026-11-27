@@ -10,7 +10,6 @@
 #include "platform/MCDirectPlay.h"
 #include <algorithm>
 #include <array>
-#include <iterator>
 #include <map>
 #include <utility>
 
@@ -133,7 +132,8 @@ namespace
         MCInternetGame& internet = *manager.Internet;
         Host.Asked = true;
         Host.AskedAt = Clock::now();
-        Host.Name = session.Name.substr(0, MCServiceGameNameMost);
+        // Named as our service's list shows the game, so INTERNET leaves out this MCO room only for this game.
+        Host.Name = MCServiceGameName(session.Name);
         Host.Password = internet.Public() ? std::string() : internet.Code();
         Host.Most = MCMcoApi::MatchCapacity(static_cast<int32_t>(session.SessionDesc.dwMaxPlayers));
         SDL_Log("MCO seats: hosting game %s on MechCommander Online too", internet.Code().c_str());
@@ -418,8 +418,25 @@ void MCMcoSeats::FillRoom(MCServiceRoom& room)
     }
 
     room.Mco = Host.RoomId;
-    std::ranges::transform(Host.Waiting, std::back_inserter(room.Players),
-                           [](const MCWaiting& waiting) { return waiting.Name; });
+    room.Players = RoomPlayers(std::move(room.Players), Host.Waiting, room.Max);
+}
+
+std::vector<std::string> MCMcoSeats::RoomPlayers(std::vector<std::string> players,
+                                                 const std::vector<MCWaiting>& waiting, int32_t most)
+{
+    // Never more than the room's most: the service refuses such a room, ending the game. The door holds the waiting
+    // players' places, so only a join meanwhile overfills it.
+    for (const MCWaiting& one : waiting)
+    {
+        if (std::cmp_greater_equal(players.size(), most))
+        {
+            break;
+        }
+
+        players.push_back(one.Name);
+    }
+
+    return players;
 }
 
 void MCMcoSeats::HostSaidRoom(uint32_t fromId, std::span<const uint8_t> bytes)

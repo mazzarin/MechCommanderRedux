@@ -529,7 +529,7 @@ void MCServiceSignaling::SendRoom()
     std::ranges::transform(_Room->Players, std::back_inserter(players), [](const std::string& player)
                            { return MCServiceName(player, MCServicePlayerNameMost, PlayerNameFallback); });
     Json room{{"t", "room"},
-              {"name", MCServiceName(_Room->Name, MCServiceGameNameMost, GameNameFallback)},
+              {"name", MCServiceGameName(_Room->Name)},
               {"public", _Room->Public},
               {"max", _Room->Max},
               {"players", players},
@@ -1237,6 +1237,11 @@ std::string MCServiceName(std::string_view text, size_t most, std::string_view f
     }
 
     return name.empty() ? std::string(fallback) : name;
+}
+
+std::string MCServiceGameName(std::string_view name)
+{
+    return MCServiceName(name, MCServiceGameNameMost, GameNameFallback);
 }
 
 bool MCIsGameCode(std::string_view text)

@@ -94,6 +94,13 @@ inline constexpr size_t MCServiceMissionMost = 48;
 /// </summary>
 std::string MCServiceName(std::string_view text, size_t most, std::string_view fallback);
 
+/// <summary>
+/// Port-only (Redux HD): a game named <paramref name="name"/> as the service's list shows it (<see cref="MCServiceName"/>
+/// at <see cref="MCServiceGameNameMost"/>). Its MCO room takes the same name, so INTERNET knows that room for the game
+/// (SPEC-mco-hosting.md).
+/// </summary>
+std::string MCServiceGameName(std::string_view name);
+
 /// <summary>The service's protocol this game speaks (each socket's URL says it).</summary>
 inline constexpr int MCServiceProtocol = 1;
 

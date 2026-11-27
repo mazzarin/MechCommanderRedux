@@ -754,6 +754,9 @@ TEST_CASE("service signaling: a room's names go as the service takes them, plain
     CHECK_EQ(MCServiceName("\xd7\xf7", 24, "GAME"), std::string("x"));
     CHECK_EQ(MCServiceName("\xf7\x81", 24, "GAME"), std::string("GAME"));
     CHECK_EQ(MCServiceName("", MCServiceMissionMost, {}), std::string());
+    // A game's name as the list shows it, which its MCO room takes too.
+    CHECK_EQ(MCServiceGameName("Steel  Rain \xe9t\xe9 and a long tail"), std::string("Steel Rain ete and a lon"));
+    CHECK_EQ(MCServiceGameName("\xf7"), std::string("GAME"));
 
     MCScriptedService service;
     MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true);

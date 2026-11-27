@@ -451,7 +451,7 @@ bool MCGamesList::ReadInternetGames()
     return true;
 }
 
-std::vector<MCListedGame> MCGamesList::McoGames()
+std::vector<MCListedGame> MCGamesList::McoGames() const
 {
     std::vector<MCListedGame> games;
 
@@ -461,9 +461,20 @@ std::vector<MCListedGame> MCGamesList::McoGames()
     }
 
     const MCMcoSeen seen = MCMcoRooms::Now().Seen();
+    // The service's games' own MCO rooms: each MCO room with the same id and name is one of them, listed already (a game
+    // naming another's room hides nothing, the names differing).
+    const std::span<const MCInternetListing::McoRoom> ours = _List != nullptr && _List->Listing().has_value()
+                                                                 ? std::span(_List->Listing()->McoRooms)
+                                                                 : std::span<const MCInternetListing::McoRoom>();
 
     for (const MCMcoApi::MCRoom& room : seen.Listed ? seen.Rooms : std::vector<MCMcoApi::MCRoom>())
     {
+        if (std::ranges::any_of(ours, [&](const MCInternetListing::McoRoom& our)
+                                { return our.Id == room.RoomId && our.Name == room.Name; }))
+        {
+            continue;
+        }
+
         games.push_back(MCListedGame{.Key = std::format("{}{}", McoKeyPrefix, room.RoomId),
                                      .Name = MCMcoApi::Printable(room.Name),
                                      .Players = {MCMcoApi::Printable(room.Host)},

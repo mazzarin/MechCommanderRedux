@@ -67,6 +67,17 @@ namespace
     };
 
     /// <summary>
+    /// MCO's switch as a game that has heard nothing, however the test ends (the user folder is the next test's).
+    /// </summary>
+    struct MCSwitchRestore
+    {
+        MCSwitchRestore() = default;
+        MCSwitchRestore(const MCSwitchRestore&) = delete;
+        MCSwitchRestore& operator=(const MCSwitchRestore&) = delete;
+        ~MCSwitchRestore() { MCMcoSwitch::Heard({.Rooms = true, .Hosts = false}); }
+    };
+
+    /// <summary>
     /// MCO's lobby as these tests have it: BOB's Solaris Night (BOB READY, CLANNER not), ANN's Bunker (locked), and
     /// CAT's Night raid, in battle.
     /// </summary>
@@ -87,12 +98,45 @@ namespace
         mco.StartMatch(RaidId);
     }
 
+    /// <summary>
+    /// INTERNET's stand-ins for the scope's time: the service's scripted list (its count three online), and MCO's lobby
+    /// with <see cref="ThreeRooms"/>, its player MCO's guest.
+    /// </summary>
+    struct MCStandIns
+    {
+        MCServiceScript::ListScript List;
+        std::string Asked;
+        MCServiceScript::SetupScope Scope{MCServiceScript::ListOpener(List),
+                                          MCServiceScript::Answering(R"({"online":3})", Asked), Service,
+                                          MCInternetSpots::Version};
+        MCFakeMcoService::MCService Mco;
+        std::optional<MCMcoScope> McoScope;
+
+        MCStandIns()
+        {
+            ThreeRooms(Mco);
+            McoScope.emplace(MCFakeMcoService::Setup(Mco, std::make_shared<MCFakeMcoService::MCMemoryKeys>(), {},
+                                                     MCFakeMcoService::Content, PollLeast, PollMost));
+        }
+
+        MCStandIns(const MCStandIns&) = delete;
+        MCStandIns& operator=(const MCStandIns&) = delete;
+    };
+
     /// <summary>INTERNET's screen (made by its first opening).</summary>
     MCGamesScreen& Internet()
     {
         const MCGuiHandle<MCGamesScreen> screen = MCTestGuest::Games(MCGamesWhere::Internet);
         REQUIRE(screen);
         return *screen;
+    }
+
+    /// <summary>The service's list with its one game, Bob's.</summary>
+    Json BobsListing()
+    {
+        return MCInternetSpots::Listing(
+            {MCServiceScript::ListedGame("K7QF", "Bob's game", {"Bob", "Ann"}, 6, nullptr, MCInternetSpots::Version)},
+            3, 0);
     }
 
     /// <summary>INTERNET opened from MULTIPLAYER, the service's one game listed and MCO's three rooms with it.</summary>
@@ -102,9 +146,7 @@ namespace
         Settle();
         MCTestGuest::PressInternet();
         REQUIRE(SettleUntil([] { return OnInternet(); }));
-        list.Send(MCInternetSpots::Listing(
-            {MCServiceScript::ListedGame("K7QF", "Bob's game", {"Bob", "Ann"}, 6, nullptr, MCInternetSpots::Version)},
-            3, 0));
+        list.Send(BobsListing());
         MCGamesScreen& screen = Internet();
         REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == rows; }));
         return screen;
@@ -410,6 +452,27 @@ TEST_CASE_ISOLATED("game: a player removed from a MechCommander Online room is t
 }
 
 /// <summary>
+/// SPEC-mco-hosting.md's "The switch": its hosts part is the host's MCO room's (off until the list says), its rooms part
+/// INTERNET's, kept in the user folder for the next start.
+/// </summary>
+TEST_CASE("mco internet: the switch's hosts part turns hosting on MCO on or off, and its rooms part is kept for the "
+          "next start")
+{
+    const MCSwitchRestore restore;
+    MCMcoSwitch::Heard({.Rooms = false, .Hosts = true});
+    CHECK(!MCMcoSwitch::RoomsOn());
+    CHECK(MCMcoSeats::HostsOn());
+    MCMcoSwitch::ReadAgainForTests();
+    CHECK(!MCMcoSwitch::RoomsOn());
+
+    MCMcoSwitch::Heard({.Rooms = true, .Hosts = false});
+    CHECK(MCMcoSwitch::RoomsOn());
+    CHECK(!MCMcoSeats::HostsOn());
+    MCMcoSwitch::ReadAgainForTests();
+    CHECK(MCMcoSwitch::RoomsOn());
+}
+
+/// <summary>
 /// SPEC-mco-hosting.md's "The switch", in INTERNET: MCO's rooms show while its rooms part is on (on until the service has
 /// said), hidden and out of MCO's lobby while it's off, the last said kept for the next start; INTERNET's games are hosted
 /// on MCO only once the service has said its hosts part is on.
@@ -423,40 +486,22 @@ TEST_CASE_ISOLATED(
         return;
     }
 
-    // As a game that has heard nothing, however the test ends (the user folder is the next test's).
-    struct MCRestore
-    {
-        MCRestore() = default;
-        MCRestore(const MCRestore&) = delete;
-        MCRestore& operator=(const MCRestore&) = delete;
-        ~MCRestore() { MCMcoSwitch::Heard({.Rooms = true, .Hosts = false}); }
-    } restore;
-
-    MCServiceScript::ListScript list;
-    std::string asked;
-    MCServiceScript::SetupScope scope(MCServiceScript::ListOpener(list),
-                                      MCServiceScript::Answering(R"({"online":3})", asked), Service,
-                                      MCInternetSpots::Version);
-    MCFakeMcoService::MCService mco;
-    ThreeRooms(mco);
-    const MCMcoScope mcoScope(MCFakeMcoService::Setup(mco, std::make_shared<MCFakeMcoService::MCMemoryKeys>(), {},
-                                                      MCFakeMcoService::Content, PollLeast, PollMost));
+    const MCSwitchRestore restore;
+    MCStandIns standIns;
     REQUIRE(MCTestGame::StartLogistics());
 
     // A list that says nothing of the switch: MCO's rooms show, and nothing is hosted there.
-    MCGamesScreen& screen = OpenWithRooms(list, 4);
+    MCGamesScreen& screen = OpenWithRooms(standIns.List, 4);
     CHECK(!MCMcoSeats::HostsOn());
     const auto withSwitch = [](bool rooms, bool hosts)
     {
-        Json listing = MCInternetSpots::Listing(
-            {MCServiceScript::ListedGame("K7QF", "Bob's game", {"Bob", "Ann"}, 6, nullptr, MCInternetSpots::Version)},
-            3, 0);
+        Json listing = BobsListing();
         listing["mco"] = {{"rooms", rooms}, {"hosts", hosts}};
         return listing;
     };
 
     // MCO's rooms off: the service's game alone; hosting on MCO on. Kept for the next start.
-    list.Send(withSwitch(false, true));
+    standIns.List.Send(withSwitch(false, true));
     REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 1; }));
     CHECK((screen.Seen().Rows == Rows{"Bob's game | 2/6 | Europe | Open"}));
     CHECK(MCMcoSeats::HostsOn());
@@ -464,7 +509,38 @@ TEST_CASE_ISOLATED(
     CHECK(!MCMcoSwitch::RoomsOn());
 
     // On again: MCO's rooms back; hosting there off.
-    list.Send(withSwitch(true, false));
+    standIns.List.Send(withSwitch(true, false));
     REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 4; }));
     CHECK(!MCMcoSeats::HostsOn());
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "On MCO": a game on both shows once, MCO's room of it left out as the service's list passes on
+/// its id and name (a private game's too, unlisted); the same id under another name shows, so a game naming another's
+/// room hides nothing.
+/// </summary>
+TEST_CASE_ISOLATED("game: INTERNET leaves out MechCommander Online's room of a game on the service, by its id and name "
+                   "together")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCStandIns standIns;
+    REQUIRE(MCTestGame::StartLogistics());
+    MCGamesScreen& screen = OpenWithRooms(standIns.List, 4);
+
+    // Solaris Night's id and name: a game of the service's (private, so not listed); Bunker's id under another name.
+    Json listing = BobsListing();
+    listing["mcoRooms"] = Json::array(
+        {Json{{"id", SolarisId}, {"name", "Solaris Night"}}, Json{{"id", BunkerId}, {"name", "Not the bunker"}}});
+    standIns.List.Send(listing);
+    REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 3; }));
+    CHECK((screen.Seen().Rows ==
+           Rows{"Bob's game | 2/6 | Europe | Open", "Bunker | 1/4 |  | Locked", "Night raid | 3/6 |  | In battle"}));
+
+    // That game gone from the service: MCO's room shows again.
+    standIns.List.Send(BobsListing());
+    REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 4; }));
 }

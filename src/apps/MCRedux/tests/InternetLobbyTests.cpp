@@ -3,8 +3,12 @@
 #include "fakes/MCServiceScript.h"
 #include "lib/MCThreadKeeper.h"
 #include "network/MCInternetLobby.h"
+#include "network/MCMcoApi.h"
+#include "platform/MCServiceSignaling.h"
 
 #include <nlohmann/json.hpp>
+
+#include <format>
 
 // The INTERNET screens' view of the games service (network/MCInternetLobby): the list's socket fed by a script of the
 // service's messages (its protocol as tools/cloudflare/games/README.md in the workspace has it), the count's request
@@ -246,6 +250,62 @@ TEST_CASE("internet lobby: MCO's switch as the service says it with its first li
     script.Send(listed(9, {{"rooms", true}, {"hosts", false}}));
     CHECK(list->Update());
     CHECK(list->McoSwitch() == std::optional(MCMcoSwitchSaid{.Rooms = true, .Hosts = false}));
+}
+
+/// <summary>
+/// Port-only (Redux HD; SPEC-mco-hosting.md's "On MCO"): the live games' MCO rooms ride on each list, each its id and the
+/// game's name; one that isn't one is left out, and rooms that aren't the service's (too many, not a list) leave none.
+/// </summary>
+TEST_CASE("internet lobby: the live games' MCO rooms as each list passes them on, one that isn't one left out")
+{
+    ListScript script;
+    LobbySetupScope scope(script, nullptr);
+    std::unique_ptr<MCInternetList> list = MCInternetList::Open();
+    REQUIRE(list != nullptr);
+    using McoRooms = std::vector<MCInternetListing::McoRoom>;
+    const auto listed = [](Json mcoRooms)
+    {
+        return Json{
+            {"t", "list"}, {"online", 1}, {"inGames", 0}, {"games", Json::array()}, {"mcoRooms", std::move(mcoRooms)}};
+    };
+
+    const auto room = [](std::string id, std::string name)
+    { return Json{{"id", std::move(id)}, {"name", std::move(name)}}; };
+    const std::string solaris(MCMcoApi::ClientIdDigits, 'a');
+    const std::string bunker(MCMcoApi::ClientIdDigits, '2');
+
+    // Each room as passed on; one with an id that isn't MCO's (capitals, short), a name too long, no name, or not a room
+    // at all, left out.
+    script.Send(
+        listed(Json::array({room(solaris, "Solaris Night"), room(std::string(MCMcoApi::ClientIdDigits, 'A'), "Caps"),
+                            room(solaris.substr(1), "Short"), room(bunker, std::string(MCServiceGameNameMost + 1, 'x')),
+                            Json{{"id", bunker}}, "Bunker", room(bunker, "Bunker")})));
+    CHECK(list->Update());
+    REQUIRE(list->Listing().has_value());
+    CHECK((list->Listing()->McoRooms ==
+           McoRooms{{.Id = solaris, .Name = "Solaris Night"}, {.Id = bunker, .Name = "Bunker"}}));
+
+    // More than the service passes on, or not a list: none.
+    Json tooMany = Json::array();
+
+    for (size_t i = 0; i <= MCInternetListing::MostMcoRooms; i++)
+    {
+        tooMany.push_back(room(solaris, std::format("Game {}", i)));
+    }
+
+    script.Send(listed(tooMany));
+    CHECK(list->Update());
+    CHECK(list->Listing()->McoRooms.empty());
+
+    for (const Json& notList : {room(solaris, "Solaris Night"), Json("rooms")})
+    {
+        script.Send(listed(Json::array({room(solaris, "Solaris Night")})));
+        CHECK(list->Update());
+        CHECK_EQ(list->Listing()->McoRooms.size(), size_t{1});
+        script.Send(listed(notList));
+        CHECK(list->Update());
+        CHECK(list->Listing()->McoRooms.empty());
+    }
 }
 
 TEST_CASE("internet lobby: the count asked once by the service's plain request, a failure saying nothing")

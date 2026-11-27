@@ -2,6 +2,7 @@
 #include "network/MCInternetLobby.h"
 
 #include "lib/MCThreadKeeper.h"
+#include "network/MCMcoApi.h"
 #include "platform/MCServices.h"
 
 #include <nlohmann/json.hpp>
@@ -29,6 +30,7 @@ namespace
 
     /// <summary>The service's limits (its protocol.js and list.js): what's past them isn't the service's.</summary>
     constexpr size_t MostListed = 100;
+    constexpr size_t MostMcoRooms = MCInternetListing::MostMcoRooms;
     constexpr size_t MostPlayers = 6;
     constexpr int32_t FewestPlayers = 2;
     constexpr size_t MostGameName = MCServiceGameNameMost;
@@ -181,6 +183,48 @@ namespace
         return game;
     }
 
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "On MCO"): the live games' MCO rooms in a list message, each its id (32
+    /// lowercase hex digits, as MCO's) and the game's name; none when it has none or they aren't the service's (said in
+    /// the log), a room that isn't one left out.
+    /// </summary>
+    std::vector<MCInternetListing::McoRoom> McoRoomsIn(const Json& message)
+    {
+        std::vector<MCInternetListing::McoRoom> rooms;
+        const auto found = message.find("mcoRooms");
+
+        if (found == message.end())
+        {
+            return rooms;
+        }
+
+        if (!found->is_array() || found->size() > MostMcoRooms)
+        {
+            SDL_Log("MCInternetList: the service's MCO rooms aren't its; MCO's listing is shown whole");
+            return rooms;
+        }
+
+        for (const Json& entry : *found)
+        {
+            const std::optional<std::string> id =
+                entry.is_object() ? ShownField(entry, "id", MCMcoApi::ClientIdDigits) : std::nullopt;
+            const std::optional<std::string> name =
+                entry.is_object() ? ShownField(entry, "name", MostGameName) : std::nullopt;
+
+            if (!id || !MCMcoApi::IsHex(*id, MCMcoApi::ClientIdDigits) ||
+                std::ranges::any_of(*id, [](char c) { return std::isupper(static_cast<unsigned char>(c)) != 0; }) ||
+                !name)
+            {
+                SDL_Log("MCInternetList: the service passed on an MCO room that isn't one; it's left out");
+                continue;
+            }
+
+            rooms.push_back(MCInternetListing::McoRoom{.Id = *id, .Name = *name});
+        }
+
+        return rooms;
+    }
+
     /// <summary>The list in a "list" message; none when it isn't one (a game that isn't one is left out, logged).</summary>
     std::optional<MCInternetListing> ListingIn(const Json& message)
     {
@@ -207,6 +251,7 @@ namespace
             }
         }
 
+        listing.McoRooms = McoRoomsIn(message);
         return listing;
     }
 

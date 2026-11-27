@@ -162,8 +162,11 @@ private:
     bool ReadLanGames();
     /// <summary>The service's games as the list shows them, with MCO's rooms.</summary>
     bool ReadInternetGames();
-    /// <summary>MCO's rooms as the list shows them, when it has listed them.</summary>
-    static std::vector<MCListedGame> McoGames();
+    /// <summary>
+    /// MCO's rooms as the list shows them, when it has listed them; those of the service's games (the same id and name
+    /// passed on in its list) left out, as listed already.
+    /// </summary>
+    std::vector<MCListedGame> McoGames() const;
     /// <summary>
     /// Port-only (Redux HD; SPEC-mco-hosting.md's "The switch"): INTERNET in MCO's lobby while the switch shows MCO's
     /// rooms (MCMcoSwitch::RoomsOn), out of it otherwise; whether that changed.

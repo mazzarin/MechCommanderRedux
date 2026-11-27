@@ -53,11 +53,28 @@ struct MCInternetListing
         bool operator==(const Game&) const = default;
     };
 
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "On MCO"): a live game's MCO room as the service passes it on, its
+    /// id and the game's name as its host sent it (MCServiceGameName, which its MCO room is named by too).
+    /// </summary>
+    struct McoRoom
+    {
+        std::string Id;
+        std::string Name;
+
+        bool operator==(const McoRoom&) const = default;
+    };
+
+    /// <summary>The most MCO rooms the service passes on (its list.js, MOST_MCO_ROOMS).</summary>
+    static constexpr size_t MostMcoRooms = 100;
+
     /// <summary>Every copy connected to the service: on the INTERNET screen or in an internet game.</summary>
     int32_t Online = 0;
     /// <summary>Those of them in a game.</summary>
     int32_t InGames = 0;
     std::vector<Game> Games;
+    /// <summary>Every live game's MCO room, public or not: INTERNET leaves MCO's own listing of each out.</summary>
+    std::vector<McoRoom> McoRooms;
 
     bool operator==(const MCInternetListing&) const = default;
 };

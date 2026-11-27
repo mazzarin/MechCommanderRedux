@@ -1,12 +1,15 @@
 #pragma once
 
-// Port-only (SPEC-menus.md's stage 8, BRIEFING): the operation's video in a window over the remade briefing. PLAY (or
-// Space) on BRIEFING opens it over the dimmed briefing, 448 units wide: the mission's OperationCinema (a Smacker movie
-// in data\movies\, with its sound) after Betty's "incoming transmission" over the operation's picture, as 1998's
-// operation tab played it, each frame shown from the HD art pack's when the 1998 window would show it; PAUSE (Space)
-// holds it, how far along under it, CLOSE (Escape) or its end goes back to the briefing as it was.
+// Port-only (SPEC-menus.md's stage 8, BRIEFING): the operation's video in a window docked at the foot of the remade
+// briefing's orders. PLAY (or Space) on BRIEFING opens it there, 1998's own size, the briefing around it as it was (the
+// user's, 26 Nov: "a really small pop-out that downplays"): the mission's OperationCinema (a Smacker movie in
+// data\movies\, with its sound) after Betty's "incoming transmission" over the operation's picture, as 1998's operation
+// tab played it, each frame shown from the HD art pack's when the 1998 window would show it, under 1998's scan lines;
+// PAUSE (Space) holds it, how far along beside it, CLOSE (Escape), its end or another tab closes it.
 
 #include "ui/MCRmlScreen.h"
+
+#include <span>
 
 class MCHdMovie;
 class MCRmlModel;
@@ -73,6 +76,10 @@ private:
     std::unique_ptr<MCHdMovie> _HdDropped;
     /// <summary>The frame decoded last, its palette indices.</summary>
     std::vector<uint8_t> _Indices;
+    /// <summary>The scan lines over the HD frames: how many (the 1998 movie's lit rows; none if it has no gaps), and
+    /// each of the HD frame's rows' brightness (MCVideoMenu::ScanLines, made at the first HD frame).</summary>
+    int32_t _ScanLines = 0;
+    std::vector<float> _ScanRows;
     std::shared_ptr<const MCUiTexture> _Picture;
     uint32_t _Shown = 0;
     bool _Incoming = false;
@@ -132,8 +139,27 @@ namespace MCVideoMenu
 {
     /// <summary>The live picture the window's video draws (MCRmlRecorder::LiveScheme).</summary>
     inline constexpr std::string_view LiveSource = "live:video";
-    /// <summary>The video's width in the window (units: the HD video's 704 pixels 1.4 times at 1080p).</summary>
-    inline constexpr float VideoUnits = 448.0f;
+    /// <summary>The video's width in the window (units: 1998's own, its 176 pixels on the 640x480 screen).</summary>
+    inline constexpr float VideoUnits = 176.0f;
+
+    /// <summary>
+    /// Port-only (the user's, 26 Nov: "what if you did today's version with the bars over it", then of three strengths
+    /// "Strong makes sense"): 1998's scan lines over the HD frames, a bar for each row the 1998 movie lights. A gap's
+    /// brightness against a bar's middle; the bar's shape a sine to this power; each pixel row averaged over this many
+    /// points of it.
+    /// </summary>
+    inline constexpr float ScanGap = 0.15f;
+    inline constexpr float ScanShape = 0.6f;
+    inline constexpr int32_t ScanSamples = 8;
+
+    /// <summary>
+    /// Each of <paramref name="height"/> pixel rows' brightness under <paramref name="lines"/> scan lines, scaled so
+    /// their average is 1 (the picture as bright as without them, its blacks still black).
+    /// </summary>
+    std::vector<float> ScanLines(int32_t height, int32_t lines);
+
+    /// <summary>The rows of <paramref name="rgba"/> (RGBA8, <paramref name="width"/> pixels a row) times <paramref name="rows"/>.</summary>
+    void ScanLinesOver(std::vector<uint8_t>& rgba, int32_t width, std::span<const float> rows);
     /// <summary>How far along: "0:24 of 0:49" (each a time as <see cref="TimeFormat"/> writes it).</summary>
     inline constexpr std::string_view AlongFormat = "{} of {}";
     inline constexpr std::string_view TimeFormat = "{}:{:02}";

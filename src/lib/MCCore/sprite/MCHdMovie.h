@@ -39,6 +39,12 @@ public:
     /// sharp (off one they wouldn't be seen); none else (the log says why when the pack has them).
     /// </summary>
     static std::unique_ptr<MCHdMovie> Over(const MCSmackTag& movie);
+
+    /// <summary>
+    /// Port-only: as <see cref="Over"/>, for a movie the remade menus show as a picture of their own (the operation's
+    /// video), whatever the game's screen: their pictures are drawn at the window's pixels, never off a 640x480 screen.
+    /// </summary>
+    static std::unique_ptr<MCHdMovie> ForPicture(const MCSmackTag& movie);
     ~MCHdMovie();
     MCHdMovie(const MCHdMovie&) = delete;
     MCHdMovie& operator=(const MCHdMovie&) = delete;

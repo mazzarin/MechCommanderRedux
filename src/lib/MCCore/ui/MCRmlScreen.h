@@ -93,6 +93,12 @@ public:
     /// <summary>A window over a screen (shown modal: the screens under it take no input while it shows).</summary>
     bool Modal = false;
 
+    /// <summary>
+    /// Port-only: a window docked beside the screen under it (the operation's video at BRIEFING's orders): the keys it
+    /// leaves go on to that screen (MCRmlLayer::TakeKey), as its mouse does where the window has nothing.
+    /// </summary>
+    bool PassesKeys = false;
+
     /// <summary>Why the document couldn't be read or made; empty when it was.</summary>
     const std::string& Error() const { return _Error; }
 

@@ -35,7 +35,7 @@
         <div id="page" class="content">
             <div class="row" id="briefing" data-if="tab == 0">
                 <div id="map" class="map picture"><div class="zone-tag" data-for="z : zones" data-style-left="z.left" data-style-top="z.top" data-style-width="z.width" data-style-height="z.height" data-style-decorator="z.picture"></div></div>
-                <div id="orders">
+                <div id="orders" data-class-docked="videoDocked">
                     <div class="eyebrow" data-if="eyebrow != ''">{{eyebrow}}</div>
                     <div class="title caps">{{title}}</div>
                     <div class="scroll-box grow">

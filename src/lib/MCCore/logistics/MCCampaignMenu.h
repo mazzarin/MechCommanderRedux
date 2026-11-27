@@ -403,6 +403,8 @@ private:
     /// <summary>The map's box (pixels) the tags were last placed in.</summary>
     SDL_FPoint _ZoneBox{};
     bool _Video = false;
+    /// <summary>Whether the operation's video is docked at BRIEFING's orders' foot (they end above it).</summary>
+    bool _VideoDocked = false;
     /// <summary>The operation the video's window names ("Operation 1 · Beachhead").</summary>
     std::string _VideoEyebrow;
     std::vector<MCCard> _Ready;

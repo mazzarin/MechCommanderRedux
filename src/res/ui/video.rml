@@ -5,22 +5,27 @@
     <link type="text/rcss" href="campaign.rcss"/>
     <link type="text/rcss" href="video.rcss"/>
 </head>
-<!-- Port-only (SPEC-menus.md, BRIEFING; stage 8): the operation's video over the briefing, which a veil dims
-     (logistics/MCOperationVideo): the picture 448 units wide, PAUSE, how far along and CLOSE under it; the operation's
-     picture while Betty says "incoming transmission". SPACE pauses, ESC closes. -->
+<!-- Port-only (SPEC-menus.md, BRIEFING): the operation's video docked at the foot of the orders, where PLAY is, the
+     briefing around it as it was (the user's, 26 Nov: "a really small pop-out that downplays"; logistics/
+     MCOperationVideo): the picture 1998's own size, under 1998's scan lines when HD; beside it the operation, how far
+     along, PAUSE and CLOSE; the operation's picture while Betty says "incoming transmission". SPACE pauses, ESC closes;
+     the briefing under it still takes the mouse and the other keys. -->
 <body class="window-body video" data-model="video">
-    <div class="veil"></div>
     <div class="stage16">
         <div class="content player-place">
-            <div id="player" class="column">
-                <div class="eyebrow" data-if="eyebrow != ''">{{eyebrow}}</div>
-                <div class="heading caps">Operation briefing</div>
+            <div id="player" class="row">
                 <div class="movie picture" data-style-height="height" data-style-decorator="still"><div class="frame" data-if="playing"></div></div>
-                <div class="controls row gap8">
-                    <div class="button small" id="pause" data-attr-data-hint="paused ? 'Play' : 'Pause'">{{paused ? 'Play' : 'Pause'}}</div>
+                <div class="column info">
+                    <div class="eyebrow" data-if="eyebrow != ''">{{eyebrow}}</div>
+                    <div class="text white caps label">Operation briefing</div>
+                    <div class="grow"></div>
+                    <div class="data grey nowrap time">{{time}}</div>
                     <div class="meter"><div class="meter-fill" data-style-width="percent + '%'"></div></div>
-                    <div class="data grey nowrap">{{time}}</div>
-                    <div class="button small" id="close" data-hint="Close" data-first>Close</div>
+                    <div class="controls row gap4">
+                        <div class="grow"></div>
+                        <div class="button small" id="pause" data-attr-data-hint="paused ? 'Play' : 'Pause'">{{paused ? 'Play' : 'Pause'}}</div>
+                        <div class="button small" id="close" data-hint="Close" data-first>Close</div>
+                    </div>
                 </div>
             </div>
         </div>

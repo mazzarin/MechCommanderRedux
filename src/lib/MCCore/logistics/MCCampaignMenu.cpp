@@ -283,6 +283,7 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
     model.List("clockFigures", _ClockFigures, std::pair{"text", &MCFigureGlyph::Text},
                std::pair{"digit", &MCFigureGlyph::Digit});
     model.Value("eyebrow", _Eyebrow);
+    model.Value("videoDocked", _VideoDocked);
     model.Value("title", _Title);
     model.Value("timeLimit", _TimeLimit);
     model.Value("dropWeight", _DropWeight);
@@ -1639,6 +1640,23 @@ void MCCampaignScreen::OnFrame()
     }
 
     bool changed = FillBar();
+
+    // The operation's video docked at BRIEFING's orders' foot, the briefing around it as it was: it goes with BRIEFING
+    // (another tab chosen), and the orders end above it while it shows.
+    if (MCVideoMenu::Shown() && Tab() != MCTab::Briefing)
+    {
+        MCVideoMenu::Close();
+    }
+
+    if (const bool docked = MCVideoMenu::Shown(); docked != _VideoDocked)
+    {
+        _VideoDocked = docked;
+
+        if (_Model != nullptr)
+        {
+            _Model->Changed("videoDocked");
+        }
+    }
 
     if (_Multiplayer)
     {

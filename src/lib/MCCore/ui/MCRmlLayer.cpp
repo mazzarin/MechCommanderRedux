@@ -190,28 +190,48 @@ void MCRmlLayer::Hidden(MCRmlScreen& screen)
 
 bool MCRmlLayer::TakeKey(int key, int modifiers)
 {
-    const MCOptionalRef<MCRmlScreen> top = Top();
+    // The shown screens, the top first, pinned for the key's length: its Back can close one (a window's CANCEL), which
+    // mustn't free it while Back runs.
+    std::vector<std::shared_ptr<MCRmlScreen>> shown;
 
-    if (!top.has_value())
+    for (auto at = _ShownOrder.rbegin(); at != _ShownOrder.rend(); ++at)
     {
-        return false;
+        if (std::shared_ptr<MCRmlScreen> screen = at->Lock(); screen != nullptr && screen->Shown())
+        {
+            shown.push_back(std::move(screen));
+        }
     }
 
-    // Pinned for the key's length: its Back can close it (a window's CANCEL), which mustn't free it while Back runs.
-    const std::shared_ptr<MCRmlScreen> screen = top->get().shared_from_this();
+    for (const std::shared_ptr<MCRmlScreen>& screen : shown)
+    {
+        if (TakeKeyOn(*screen, key, modifiers))
+        {
+            return true;
+        }
 
+        if (!screen->PassesKeys)
+        {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+bool MCRmlLayer::TakeKeyOn(MCRmlScreen& screen, int key, int modifiers)
+{
     switch (key)
     {
         case Rml::Input::KI_ESCAPE:
         {
             // Back one screen, or the window's CANCEL (its Back).
-            if (screen->Back)
+            if (screen.Back)
             {
-                screen->Back();
+                screen.Back();
             }
             else
             {
-                screen->Hide();
+                screen.Hide();
             }
 
             return true;
@@ -219,7 +239,7 @@ bool MCRmlLayer::TakeKey(int key, int modifiers)
         case Rml::Input::KI_Q:
         case Rml::Input::KI_E:
         {
-            if (const MCOptionalRef<Rml::ElementDocument> document = screen->Document(); document.has_value())
+            if (const MCOptionalRef<Rml::ElementDocument> document = screen.Document(); document.has_value())
             {
                 return _Kit.StepTab(document->get(), key == Rml::Input::KI_Q ? -1 : 1);
             }
@@ -232,12 +252,12 @@ bool MCRmlLayer::TakeKey(int key, int modifiers)
             // Port-only (the user's, 26 Nov): Z and C step the screen's list switch as Q and E its tabs. A window that
             // takes every key (PURCHASING's buy window) has them first; with Ctrl, Alt or Command they're shortcuts
             // (copy, undo), never the switch.
-            if (screen->OnKey(key, modifiers) || (modifiers & ShortcutModifiers) != 0)
+            if (screen.OnKey(key, modifiers) || (modifiers & ShortcutModifiers) != 0)
             {
                 return true;
             }
 
-            if (const MCOptionalRef<Rml::ElementDocument> document = screen->Document(); document.has_value())
+            if (const MCOptionalRef<Rml::ElementDocument> document = screen.Document(); document.has_value())
             {
                 return _Kit.StepSubtab(document->get(), key == Rml::Input::KI_Z ? -1 : 1);
             }
@@ -245,7 +265,7 @@ bool MCRmlLayer::TakeKey(int key, int modifiers)
             return false;
         }
         default:
-            return screen->OnKey(key, modifiers);
+            return screen.OnKey(key, modifiers);
     }
 }
 

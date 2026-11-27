@@ -493,9 +493,14 @@ auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::un
 
 auto MCHdMovie::Over(const MCSmackTag& movie) -> std::unique_ptr<MCHdMovie>
 {
+    return MCRenderer::ShowsHdPictures() ? ForPicture(movie) : nullptr;
+}
+
+auto MCHdMovie::ForPicture(const MCSmackTag& movie) -> std::unique_ptr<MCHdMovie>
+{
     const std::optional<std::filesystem::path> path = MCHdArt::FindMovie(movie.FileName);
 
-    if (!path.has_value() || !MCRenderer::ShowsHdPictures())
+    if (!path.has_value())
     {
         return nullptr;
     }

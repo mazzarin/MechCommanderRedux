@@ -1,14 +1,31 @@
-/* Port-only (SPEC-menus.md, BRIEFING; stage 8): the operation's video playing (tools/menus-frames/frames/
-   briefing_b_video.rml's style block): over the briefing, which a veil dims; the picture as large as reads well (448
-   units, the HD video's 704 pixels 1.4 times at 1080p), its height the movie's own shape, PAUSE, how far along, CLOSE
-   under it; the player in the middle of the window above the hint line. */
-.video .veil { background-color: #040404f2; }
-.video .player-place { padding-bottom: 34dp; justify-content: center; align-items: center; }
-#player { width: 448dp; flex: 0 0 auto; }
+/* Port-only (SPEC-menus.md, BRIEFING): the operation's video docked at the foot of BRIEFING's orders, where its PLAY
+   row is (the user's, 26 Nov: "a really small pop-out that downplays", B of the two mocked): a strip across the orders'
+   column over a rule, as a match's chat sits there; the picture 1998's own size (176x128 units) at its left, beside it
+   the operation, the time, how far along, PAUSE and CLOSE; the orders end above it (campaign.rcss, #orders.docked);
+   nothing dimmed. The window passes the mouse through to the briefing everywhere but the strip and the hint line. */
+.video { pointer-events: none; }
+.video #player, .video #hintbar { pointer-events: auto; }
+.video .player-place { position: relative; }
+@media (min-aspect-ratio: 2/1) {
+    .video .content { flex: 0 1 1115dp; }
+}
+#player { position: absolute; left: 420dp; right: 0; bottom: 34dp; padding-top: 8dp; background-color: #0b1116; border-top: 1dp #2a3742; align-items: stretch; }
 #player > * { flex: 0 0 auto; }
-#player .heading { margin-bottom: 8dp; }
-#player > .movie { position: relative; background-color: #000000; }
+#player > .movie { position: relative; width: 176dp; background-color: #000000; }
 #player > .movie > .frame { position: absolute; left: 0; top: 0; right: 0; bottom: 0; decorator: image(live:video fill); }
-#player .controls { margin-top: 8dp; }
+#player > .info { flex: 1 1 0; margin-left: 12dp; }
+#player .info > * { flex: 0 0 auto; }
+#player .info > .grow { flex: 1 1 0; }
+#player .label { margin-top: 2dp; }
+#player .time { margin-bottom: 4dp; }
+#player .controls { margin-top: 6dp; align-items: center; }
 #player .controls > * { flex: 0 0 auto; }
-#player .meter { flex: 1 1 0; }
+#player .controls > .grow { flex: 1 1 0; }
+.video #hintbar { background-color: #0b1116; }
+/* 4:3 and 5:4: the orders' column (188 units) just holds the picture: the rest under it, the operation's line left out. */
+@media (max-aspect-ratio: 3/2) {
+    #player { flex-direction: column; }
+    #player > .info { flex: 0 0 auto; margin-left: 0; margin-top: 8dp; }
+    #player .label { display: none; }
+    #player .info > .grow { display: none; }
+}

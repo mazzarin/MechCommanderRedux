@@ -15,6 +15,9 @@
 
 #include <RmlUi/Core/Input.h>
 
+#include <cmath>
+#include <numbers>
+
 namespace
 {
     constexpr const char* WindowDocument = "video.rml";
@@ -74,8 +77,18 @@ std::expected<std::unique_ptr<MCOperationVideo>, std::string> MCOperationVideo::
     auto video = std::make_unique<MCOperationVideo>(Key{});
     const MCSmackerPlayer& player = *movie->Player;
     video->_Indices.resize(static_cast<size_t>(player.Width()) * static_cast<size_t>(player.Height()));
+    // 1998's scan lines over the HD frames: one for each row an interlaced movie lights, its others black.
+    const uint32_t flags = movie->Player->Decoder().Flags();
+
+    if ((flags & MCSmacker::FlagYInterlaced) != 0 && (flags & MCSmacker::FlagYDoubled) == 0)
+    {
+        video->_ScanLines = player.Height() / 2;
+    }
+
     video->_Movie = std::move(movie);
-    video->_Hd = MCHdMovie::Over(*video->_Movie);
+    // The pack's frames whatever the game's screen (the remade briefing's is never a sharp 640x480 one: before 26 Nov
+    // its video never showed them).
+    video->_Hd = MCHdMovie::ForPicture(*video->_Movie);
 
     if (incoming && SoundSystem() != nullptr)
     {
@@ -154,6 +167,16 @@ std::shared_ptr<const MCUiTexture> MCOperationVideo::Pictured(uint32_t frame)
         }
         else if (std::expected<std::vector<uint8_t>, std::string> colors = MCHdMovie::Rgba(**hd); colors)
         {
+            if (_ScanLines > 0)
+            {
+                if (_ScanRows.size() != static_cast<size_t>((*hd)->Height))
+                {
+                    _ScanRows = MCVideoMenu::ScanLines((*hd)->Height, _ScanLines);
+                }
+
+                MCVideoMenu::ScanLinesOver(*colors, (*hd)->Width, _ScanRows);
+            }
+
             return MCRmlRecorder::MakeTexture((*hd)->Width, (*hd)->Height, std::move(*colors), true);
         }
         else
@@ -166,8 +189,7 @@ std::shared_ptr<const MCUiTexture> MCOperationVideo::Pictured(uint32_t frame)
     // drawn as the 1998 art's are; an interlaced movie's rows between its own black, as 1998's window left them (its
     // pane wiped to the game palette's black).
     const std::array<uint8_t, 768>& palette = player.Palette();
-    const uint32_t flags = _Movie->Player->Decoder().Flags();
-    const bool gaps = (flags & MCSmacker::FlagYInterlaced) != 0 && (flags & MCSmacker::FlagYDoubled) == 0;
+    const bool gaps = _ScanLines > 0;
     std::vector<uint8_t> pixels(_Indices.size() * PixelBytes);
 
     for (size_t at = 0; at < _Indices.size(); ++at)
@@ -236,7 +258,9 @@ int32_t MCOperationVideo::Height() const
 MCOperationVideoWindow::MCOperationVideoWindow()
 {
     SetDocument(WindowDocument);
-    Modal = true;
+    // Docked beside the briefing, not over it: the briefing takes the mouse and the keys the window leaves.
+    Modal = false;
+    PassesKeys = true;
     Back = [this] { Close(); };
     // No picture and no height until a video plays (the bound styles are read as the document loads).
     _Still = MCCampaignScreen::NoPicture;
@@ -439,6 +463,63 @@ bool MCVideoMenu::Shown()
 {
     const MCOptionalRef<MCOperationVideoWindow> window = Window();
     return window.has_value() && window->get().Shown();
+}
+
+std::vector<float> MCVideoMenu::ScanLines(int32_t height, int32_t lines)
+{
+    std::vector<float> rows(static_cast<size_t>(std::max(height, 0)), 1.0f);
+
+    if (height <= 0 || lines <= 0)
+    {
+        return rows;
+    }
+
+    double total = 0.0;
+
+    for (int32_t row = 0; row < height; ++row)
+    {
+        float sum = 0.0f;
+
+        for (int32_t sample = 0; sample < ScanSamples; ++sample)
+        {
+            const float at = (static_cast<float>(row) + (static_cast<float>(sample) + 0.5f) / ScanSamples) *
+                             static_cast<float>(lines) / static_cast<float>(height);
+            const float along = at - std::floor(at);
+            sum += ScanGap + (1.0f - ScanGap) * std::pow(std::sin(std::numbers::pi_v<float> * along), ScanShape);
+        }
+
+        rows[static_cast<size_t>(row)] = sum / ScanSamples;
+        total += rows[static_cast<size_t>(row)];
+    }
+
+    const auto mean = static_cast<float>(total / height);
+
+    for (float& row : rows)
+    {
+        row /= mean;
+    }
+
+    return rows;
+}
+
+void MCVideoMenu::ScanLinesOver(std::vector<uint8_t>& rgba, int32_t width, std::span<const float> rows)
+{
+    const size_t rowBytes = static_cast<size_t>(std::max(width, 0)) * PixelBytes;
+
+    for (size_t row = 0; row < rows.size() && (row + 1) * rowBytes <= rgba.size(); ++row)
+    {
+        uint8_t* pixel = rgba.data() + row * rowBytes;
+
+        for (size_t at = 0; at < rowBytes; at += PixelBytes)
+        {
+            // Red, green and blue; the alpha as it was (the frames are opaque).
+            for (size_t channel = 0; channel < PixelBytes - 1; ++channel)
+            {
+                pixel[at + channel] =
+                    static_cast<uint8_t>(std::min(std::lround(pixel[at + channel] * rows[row]), long{Opaque}));
+            }
+        }
+    }
 }
 
 std::string MCVideoMenu::TimeText(double seconds)

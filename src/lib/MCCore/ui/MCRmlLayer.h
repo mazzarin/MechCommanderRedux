@@ -110,11 +110,15 @@ public:
 
     /// <summary>
     /// A key RmlUi left (RmlUi's KeyIdentifier): Escape to the top screen's Back, Q and E to its tabs, the rest to the
-    /// screen (MCRmlScreen::OnKey); whether it was used.
+    /// screen (MCRmlScreen::OnKey); one the top screen leaves on to the screen under it while it passes keys
+    /// (MCRmlScreen::PassesKeys); whether it was used.
     /// </summary>
     bool TakeKey(int key, int modifiers);
 
 private:
+    /// <summary>TakeKey's for one screen.</summary>
+    bool TakeKeyOn(MCRmlScreen& screen, int key, int modifiers);
+
     /// <summary>Whether a text box has the focus (its letters are typed, not keys).</summary>
     bool Typing() const;
 

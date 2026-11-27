@@ -1180,8 +1180,9 @@ TEST_CASE_ISOLATED("game: the loading screen draws the same on every machine and
 /// <summary>
 /// BRIEFING's operation video (a campaign mission's, OPVID1 here: 176x128, 732 frames at 15 a second): Space opens it
 /// over the briefing, after Betty's "incoming transmission"; its frames come as the clock reaches them, how far along
-/// under it; Space holds it (no frame comes, its time stays) and lets it go on; Q and E change no tab under it; Escape
-/// closes it, back to BRIEFING as it was; the mouse's PLAY and CLOSE do the same.
+/// beside it; Space holds it (no frame comes, its time stays) and lets it go on; Escape closes it, back to BRIEFING as it
+/// was; the mouse's PLAY and CLOSE do the same. Docked at the orders' foot, not over the briefing (the user's, 26 Nov):
+/// the briefing's own keys and mouse reach it as it plays, E or a click on a tab going to another, which closes it.
 /// </summary>
 TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space holds it and Escape closes it")
 {
@@ -1237,12 +1238,6 @@ TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space hol
     CHECK(!video.Paused());
     CHECK(video.Shown() > held);
 
-    // Q and E: no tab changes under it.
-    MCScreenInput::RealKey(SDL_SCANCODE_Q);
-    MCTestGame::RunFrame(FlowFrame);
-    CHECK(MCVideoMenu::Shown());
-    CHECK(screen.Tab() == MCCampaignScreen::MCTab::Briefing);
-
     // Escape closes it: BRIEFING as it was, and Escape there still the way to the main menu.
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     MCTestGame::RunFrame(FlowFrame);
@@ -1260,6 +1255,33 @@ TEST_CASE_ISOLATED("game: BRIEFING's PLAY opens the operation's video, Space hol
     MCTestGame::RunFrame(FlowFrame);
     CHECK(!MCVideoMenu::Shown());
     CHECK(MCCampaignMenu::Shown());
+
+    // The briefing's keys under it: E to PURCHASING, the video gone with BRIEFING; and its mouse: PURCHASING's tab.
+    for (const bool keys : {true, false})
+    {
+        screen.ChooseTab(MCCampaignScreen::MCTab::Briefing);
+        MCTestGame::RunFrame(FlowFrame);
+        ClickOn(ElementOf(screen, "play"));
+        MCTestGame::RunFrame(FlowFrame);
+        REQUIRE(MCVideoMenu::Shown());
+
+        if (keys)
+        {
+            MCScreenInput::RealKey(SDL_SCANCODE_E);
+        }
+        else
+        {
+            Rml::Element* tab =
+                ElementOf(screen, "tabs").GetChild(static_cast<int>(MCCampaignScreen::MCTab::Purchasing));
+            REQUIRE(tab != nullptr);
+            ClickOn(*tab);
+        }
+
+        MCTestGame::RunFrame(FlowFrame);
+        MCTestGame::RunFrame(FlowFrame);
+        CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
+        CHECK(!MCVideoMenu::Shown());
+    }
 }
 
 /// <summary>
@@ -1299,11 +1321,11 @@ TEST_CASE_ISOLATED(
         return &window->get().Video()->get();
     };
 
-    // Two clicks on PLAY, the second at once: one video, from its start.
+    // PLAY, then its press again at once: one video, from its start (the docked video covers PLAY once it opens).
     ClickOn(play);
     const MCOperationVideo* const video = playing();
     REQUIRE(video != nullptr);
-    ClickOn(play);
+    screen.PlayVideo();
     REQUIRE_EQ(playing(), video);
     CHECK(!video->Paused());
 
@@ -1363,12 +1385,13 @@ TEST_CASE_ISOLATED("game: the operation's video draws the same on every machine 
     }
 
     constexpr uint32_t HeldAt = 60;
+    constexpr float Slack = 0.5f;
     GRenderer = static_cast<int>(MCRendererKind::Software);
     StartFirstBriefing();
     const std::shared_ptr<MCDisplay> display = MCInput::Display();
     REQUIRE(display != nullptr);
     REQUIRE(display->RendererKind() == MCRendererKind::Software);
-    static_cast<void>(Shown());
+    MCCampaignScreen& screen = Shown();
     MCOperationVideoWindow& window = PlayVideoTo(HeldAt);
     window.TogglePause();
     REQUIRE(window.Video()->get().Paused());
@@ -1376,7 +1399,7 @@ TEST_CASE_ISOLATED("game: the operation's video draws the same on every machine 
     MCRmlMenus& menus = MCRmlMenus::Running()->get();
     double clock = 0.0;
     menus.SetClock([&clock] { return clock; });
-    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xa61b5a95, 0x9b51ff70, 0x1b8fa7e5};
+    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0x2c882f87, 0x3a58f152, 0x60e2b6d3};
 
     for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
     {
@@ -1394,9 +1417,66 @@ TEST_CASE_ISOLATED("game: the operation's video draws the same on every machine 
         const std::string where = std::format("video {}x{}: ", size.Width, size.Height);
         CHECK_EQ(where + MCRmlChecks::BoxProblems(menus.Menus().Context()), where);
         CHECK_EQ(where + MCRmlChecks::Illegible(menus.Menus().Context(), unit), where);
+        // Docked at the orders' foot: the strip as wide as their column, the orders' box ending above it.
+        Rml::Element& orders = ElementOf(screen, "orders");
+        Rml::Element* box = orders.QuerySelector(".scroll-box");
+        Rml::Element& player = ElementOf(window, "player");
+        REQUIRE(box != nullptr);
+        const Rml::Vector2f ordersAt = orders.GetAbsoluteOffset(Rml::BoxArea::Border);
+        const Rml::Vector2f playerAt = player.GetAbsoluteOffset(Rml::BoxArea::Border);
+        CHECK_EQ(where + std::format("{:.0f}", playerAt.x), where + std::format("{:.0f}", ordersAt.x));
+        CHECK_EQ(where + std::format("{:.0f}", playerAt.x + player.GetBox().GetSize(Rml::BoxArea::Border).x),
+                 where + std::format("{:.0f}", ordersAt.x + orders.GetBox().GetSize(Rml::BoxArea::Border).x));
+        CHECK(box->GetAbsoluteOffset(Rml::BoxArea::Border).y + box->GetBox().GetSize(Rml::BoxArea::Border).y <=
+              playerAt.y + Slack);
     }
 
     window.Close();
+}
+
+/// <summary>
+/// 1998's scan lines over the operation's HD video (the user's, 26 Nov: "today's version with the bars over it", the
+/// "Strong" of three): 64 over a 512-row frame (OPVID1's 64 lit rows), a bar each 8 rows, as bright on average as the
+/// frame without them, a gap at 0.15 of a bar's middle (its darkest pixel row, averaged, 0.46), its blacks black.
+/// </summary>
+TEST_CASE("game: the operation's HD video under 1998's scan lines, as bright as without them")
+{
+    constexpr int32_t Height = 512;
+    constexpr int32_t Lines = 64;
+    constexpr int32_t Period = Height / Lines;
+    constexpr float Near = 0.001f;
+    const std::vector<float> rows = MCVideoMenu::ScanLines(Height, Lines);
+    REQUIRE_EQ(rows.size(), static_cast<size_t>(Height));
+    double total = 0.0;
+
+    for (int32_t row = 0; row < Height; row++)
+    {
+        total += rows[row];
+
+        if (row + Period < Height)
+        {
+            CHECK(std::abs(rows[row] - rows[row + Period]) < Near);
+        }
+    }
+
+    CHECK(std::abs(total / Height - 1.0) < Near);
+    const auto [darkest, brightest] = std::ranges::minmax(rows);
+    // A gap's 0.15 averaged over its pixel row: the darkest row 0.46 of the brightest (the mock's at 1080p, 0.44).
+    constexpr float GapRow = 0.458f;
+    constexpr float GapRowNear = 0.01f;
+    CHECK(std::abs(darkest / brightest - GapRow) < GapRowNear);
+
+    // Over a frame: each row times its brightness, white clipped at white, black kept black.
+    constexpr int32_t Width = 2;
+    std::vector<uint8_t> rgba(static_cast<size_t>(Width * Height * 4), 0xff);
+    std::fill(rgba.begin(), rgba.begin() + Width * 4, uint8_t{0});
+    MCVideoMenu::ScanLinesOver(rgba, Width, rows);
+    CHECK_EQ(rgba[0], 0);
+    CHECK_EQ(rgba[3], 0);
+    // A gap's row past the black one: white times its brightness, opaque.
+    const size_t dark = static_cast<size_t>(std::ranges::min_element(rows) - rows.begin()) + Period;
+    CHECK_EQ(static_cast<int>(rgba[dark * Width * 4]), static_cast<int>(std::lround(255.0f * rows[dark])));
+    CHECK_EQ(rgba[dark * Width * 4 + 3], 0xff);
 }
 
 /// <summary>

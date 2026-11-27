@@ -155,6 +155,11 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
 #orders { flex: 1 1 0; display: flex; flex-direction: column; margin-left: 16dp; }
 #orders > * { flex: 0 0 auto; }
 #orders > .scroll-box { flex: 1 1 0; }
+/* The operation's video docked at the orders' foot (video.rcss): the orders end above its strip, read on above it. */
+#orders.docked > .scroll-box { margin-bottom: 117dp; }
+@media (max-aspect-ratio: 3/2) {
+    #orders.docked > .scroll-box { margin-bottom: 177dp; }
+}
 .split { display: flex; flex-direction: column; }
 .split > * { flex: 0 0 auto; }
 /* 21:9: the objectives and the orders side by side. */

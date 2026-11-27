@@ -284,6 +284,9 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - A mech component that was already destroyed and then hit again, for example when its limb was blown off, no longer
   shows in its normal colour on the payload page. Its health wrapped around instead of staying at 0, so a destroyed
   Gauss rifle (railgun) could look undamaged while a destroyed ER laser showed red.
+- A mech sent somewhere as it powers up, as after a repair, no longer says "I can't get through this way" when it gets
+  there. When the order ended, the original gave it again from where the mech stood, and a mech that had stopped beside
+  a spot it couldn't stand on found no way to it (OB-196).
 
 ### Logistics and Menus
 

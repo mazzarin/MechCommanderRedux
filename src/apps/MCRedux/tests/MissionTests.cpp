@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "TestGame.h"
+#include "ai/MCMoveGeometry.h"
 #include "ai/MCMoveSystem.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -21,11 +22,14 @@
 #include "object/MCObjectType.h"
 #include "object/MCObjectTypeManager.h"
 #include "object/MCMechWarrior.h"
+#include "object/MCForces.h"
+#include "object/MCTreeBuilding.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
 #include "sprite/MCVfxAppearanceType.h"
 #include "sprite/MCShape.h"
+#include "sound/MCRadio.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxClip.h"
 
@@ -857,4 +861,180 @@ TEST_CASE_ISOLATED("game: a target standing still gets easier to hit as fast at 
     const float fast = ChanceAfterStanding(*shooter, target, other, weaponIndex, Fast);
 
     CHECK_EQ(fast, locked);
+}
+
+namespace
+{
+    /// <summary>Runs up to <paramref name="seconds"/> of 15 Hz frames, until <paramref name="done"/> says so.</summary>
+    bool RunUntil(float seconds, const std::function<bool()>& done)
+    {
+        constexpr int32_t Fps = 15;
+
+        for (int32_t frame = 0; frame < static_cast<int32_t>(seconds * Fps); frame++)
+        {
+            MCTestGame::RunFrame(1.0f / static_cast<float>(Fps));
+
+            if (done())
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The player's first mech bay in the mission, or none.</summary>
+    std::shared_ptr<MCTreeBuilding> FindHomeMechBay()
+    {
+        for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
+        {
+            for (const std::shared_ptr<MCBaseObject>& object : *list)
+            {
+                if (object == nullptr || object->ObjectClass != MCObjectClass::TreeBuilding)
+                {
+                    continue;
+                }
+
+                auto building = std::static_pointer_cast<MCTreeBuilding>(object);
+
+                if (building->MechBay && building->GetRefitPoints() > 0.0f &&
+                    building->GetAlignment() == HomeTeam()->Alignment)
+                {
+                    return building;
+                }
+            }
+        }
+
+        return nullptr;
+    }
+}
+
+/// <summary>
+/// A move given while a repaired mech powers up in its bay runs, but the pilot stays in the alarm state of the power-up
+/// (OB-008). When the move ended, the original gave it again from where the mech stood (OB-196): to a spot the mech
+/// can't stand on, whose path ends in the open cell nearest it, more than 10 m from the point given, the second try
+/// found no step to take and the pilot radioed "I can't get through this way". Mission 17's mech bay repairs one of the
+/// player's mechs (part 513), which is then sent to a blocked cell about ten tiles east as it powers up.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mech sent on as it powers up after a repair doesn't radio a blocked move (OB-196)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(17));
+    const std::shared_ptr<MCTreeBuilding> bay = FindHomeMechBay();
+    REQUIRE(bay != nullptr);
+    const std::shared_ptr<MCMover> mover = GetMoverFromPartId(0x201);
+    REQUIRE(mover != nullptr);
+    REQUIRE(mover->ObjectClass == MCObjectClass::BattleMech);
+    std::shared_ptr<MCMechWarrior> pilot = mover->GetPilot();
+    REQUIRE(pilot != nullptr);
+
+    // In front of the bay (the interface offers a repair within 100 m), on the first open cell below it.
+    int32_t bayR = 0;
+    int32_t bayC = 0;
+    WorldCoordToMapTile(bay->GetPosition(), bayR, bayC);
+    MCVector3D front;
+    bool open = false;
+
+    for (int32_t down = 2; down < 6 && !open; down++)
+    {
+        front = MapTileCellToWorldPos(bayR + down, bayC, 1, 1);
+        const auto [row, col] = CellAt(front);
+        open = CellPassable(row, col);
+    }
+
+    REQUIRE(open);
+    front.Z = MCTerrain::GetTerrainElevation(front);
+    mover->SetPosition(front);
+    RunUntil(3.0f, [] { return false; });
+    REQUIRE(pilot->CurTacOrder.Code == MCTacticalOrderCode::None);
+
+    for (MCArmorLocation& armor : mover->Armor)
+    {
+        armor.CurArmor = static_cast<float>(armor.MaxArmor) * 0.5f;
+    }
+
+    // The repair, as the interface orders it.
+    MCTacticalOrder repair;
+    repair.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::GetFixed, 0);
+    repair.Target = bay;
+    repair.MoveParams.WayPath.Mode[0] = 1;
+    REQUIRE(mover->HandleTacticalOrder(repair, 1, 0) == 0);
+    constexpr int8_t ShutDown = 5;
+    bool shutDown = false;
+    const bool poweringUp = RunUntil(60.0f,
+                                     [&]
+                                     {
+                                         shutDown = shutDown || static_cast<int8_t>(mover->Status) == ShutDown;
+                                         return shutDown && static_cast<int8_t>(mover->Status) != ShutDown;
+                                     });
+    REQUIRE(poweringUp);
+    CHECK(mover->NeedsRefit(0) == 0);
+    CHECK_EQ(pilot->LastMessageType, static_cast<int32_t>(MCRadioMessageType::RefitDone));
+
+    // A blocked cell near an open one ten tiles east.
+    int32_t tileR = 0;
+    int32_t tileC = 0;
+    WorldCoordToMapTile(mover->GetPosition(), tileR, tileC);
+    constexpr int32_t Tiles = 10;
+    const MCVector3D open10 = MapTileCellToWorldPos(tileR, tileC + Tiles, 1, 1);
+    const auto [openRow, openCol] = CellAt(open10);
+    REQUIRE(CellPassable(openRow, openCol));
+    MCVector3D goal;
+    bool blocked = false;
+
+    for (int32_t radius = 1; radius <= 3 && !blocked; radius++)
+    {
+        for (int32_t dr = -radius; dr <= radius && !blocked; dr++)
+        {
+            for (int32_t dc = -radius; dc <= radius && !blocked; dc++)
+            {
+                if (!CellPassable(openRow + dr, openCol + dc))
+                {
+                    blocked = true;
+                    goal = MapCellToWorldPos(openRow + dr, openCol + dc);
+                }
+            }
+        }
+    }
+
+    REQUIRE(blocked);
+    mover->SelectionIndex = 0;
+    const MCWayPathPoint point{goal, false};
+    MCTacticalOrder move;
+    move.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::MoveToPoint, 0);
+    move.InitWayPath(std::span(&point, 1));
+    move.MoveParams.Wait = 0;
+    move.SelectionIndex = mover->SelectionIndex;
+    REQUIRE(mover->HandleTacticalOrder(move, 1, 0) == 0);
+    const float ordered = ScenarioTime;
+    RunUntil(1.0f, [&] { return pilot->CurTacOrder.Code == MCTacticalOrderCode::MoveToPoint; });
+    CHECK(pilot->OrderState == MCOrderState::Alarm);
+
+    // To the end of the move, then 5 seconds more.
+    bool radioedBlocked = false;
+    auto heardBlocked = [&]
+    {
+        radioedBlocked =
+            radioedBlocked || (pilot->LastMessageType == static_cast<int32_t>(MCRadioMessageType::MoveBlocked) &&
+                               pilot->LastMessageTime >= ordered);
+        return false;
+    };
+
+    const bool ended = RunUntil(90.0f,
+                                [&]
+                                {
+                                    heardBlocked();
+                                    return pilot->CurTacOrder.Code == MCTacticalOrderCode::None;
+                                });
+    REQUIRE(ended);
+    RunUntil(5.0f, heardBlocked);
+
+    // The path ended short of the spot given, as the original's second try needed.
+    CHECK(mover->DistanceFrom(goal) > MoveMarginOfError[1]);
+    CHECK(!radioedBlocked);
+    CHECK(pilot->TacOrderOf(MCOrderState::Player).Code == MCTacticalOrderCode::None);
 }

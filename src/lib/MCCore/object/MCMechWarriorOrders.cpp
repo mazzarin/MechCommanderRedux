@@ -98,6 +98,8 @@ namespace
 
 auto MCMechWarrior::ClearCurTacOrder(int updateTacOrder, int updateBrain) -> void
 {
+    // A player's order taken during an alarm runs as the current order while the state stays ALARM (OB-008).
+    const bool playerOrderEnded = OrderState == MCOrderState::Alarm && CurTacOrder.Origin == MCOrderOrigin::Player;
     CurTacOrder.Reset();
 
     if (updateTacOrder == 0)
@@ -148,6 +150,16 @@ auto MCMechWarrior::ClearCurTacOrder(int updateTacOrder, int updateBrain) -> voi
             }
 
             AlarmPriority = 0;
+
+            // OB-196 (fixed): when that player's order ended, the original fell back to the player's slot, which still
+            // held it, and gave it again from where the vehicle stood. A move whose path had ended more than 10 m from
+            // the point clicked (a blocked spot: the path ends in the open cell nearest it) then found no step to take,
+            // and the pilot radioed that it couldn't get through. The order that ended is done, as in the player state.
+            if (playerOrderEnded && NewTacOrderReceivedOf(MCOrderState::Player) == 0)
+            {
+                TacOrderOf(MCOrderState::Player).Reset();
+                PlayerOrderFromQueue = 0;
+            }
 
             if (TacOrderOf(MCOrderState::Player).Code != MCTacticalOrderCode::None)
             {

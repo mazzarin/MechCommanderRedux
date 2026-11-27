@@ -59,9 +59,20 @@ namespace
         uint64_t Revision = 0;
     };
 
+    /// <summary>The tests' MCO (MCMcoSeats::SetWaitingForTests): its waiting players, and its LET IN.</summary>
+    struct MCTestsMco
+    {
+        std::vector<MCMcoSeats::MCWaiting> Waiting;
+        /// <summary>Whether LET IN fails from its next press on, and whether its last press failed.</summary>
+        bool Fails = false;
+        bool Failed = false;
+        int32_t LetIns = 0;
+    };
+
     MCHostSide Host;
     MCGuestSide Guest;
     bool HostsSwitch = false;
+    std::optional<MCTestsMco> TestsMco;
 
     /// <summary>Whether the game was started by a launcher (MCO's, or another's): its room is where it put it.</summary>
     bool LaunchersGame()
@@ -491,6 +502,11 @@ void MCMcoSeats::Ended()
 
 std::vector<MCMcoSeats::MCWaiting> MCMcoSeats::Waiting()
 {
+    if (TestsMco.has_value())
+    {
+        return TestsMco->Waiting;
+    }
+
     const std::shared_ptr<MCMultiPlayer> game = InternetGame();
 
     if (game == nullptr)
@@ -522,11 +538,31 @@ void MCMcoSeats::HostSaidWaiting(uint32_t fromId, std::span<const uint8_t> bytes
 
 void MCMcoSeats::LetIn()
 {
+    if (TestsMco.has_value())
+    {
+        TestsMco->LetIns++;
+        TestsMco->Failed = TestsMco->Fails;
+        return;
+    }
+
     if (const std::shared_ptr<MCMultiPlayer> game = InternetGame();
         game != nullptr && game->SessionManager->IsHost && !Host.RoomId.empty())
     {
         MCMcoRooms::Now().StartBoth(false);
     }
+}
+
+bool MCMcoSeats::LetInFailed()
+{
+    if (TestsMco.has_value())
+    {
+        return TestsMco->Failed;
+    }
+
+    // MCO's refusal stays until its next ask, and LET IN's ask clears it at once (MCMcoRooms::StartBoth).
+    const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+    return game != nullptr && game->SessionManager->IsHost &&
+           MCMcoRooms::Now().Seen().Refusal == MCMcoRooms::LetInFailedText;
 }
 
 void MCMcoSeats::MatchStarts()
@@ -710,4 +746,35 @@ std::optional<std::vector<MCMcoSeats::MCWaiting>> MCMcoSeats::WaitingSaidIn(std:
     }
 
     return waiting;
+}
+
+void MCMcoSeats::SetWaitingForTests(std::optional<std::vector<MCWaiting>> waiting)
+{
+    if (!waiting.has_value())
+    {
+        TestsMco.reset();
+        return;
+    }
+
+    if (!TestsMco.has_value())
+    {
+        TestsMco.emplace();
+    }
+
+    TestsMco->Waiting = std::move(*waiting);
+}
+
+void MCMcoSeats::FailLetInForTests(bool fail)
+{
+    if (!TestsMco.has_value())
+    {
+        TestsMco.emplace();
+    }
+
+    TestsMco->Fails = fail;
+}
+
+int32_t MCMcoSeats::LetInsForTests()
+{
+    return TestsMco.has_value() ? TestsMco->LetIns : 0;
 }

@@ -4,7 +4,9 @@
 // (logistics/MCRoomModel): its name along the top with how it's found; the teams with their tech bases and points, the
 // players on no team as cards the host drags onto a team or sends with TEAM 1 and TEAM 2; the map with CHOOSE MAP, the
 // match options as played with VIEW or CHANGE; the chat; along the foot LEAVE, whom the room waits for and the host's
-// BEGIN PLANNING. It shows in the 1998 session screen's place (MCSessionScreen::ShowGuiWindow), which stays logistics'
+// BEGIN PLANNING. Port-only (Redux HD; SPEC-mco-hosting.md): MCO's players waiting in an internet game's room as WAITING
+// cards after the players on no team, said along the foot, the host's LET IN in BEGIN PLANNING's place while they wait.
+// It shows in the 1998 session screen's place (MCSessionScreen::ShowGuiWindow), which stays logistics'
 // screen, hidden, while its logic moves into the model: the flow's "room" kind is the same, what is sent is unchanged.
 
 #include "logistics/MCChatView.h"
@@ -33,6 +35,11 @@ public:
         std::vector<std::string> Team2;
         /// <summary>The players on no team, by name.</summary>
         std::vector<std::string> Pool;
+        /// <summary>
+        /// Port-only (Redux HD): MCO's players waiting, after them, as their cards read: "Clanner | Waiting", "Kerensky |
+        /// Waiting, not ready".
+        /// </summary>
+        std::vector<std::string> Waiting;
         std::string Tech1;
         std::string Tech2;
         std::string Points1;
@@ -53,13 +60,18 @@ public:
         /// <summary>The update waiting's line (a launcher's game's), which opens UPDATE; empty with none.</summary>
         std::string UpdateLine;
         bool Hosting = false;
+        /// <summary>The host's button at the foot as it reads ("Begin planning", or "Let in" while anyone waits).</summary>
+        std::string Start;
         bool CanBegin = false;
+        bool CanLetIn = false;
     };
 
     MCSeen Seen() const;
 
     /// <summary>What a player's presses do (and the tests'): each the model's action, as a click would.</summary>
     void PressBegin();
+    /// <summary>The host's LET IN (the foot's button while anyone waits on MCO, in BEGIN PLANNING's place).</summary>
+    void PressLetIn();
     void PressLeave();
     void PressJoin(uint32_t playerId, int8_t team);
     /// <summary>A card dropped on team <paramref name="team"/>'s place <paramref name="slot"/> (no team: the pool).</summary>
@@ -110,6 +122,15 @@ private:
         bool operator==(const MCCard&) const = default;
     };
 
+    /// <summary>One of MCO's players waiting, after the players on no team: its name and its mark ("Waiting").</summary>
+    struct MCWaitingCard
+    {
+        std::string Name;
+        std::string Mark;
+
+        bool operator==(const MCWaitingCard&) const = default;
+    };
+
     struct MCOption
     {
         std::string Name;
@@ -121,10 +142,16 @@ private:
 
     /// <summary>The model's room copied into what the document binds, each change said.</summary>
     void ShowRoom();
-    void ShowTeams(const std::vector<MCRoomModel::MCPlayer>& players);
+    void ShowTeams(const std::vector<MCRoomModel::MCPlayer>& players,
+                   const std::vector<MCMcoSeats::MCWaiting>& waiting);
     void ShowMatch();
     void ShowChat();
-    void ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players);
+    void ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players, const std::vector<MCMcoSeats::MCWaiting>& waiting);
+    /// <summary>
+    /// Port-only (Redux HD): the foot's line while anyone waits on MCO (<paramref name="waiting"/>): who waits, or for
+    /// the host whom LET IN waits for to get ready, or that it failed; empty while no one waits.
+    /// </summary>
+    std::string McoLine(const std::vector<MCMcoSeats::MCWaiting>& waiting) const;
     /// <summary>The host's switches and points boxes set from the model (not a box being typed in).</summary>
     void ShowControls();
     /// <summary>The model's value <paramref name="name"/> set to <paramref name="now"/>, said when it changed.</summary>
@@ -153,6 +180,7 @@ private:
     std::vector<MCSlot> _Slots1;
     std::vector<MCSlot> _Slots2;
     std::vector<MCCard> _Pool;
+    std::vector<MCWaitingCard> _Waiting;
     bool _HasMap = false;
     std::string _MapTitle;
     std::string _MapPic;
@@ -169,7 +197,14 @@ private:
     std::string _WaitName;
     std::string _WaitColour;
     std::string _WaitWhat;
+    /// <summary>Port-only (Redux HD): the foot's line while anyone waits on MCO (<see cref="McoLine"/>).</summary>
+    std::string _McoLine;
     bool _CanBegin = false;
+    /// <summary>The host's button at the foot: LET IN while anyone waits (and whether it's on), else BEGIN PLANNING.</summary>
+    bool _LetsIn = false;
+    bool _CanLetIn = false;
+    std::string _StartWord;
+    bool _StartOn = false;
 };
 
 /// <summary>

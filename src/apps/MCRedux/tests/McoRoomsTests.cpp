@@ -659,7 +659,10 @@ TEST_CASE("mco rooms: an internet game's room starts on MCO at LET IN, its bridg
     guest.CloseLobby();
     guest.Sit(roomId, "Steel Rain", 6, "K7QF");
     REQUIRE(Within(HeardMs, [&] { return host.Seen().Room && host.Seen().Room->Players.size() == 2; }));
+    REQUIRE_EQ(host.Seen().Refusal, std::string(MCMcoRooms::LetInFailedText));
     host.StartBoth(false);
+    // LET IN asks afresh: the last one's failure goes at once (the room says it until then).
+    CHECK(host.Seen().Refusal.empty());
     REQUIRE(Within(HeardMs, [&] { return host.Seen().Match == MCMcoMatchStage::Playing; }));
     CHECK(host.Seen().Refusal.empty());
     CHECK_EQ(host.Seen().GamePort, uint16_t{0});

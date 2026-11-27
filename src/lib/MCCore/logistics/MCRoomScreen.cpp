@@ -15,6 +15,7 @@
 #include "main/MCLogistics.h"
 #include "network/MCGamesList.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCMcoSeats.h"
 #include "network/MCMultiPlayer.h"
 #include "ui/MCRmlArt.h"
 #include "ui/MCRmlDialog.h"
@@ -51,6 +52,17 @@ namespace
     constexpr std::string_view ToChooseTeams = "to choose the teams.";
     constexpr std::string_view AllWeaponsFormat = "All {}";
     constexpr std::string_view SomeWeaponsFormat = "{} of {}";
+    /// <summary>The host's button at the foot: BEGIN PLANNING, or LET IN while anyone waits on MCO.</summary>
+    constexpr std::string_view BeginWord = "Begin planning";
+    constexpr std::string_view LetInWord = "Let in";
+    /// <summary>Port-only (Redux HD; SPEC-mco-hosting.md's "In the room"): MCO's waiting players' cards and lines.</summary>
+    constexpr std::string_view WaitingMark = "Waiting";
+    constexpr std::string_view NotReadyMark = "Waiting, not ready";
+    constexpr std::string_view WaitingSeenFormat = "{} | {}";
+    constexpr std::string_view OneWaitsFormat = "{} is waiting in MechCommander Online.";
+    constexpr std::string_view SomeWaitFormat = "{} are waiting in MechCommander Online.";
+    constexpr std::string_view GetReadyFormat = "Waiting for {} to get ready.";
+    constexpr std::string_view LetInFailedFormat = "Couldn't let {} in. Try again.";
 
     /// <summary>The kit's choices of the tech base switch: Inner Sphere, then Clan.</summary>
     constexpr int InnerSphereChoice = 0;
@@ -167,6 +179,7 @@ void MCRoomScreen::MakeModels(Rml::Context& context)
     slotFields("slots2", _Slots2);
     model.List("pool", _Pool, std::pair{"id", &MCCard::Id}, std::pair{"name", &MCCard::Name},
                std::pair{"colour", &MCCard::Colour}, std::pair{"host", &MCCard::Host}, std::pair{"me", &MCCard::Me});
+    model.List("waiting", _Waiting, std::pair{"name", &MCWaitingCard::Name}, std::pair{"mark", &MCWaitingCard::Mark});
     model.Value("has_map", _HasMap);
     model.Value("map_title", _MapTitle);
     model.Value("map_pic", _MapPic);
@@ -182,7 +195,9 @@ void MCRoomScreen::MakeModels(Rml::Context& context)
     model.Value("wait_name", _WaitName);
     model.Value("wait_colour", _WaitColour);
     model.Value("wait_what", _WaitWhat);
-    model.Value("can_begin", _CanBegin);
+    model.Value("mco_line", _McoLine);
+    model.Value("start_word", _StartWord);
+    model.Value("start_on", _StartOn);
 
     // A card's TEAM 1 and TEAM 2, and its drag onto a team's place or back to the players on no team.
     const auto argument = [](const Rml::VariantList& arguments, size_t at)
@@ -206,7 +221,18 @@ void MCRoomScreen::MakeModels(Rml::Context& context)
 void MCRoomScreen::OnLoaded(Rml::ElementDocument& /*document*/)
 {
     OnClick("leave", [this] { PressLeave(); });
-    OnClick("begin", [this] { PressBegin(); });
+    // BEGIN PLANNING's button is LET IN while anyone waits on MCO: the same button, so the keys reach it the same way.
+    OnClick("begin",
+            [this]
+            {
+                if (_LetsIn)
+                {
+                    PressLetIn();
+                    return;
+                }
+
+                PressBegin();
+            });
     OnClick("choose-map", [this] { PressChooseMap(); });
     OnClick("change-map", [this] { PressChooseMap(); });
     OnClick("view-options", [this] { PressOptions(); });
@@ -324,6 +350,7 @@ void MCRoomScreen::ShowRoom()
     const MCRoomModel& room = Room();
     const MCRoomModel::MCWhere where = room.Where();
     const std::vector<MCRoomModel::MCPlayer> players = room.Players();
+    const std::vector<MCMcoSeats::MCWaiting> waiting = room.Waiting();
     Keep("eyebrow", _Eyebrow, RoomPlace());
     Keep("name", _Name, room.Name());
     Keep("access", _Access,
@@ -331,18 +358,20 @@ void MCRoomScreen::ShowRoom()
                      : where == MCRoomModel::MCWhere::Lan    ? LanAccess
                                                              : std::string_view()));
     Keep("code", _Code, where == MCRoomModel::MCWhere::Internet ? room.Code() : std::string());
-    Keep("count", _Count, static_cast<int>(players.size()));
+    // MCO's waiting players are counted, as the host's door holds their places and INTERNET's list counts them.
+    Keep("count", _Count, static_cast<int>(players.size() + waiting.size()));
     Keep("most", _Most, static_cast<int>(room.Most()));
     Keep("hosting", _Hosting, room.Hosting());
     Keep("can_teams", _CanTeams, room.CanChangeTeams());
     Keep("can_forces", _CanForces, room.CanChangeForces());
-    ShowTeams(players);
+    ShowTeams(players, waiting);
     ShowMatch();
     ShowChat();
-    ShowFoot(players);
+    ShowFoot(players, waiting);
 }
 
-void MCRoomScreen::ShowTeams(const std::vector<MCRoomModel::MCPlayer>& players)
+void MCRoomScreen::ShowTeams(const std::vector<MCRoomModel::MCPlayer>& players,
+                             const std::vector<MCMcoSeats::MCWaiting>& waiting)
 {
     const MCRoomModel& room = Room();
     const auto techName = [&room](int8_t team)
@@ -411,6 +440,17 @@ void MCRoomScreen::ShowTeams(const std::vector<MCRoomModel::MCPlayer>& players)
     Keep("slots1", _Slots1, std::move(slots[0]));
     Keep("slots2", _Slots2, std::move(slots[1]));
     Keep("pool", _Pool, std::move(pool));
+
+    // MCO's waiting players after them: not players yet, so never placed.
+    std::vector<MCWaitingCard> cards;
+
+    for (const MCMcoSeats::MCWaiting& player : waiting)
+    {
+        cards.push_back(
+            MCWaitingCard{.Name = player.Name, .Mark = std::string(player.Ready ? WaitingMark : NotReadyMark)});
+    }
+
+    Keep("waiting", _Waiting, std::move(cards));
 }
 
 void MCRoomScreen::ShowMatch()
@@ -499,7 +539,8 @@ void MCRoomScreen::ShowChat()
     }
 }
 
-void MCRoomScreen::ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players)
+void MCRoomScreen::ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players,
+                            const std::vector<MCMcoSeats::MCWaiting>& waiting)
 {
     const MCRoomModel& room = Room();
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
@@ -513,13 +554,15 @@ void MCRoomScreen::ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players)
          room.StartWaits.empty() ? std::string()
          : !waitsLine.empty()    ? waitsLine
                                  : Sentence(room.StartWaits));
+    // Port-only (Redux HD): then MCO's waiting players, in the update's line's place and the guest's.
+    Keep("mco_line", _McoLine, room.StartWaits.empty() ? McoLine(waiting) : std::string());
     // The update waiting, as a launcher's players start here: the HD art a program installed alone came for in the main
     // menu's foot's words, any other update in the update line's.
     const std::string artLine = DueArtLineText();
     Keep("update_line", _UpdateLine,
-         !room.StartWaits.empty() || !MCLobbyUpdate::InRoom() ? std::string()
-         : !artLine.empty()                                   ? artLine
-                                                              : Sentence(UpdateLineText()));
+         !room.StartWaits.empty() || !_McoLine.empty() || !MCLobbyUpdate::InRoom() ? std::string()
+         : !artLine.empty()                                                        ? artLine
+                                                                                   : Sentence(UpdateLineText()));
 
     // A guest waits for the host: to choose a map and the teams, or whichever is left, then to begin planning.
     const auto host = std::ranges::find(players, true, &MCRoomModel::MCPlayer::Host);
@@ -533,7 +576,39 @@ void MCRoomScreen::ShowFoot(const std::vector<MCRoomModel::MCPlayer>& players)
                      : hasMap         ? ToChooseTeams
                      : placed         ? ToChooseMap
                                       : ToChoose));
-    Keep("can_begin", _CanBegin, room.Hosting() && room.CanStart && game != nullptr);
+    // The host's button: LET IN while anyone waits on MCO (on once every one is READY), else BEGIN PLANNING.
+    const bool letsIn = room.LetsIn();
+    _LetsIn = letsIn;
+    _CanLetIn = room.CanLetIn();
+    _CanBegin = !letsIn && room.Hosting() && room.CanStart && game != nullptr;
+    Keep("start_word", _StartWord, std::string(letsIn ? LetInWord : BeginWord));
+    Keep("start_on", _StartOn, letsIn ? _CanLetIn : _CanBegin);
+}
+
+std::string MCRoomScreen::McoLine(const std::vector<MCMcoSeats::MCWaiting>& waiting) const
+{
+    if (waiting.empty())
+    {
+        return {};
+    }
+
+    const MCRoomModel& room = Room();
+    const auto name = [](const MCMcoSeats::MCWaiting& player) { return player.Name; };
+    const std::string everyone = MCNamedInSentence(waiting, [](const MCMcoSeats::MCWaiting&) { return true; }, name);
+
+    if (room.LetInFailed())
+    {
+        return std::format(LetInFailedFormat, everyone);
+    }
+
+    if (room.LetsIn() && !room.CanLetIn())
+    {
+        return std::format(
+            GetReadyFormat,
+            MCNamedInSentence(waiting, [](const MCMcoSeats::MCWaiting& player) { return !player.Ready; }, name));
+    }
+
+    return std::vformat(waiting.size() == 1 ? OneWaitsFormat : SomeWaitFormat, std::make_format_args(everyone));
 }
 
 void MCRoomScreen::ShowControls()
@@ -593,7 +668,9 @@ MCRoomScreen::MCSeen MCRoomScreen::Seen() const
                 .MapTime = _HasMap ? _MapTime : std::string(),
                 .UpdateLine = _UpdateLine,
                 .Hosting = _Hosting,
-                .CanBegin = _CanBegin};
+                .Start = _Hosting ? _StartWord : std::string(),
+                .CanBegin = _CanBegin,
+                .CanLetIn = _LetsIn && _CanLetIn};
     std::vector<std::string> facts;
 
     if (!_Access.empty())
@@ -634,6 +711,11 @@ MCRoomScreen::MCSeen MCRoomScreen::Seen() const
         seen.Pool.push_back(card.Name);
     }
 
+    for (const MCWaitingCard& card : _Waiting)
+    {
+        seen.Waiting.push_back(std::format(WaitingSeenFormat, card.Name, card.Mark));
+    }
+
     seen.MapText = _MapLines;
 
     for (const MCOption& option : _Opts)
@@ -647,6 +729,7 @@ MCRoomScreen::MCSeen MCRoomScreen::Seen() const
     }
 
     seen.Status = !_Waits.empty()                   ? _Waits
+                  : !_McoLine.empty()               ? _McoLine
                   : !_UpdateLine.empty()            ? _UpdateLine
                   : !_Hosting && !_WaitName.empty() ? std::format("Waiting for {} {}", _WaitName, _WaitWhat)
                                                     : std::string();
@@ -658,6 +741,15 @@ void MCRoomScreen::PressBegin()
     if (_CanBegin && GlobalLog() != nullptr)
     {
         Room().BeginPlanning();
+    }
+}
+
+void MCRoomScreen::PressLetIn()
+{
+    if (_LetsIn && _CanLetIn && GlobalLog() != nullptr)
+    {
+        SDL_Log("Room: LET IN");
+        Room().LetIn();
     }
 }
 

@@ -777,14 +777,8 @@ namespace
     /// <summary>Port-only (SPEC-menus.md's stage 4): the same as a sentence lists them, as typed ("Ann, Cal and Dan").</summary>
     std::string ComingNamesTyped()
     {
-        std::string joined;
-
-        for (size_t at = 0; at < Coming.size(); at++)
-        {
-            joined += std::format("{}{}", at == 0 ? "" : at + 1 == Coming.size() ? " and " : ", ", Coming[at].Name);
-        }
-
-        return joined;
+        return MCNamedInSentence(
+            Coming, [](const MCComing&) { return true; }, [](const MCComing& coming) { return coming.Name; });
     }
 }
 

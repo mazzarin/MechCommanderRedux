@@ -63,6 +63,11 @@ namespace MCMcoSeats
     /// <summary>The host's LET IN: MCO's waiting players come into the game (MCO's START).</summary>
     void LetIn();
     /// <summary>
+    /// Whether the host's last LET IN failed (MCO refused its START, or its relay couldn't be reached:
+    /// MCMcoRooms::LetInFailedText), until LET IN is pressed again.
+    /// </summary>
+    bool LetInFailed();
+    /// <summary>
     /// The match starts (MCRoomModel::PublishMatchState): a host's room starts on MCO, if LET IN hasn't, so MCO shows it
     /// in game; where MCO won't, the room is off MCO for the battle and hosted again after it.
     /// </summary>
@@ -158,4 +163,17 @@ namespace MCMcoSeats
     /// <summary>The McoWaiting for <paramref name="waiting"/> (its first six), and what one says (none: it isn't one).</summary>
     MCMPMcoWaitingMessage WaitingMessage(const std::vector<MCWaiting>& waiting);
     std::optional<std::vector<MCWaiting>> WaitingSaidIn(std::span<const uint8_t> bytes);
+
+    // The tests' own (the room screen's tests, which have no MCO).
+
+    /// <summary>
+    /// The tests': while <paramref name="waiting"/> is set, <see cref="Waiting"/> gives it whatever the game, and
+    /// <see cref="LetIn"/> only counts its presses, failing or not as <see cref="FailLetInForTests"/> last said
+    /// (<see cref="LetInFailed"/>); none: MCO's own again, the presses and the failure forgotten.
+    /// </summary>
+    void SetWaitingForTests(std::optional<std::vector<MCWaiting>> waiting);
+    /// <summary>The tests': whether the tests' LET IN fails, from its next press on.</summary>
+    void FailLetInForTests(bool fail);
+    /// <summary>The tests': LET IN's presses since the tests' waiting players were first set.</summary>
+    int32_t LetInsForTests();
 }

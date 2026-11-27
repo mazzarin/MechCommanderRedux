@@ -471,10 +471,39 @@ auto MCRoomModel::ChooseMission(std::string_view mission) -> void
 
 auto MCRoomModel::BeginPlanning() -> void
 {
-    if (Made() && Hosting() && CanStart)
+    if (Made() && Hosting() && CanStart && !LetsIn())
     {
         Begin();
     }
+}
+
+auto MCRoomModel::Waiting() const -> std::vector<MCMcoSeats::MCWaiting>
+{
+    return Made() ? MCMcoSeats::Waiting() : std::vector<MCMcoSeats::MCWaiting>();
+}
+
+auto MCRoomModel::LetsIn() const -> bool
+{
+    return Hosting() && !Waiting().empty();
+}
+
+auto MCRoomModel::CanLetIn() const -> bool
+{
+    return LetsIn() && std::ranges::all_of(Waiting(), &MCMcoSeats::MCWaiting::Ready);
+}
+
+auto MCRoomModel::LetIn() -> void
+{
+    if (CanLetIn())
+    {
+        _LetInPressed = true;
+        MCMcoSeats::LetIn();
+    }
+}
+
+auto MCRoomModel::LetInFailed() const -> bool
+{
+    return _LetInPressed && LetsIn() && MCMcoSeats::LetInFailed();
 }
 
 auto MCRoomModel::Tend() -> void
@@ -482,6 +511,12 @@ auto MCRoomModel::Tend() -> void
     if (const std::shared_ptr<MCMultiPlayer> game = MultiPlayer(); game != nullptr)
     {
         game->UpdateMatchOptions();
+    }
+
+    // MCO's refusal stays until LET IN asks again: its failure is said only while anyone still waits.
+    if (_LetInPressed && Waiting().empty())
+    {
+        _LetInPressed = false;
     }
 }
 
@@ -586,6 +621,8 @@ auto MCRoomModel::Activate(bool refresh) -> void
     PingUntil = MCPort::Milliseconds() + PingMs;
     Pinging = true;
     CanStart = false;
+    // Port-only (Redux HD): a room opened afresh says no LET IN's failure of before.
+    _LetInPressed = false;
     // The view's tabs and buttons a new room's (SPEC-menus.md's stage 2: EXIT goes back one screen, as Escape does), and
     // its names hidden, each at its row.
     ToView([](MCRoomView& view) { view.Opening(); });

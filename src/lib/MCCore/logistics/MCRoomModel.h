@@ -14,6 +14,11 @@ enum class MCFileCheck : uint8_t;
 class MCRoomTicker;
 struct MCRoomPicks;
 
+namespace MCMcoSeats
+{
+    struct MCWaiting;
+}
+
 /// <summary>
 /// Port-only (SPEC-menus.md's stage 9): what a view of the room is told as the room's logic goes, at the moments the 1998
 /// session screen did each itself (logistics/MCSessionScreen, the one such view): its name slots, its points' boxes, its
@@ -263,12 +268,29 @@ public:
     void SetPoints(int8_t team, int32_t points);
     /// <summary>Loads the multiplayer mission <paramref name="mission"/> (its packet's name), asking everyone for it.</summary>
     void ChooseMission(std::string_view mission);
-    /// <summary>Starts the match (the host's BEGIN PLANNING), when it can start.</summary>
+    /// <summary>Starts the match (the host's BEGIN PLANNING), when it can start and no one waits on MCO.</summary>
     void BeginPlanning();
+
+    // ---- Port-only (Redux HD; SPEC-mco-hosting.md's "In the room"): MCO's players waiting in an internet game's room ----
+
+    /// <summary>
+    /// MCO's players waiting in the room (network/MCMcoSeats.h), its WAITING cards: on no team and not its players, so
+    /// they're never placed and the start doesn't wait for them to be; none when MCO isn't in the game.
+    /// </summary>
+    std::vector<MCMcoSeats::MCWaiting> Waiting() const;
+    /// <summary>Whether the host's button at the foot is LET IN, in BEGIN PLANNING's place: anyone waits.</summary>
+    bool LetsIn() const;
+    /// <summary>Whether LET IN is on: anyone waits, every one READY.</summary>
+    bool CanLetIn() const;
+    /// <summary>The host's LET IN, when it's on: MCO's waiting players come into the game (MCMcoSeats::LetIn).</summary>
+    void LetIn();
+    /// <summary>Whether the host's last LET IN failed: said until LET IN is pressed again, or no one waits.</summary>
+    bool LetInFailed() const;
 
     /// <summary>
     /// The room's work each frame, whichever room shows (the remade one's frame or the 1998 one's draw): the host's
-    /// match options sent again when a player's rules change what the match plays.
+    /// match options sent again when a player's rules change what the match plays; LET IN's failure forgotten once no
+    /// one waits on MCO.
     /// </summary>
     void Tend();
 
@@ -471,6 +493,8 @@ private:
 
     std::weak_ptr<MCRoomView> _View;
     bool _Made = false;
+    /// <summary>Port-only (Redux HD): the host pressed LET IN, and someone has waited since (its failure is said).</summary>
+    bool _LetInPressed = false;
     /// <summary>The GUI object the room's tick's timer goes to.</summary>
     MCGuiRef<MCRoomTicker> _Ticker;
 };

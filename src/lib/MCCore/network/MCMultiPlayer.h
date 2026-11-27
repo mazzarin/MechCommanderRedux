@@ -365,6 +365,33 @@ std::string MCNamedPlayers(const Players& players, Wanted wanted, NameOf nameOf)
 }
 
 /// <summary>
+/// Port-only (SPEC-menus.md's stage 4): the same as a sentence lists them, as typed: "Ann", "Ann and Bob", "Ann, Bob and
+/// Cal".
+/// </summary>
+template <std::ranges::input_range Players, typename Wanted, typename NameOf>
+std::string MCNamedInSentence(const Players& players, Wanted wanted, NameOf nameOf)
+{
+    std::vector<std::string> names;
+
+    for (const auto& player : players)
+    {
+        if (wanted(player))
+        {
+            names.emplace_back(nameOf(player));
+        }
+    }
+
+    std::string joined;
+
+    for (size_t at = 0; at < names.size(); at++)
+    {
+        joined += std::format("{}{}", at == 0 ? "" : at + 1 == names.size() ? " and " : ", ", names[at]);
+    }
+
+    return joined;
+}
+
+/// <summary>
 /// Port: sets the rules the mission being played plays by (MCScenario::Load: its match's, MCMultiPlayer::Played; none
 /// outside a match).
 /// </summary>

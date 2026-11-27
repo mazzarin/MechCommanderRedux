@@ -31,6 +31,7 @@
 #include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
 #include "network/MCGameDataHash.h"
+#include "network/MCMcoSeats.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCRoomEnd.h"
 #include "platform/MCDirectPlay.h"
@@ -357,6 +358,20 @@ namespace
         REQUIRE(RoomScreenShown());
         return RoomScreen()->Seen();
     }
+
+    /// <summary>MCO's players waiting in a room, as the tests' MCO says them (MCMcoSeats::SetWaitingForTests).</summary>
+    const MCMcoSeats::MCWaiting ClannerReady{.Name = "Clanner", .Ready = true};
+    const MCMcoSeats::MCWaiting KerenskyNotReady{.Name = "Kerensky", .Ready = false};
+    const MCMcoSeats::MCWaiting KerenskyReady{.Name = "Kerensky", .Ready = true};
+
+    /// <summary>The tests' MCO let go as the test ends, however it ends (MCMcoSeats' own is the game's again).</summary>
+    struct MCTestsMcoGoes
+    {
+        MCTestsMcoGoes() = default;
+        MCTestsMcoGoes(const MCTestsMcoGoes&) = delete;
+        MCTestsMcoGoes& operator=(const MCTestsMcoGoes&) = delete;
+        ~MCTestsMcoGoes() { MCMcoSeats::SetWaitingForTests(std::nullopt); }
+    };
 }
 
 /// <summary>
@@ -366,7 +381,8 @@ namespace
 /// change of map, and the room shown again (as a host shows it for a player joining or rejoining, and to a rematch's
 /// guests back), its map named again; drawn at the frames' windows (the room's frames' guest's), and laid out and read
 /// at the players'. A launcher's and MCO's rooms are a guest's room the same way (the same model and screen, the
-/// host's same messages). Fails with a room keyed on the host's mission file, which a guest never has.
+/// host's same messages). MCO's players waiting in an internet game's room show as WAITING cards, the foot saying they
+/// wait. Fails with a room keyed on the host's mission file, which a guest never has.
 /// </summary>
 TEST_CASE_ISOLATED("game: a LAN guest's room shows the map its host loads, and what it waits for")
 {
@@ -461,6 +477,23 @@ TEST_CASE_ISOLATED("game: a LAN guest's room shows the map its host loads, and w
     seen = RoomSeen();
     CHECK_EQ(seen.Map, std::string("3 is a Magic Number"));
     CHECK(!seen.MapText.empty());
+    CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
+
+    // Port-only (Redux HD; SPEC-mco-hosting.md): MCO's players waiting in an internet game's room (the tests' MCO, as
+    // its host says them) show to a guest too, after the players on no team, and the foot says they wait in the line
+    // of what the room waits for (READY or not: whom LET IN waits for is the host's line); no LET IN.
+    const MCTestsMcoGoes mcoGoes;
+    MCMcoSeats::SetWaitingForTests(std::vector{ClannerReady, KerenskyNotReady});
+    Settle();
+    seen = RoomSeen();
+    CHECK(seen.Pool.empty());
+    CHECK_EQ(seen.Waiting, (std::vector<std::string>{"Clanner | Waiting", "Kerensky | Waiting, not ready"}));
+    CHECK_EQ(seen.Status, std::string("Clanner and Kerensky are waiting in MechCommander Online."));
+    CHECK_EQ(seen.Start, std::string());
+    MCMcoSeats::SetWaitingForTests(std::vector<MCMcoSeats::MCWaiting>{});
+    Settle();
+    seen = RoomSeen();
+    CHECK(seen.Waiting.empty());
     CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
     bob.Close();
 }
@@ -1046,6 +1079,150 @@ TEST_CASE_ISOLATED("game: the room's chat and points take what the 1998 room's b
     Settle();
     CHECK_EQ(GlobalLog()->Room.Team1Points, 9'999'999);
     CHECK_EQ(room.Seen().Points1, std::string("9,999,999"));
+}
+
+namespace
+{
+    /// <summary>The MCO waiting test's host's address, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view WaitingHostAddress = "127.0.0.1:29011";
+    /// <summary>The map the MCO waiting test's room loads, the host's and its guest's.</summary>
+    constexpr std::string_view WaitingMission = "CPTRBASE";
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "In the room", the host's: MCO's players waiting in its internet game's room (the tests' MCO)
+/// show as cards after the players on no team, marked WAITING or WAITING, NOT READY, counted among the room's players.
+/// They're never placed (no TEAM 1 or TEAM 2, no drag) and the start doesn't wait for them to be. While anyone waits the
+/// foot says so, and the host's button reads LET IN in BEGIN PLANNING's place: off while one isn't READY (the line
+/// says whom it waits for), pressed from the keys as BEGIN PLANNING is. A LET IN that fails is said, naming them, until
+/// LET IN again, or until no one waits (BEGIN PLANNING back as it was). Drawn at the frames' windows (--shots saves
+/// them), and laid out and read at the players'.
+/// </summary>
+TEST_CASE_ISOLATED("game: a room shows MCO's waiting players, and its host lets them in with LET IN")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    using MCMenusPictures::CheckMenusFrames;
+    REQUIRE(MCTestGame::StartLogistics());
+    const MCTestsMcoGoes mcoGoes;
+
+    // Bob hosts Steel Rain, Ann joins: each on a team, Capture Base loaded, BEGIN PLANNING on.
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.ConnectTcp(WaitingHostAddress);
+    MCTestGuest::HostOnLan("Bob", "Steel Rain", 6);
+    Settle();
+    REQUIRE(manager.DirectPlay != nullptr);
+    Guest guest("Ann");
+    REQUIRE(guest.Join(*manager.DirectPlay, WaitingHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(guest.Id()); }));
+    Settle();
+    REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, guest.Id()));
+    const uint32_t hostId = manager.MyPlayer()->Id;
+    guest.SendRules(hostId, MCMatchRule::Supported);
+    guest.AnswerFiles(MCMissionDataHash(GamePath(SavePath, WaitingMission, ".mpk")));
+    Settle();
+    REQUIRE(RoomScreenShown());
+    MCRoomScreen& room = *RoomScreen();
+    MCRoomModel& model = GlobalLog()->Room;
+    room.PressJoin(hostId, MCRoomModel::Team1);
+    room.PressJoin(guest.Id(), MCRoomModel::Team2);
+    model.ChooseMission(WaitingMission);
+    REQUIRE(SettleUntil([&] { return guest.MissionsLoaded() == 1 && MCTestGuest::DialogText().empty(); }));
+    REQUIRE(SettleUntil([&] { return room.Seen().CanBegin; }));
+    MCRoomScreen::MCSeen seen = room.Seen();
+    CHECK_EQ(seen.Start, std::string("Begin planning"));
+    CHECK(seen.Waiting.empty());
+    CHECK_EQ(seen.Status, std::string());
+    CHECK(seen.Facts.ends_with("2 of 6 players"));
+
+    // Clanner waits on MCO, READY: a card on no team, never placed; the foot says so, LET IN on in BEGIN PLANNING's
+    // place. The start doesn't wait for Clanner to be placed.
+    MCMcoSeats::SetWaitingForTests(std::vector{ClannerReady});
+    Settle();
+    seen = room.Seen();
+    CHECK(seen.Pool.empty());
+    CHECK_EQ(seen.Waiting, std::vector<std::string>{"Clanner | Waiting"});
+    CHECK(seen.Facts.ends_with("3 of 6 players"));
+    CHECK_EQ(seen.Status, std::string("Clanner is waiting in MechCommander Online."));
+    CHECK_EQ(seen.Start, std::string("Let in"));
+    CHECK(seen.CanLetIn);
+    CHECK(!seen.CanBegin);
+    CHECK(model.CanStart);
+    const MCOptionalRef<Rml::ElementDocument> document = room.Document();
+    REQUIRE(document.has_value());
+    Rml::Element* card = document->get().QuerySelector(".person.waiting");
+    REQUIRE(card != nullptr);
+    CHECK(card->IsVisible(true));
+    CHECK(!card->IsClassSet("drags"));
+    Rml::ElementList buttons;
+    card->QuerySelectorAll(buttons, ".button");
+    CHECK(buttons.empty());
+    // Nobody on no team to drag: the list's note doesn't ask for it.
+    Rml::Element* note = document->get().QuerySelector("#pool .pool-head .note");
+    REQUIRE(note != nullptr);
+    CHECK(!note->IsVisible(true));
+
+    // Kerensky waits too, not READY: LET IN off, the line saying whom it waits for, its press nothing.
+    MCMcoSeats::SetWaitingForTests(std::vector{ClannerReady, KerenskyNotReady});
+    Settle();
+    seen = room.Seen();
+    CHECK_EQ(seen.Waiting, (std::vector<std::string>{"Clanner | Waiting", "Kerensky | Waiting, not ready"}));
+    CHECK_EQ(seen.Status, std::string("Waiting for Kerensky to get ready."));
+    CHECK_EQ(seen.Start, std::string("Let in"));
+    CHECK(!seen.CanLetIn);
+    CheckMenusFrames("room let in off", {0xc4e73935, 0x0de85f00, 0xe488c157});
+    MCTestGuest::PressInRoom("begin");
+    room.PressLetIn();
+    Settle();
+    CHECK_EQ(MCMcoSeats::LetInsForTests(), 0);
+
+    // Kerensky READY: LET IN on, the line naming them both; Enter on it lets them in, as it presses BEGIN PLANNING.
+    MCMcoSeats::SetWaitingForTests(std::vector{ClannerReady, KerenskyReady});
+    Settle();
+    seen = room.Seen();
+    CHECK_EQ(seen.Status, std::string("Clanner and Kerensky are waiting in MechCommander Online."));
+    CHECK(seen.CanLetIn);
+    CheckMenusFrames("room let in", {0x7f7e35a0, 0xffd64130, 0x1aabda24});
+    Rml::Element* button = MCTestGuest::ElementOf(room, "begin");
+    REQUIRE(button != nullptr);
+    button->Focus(true);
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    Settle();
+    CHECK_EQ(MCMcoSeats::LetInsForTests(), 1);
+
+    // A LET IN that fails is said, naming them, until LET IN again.
+    MCMcoSeats::FailLetInForTests(true);
+    MCTestGuest::PressInRoom("begin");
+    CHECK_EQ(MCMcoSeats::LetInsForTests(), 2);
+    seen = room.Seen();
+    CHECK_EQ(seen.Status, std::string("Couldn't let Clanner and Kerensky in. Try again."));
+    CHECK(seen.CanLetIn);
+    CheckMenusFrames("room let in failed", {0xd089bdb2, 0x4230d735, 0xc5348809});
+    MCMcoSeats::FailLetInForTests(false);
+    MCTestGuest::PressInRoom("begin");
+    CHECK_EQ(MCMcoSeats::LetInsForTests(), 3);
+    CHECK_EQ(room.Seen().Status, std::string("Clanner and Kerensky are waiting in MechCommander Online."));
+
+    // ...or until no one waits: BEGIN PLANNING back, on, and nothing said; someone waiting again isn't told it failed.
+    MCMcoSeats::FailLetInForTests(true);
+    MCTestGuest::PressInRoom("begin");
+    CHECK_EQ(room.Seen().Status, std::string("Couldn't let Clanner and Kerensky in. Try again."));
+    MCMcoSeats::SetWaitingForTests(std::vector<MCMcoSeats::MCWaiting>{});
+    Settle();
+    seen = room.Seen();
+    CHECK(seen.Waiting.empty());
+    CHECK_EQ(seen.Status, std::string());
+    CHECK_EQ(seen.Start, std::string("Begin planning"));
+    CHECK(seen.CanBegin);
+    CHECK(seen.Facts.ends_with("2 of 6 players"));
+    MCMcoSeats::SetWaitingForTests(std::vector{ClannerReady});
+    Settle();
+    CHECK_EQ(room.Seen().Status, std::string("Clanner is waiting in MechCommander Online."));
 }
 
 /// <summary>

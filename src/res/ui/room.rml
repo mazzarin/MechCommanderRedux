@@ -8,7 +8,9 @@
      with how it's found; who plays (the teams with their tech base and points, three places each, the players on no
      team as cards the host drags onto a team or sends with TEAM 1 or TEAM 2), what is played (the map, CHOOSE MAP or
      the host's CHANGE, the match options as played, VIEW or CHANGE opening MATCH OPTIONS) and the chat; along the
-     bottom LEAVE, whom the room waits for and the host's BEGIN PLANNING. The room's model (logistics/MCRoomModel). -->
+     bottom LEAVE, whom the room waits for and the host's BEGIN PLANNING. The room's model (logistics/MCRoomModel).
+     Port-only (Redux HD; SPEC-mco-hosting.md): MCO's players waiting as WAITING cards after the players on no team,
+     never placed; the foot's line says who waits, and the host's button is LET IN while they do. -->
 <body class="night" data-model="room">
     <div class="stage16">
         <div id="room" class="content">
@@ -60,8 +62,8 @@
                             </div>
                         </div>
                     </div>
-                    <div class="pool-drop" id="pool" data-if="pool.size > 0" data-event-dragdrop="drop(0, 0)">
-                        <div class="pool-head"><div class="pool-name">Not on a team</div><div class="grow"></div><div class="note" data-if="can_teams">Drag a player onto a team.</div></div>
+                    <div class="pool-drop" id="pool" data-if="pool.size > 0 || waiting.size > 0" data-event-dragdrop="drop(0, 0)">
+                        <div class="pool-head"><div class="pool-name">Not on a team</div><div class="grow"></div><div class="note" data-if="can_teams &amp;&amp; pool.size > 0">Drag a player onto a team.</div></div>
                         <div class="person" data-for="card : pool" data-class-me="card.me" data-class-drags="can_teams"
                              data-event-dragstart="drag(card.id)">
                             <div data-attr-class="'name ' + card.colour">{{card.name}}</div>
@@ -69,6 +71,11 @@
                             <div class="grow"></div>
                             <div class="button small" data-if="can_teams" data-class-off="full1" data-event-click="join(card.id, 1)" data-hint="To team 1">Team 1</div>
                             <div class="button small" data-if="can_teams" data-class-off="full2" data-event-click="join(card.id, 2)" data-hint="To team 2">Team 2</div>
+                        </div>
+                        <div class="person waiting" data-for="wait : waiting">
+                            <div class="name grey">{{wait.name}}</div>
+                            <div class="note">{{wait.mark}}</div>
+                            <div class="grow"></div>
                         </div>
                     </div>
                 </div>
@@ -116,8 +123,9 @@
                 <div class="grow"></div>
                 <div class="status update-line" id="update" data-if="update_line != ''" data-hint="Update">{{update_line}}</div>
                 <div class="status" data-if="waits != ''">{{waits}}</div>
-                <div class="status" data-if="!hosting &amp;&amp; waits == '' &amp;&amp; wait_name != ''">Waiting for <span data-attr-class="wait_colour">{{wait_name}}</span> {{wait_what}}</div>
-                <div class="button main" id="begin" data-if="hosting" data-class-off="!can_begin" data-hint="Begin planning">Begin planning</div>
+                <div class="status" data-if="mco_line != ''">{{mco_line}}</div>
+                <div class="status" data-if="!hosting &amp;&amp; waits == '' &amp;&amp; mco_line == '' &amp;&amp; wait_name != ''">Waiting for <span data-attr-class="wait_colour">{{wait_name}}</span> {{wait_what}}</div>
+                <div class="button main" id="begin" data-if="hosting" data-class-off="!start_on" data-attr-data-hint="start_word">{{start_word}}</div>
             </div>
         </div>
     </div>

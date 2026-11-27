@@ -1616,6 +1616,12 @@ void MCMcoRooms::DoStart()
 
 void MCMcoRooms::StartBoth(bool battle)
 {
+    // LET IN asks afresh: its last failure goes at once, so the room no longer says it (MCMcoSeats::LetInFailed).
+    if (!battle)
+    {
+        Show([](MCMcoSeen& seen) { seen.Refusal.clear(); });
+    }
+
     Post([this, battle] { DoStartBoth(battle); });
 }
 

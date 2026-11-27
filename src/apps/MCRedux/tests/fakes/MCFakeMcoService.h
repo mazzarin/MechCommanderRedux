@@ -113,6 +113,8 @@ namespace MCFakeMcoService
             std::string Password;
             std::string Build;
             std::string Content;
+            /// <summary>What update_room last said of it (the mission, for our hosts).</summary>
+            std::string Description;
             std::optional<Json> Match;
             /// <summary>The host said its game is hosting the match (publish_ready): the guests are told of it.</summary>
             bool Published = false;
@@ -300,6 +302,30 @@ namespace MCFakeMcoService
         }
 
         /// <summary>The rooms hosted or added, by their ids.</summary>
+        /// <summary>The room <paramref name="roomId"/> as it stands, if it's there.</summary>
+        std::optional<MCRoom> RoomOf(std::string_view roomId) const
+        {
+            const std::scoped_lock lock(_Lock);
+            const auto room = _Rooms.find(std::string(roomId));
+            return room != _Rooms.end() ? std::optional<MCRoom>(room->second) : std::nullopt;
+        }
+
+        /// <summary>Whether <paramref name="username"/> sits in <paramref name="roomId"/>, and READY.</summary>
+        std::optional<bool> SeatOf(std::string_view roomId, std::string_view username) const
+        {
+            const std::scoped_lock lock(_Lock);
+
+            for (const auto& [id, peer] : _Peers)
+            {
+                if (peer.RoomId == roomId && peer.Username == username)
+                {
+                    return peer.Ready;
+                }
+            }
+
+            return std::nullopt;
+        }
+
         std::vector<std::string> RoomIds() const
         {
             const std::scoped_lock lock(_Lock);
@@ -546,6 +572,43 @@ namespace MCFakeMcoService
             }
         }
 
+        /// <summary>update_room, kick_peer or transfer_host from <paramref name="peer"/>, which must host <paramref name="room"/>.</summary>
+        MCAnswer HostCall(const std::string& action, MCFields& fields, MCPeer& peer, MCRoom& room)
+        {
+            if (room.HostClient != peer.ClientId)
+            {
+                return Error(HttpForbidden, "not_host", "Only the host can do that.");
+            }
+
+            if (action == "update_room")
+            {
+                room.Name = fields["new_name"];
+                room.Description = fields["description"];
+                room.MaxPlayers = std::stoi(fields["max_players"]);
+                return {HttpOk, Success()};
+            }
+
+            const auto target = _Peers.find(fields["target_client_id"]);
+
+            if (target == _Peers.end() || target->second.RoomId != room.RoomId || target->first == peer.ClientId)
+            {
+                return Error(HttpForbidden, "peer_not_found", "That player isn't in the room.");
+            }
+
+            if (action == "kick_peer")
+            {
+                target->second.RoomId.clear();
+                _Removed[target->first] = {.Kind = "kicked", .By = peer.Username};
+                AppendLine(room.RoomId, Event("removed", target->second.Username));
+                return {HttpOk, Success()};
+            }
+
+            room.HostClient = target->first;
+            target->second.Host = true;
+            peer.Host = false;
+            return {HttpOk, Success()};
+        }
+
         std::string ClientOf(std::string_view username) const
         {
             for (const auto& [id, peer] : _Peers)
@@ -740,6 +803,12 @@ namespace MCFakeMcoService
             if (room == _Rooms.end())
             {
                 return Error(HttpForbidden, "not_in_room", "Not in a room.");
+            }
+
+            // The host's own calls (Port-only, Redux HD: SPEC-mco-hosting.md), as the launcher's room window makes them.
+            if (action == "update_room" || action == "kick_peer" || action == "transfer_host")
+            {
+                return HostCall(action, fields, peer, room->second);
             }
 
             if (action == "send_message")

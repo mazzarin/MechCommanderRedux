@@ -388,6 +388,20 @@ namespace MCMcoApi
         /// <summary>Leaves the room for the lobby (register_peer into the Lobby).</summary>
         MCResult<void> LeaveRoom(MCPeer& peer);
 
+        /// <summary>
+        /// Port-only (Redux HD; SPEC-mco-hosting.md): the host's room told its <paramref name="name"/>,
+        /// <paramref name="description"/> and <paramref name="maxPlayers"/> (update_room, as the launcher's Edit Room
+        /// sends them; its password left as it is).
+        /// </summary>
+        MCResult<void> UpdateRoom(MCPeer& peer, const MCSeat& seat, std::string_view name, std::string_view description,
+                                  int32_t maxPlayers);
+
+        /// <summary>The host takes the player <paramref name="clientId"/> out of its room (kick_peer).</summary>
+        MCResult<void> KickPeer(MCPeer& peer, std::string_view clientId);
+
+        /// <summary>The host hands its room to the player <paramref name="clientId"/> in it (transfer_host).</summary>
+        MCResult<void> TransferHost(MCPeer& peer, std::string_view clientId);
+
     private:
         struct MCAnswer;
 

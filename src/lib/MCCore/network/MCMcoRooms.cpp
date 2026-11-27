@@ -854,7 +854,7 @@ void MCMcoRooms::PollLobby()
 
 // The room.
 
-bool MCMcoRooms::Prepared()
+bool MCMcoRooms::Prepared(bool quiet)
 {
     if (_Content.empty() && _Setup.Content)
     {
@@ -863,7 +863,12 @@ bool MCMcoRooms::Prepared()
         if (!content)
         {
             SDL_Log("MechCommander Online: the game data's fingerprint: %s", content.error().c_str());
-            Refused(std::string(NoMatchText));
+
+            if (!quiet)
+            {
+                Refused(std::string(NoMatchText));
+            }
+
             return false;
         }
 
@@ -1053,6 +1058,173 @@ void MCMcoRooms::DoHost(const std::string& name, int32_t maxPlayers, std::string
         });
 }
 
+// Port-only (Redux HD; SPEC-mco-hosting.md): an internet game on MCO too, said only in the log.
+
+void MCMcoRooms::HostBoth(MCMcoBoth both)
+{
+    Post([this, both = std::move(both)]() mutable { DoHostBoth(std::move(both)); });
+}
+
+void MCMcoRooms::DoHostBoth(MCMcoBoth both)
+{
+    if (_Seat || _Peer.PeerToken.empty() || !Prepared(true) || _Stock.empty())
+    {
+        SDL_Log("MechCommander Online: the internet game isn't hosted there: %s",
+                _Seat                     ? "this game is in a room already"
+                : _Peer.PeerToken.empty() ? "this game has no player there"
+                : _Stock.empty()          ? "it names no build for its Redux rooms"
+                                          : "it can't be reached, or the game's data can't be read");
+        Wipe(both.Password);
+        return;
+    }
+
+    const int32_t players = MCMcoApi::MatchCapacity(both.MaxPlayers);
+    auto seat = _Service->HostRoom(_Peer, both.Name, players, both.Password, _Stock, _Content);
+    Wipe(both.Password);
+
+    if (!seat)
+    {
+        if (!SignsOut(seat.error()))
+        {
+            SDL_Log("MechCommander Online: hosting the internet game's room: %s",
+                    MCMcoApi::Describe(seat.error()).c_str());
+        }
+
+        return;
+    }
+
+    SDL_Log("MechCommander Online: the internet game is hosted there too, as \"%s\"", both.Name.c_str());
+    _Seat = std::move(*seat);
+    _InLobby = false;
+    _NextPoll = Clock::now();
+    _DescribedMax = players;
+    const std::string name = both.Name;
+    _Both = std::move(both);
+    Show(
+        [&](MCMcoSeen& seen)
+        {
+            seen.ClientId = _Peer.ClientId;
+            seen.Room = MCMcoRoomSeen{
+                .RoomId = _Seat->RoomId,
+                .Name = name,
+                .Hosting = true,
+                .Players = {{.ClientId = _Peer.ClientId, .Username = _Peer.Username, .Ready = true, .Host = true}},
+                .MaxPlayers = players,
+                .Host = _Peer.Username,
+                .Both = true};
+        });
+}
+
+void MCMcoRooms::Describe(std::string description, int32_t maxPlayers)
+{
+    Post([this, description = std::move(description), maxPlayers] { DoDescribe(description, maxPlayers); });
+}
+
+void MCMcoRooms::DoDescribe(const std::string& description, int32_t maxPlayers)
+{
+    const int32_t players = MCMcoApi::MatchCapacity(maxPlayers);
+
+    if (!_Seat || !_Seat->Host || !_Both || (description == _Described && players == _DescribedMax))
+    {
+        return;
+    }
+
+    if (const auto updated = _Service->UpdateRoom(_Peer, *_Seat, _Both->Name, description, players); !updated)
+    {
+        SDL_Log("MechCommander Online: describing the internet game's room: %s",
+                MCMcoApi::Describe(updated.error()).c_str());
+        return;
+    }
+
+    _Described = description;
+    _DescribedMax = players;
+    Show(
+        [&](MCMcoSeen& seen)
+        {
+            if (seen.Room)
+            {
+                seen.Room->MaxPlayers = players;
+            }
+        });
+}
+
+void MCMcoRooms::Sit(std::string roomId, std::string name, int32_t maxPlayers, std::string password)
+{
+    Post([this, roomId = std::move(roomId), name = std::move(name), maxPlayers,
+          password = std::move(password)]() mutable { DoSit(roomId, name, maxPlayers, std::move(password)); });
+}
+
+void MCMcoRooms::DoSit(const std::string& roomId, const std::string& name, int32_t maxPlayers, std::string password)
+{
+    if (_Seat || _Peer.PeerToken.empty() || !Prepared(true) || _Stock.empty())
+    {
+        SDL_Log("MechCommander Online: no seat in the host's room: %s",
+                _Seat ? "this game is in a room already" : "this game can't take one there now");
+        Wipe(password);
+        return;
+    }
+
+    MCMcoApi::MCRoom room;
+    room.RoomId = roomId;
+    room.Name = name;
+    room.Engine = std::string(MCMcoApi::ReduxEngine);
+    room.EngineBuild = _Stock;
+    room.MaxPlayers = MCMcoApi::MatchCapacity(maxPlayers);
+    auto seat = _Service->JoinRoom(_Peer, room, password, _Content, true);
+    Wipe(password);
+
+    if (!seat)
+    {
+        if (!SignsOut(seat.error()))
+        {
+            SDL_Log("MechCommander Online: no seat in the host's room: %s", MCMcoApi::Describe(seat.error()).c_str());
+        }
+
+        return;
+    }
+
+    _Seat = std::move(*seat);
+    _Silent = true;
+    _InLobby = false;
+    _NextPoll = Clock::now();
+    Show(
+        [&](MCMcoSeen& seen)
+        {
+            seen.Seated = true;
+            seen.ClientId = _Peer.ClientId;
+        });
+}
+
+void MCMcoRooms::Unsit()
+{
+    Post(
+        [this]
+        {
+            if (_Silent)
+            {
+                DoLeave();
+            }
+        });
+}
+
+void MCMcoRooms::LetSeatGo()
+{
+    _Seat.reset();
+    _Both.reset();
+    _Described.clear();
+    _DescribedMax = 0;
+    _Silent = false;
+    _SilentMatch.clear();
+    _NextPoll = Clock::now();
+    Show(
+        [](MCMcoSeen& seen)
+        {
+            seen.Room.reset();
+            seen.Match = MCMcoMatchStage::None;
+            seen.Seated = false;
+        });
+}
+
 void MCMcoRooms::Leave()
 {
     Post([this] { DoLeave(); });
@@ -1077,14 +1249,7 @@ void MCMcoRooms::DoLeave()
         SDL_Log("MechCommander Online: leaving the room: %s", MCMcoApi::Describe(left.error()).c_str());
     }
 
-    _Seat.reset();
-    _NextPoll = Clock::now();
-    Show(
-        [](MCMcoSeen& seen)
-        {
-            seen.Room.reset();
-            seen.Match = MCMcoMatchStage::None;
-        });
+    LetSeatGo();
 }
 
 void MCMcoRooms::ClearLeft()
@@ -1279,6 +1444,16 @@ std::optional<MCMcoChatLine> MCMcoRooms::ChatLineOf(const MCMcoApi::MCRoomMessag
 
 void MCMcoRooms::LeftRoom(std::string why)
 {
+    // Port-only (Redux HD): a guest's quiet seat, or the internet game's room, goes without a word on the screens.
+    if (_Silent || _Both)
+    {
+        SDL_Log("MechCommander Online: out of the internet game's room: %s", why.c_str());
+        EndMatch(false);
+        _InLobby = false;
+        LetSeatGo();
+        return;
+    }
+
     EndMatch(false);
     _Seat.reset();
     _InLobby = false;
@@ -1294,9 +1469,12 @@ void MCMcoRooms::LeftRoom(std::string why)
 
 void MCMcoRooms::PollRoom()
 {
+    // A quiet seat's game is in its room's match on our links: it's reported running, so MCO keeps the seat.
     const bool running =
-        _Match.has_value() && _GameIn && ((_Guest && _Guest->Running()) || (_Hosted && _Hosted->Running()));
-    const auto state = _Service->RoomPoll(_Peer, *_Seat, _Match ? _Match->SessionHex : std::string(), running);
+        _Silent ? !_SilentMatch.empty()
+                : _Match.has_value() && _GameIn && ((_Guest && _Guest->Running()) || (_Hosted && _Hosted->Running()));
+    const std::string session = _Silent ? _SilentMatch : _Match ? _Match->SessionHex : std::string();
+    const auto state = _Service->RoomPoll(_Peer, *_Seat, session, running);
     std::string host;
 
     {
@@ -1331,6 +1509,13 @@ void MCMcoRooms::PollRoom()
         return;
     }
 
+    // A quiet seat shows nothing and plays no match: its room's lines reach the game through its host.
+    if (_Silent)
+    {
+        _SilentMatch = state->Start ? state->Start->SessionHex : std::string();
+        return;
+    }
+
     TakeMessages(state->Messages);
 
     Show(
@@ -1342,6 +1527,11 @@ void MCMcoRooms::PollRoom()
             }
 
             seen.Room->Players = state->Players;
+
+            if (!_Seat->RoomId.empty())
+            {
+                seen.Room->RoomId = _Seat->RoomId;
+            }
 
             if (!state->Name.empty())
             {

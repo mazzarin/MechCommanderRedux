@@ -1147,6 +1147,36 @@ namespace MCMcoApi
         return Register(peer);
     }
 
+    MCResult<void> MCService::UpdateRoom(MCPeer& peer, const MCSeat& seat, std::string_view name,
+                                         std::string_view description, int32_t maxPlayers)
+    {
+        // As the launcher's Edit Room sends it: the room's id only when known, no password (it stays as it is).
+        MCFields extra = {{"room", seat.Room},
+                          {"new_name", std::string(name)},
+                          {"description", std::string(description)},
+                          {"max_players", std::to_string(maxPlayers)}};
+
+        if (IsHex(seat.RoomId, ClientIdDigits))
+        {
+            extra.emplace_back("room_id", seat.RoomId);
+        }
+
+        const auto answer = AskChat("update_room", extra, peer);
+        return answer ? MCResult<void>() : std::unexpected(answer.error());
+    }
+
+    MCResult<void> MCService::KickPeer(MCPeer& peer, std::string_view clientId)
+    {
+        const auto answer = AskChat("kick_peer", {{"target_client_id", std::string(clientId)}}, peer);
+        return answer ? MCResult<void>() : std::unexpected(answer.error());
+    }
+
+    MCResult<void> MCService::TransferHost(MCPeer& peer, std::string_view clientId)
+    {
+        const auto answer = AskChat("transfer_host", {{"target_client_id", std::string(clientId)}}, peer);
+        return answer ? MCResult<void>() : std::unexpected(answer.error());
+    }
+
     MCResult<MCLobby> MCService::Lobby(MCPeer& peer)
     {
         const MCFields extra = {{"last_id", std::to_string(peer.LastMessageId)},

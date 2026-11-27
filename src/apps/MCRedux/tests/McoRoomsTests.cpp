@@ -525,3 +525,102 @@ TEST_CASE("mco rooms: a player removed from the room hears who removed them, and
     CHECK_EQ(MCMcoRooms::LeftText("kicked", "BOB", false), std::string("BOB removed you from the room."));
     CHECK_EQ(MCMcoRooms::LeftText("kicked", "", true), std::string("The host removed you from the room."));
 }
+
+// Port-only (Redux HD; SPEC-mco-hosting.md): an internet game on MCO too.
+
+namespace
+{
+    /// <summary>The internet game the tests host on both: private, its code the room's password.</summary>
+    MCMcoBoth SteelRain()
+    {
+        return {.Name = "Steel Rain", .MaxPlayers = 6, .Password = "K7QF", .GamePort = 28881};
+    }
+
+    /// <summary>The one room on the stand-in (the internet game's), once it's there.</summary>
+    std::string OnlyRoom(const MCService& mco)
+    {
+        const std::vector<std::string> ids = mco.RoomIds();
+        return ids.size() == 1 ? ids[0] : std::string();
+    }
+}
+
+TEST_CASE("mco rooms: an internet game hosted on both is a room there, locked with its code and described with its "
+          "mission, with nothing of it on the screens")
+{
+    MCService mco;
+    MCMcoRooms host(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    host.OpenLobby("ANN");
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Listed; }));
+
+    host.HostBoth(SteelRain());
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Room.has_value() && !OnlyRoom(mco).empty(); }));
+    const MCMcoSeen hosting = host.Seen();
+    CHECK(hosting.Room->Both);
+    CHECK(hosting.Room->Hosting);
+    CHECK(!hosting.Busy);
+    CHECK(hosting.Refusal.empty());
+    CHECK(!hosting.ClientId.empty());
+    std::map<std::string, std::string> asked = mco.LastFields("register_peer");
+    CHECK_EQ(asked["is_host"], std::string("1"));
+    CHECK_EQ(asked["password"], std::string("K7QF"));
+    CHECK_EQ(asked["room"], std::string("Steel Rain"));
+    const std::string roomId = OnlyRoom(mco);
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Room->RoomId == roomId; }));
+
+    // The mission picked is the room's description; the same again isn't asked twice; fewer seats are told.
+    host.Describe("Arena", 6);
+    REQUIRE(Within(HeardMs, [&] { return mco.RoomOf(roomId)->Description == "Arena"; }));
+    host.Describe("Arena", 6);
+    host.Describe("Arena", 4);
+    REQUIRE(Within(HeardMs, [&] { return mco.RoomOf(roomId)->MaxPlayers == 4; }));
+    CHECK_EQ(mco.Asked("update_room"), size_t{2});
+    CHECK_EQ(mco.LastFields("update_room")["new_name"], std::string("Steel Rain"));
+    CHECK_EQ(mco.LastFields("update_room")["room_id"], roomId);
+    CHECK(!mco.LastFields("update_room").contains("password"));
+
+    host.Leave();
+    REQUIRE(Within(HeardMs, [&] { return mco.RoomIds().empty(); }));
+    CHECK(!host.Seen().Room.has_value());
+    CHECK(host.Seen().Left.empty());
+}
+
+TEST_CASE("mco rooms: an internet game's guest sits quietly in its host's room, READY, plays none of its matches, and "
+          "goes without a word")
+{
+    MCService mco;
+    MCMcoRooms host(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    MCMcoRooms guest(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    host.OpenLobby("ANN");
+    guest.OpenLobby("BOB");
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Listed && guest.Seen().Listed; }));
+    host.HostBoth(SteelRain());
+    REQUIRE(Within(HeardMs, [&] { return !OnlyRoom(mco).empty(); }));
+    const std::string roomId = OnlyRoom(mco);
+    guest.CloseLobby();
+
+    guest.Sit(roomId, "Steel Rain", 6, "K7QF");
+    REQUIRE(Within(HeardMs, [&] { return guest.Seen().Seated; }));
+    CHECK(!guest.Seen().Room.has_value());
+    CHECK(!guest.Seen().ClientId.empty());
+    CHECK(mco.SeatOf(roomId, "BOB") == std::optional<bool>(true));
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Room && host.Seen().Room->Players.size() == 2; }));
+
+    // The room's match goes on without the quiet seat's game, which reports it running: its seat stays.
+    mco.StartMatch(roomId);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10 * PollMost.count()));
+    CHECK(guest.Seen().Match == MCMcoMatchStage::None);
+    CHECK(guest.Seen().Seated);
+    CHECK(mco.SeatOf(roomId, "BOB").has_value());
+
+    guest.Unsit();
+    REQUIRE(Within(HeardMs, [&] { return !guest.Seen().Seated; }));
+    CHECK(!mco.SeatOf(roomId, "BOB").has_value());
+
+    // Taken out of the room, the seat goes without a word on the screens.
+    guest.Sit(roomId, "Steel Rain", 6, "K7QF");
+    REQUIRE(Within(HeardMs, [&] { return guest.Seen().Seated; }));
+    mco.Kick(roomId, "BOB", "ANN");
+    REQUIRE(Within(HeardMs, [&] { return !guest.Seen().Seated; }));
+    CHECK(guest.Seen().Left.empty());
+    CHECK(!guest.Seen().Room.has_value());
+}

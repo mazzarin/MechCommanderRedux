@@ -49,6 +49,21 @@ struct MCMcoSetup
     int HostGameMs = DefaultHostGameMs;
 };
 
+/// <summary>
+/// Port-only (Redux HD; SPEC-mco-hosting.md): an internet game this game hosts, which is also a room in MCO's lobby.
+/// </summary>
+struct MCMcoBoth
+{
+    /// <summary>The game's name and its most players.</summary>
+    std::string Name;
+    int32_t MaxPlayers = 0;
+    /// <summary>A private game's code, the room's password; none for a public game.</summary>
+    std::string Password;
+    /// <summary>The internet session's port in the game's own network, and the links MCO's guests come in on there.</summary>
+    uint16_t GamePort = 0;
+    MCMcoBridge::MCCarry Carry;
+};
+
 /// <summary>Where the player stands with MCO.</summary>
 enum class MCMcoAccount : uint8_t
 {
@@ -103,6 +118,8 @@ struct MCMcoRoomSeen
     std::string Host;
     /// <summary>The room's chat, oldest first (its last <see cref="MCMcoRooms::ChatLinesKept"/>).</summary>
     std::vector<MCMcoChatLine> Chat;
+    /// <summary>Port-only (Redux HD): the room is the internet game this game hosts (MCMcoRooms::HostBoth).</summary>
+    bool Both = false;
     bool operator==(const MCMcoRoomSeen&) const = default;
 };
 
@@ -136,6 +153,12 @@ struct MCMcoSeen
     int32_t Capacity = 0;
     /// <summary>The player's name in the match, as MCO's launcher passes it to the game.</summary>
     std::string MatchName;
+    /// <summary>
+    /// Port-only (Redux HD): a guest of an internet game sits quietly in its host's MCO room (MCMcoRooms::Sit), with
+    /// this player's MCO id, which the host's game is told.
+    /// </summary>
+    bool Seated = false;
+    std::string ClientId;
     /// <summary>Each change bumps it: a screen redraws only when it has moved on.</summary>
     uint64_t Revision = 0;
 };
@@ -188,6 +211,18 @@ public:
     void Join(std::string roomId, std::string password, std::string guestName = {});
     void Host(std::string name, int32_t maxPlayers, std::string password);
     void Leave();
+
+    // Port-only (Redux HD; SPEC-mco-hosting.md): an internet game on MCO too. Nothing of it is said on the screens: a
+    // room or a seat MCO refuses is only logged, and the game plays on our service alone.
+
+    /// <summary>The internet game this game hosts is also hosted as an MCO room (left by <see cref="Leave"/>).</summary>
+    void HostBoth(MCMcoBoth both);
+    /// <summary>The internet game's room describes <paramref name="description"/> (its mission) for <paramref name="maxPlayers"/>.</summary>
+    void Describe(std::string description, int32_t maxPlayers);
+    /// <summary>A guest of an internet game sits in its host's MCO room, READY, never playing its match.</summary>
+    void Sit(std::string roomId, std::string name, int32_t maxPlayers, std::string password);
+    /// <summary>The guest's seat is let go (the guest left the game).</summary>
+    void Unsit();
     void Start();
     /// <summary>The room's closing said (its OK): <see cref="MCMcoSeen::Left"/> cleared.</summary>
     void ClearLeft();
@@ -282,9 +317,15 @@ private:
     bool Registered();
     void PollLobby();
     void PollRoom();
-    bool Prepared();
+    /// <summary>The game's data read and the player registered; <paramref name="quiet"/>: the screens told nothing.</summary>
+    bool Prepared(bool quiet = false);
     void DoJoin(const std::string& roomId, std::string password);
     void DoHost(const std::string& name, int32_t maxPlayers, std::string password);
+    void DoHostBoth(MCMcoBoth both);
+    void DoDescribe(const std::string& description, int32_t maxPlayers);
+    void DoSit(const std::string& roomId, const std::string& name, int32_t maxPlayers, std::string password);
+    /// <summary>The seat let go, quietly (a guest's seat in its host's room, or the host's room on both).</summary>
+    void LetSeatGo();
     void DoLeave();
     void DoStart();
     void DoSay(const std::string& text, const std::string& requestId);
@@ -342,6 +383,13 @@ private:
     std::chrono::steady_clock::time_point _MatchTried;
     /// <summary>Set by the screens' thread when the game couldn't host: the wait for its answer gives up at once.</summary>
     std::atomic<bool> _Cancel = false;
+    /// <summary>Port-only (Redux HD): the internet game the room is (the host's), its description and seats told.</summary>
+    std::optional<MCMcoBoth> _Both;
+    std::string _Described;
+    int32_t _DescribedMax = 0;
+    /// <summary>A guest's quiet seat, and the match its room runs (reported as running: its game is in it, on our links).</summary>
+    bool _Silent = false;
+    std::string _SilentMatch;
 
     std::thread _Thread;
 };

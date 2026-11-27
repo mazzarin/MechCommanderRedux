@@ -440,6 +440,11 @@ public:
     /// </summary>
     using Admission = std::function<std::optional<std::string>(std::string_view name, std::span<const uint8_t> data)>;
     void SetAdmission(Admission admission);
+    /// <summary>
+    /// Port-only (Redux HD), a host: <paramref name="places"/> held for players coming another way (an internet game's
+    /// MCO players waiting: network/MCMcoSeats.h), taken at its door: a join past the most is refused as full.
+    /// </summary>
+    void SetReserved(uint32_t places);
 
     /// <summary>Creates a group; <paramref name="groupID"/> receives its id.</summary>
     uint32_t CreateGroup(uint32_t& groupID, const DPNAME& name, std::span<const uint8_t> data, uint32_t flags);

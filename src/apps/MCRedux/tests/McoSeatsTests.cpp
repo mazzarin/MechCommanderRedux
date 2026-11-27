@@ -109,6 +109,34 @@ TEST_CASE("mco seats: MCO's waiting players are the room's seats that aren't the
         {.ClientId = "c", .Username = "CLANNER", .Ready = false},
     };
 
-    CHECK_EQ(MCMcoSeats::WaitingIn(seats, {"b"}), std::vector<std::string>{"CLANNER"});
-    CHECK_EQ(MCMcoSeats::WaitingIn(seats, {"b", "c"}), std::vector<std::string>{});
+    using MCMcoSeats::MCWaiting;
+    const std::vector<MCWaiting> clanner{{.Name = "CLANNER", .Ready = false}};
+    CHECK((MCMcoSeats::WaitingIn(seats, {"b"}, {"ANN", "BOB"}) == clanner));
+    CHECK((MCMcoSeats::WaitingIn(seats, {"b", "c"}, {}).empty()));
+    // Let in: its game's player is named as its MCO account.
+    CHECK((MCMcoSeats::WaitingIn(seats, {"b"}, {"ANN", "BOB", "CLANNER"}).empty()));
+    const std::vector<MCWaiting> both{{.Name = "BOB", .Ready = true}, {.Name = "CLANNER", .Ready = false}};
+    CHECK((MCMcoSeats::WaitingIn(seats, {}, {}) == both));
+}
+
+TEST_CASE("mco seats: who waits in the host's MCO room reaches its guests whole, six at most")
+{
+    using MCMcoSeats::MCWaiting;
+    const std::vector<MCWaiting> waiting{{.Name = "CLANNER", .Ready = true}, {.Name = "SHINOBI", .Ready = false}};
+    MCMPMcoWaitingMessage message = MCMcoSeats::WaitingMessage(waiting);
+    CHECK(MCMcoSeats::WaitingSaidIn(LinkupBytes(message)) == std::optional(waiting));
+    MCMPMcoWaitingMessage none = MCMcoSeats::WaitingMessage({});
+    CHECK(MCMcoSeats::WaitingSaidIn(LinkupBytes(none)) == std::optional(std::vector<MCWaiting>()));
+    MCMPMcoWaitingMessage many = MCMcoSeats::WaitingMessage(std::vector<MCWaiting>(8, {.Name = "X"}));
+    CHECK_EQ(many.Count, 6);
+
+    MCMPMcoWaitingMessage bad = message;
+    bad.Count = 7;
+    CHECK(!MCMcoSeats::WaitingSaidIn(LinkupBytes(bad)).has_value());
+    bad = message;
+    bad.Players[1].Name.fill('\0');
+    CHECK(!MCMcoSeats::WaitingSaidIn(LinkupBytes(bad)).has_value());
+    bad = message;
+    bad.Players[0].Ready = 2;
+    CHECK(!MCMcoSeats::WaitingSaidIn(LinkupBytes(bad)).has_value());
 }

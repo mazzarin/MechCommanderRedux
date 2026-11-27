@@ -112,7 +112,12 @@ enum class MCMPMessageType : uint16_t
     /// Port-only (Redux HD): a guest's seat in its host's MCO room (<c>MCMPMcoSeatMessage</c>), to the host: asked for
     /// as the room's word comes, then taken (its MCO id) or not as MCO answers.
     /// </summary>
-    McoSeat = 57
+    McoSeat = 57,
+    /// <summary>
+    /// Port-only (Redux HD): MCO's players waiting in the host's internet game's room (<c>MCMPMcoWaitingMessage</c>), to
+    /// each guest told the room as they change: the room's WAITING cards.
+    /// </summary>
+    McoWaiting = 58
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>
@@ -187,6 +192,25 @@ struct MCMPMcoSeatMessage : public MCFIGuaranteedMessageHeader
 };
 
 static_assert(sizeof(MCMPMcoSeatMessage) == 0x2a);
+
+/// <summary>
+/// Port-only (Redux HD): MCMPMessageType::McoWaiting: how many of MCO's players wait, each its MCO name (zero-terminated)
+/// and whether it's READY.
+/// </summary>
+/// <remarks>Fixed layout.</remarks>
+struct MCMPMcoWaitingMessage : public MCFIGuaranteedMessageHeader
+{
+    struct Player
+    {
+        std::array<char, 17> Name{};
+        uint8_t Ready = 0;
+    };
+
+    uint8_t Count = 0;
+    std::array<Player, 6> Players{};
+};
+
+static_assert(sizeof(MCMPMcoWaitingMessage) == 0x75);
 
 /// <summary>Check-in receipt (guaranteed, to the server): the check-in id; also end scenario: the result.</summary>
 /// <remarks>Fixed layout.</remarks>

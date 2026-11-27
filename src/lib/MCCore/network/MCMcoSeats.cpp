@@ -10,6 +10,7 @@
 #include "platform/MCDirectPlay.h"
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <map>
 #include <utility>
 
@@ -39,8 +40,11 @@ namespace
         std::map<uint32_t, MCMcoSeats::MCSeatSaid> Seats;
         /// <summary>The description and most players MCO was last asked for.</summary>
         std::optional<std::pair<std::string, int32_t>> Described;
-        /// <summary>MCO's waiting players' names, for our service's list.</summary>
-        std::vector<std::string> Waiting;
+        /// <summary>MCO's session is on (LET IN, or the match started there): no one waits until it closes.</summary>
+        bool Live = false;
+        /// <summary>MCO's waiting players, and what the guests were last told of them.</summary>
+        std::vector<MCMcoSeats::MCWaiting> Waiting;
+        std::map<uint32_t, std::vector<MCMcoSeats::MCWaiting>> ToldWaiting;
     };
 
     /// <summary>A guest's seat in its host's MCO room.</summary>
@@ -50,6 +54,8 @@ namespace
         std::string RoomId;
         /// <summary>The seat it last told the host.</summary>
         std::optional<MCMcoSeats::MCSeatSaid> Told;
+        /// <summary>MCO's players waiting, as the host last said.</summary>
+        std::vector<MCMcoSeats::MCWaiting> Waiting;
         uint64_t Revision = 0;
     };
 
@@ -147,6 +153,7 @@ namespace
 
             Host.RoomId = std::move(roomId);
             Host.RoomSeats = ours ? seen.Room->Players : std::vector<MCMcoApi::MCRoomPlayer>();
+            Host.Live = ours && seen.Match != MCMcoMatchStage::None;
         }
     }
 
@@ -178,7 +185,55 @@ namespace
         }
     }
 
-    /// <summary>The guests with no seat in the room (MCMcoSeats::HasNoSeat).</summary>
+    /// <summary>The session's players' names.</summary>
+    std::set<std::string> NamesOf(MCSessionManager& manager)
+    {
+        std::set<std::string> names;
+
+        for (const std::shared_ptr<MCFidpPlayer>& player : manager.GetPlayers(nullptr))
+        {
+            if (player != nullptr)
+            {
+                names.insert(player->Name);
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>Whether <paramref name="guest"/> is one of MCO's players let in: its seat is MCO's own.</summary>
+    bool FromMco(MCSessionManager& manager, uint32_t guest)
+    {
+        const std::shared_ptr<MCFidpPlayer> player = manager.GetPlayer(guest);
+        return player != nullptr && std::ranges::any_of(Host.RoomSeats, [&](const MCMcoApi::MCRoomPlayer& seat)
+                                                        { return !seat.Host && seat.Username == player->Name; });
+    }
+
+    /// <summary>Each guest told the room told who waits in it, as that changes.</summary>
+    void TellWaiting(MCSessionManager& manager)
+    {
+        std::erase_if(Host.ToldWaiting, [&](const auto& told) { return !InSession(manager, told.first); });
+
+        for (const auto& [guest, room] : Host.Told)
+        {
+            if (room.first != Host.RoomId)
+            {
+                continue;
+            }
+
+            if (const auto told = Host.ToldWaiting.find(guest);
+                told != Host.ToldWaiting.end() && told->second == Host.Waiting)
+            {
+                continue;
+            }
+
+            MCMPMcoWaitingMessage message = MCMcoSeats::WaitingMessage(Host.Waiting);
+            manager.SendPlainMessage(guest, LinkupBytes(message));
+            Host.ToldWaiting[guest] = Host.Waiting;
+        }
+    }
+
+    /// <summary>The guests with no seat in the room (MCMcoSeats::HasNoSeat), MCO's own players let in aside.</summary>
     size_t Unseated(MCMultiPlayer& game, MCSessionManager& manager)
     {
         const Clock::time_point now = Clock::now();
@@ -186,6 +241,11 @@ namespace
             GuestsOf(manager),
             [&](uint32_t guest)
             {
+                if (FromMco(manager, guest))
+                {
+                    return false;
+                }
+
                 MCMcoSeats::MCGuestSeat known;
 
                 if (const auto rules = game.PlayerRules.find(guest); rules != game.PlayerRules.end())
@@ -250,7 +310,11 @@ namespace
             }
         }
 
-        Host.Waiting = MCMcoSeats::WaitingIn(Host.RoomSeats, seated);
+        // After LET IN no one waits: an MCO player whose game closed waits for the next match, its place not held.
+        Host.Waiting = Host.Live ? std::vector<MCMcoSeats::MCWaiting>()
+                                 : MCMcoSeats::WaitingIn(Host.RoomSeats, seated, NamesOf(manager));
+        manager.DirectPlay->SetReserved(static_cast<uint32_t>(Host.Waiting.size()));
+        TellWaiting(manager);
 
         // The mission picked is the room's description; MCO takes no more players than the game has room for.
         const std::string mission =
@@ -343,7 +407,8 @@ void MCMcoSeats::FillRoom(MCServiceRoom& room)
     }
 
     room.Mco = Host.RoomId;
-    room.Players.insert(room.Players.end(), Host.Waiting.begin(), Host.Waiting.end());
+    std::ranges::transform(Host.Waiting, std::back_inserter(room.Players),
+                           [](const MCWaiting& waiting) { return waiting.Name; });
 }
 
 void MCMcoSeats::HostSaidRoom(uint32_t fromId, std::span<const uint8_t> bytes)
@@ -422,6 +487,37 @@ void MCMcoSeats::Ended()
 
     Host = {};
     Guest = {};
+}
+
+std::vector<MCMcoSeats::MCWaiting> MCMcoSeats::Waiting()
+{
+    const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+
+    if (game == nullptr)
+    {
+        return {};
+    }
+
+    return game->SessionManager->IsHost ? Host.Waiting : Guest.Waiting;
+}
+
+void MCMcoSeats::HostSaidWaiting(uint32_t fromId, std::span<const uint8_t> bytes)
+{
+    const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+
+    if (game == nullptr || game->SessionManager->IsHost || fromId != game->SessionManager->ServerID)
+    {
+        return;
+    }
+
+    if (std::optional<std::vector<MCWaiting>> waiting = WaitingSaidIn(bytes))
+    {
+        Guest.Waiting = std::move(*waiting);
+    }
+    else
+    {
+        SDL_Log("MCO seats: the host's word of who waits in its MCO room isn't one; it's left as it was");
+    }
 }
 
 void MCMcoSeats::LetIn()
@@ -553,17 +649,64 @@ int32_t MCMcoSeats::RoomMost(int32_t gameMost, size_t unseated, size_t seatsTake
         std::max(open, static_cast<int32_t>(std::min<size_t>(seatsTaken, MCMcoApi::RoomMost))));
 }
 
-std::vector<std::string> MCMcoSeats::WaitingIn(const std::vector<MCMcoApi::MCRoomPlayer>& seats,
-                                               const std::set<std::string>& inSession)
+std::vector<MCMcoSeats::MCWaiting> MCMcoSeats::WaitingIn(const std::vector<MCMcoApi::MCRoomPlayer>& seats,
+                                                         const std::set<std::string>& seated,
+                                                         const std::set<std::string>& names)
 {
-    std::vector<std::string> waiting;
+    std::vector<MCWaiting> waiting;
 
     for (const MCMcoApi::MCRoomPlayer& seat : seats)
     {
-        if (!seat.Host && !inSession.contains(seat.ClientId))
+        if (!seat.Host && !seated.contains(seat.ClientId) && !names.contains(seat.Username))
         {
-            waiting.push_back(seat.Username);
+            waiting.push_back({.Name = seat.Username, .Ready = seat.Ready});
         }
+    }
+
+    return waiting;
+}
+
+MCMPMcoWaitingMessage MCMcoSeats::WaitingMessage(const std::vector<MCWaiting>& waiting)
+{
+    MCMPMcoWaitingMessage message{};
+    message.Header = PlainHeader(MCMPMessageType::McoWaiting);
+    message.Count = static_cast<uint8_t>(std::min(waiting.size(), message.Players.size()));
+
+    for (size_t i = 0; i < message.Count; ++i)
+    {
+        Put(message.Players[i].Name, waiting[i].Name);
+        message.Players[i].Ready = waiting[i].Ready ? 1 : 0;
+    }
+
+    return message;
+}
+
+std::optional<std::vector<MCMcoSeats::MCWaiting>> MCMcoSeats::WaitingSaidIn(std::span<const uint8_t> bytes)
+{
+    if (bytes.size() < sizeof(MCMPMcoWaitingMessage))
+    {
+        return std::nullopt;
+    }
+
+    const auto message = ReadLinkupMessage<MCMPMcoWaitingMessage>(bytes);
+
+    if (message.Count > message.Players.size())
+    {
+        return std::nullopt;
+    }
+
+    std::vector<MCWaiting> waiting;
+
+    for (size_t i = 0; i < message.Count; ++i)
+    {
+        std::optional<std::string> name = Got(message.Players[i].Name);
+
+        if (!name || name->empty() || message.Players[i].Ready > 1)
+        {
+            return std::nullopt;
+        }
+
+        waiting.push_back({.Name = std::move(*name), .Ready = message.Players[i].Ready == 1});
     }
 
     return waiting;

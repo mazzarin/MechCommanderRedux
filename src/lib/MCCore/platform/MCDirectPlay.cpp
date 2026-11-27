@@ -624,6 +624,8 @@ struct MCDirectPlay::Impl
     uint32_t NextToken = 1;
     /// <summary>Host: its say on a joiner's players (MCDirectPlay::SetAdmission).</summary>
     MCDirectPlay::Admission Admit;
+    /// <summary>Port-only (Redux HD), a host: places held for players coming another way (SetReserved).</summary>
+    uint32_t Reserved = 0;
     /// <summary>Joiner: why the host refused its last player (MCDirectPlay::LastRefusal).</summary>
     std::string Refusal;
 
@@ -901,6 +903,9 @@ struct MCDirectPlay::Impl
     }
 
     // ---- shared state --------------------------------------------------------------------------------------------
+
+    /// <summary>Port-only (Redux HD), a host: whether its session takes no more players, its reserved places taken.</summary>
+    bool Full() const { return PlayerCount() + Reserved >= Session.Desc.dwMaxPlayers; }
 
     uint32_t PlayerCount() const
     {
@@ -1402,8 +1407,7 @@ struct MCDirectPlay::Impl
             {
                 result = DPERR_NOSESSIONS;
             }
-            else if ((Session.Desc.dwFlags & (DPSESSION_NEWPLAYERSDISABLED | DPSESSION_JOINDISABLED)) != 0 ||
-                     PlayerCount() >= Session.Desc.dwMaxPlayers)
+            else if ((Session.Desc.dwFlags & (DPSESSION_NEWPLAYERSDISABLED | DPSESSION_JOINDISABLED)) != 0 || Full())
             {
                 result = DPERR_NONEWPLAYERS;
             }
@@ -1461,8 +1465,7 @@ struct MCDirectPlay::Impl
 
                 // Issue #25: one machine's player, not as many as the room has places (MaxJoinerPlayers).
                 if (result == DP_OK && entity.Type == DPPLAYERTYPE_PLAYER &&
-                    ((Session.Desc.dwFlags & DPSESSION_NEWPLAYERSDISABLED) != 0 ||
-                     PlayerCount() >= Session.Desc.dwMaxPlayers ||
+                    ((Session.Desc.dwFlags & DPSESSION_NEWPLAYERSDISABLED) != 0 || Full() ||
                      std::ranges::count_if(
                          Entities, [&](const auto& item)
                          { return item.second.Type == DPPLAYERTYPE_PLAYER && item.second.Owner == index; }) >=
@@ -2916,6 +2919,11 @@ std::string MCDirectPlay::LastRefusal() const
 void MCDirectPlay::SetAdmission(Admission admission)
 {
     _Impl->Admit = std::move(admission);
+}
+
+void MCDirectPlay::SetReserved(uint32_t places)
+{
+    _Impl->Reserved = places;
 }
 
 uint32_t MCDirectPlay::CreatePlayer(uint32_t& playerID, const DPNAME& name, std::span<const uint8_t> data,

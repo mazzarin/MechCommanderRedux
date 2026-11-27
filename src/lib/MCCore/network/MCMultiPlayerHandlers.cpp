@@ -1895,6 +1895,13 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
             break;
         }
 
+        case MCMPMessageType::McoWaiting:
+        {
+            // Port-only (Redux HD): who waits in the host's MCO room: the room's WAITING cards (network/MCMcoSeats.h).
+            MCMcoSeats::HostSaidWaiting(fromID, bytes);
+            break;
+        }
+
         case MCMPMessageType::McoSeat:
         {
             // Port-only (Redux HD): a guest's seat in the host's MCO room (network/MCMcoSeats.h).

@@ -34,6 +34,24 @@ namespace MCMcoSeats
     /// </summary>
     void FillRoom(MCServiceRoom& room);
 
+    /// <summary>One of MCO's players waiting in the room.</summary>
+    struct MCWaiting
+    {
+        /// <summary>Its MCO name.</summary>
+        std::string Name;
+        bool Ready = false;
+        bool operator==(const MCWaiting&) const = default;
+    };
+
+    /// <summary>
+    /// MCO's players waiting in the internet game's room, the room's WAITING cards: a host's from its room's poll, a
+    /// guest's as its host said. None once LET IN has let them in, until the match ends.
+    /// </summary>
+    std::vector<MCWaiting> Waiting();
+
+    /// <summary>A guest: the host <paramref name="fromId"/> says who waits in its MCO room.</summary>
+    void HostSaidWaiting(uint32_t fromId, std::span<const uint8_t> bytes);
+
     /// <summary>A guest: the host <paramref name="fromId"/> says its game is an MCO room too: the guest sits in it.</summary>
     void HostSaidRoom(uint32_t fromId, std::span<const uint8_t> bytes);
     /// <summary>The host: guest <paramref name="fromId"/>'s seat in the MCO room, as MCO answered it.</summary>
@@ -130,9 +148,14 @@ namespace MCMcoSeats
     int32_t RoomMost(int32_t gameMost, size_t unseated, size_t seatsTaken);
 
     /// <summary>
-    /// MCO's waiting players: the room's seats (<paramref name="seats"/>, the host's first) that aren't the host's and
-    /// aren't a guest's in the session (<paramref name="inSession"/>, their MCO ids); their names.
+    /// MCO's waiting players: the room's seats (<paramref name="seats"/>, the host's first) that aren't the host's, a
+    /// guest's in the session (<paramref name="seated"/>, their MCO ids) or a player's already let in
+    /// (<paramref name="names"/>, the session's players' names: MCO's launcher names its game's player as its account).
     /// </summary>
-    std::vector<std::string> WaitingIn(const std::vector<MCMcoApi::MCRoomPlayer>& seats,
-                                       const std::set<std::string>& inSession);
+    std::vector<MCWaiting> WaitingIn(const std::vector<MCMcoApi::MCRoomPlayer>& seats,
+                                     const std::set<std::string>& seated, const std::set<std::string>& names);
+
+    /// <summary>The McoWaiting for <paramref name="waiting"/> (its first six), and what one says (none: it isn't one).</summary>
+    MCMPMcoWaitingMessage WaitingMessage(const std::vector<MCWaiting>& waiting);
+    std::optional<std::vector<MCWaiting>> WaitingSaidIn(std::span<const uint8_t> bytes);
 }

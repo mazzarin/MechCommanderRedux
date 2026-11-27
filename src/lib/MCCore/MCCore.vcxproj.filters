@@ -790,6 +790,9 @@
     <ClCompile Include="network\MCMcoRooms.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCMcoSeats.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMechHandover.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -2248,6 +2251,9 @@
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCMcoRooms.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCMcoSeats.h">
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCMechHandover.h">

@@ -291,6 +291,16 @@ bool MCInternetGame::NameRefused()
     return _Signaling != nullptr && _Signaling->NameRefused();
 }
 
+std::function<std::shared_ptr<MCCarriedLink>()> MCInternetGame::Carrier() const
+{
+    // Weak: the bridge's threads may ask after the game (and its links) ended.
+    return [transport = std::weak_ptr<MCIceTransport>(_Transport)]() -> std::shared_ptr<MCCarriedLink>
+    {
+        const std::shared_ptr<MCIceTransport> links = transport.lock();
+        return links != nullptr ? links->Carry() : nullptr;
+    };
+}
+
 bool MCInternetGame::TakeUnlistedNotice()
 {
     if (!_Hosting || _UnlistedTold || _Signaling == nullptr || !_Signaling->Unlisted())

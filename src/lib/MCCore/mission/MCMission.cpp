@@ -49,6 +49,7 @@
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCMcoSeats.h"
 #include "network/MCRoomEnd.h"
 #include "network/MCMultiPlayer.h"
 #include "main/MCGameContext.h"
@@ -727,6 +728,7 @@ auto MCMission::Run() -> int32_t
             MCLobbyUpdate::Frame();
             MCIdleCheck::Frame();
             MCRoomEnd::Frame();
+            MCMcoSeats::Frame();
             ShowDueArtNotice();
 
             EscapedSmackerMovie = 0;
@@ -770,6 +772,7 @@ auto MCMission::Run() -> int32_t
 
             // Port-only (Redux HD): the room's end from the results (network/MCRoomEnd.h).
             MCRoomEnd::Frame();
+            MCMcoSeats::Frame();
             break;
         }
         case MCMissionState::Scenario:

@@ -10,6 +10,7 @@
 #include "main/MCGameContext.h"
 #include "main/MCLogistics.h"
 #include "network/MCInternetGame.h"
+#include "network/MCMcoSeats.h"
 #include "platform/MCDirectPlay.h"
 #include "platform/MCInput.h"
 #include "platform/MCNetSwitch.h"
@@ -853,6 +854,9 @@ void MCSessionManager::EndInternet(std::chrono::milliseconds wait)
         return;
     }
 
+    // Port-only (Redux HD; SPEC-mco-hosting.md): the game's MCO room (a host's) or seat (a guest's) goes with it.
+    MCMcoSeats::Ended();
+
     // DirectPlay lets go of its sockets first: they're on the game's links. (Port-only, Redux HD: a host's session rolls
     // over to another machine, unless its game restarts into an update, its place kept: its guests wait for it.)
     if (DirectPlay != nullptr)
@@ -914,6 +918,8 @@ void MCSessionManager::TendInternet()
         room.Players.push_back(player->Name);
     }
 
+    // Port-only (Redux HD; SPEC-mco-hosting.md): its MCO room's id, MCO's waiting players counted.
+    MCMcoSeats::FillRoom(room);
     Internet->SetRoom(std::move(room));
 }
 

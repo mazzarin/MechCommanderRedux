@@ -127,6 +127,11 @@ public:
     /// games): the room's chat says so. The game stays public.
     /// </summary>
     bool TakeUnlistedNotice();
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md), a host: makes a link of its own in the game's network for an MCO
+    /// guest its bridge brings in (MCIceTransport::Carry); none once the game has ended. Safe from any thread.
+    /// </summary>
+    std::function<std::shared_ptr<MCCarriedLink>()> Carrier() const;
 
     /// <summary>
     /// Port-only (Redux HD), a guest: its session rolled over to this game (SPEC-host-rollover.md), which takes the game

@@ -42,6 +42,11 @@ struct MCServiceRoom
     /// <summary>The mission picked, or empty.</summary>
     std::string Mission;
     bool Battle = false;
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md): the game's MCO room's id when it's hosted there too (32 hex digits),
+    /// by which INTERNET leaves MCO's copy of it out; empty when it isn't.
+    /// </summary>
+    std::string Mco;
 
     bool operator==(const MCServiceRoom&) const = default;
 };

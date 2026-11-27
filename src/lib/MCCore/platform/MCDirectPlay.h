@@ -376,6 +376,11 @@ public:
     /// guest found on the LAN joins its host's next room there (network/MCRoomEnd.h's REMATCH).
     /// </summary>
     std::optional<std::string> JoinedAddress() const;
+    /// <summary>
+    /// Port-only (Redux HD): a host's port, TCP and UDP, while it hosts a session; 0 otherwise. An internet game's MCO
+    /// guests come in on it (network/MCMcoSeats.h).
+    /// </summary>
+    uint16_t HostPort() const;
 
     /// <summary>
     /// Port-only (Redux HD): leaves the session; a host's rolls over to another machine (see the top of this header)

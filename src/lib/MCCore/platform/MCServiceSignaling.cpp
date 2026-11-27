@@ -528,13 +528,21 @@ void MCServiceSignaling::SendRoom()
     std::vector<std::string> players;
     std::ranges::transform(_Room->Players, std::back_inserter(players), [](const std::string& player)
                            { return MCServiceName(player, MCServicePlayerNameMost, PlayerNameFallback); });
-    _Host->Ws->SendText(Dumped({{"t", "room"},
-                                {"name", MCServiceName(_Room->Name, MCServiceGameNameMost, GameNameFallback)},
-                                {"public", _Room->Public},
-                                {"max", _Room->Max},
-                                {"players", players},
-                                {"mission", MCServiceName(_Room->Mission, MCServiceMissionMost, {})},
-                                {"battle", _Room->Battle}}));
+    Json room{{"t", "room"},
+              {"name", MCServiceName(_Room->Name, MCServiceGameNameMost, GameNameFallback)},
+              {"public", _Room->Public},
+              {"max", _Room->Max},
+              {"players", players},
+              {"mission", MCServiceName(_Room->Mission, MCServiceMissionMost, {})},
+              {"battle", _Room->Battle}};
+
+    // Port-only (Redux HD; SPEC-mco-hosting.md): its MCO room's id, when it's one there too (the service takes none).
+    if (!_Room->Mco.empty())
+    {
+        room["mco"] = _Room->Mco;
+    }
+
+    _Host->Ws->SendText(Dumped(room));
 }
 
 bool MCServiceSignaling::Joined(std::string_view game)

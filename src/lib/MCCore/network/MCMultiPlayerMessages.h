@@ -5,6 +5,7 @@
 // update messages (mover, turret, weapon fire, hits, world state) are arrays of packed chunks and are built in place.
 
 #include "linkup/MCLinkupMessages.h"
+#include <array>
 
 /// <summary>
 /// The game's message types (bits 0-9 of the linkup header), handled by MultiPlayerApplicationCallback. 6, 9 and 12
@@ -100,7 +101,18 @@ enum class MCMPMessageType : uint16_t
     /// closes it (its EXIT), or hosts it again for a rematch (REMATCH at the results), which its guests join again
     /// (network/MCRoomEnd.h). Sent to everyone; a build without MCMatchRule::Rematch ignores it.
     /// </summary>
-    RoomEnds = 55
+    RoomEnds = 55,
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md): the host's internet game is an MCO room too
+    /// (<c>MCMPMcoRoomMessage</c>), to each guest whose build has MCMatchRule::Rematch (Redux HD's), which sits in it
+    /// quietly (network/MCMcoSeats.h). A build without seats ignores it.
+    /// </summary>
+    McoRoom = 56,
+    /// <summary>
+    /// Port-only (Redux HD): a guest's seat in its host's MCO room (<c>MCMPMcoSeatMessage</c>), to the host: asked for
+    /// as the room's word comes, then taken (its MCO id) or not as MCO answers.
+    /// </summary>
+    McoSeat = 57
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>
@@ -147,6 +159,34 @@ struct MCMPPlayerSetupMessage : public MCFIGuaranteedMessageHeader
 };
 
 static_assert(sizeof(MCMPPlayerSetupMessage) == 0x14);
+
+/// <summary>
+/// Port-only (Redux HD): MCMPMessageType::McoRoom: the MCO room's id, its name, password (a private game's code) and
+/// most players, as the host hosted it; each text zero-terminated in its field.
+/// </summary>
+/// <remarks>Fixed layout.</remarks>
+struct MCMPMcoRoomMessage : public MCFIGuaranteedMessageHeader
+{
+    std::array<char, 33> RoomId{};
+    std::array<char, 25> Name{};
+    std::array<char, 9> Password{};
+    int8_t MaxPlayers = 0;
+};
+
+static_assert(sizeof(MCMPMcoRoomMessage) == 0x4c);
+
+/// <summary>
+/// Port-only (Redux HD): MCMPMessageType::McoSeat: the guest's seat (an <c>MCMcoSeats::MCSeat</c>) and, taken, its MCO
+/// id, zero-terminated.
+/// </summary>
+/// <remarks>Fixed layout.</remarks>
+struct MCMPMcoSeatMessage : public MCFIGuaranteedMessageHeader
+{
+    uint8_t Seat = 0;
+    std::array<char, 33> ClientId{};
+};
+
+static_assert(sizeof(MCMPMcoSeatMessage) == 0x2a);
 
 /// <summary>Check-in receipt (guaranteed, to the server): the check-in id; also end scenario: the result.</summary>
 /// <remarks>Fixed layout.</remarks>

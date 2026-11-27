@@ -773,6 +773,24 @@ TEST_CASE("service signaling: a room's names go as the service takes them, plain
                                             R"("players":["Renee","PLAYER"],"public":true,"t":"room"})"));
 }
 
+// Port-only (Redux HD; SPEC-mco-hosting.md): a game hosted on MCO too names its MCO room, by which INTERNET leaves
+// MCO's copy of it out.
+TEST_CASE("service signaling: a room hosted on MCO too names its MCO room's id")
+{
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, true);
+    signaling.Host();
+    MCScriptedEnd& host = service.At(HostUrl);
+    host.Arrived.push_back(Text(HostedMessage));
+    CHECK(signaling.Take().empty());
+    signaling.SetRoom(
+        {.Name = "GAME", .Public = true, .Max = 6, .Players = {"BOB"}, .Mco = "0123456789abcdef0123456789abcdef"});
+    REQUIRE_EQ(host.Sent.size(), size_t{1});
+    CHECK_EQ(host.Sent[0].Data,
+             std::string(R"({"battle":false,"max":6,"mco":"0123456789abcdef0123456789abcdef",)"
+                         R"("mission":"","name":"GAME","players":["BOB"],"public":true,"t":"room"})"));
+}
+
 TEST_CASE("internet copy: an ID made once and kept in internet.cfg, and one that isn't an ID made again")
 {
     const std::filesystem::path file = MCFileSystem::UserRoot() / "internet.cfg";

@@ -4,6 +4,7 @@
 #include "network/MCMultiPlayerHandlers.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCMcoSeats.h"
 #include "network/MCRoomEnd.h"
 #include "abl/MCAblDebugger.h"
 #include "ai/MCMoveSystem.h"
@@ -1884,6 +1885,20 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
                 HandleLocalPlayerRemoved();
             }
 
+            break;
+        }
+
+        case MCMPMessageType::McoRoom:
+        {
+            // Port-only (Redux HD): the host's internet game is an MCO room too: this guest sits in it quietly.
+            MCMcoSeats::HostSaidRoom(fromID, bytes);
+            break;
+        }
+
+        case MCMPMessageType::McoSeat:
+        {
+            // Port-only (Redux HD): a guest's seat in the host's MCO room (network/MCMcoSeats.h).
+            MCMcoSeats::GuestSaidSeat(fromID, bytes);
             break;
         }
 

@@ -159,6 +159,8 @@ struct MCMcoSeen
     /// </summary>
     bool Seated = false;
     std::string ClientId;
+    /// <summary>The room the last seat asked for was in, once MCO answered (<see cref="Seated"/>: taken or not).</summary>
+    std::string SeatRoom;
     /// <summary>Each change bumps it: a screen redraws only when it has moved on.</summary>
     uint64_t Revision = 0;
 };
@@ -215,8 +217,10 @@ public:
     // Port-only (Redux HD; SPEC-mco-hosting.md): an internet game on MCO too. Nothing of it is said on the screens: a
     // room or a seat MCO refuses is only logged, and the game plays on our service alone.
 
-    /// <summary>The internet game this game hosts is also hosted as an MCO room (left by <see cref="Leave"/>).</summary>
+    /// <summary>The internet game this game hosts is also hosted as an MCO room (left by <see cref="LeaveBoth"/>).</summary>
     void HostBoth(MCMcoBoth both);
+    /// <summary>The internet game's MCO room left, if it's the room this game is in (one MCO refused, nothing).</summary>
+    void LeaveBoth();
     /// <summary>The internet game's room describes <paramref name="description"/> (its mission) for <paramref name="maxPlayers"/>.</summary>
     void Describe(std::string description, int32_t maxPlayers);
     /// <summary>A guest of an internet game sits in its host's MCO room, READY, never playing its match.</summary>

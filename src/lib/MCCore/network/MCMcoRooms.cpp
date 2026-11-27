@@ -1161,6 +1161,7 @@ void MCMcoRooms::DoSit(const std::string& roomId, const std::string& name, int32
         SDL_Log("MechCommander Online: no seat in the host's room: %s",
                 _Seat ? "this game is in a room already" : "this game can't take one there now");
         Wipe(password);
+        Show([&](MCMcoSeen& seen) { seen.SeatRoom = roomId; });
         return;
     }
 
@@ -1180,6 +1181,7 @@ void MCMcoRooms::DoSit(const std::string& roomId, const std::string& name, int32
             SDL_Log("MechCommander Online: no seat in the host's room: %s", MCMcoApi::Describe(seat.error()).c_str());
         }
 
+        Show([&](MCMcoSeen& seen) { seen.SeatRoom = roomId; });
         return;
     }
 
@@ -1192,6 +1194,7 @@ void MCMcoRooms::DoSit(const std::string& roomId, const std::string& name, int32
         {
             seen.Seated = true;
             seen.ClientId = _Peer.ClientId;
+            seen.SeatRoom = roomId;
         });
 }
 
@@ -1228,6 +1231,18 @@ void MCMcoRooms::LetSeatGo()
 void MCMcoRooms::Leave()
 {
     Post([this] { DoLeave(); });
+}
+
+void MCMcoRooms::LeaveBoth()
+{
+    Post(
+        [this]
+        {
+            if (_Both.has_value())
+            {
+                DoLeave();
+            }
+        });
 }
 
 void MCMcoRooms::DoLeave()

@@ -1,0 +1,533 @@
+#include "stdafx.h"
+#include "network/MCMcoSeats.h"
+#include "linkup/MCFidpPlayer.h"
+#include "linkup/MCFidpSession.h"
+#include "linkup/MCSessionManager.h"
+#include "main/MCLogistics.h"
+#include "network/MCInternetGame.h"
+#include "network/MCMcoRooms.h"
+#include "network/MCMultiPlayer.h"
+#include "platform/MCDirectPlay.h"
+#include <algorithm>
+#include <array>
+#include <map>
+#include <utility>
+
+namespace
+{
+    using Clock = std::chrono::steady_clock;
+
+    /// <summary>A host's MCO room for its internet game, as far as it has gone.</summary>
+    struct MCHostSide
+    {
+        /// <summary>The internet game it's for: a new one starts again.</summary>
+        const MCInternetGame* For = nullptr;
+        /// <summary>HostBoth was asked.</summary>
+        bool Asked = false;
+        /// <summary>The room as hosted, for the guests: its name, password and most players.</summary>
+        std::string Name;
+        std::string Password;
+        int32_t Most = 0;
+        /// <summary>The room's id once MCO took it, and its seats as last heard (the host's first).</summary>
+        std::string RoomId;
+        std::vector<MCMcoApi::MCRoomPlayer> RoomSeats;
+        uint64_t Revision = 0;
+        /// <summary>Each guest told the room: the room's id, and when.</summary>
+        std::map<uint32_t, std::pair<std::string, Clock::time_point>> Told;
+        /// <summary>Each guest's seat as it said.</summary>
+        std::map<uint32_t, MCMcoSeats::MCSeatSaid> Seats;
+        /// <summary>The description and most players MCO was last asked for.</summary>
+        std::optional<std::pair<std::string, int32_t>> Described;
+        /// <summary>MCO's waiting players' names, for our service's list.</summary>
+        std::vector<std::string> Waiting;
+    };
+
+    /// <summary>A guest's seat in its host's MCO room.</summary>
+    struct MCGuestSide
+    {
+        /// <summary>The room it was told to sit in.</summary>
+        std::string RoomId;
+        /// <summary>The seat it last told the host.</summary>
+        std::optional<MCMcoSeats::MCSeatSaid> Told;
+        uint64_t Revision = 0;
+    };
+
+    MCHostSide Host;
+    MCGuestSide Guest;
+    bool HostsSwitch = false;
+
+    /// <summary>Whether the game was started by a launcher (MCO's, or another's): its room is where it put it.</summary>
+    bool LaunchersGame()
+    {
+        return LobbyLaunchArgs.Active && !LobbyLaunchArgs.FromMenus;
+    }
+
+    /// <summary><paramref name="text"/> in <paramref name="field"/>, cut to leave its zero.</summary>
+    template <size_t N> void Put(std::array<char, N>& field, std::string_view text)
+    {
+        field.fill('\0');
+        std::ranges::copy(text.substr(0, N - 1), field.begin());
+    }
+
+    /// <summary>The text in <paramref name="field"/>; none without its zero.</summary>
+    template <size_t N> std::optional<std::string> Got(const std::array<char, N>& field)
+    {
+        const auto end = std::ranges::find(field, '\0');
+        return end != field.end() ? std::optional(std::string(field.begin(), end)) : std::nullopt;
+    }
+
+    bool InSession(MCSessionManager& manager, uint32_t id)
+    {
+        return manager.GetPlayer(id) != nullptr;
+    }
+
+    /// <summary>The host's guests in the session (not itself).</summary>
+    std::vector<uint32_t> GuestsOf(MCSessionManager& manager)
+    {
+        std::vector<uint32_t> guests;
+
+        for (const std::shared_ptr<MCFidpPlayer>& player : manager.GetPlayers(nullptr))
+        {
+            if (player != nullptr && player->Id != manager.MyPlayerID)
+            {
+                guests.push_back(player->Id);
+            }
+        }
+
+        return guests;
+    }
+
+    /// <summary>The internet game hosted on MCO too, once its code is known and the session is up.</summary>
+    void AskHost(MCSessionManager& manager, const MCFidpSession& session)
+    {
+        if (!HostsSwitch || LaunchersGame())
+        {
+            return;
+        }
+
+        const uint16_t port = manager.DirectPlay != nullptr ? manager.DirectPlay->HostPort() : uint16_t{0};
+
+        if (port == 0)
+        {
+            return;
+        }
+
+        MCInternetGame& internet = *manager.Internet;
+        Host.Asked = true;
+        Host.Name = session.Name.substr(0, MCServiceGameNameMost);
+        Host.Password = internet.Public() ? std::string() : internet.Code();
+        Host.Most = MCMcoApi::MatchCapacity(static_cast<int32_t>(session.SessionDesc.dwMaxPlayers));
+        SDL_Log("MCO seats: hosting game %s on MechCommander Online too", internet.Code().c_str());
+        MCMcoRooms::Now().HostBoth({.Name = Host.Name,
+                                    .MaxPlayers = Host.Most,
+                                    .Password = Host.Password,
+                                    .GamePort = port,
+                                    .Carry = internet.Carrier()});
+    }
+
+    /// <summary>The MCO room as the model last heard it.</summary>
+    void HearRoom()
+    {
+        MCMcoRooms& mco = MCMcoRooms::Now();
+
+        if (const uint64_t revision = mco.Revision(); revision != Host.Revision)
+        {
+            Host.Revision = revision;
+            const MCMcoSeen seen = mco.Seen();
+            const bool ours = seen.Room.has_value() && seen.Room->Both && seen.Room->Hosting;
+            Host.RoomId = ours ? seen.Room->RoomId : std::string();
+            Host.RoomSeats = ours ? seen.Room->Players : std::vector<MCMcoApi::MCRoomPlayer>();
+        }
+    }
+
+    /// <summary>Whether <paramref name="rules"/> are a Redux HD build's, which a room's word may reach.</summary>
+    bool ReduxHd(uint32_t rules)
+    {
+        return (rules & MCMatchRule::Rematch) != 0;
+    }
+
+    /// <summary>Each Redux HD guest told the room (an earlier build ignores it), once a room.</summary>
+    void TellGuests(MCMultiPlayer& game, MCSessionManager& manager)
+    {
+        for (const uint32_t guest : GuestsOf(manager))
+        {
+            const auto rules = game.PlayerRules.find(guest);
+            const auto told = Host.Told.find(guest);
+
+            if (rules == game.PlayerRules.end() || !ReduxHd(rules->second) ||
+                (told != Host.Told.end() && told->second.first == Host.RoomId))
+            {
+                continue;
+            }
+
+            MCMPMcoRoomMessage message = MCMcoSeats::RoomMessage(
+                {.RoomId = Host.RoomId, .Name = Host.Name, .Password = Host.Password, .MaxPlayers = Host.Most});
+            manager.SendPlainMessage(guest, LinkupBytes(message));
+            Host.Told[guest] = {Host.RoomId, Clock::now()};
+            Host.Seats.erase(guest);
+        }
+    }
+
+    /// <summary>The guests with no seat in the room (MCMcoSeats::HasNoSeat).</summary>
+    size_t Unseated(MCMultiPlayer& game, MCSessionManager& manager)
+    {
+        const Clock::time_point now = Clock::now();
+        return static_cast<size_t>(std::ranges::count_if(
+            GuestsOf(manager),
+            [&](uint32_t guest)
+            {
+                MCMcoSeats::MCGuestSeat known;
+
+                if (const auto rules = game.PlayerRules.find(guest); rules != game.PlayerRules.end())
+                {
+                    known.Rules = rules->second;
+                }
+
+                if (const auto told = Host.Told.find(guest); told != Host.Told.end())
+                {
+                    known.Told = told->second.second;
+                }
+
+                if (const auto seat = Host.Seats.find(guest); seat != Host.Seats.end())
+                {
+                    known.Said = seat->second.Seat;
+                }
+
+                return MCMcoSeats::HasNoSeat(known, now);
+            }));
+    }
+
+    void TendHost(MCMultiPlayer& game, MCSessionManager& manager)
+    {
+        MCInternetGame& internet = *manager.Internet;
+        const std::shared_ptr<MCFidpSession> session = manager.CurrentSession();
+
+        if (!internet.Hosting() || internet.Code().empty() || session == nullptr)
+        {
+            return;
+        }
+
+        if (Host.For != &internet)
+        {
+            Host = {.For = &internet};
+        }
+
+        if (!Host.Asked)
+        {
+            AskHost(manager, *session);
+            return;
+        }
+
+        HearRoom();
+
+        if (Host.RoomId.empty())
+        {
+            return;
+        }
+
+        // A guest gone takes its seat with it.
+        std::erase_if(Host.Told, [&](const auto& told) { return !InSession(manager, told.first); });
+        std::erase_if(Host.Seats, [&](const auto& seat) { return !InSession(manager, seat.first); });
+        TellGuests(game, manager);
+
+        std::set<std::string> seated;
+
+        for (const auto& [guest, seat] : Host.Seats)
+        {
+            if (seat.Seat == MCMcoSeats::MCSeat::Taken)
+            {
+                seated.insert(seat.ClientId);
+            }
+        }
+
+        Host.Waiting = MCMcoSeats::WaitingIn(Host.RoomSeats, seated);
+
+        // The mission picked is the room's description; MCO takes no more players than the game has room for.
+        const std::string mission =
+            GlobalLog() != nullptr && GlobalLog()->Room.Made() ? GlobalLog()->Room.MissionName : std::string();
+        const int32_t most = MCMcoSeats::RoomMost(static_cast<int32_t>(session->SessionDesc.dwMaxPlayers),
+                                                  Unseated(game, manager), Host.RoomSeats.size());
+
+        if (const std::pair<std::string, int32_t> described{mission, most}; Host.Described != described)
+        {
+            Host.Described = described;
+            MCMcoRooms::Now().Describe(mission, most);
+        }
+    }
+
+    /// <summary>The host told this guest's seat, when it isn't what it last told.</summary>
+    void TellSeat(MCSessionManager& manager, const MCMcoSeats::MCSeatSaid& said)
+    {
+        if (Guest.Told != said)
+        {
+            MCMPMcoSeatMessage message = MCMcoSeats::SeatMessage(said);
+            manager.SendPlainMessage(manager.ServerID, LinkupBytes(message));
+            Guest.Told = said;
+        }
+    }
+
+    void TendGuest(MCSessionManager& manager)
+    {
+        if (Guest.RoomId.empty())
+        {
+            return;
+        }
+
+        MCMcoRooms& mco = MCMcoRooms::Now();
+        const uint64_t revision = mco.Revision();
+
+        if (revision == Guest.Revision)
+        {
+            return;
+        }
+
+        Guest.Revision = revision;
+        const MCMcoSeen seen = mco.Seen();
+
+        // Told once MCO has answered for this room, and again if the seat goes.
+        if (seen.SeatRoom != Guest.RoomId)
+        {
+            return;
+        }
+
+        TellSeat(manager, seen.Seated
+                              ? MCMcoSeats::MCSeatSaid{.Seat = MCMcoSeats::MCSeat::Taken, .ClientId = seen.ClientId}
+                              : MCMcoSeats::MCSeatSaid{});
+    }
+
+    /// <summary>The game whose internet game is tended, with MCO in it; none otherwise.</summary>
+    std::shared_ptr<MCMultiPlayer> InternetGame()
+    {
+        std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+        return game != nullptr && game->SessionManager != nullptr && game->SessionManager->Internet != nullptr &&
+                       MCMcoRooms::Available()
+                   ? game
+                   : nullptr;
+    }
+}
+
+void MCMcoSeats::Frame()
+{
+    const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+
+    if (game == nullptr)
+    {
+        return;
+    }
+
+    if (MCSessionManager& manager = *game->SessionManager; manager.IsHost)
+    {
+        TendHost(*game, manager);
+    }
+    else
+    {
+        TendGuest(manager);
+    }
+}
+
+void MCMcoSeats::FillRoom(MCServiceRoom& room)
+{
+    if (Host.RoomId.empty())
+    {
+        return;
+    }
+
+    room.Mco = Host.RoomId;
+    room.Players.insert(room.Players.end(), Host.Waiting.begin(), Host.Waiting.end());
+}
+
+void MCMcoSeats::HostSaidRoom(uint32_t fromId, std::span<const uint8_t> bytes)
+{
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+
+    if (game == nullptr || game->SessionManager == nullptr || game->SessionManager->Internet == nullptr ||
+        game->SessionManager->IsHost || fromId != game->SessionManager->ServerID)
+    {
+        return;
+    }
+
+    MCSessionManager& manager = *game->SessionManager;
+    const std::optional<MCRoomSaid> said = RoomSaidIn(bytes);
+
+    if (!said.has_value() || !MCMcoRooms::Available())
+    {
+        if (!said.has_value())
+        {
+            SDL_Log("MCO seats: the host's word of its MCO room isn't one; no seat taken");
+        }
+
+        TellSeat(manager, {});
+        return;
+    }
+
+    if (said->RoomId == Guest.RoomId)
+    {
+        return;
+    }
+
+    MCMcoRooms& mco = MCMcoRooms::Now();
+
+    if (!Guest.RoomId.empty())
+    {
+        mco.Unsit();
+    }
+
+    Guest = {.RoomId = said->RoomId};
+    TellSeat(manager, {.Seat = MCSeat::Asked});
+    mco.Sit(said->RoomId, said->Name, said->MaxPlayers, said->Password);
+}
+
+void MCMcoSeats::GuestSaidSeat(uint32_t fromId, std::span<const uint8_t> bytes)
+{
+    const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+    const std::optional<MCSeatSaid> seat = SeatSaidIn(bytes);
+
+    if (game == nullptr || !game->SessionManager->IsHost || Host.RoomId.empty())
+    {
+        return;
+    }
+
+    if (!seat.has_value())
+    {
+        SDL_Log("MCO seats: player %u's word of its seat isn't one; it's taken as none", fromId);
+    }
+
+    Host.Seats[fromId] = seat.value_or(MCSeatSaid{});
+}
+
+void MCMcoSeats::Ended()
+{
+    if (MCMcoRooms::Available())
+    {
+        if (Host.Asked)
+        {
+            MCMcoRooms::Now().LeaveBoth();
+        }
+
+        if (!Guest.RoomId.empty())
+        {
+            MCMcoRooms::Now().Unsit();
+        }
+    }
+
+    Host = {};
+    Guest = {};
+}
+
+void MCMcoSeats::SetHostsOn(bool on)
+{
+    HostsSwitch = on;
+}
+
+bool MCMcoSeats::HostsOn()
+{
+    return HostsSwitch;
+}
+
+MCMPMcoRoomMessage MCMcoSeats::RoomMessage(const MCRoomSaid& said)
+{
+    MCMPMcoRoomMessage message{};
+    message.Header = PlainHeader(MCMPMessageType::McoRoom);
+    Put(message.RoomId, said.RoomId);
+    Put(message.Name, said.Name);
+    Put(message.Password, said.Password);
+    message.MaxPlayers = static_cast<int8_t>(std::clamp(said.MaxPlayers, MCMcoApi::MatchFewest, MCMcoApi::RoomMost));
+    return message;
+}
+
+std::optional<MCMcoSeats::MCRoomSaid> MCMcoSeats::RoomSaidIn(std::span<const uint8_t> bytes)
+{
+    if (bytes.size() < sizeof(MCMPMcoRoomMessage))
+    {
+        return std::nullopt;
+    }
+
+    const auto message = ReadLinkupMessage<MCMPMcoRoomMessage>(bytes);
+    std::optional<std::string> roomId = Got(message.RoomId);
+    std::optional<std::string> name = Got(message.Name);
+    std::optional<std::string> password = Got(message.Password);
+
+    if (!roomId || !MCMcoApi::IsHex(*roomId, MCMcoApi::ClientIdDigits) || !name || name->empty() || !password ||
+        message.MaxPlayers < MCMcoApi::MatchFewest || message.MaxPlayers > MCMcoApi::RoomMost)
+    {
+        return std::nullopt;
+    }
+
+    return MCRoomSaid{.RoomId = std::move(*roomId),
+                      .Name = std::move(*name),
+                      .Password = std::move(*password),
+                      .MaxPlayers = message.MaxPlayers};
+}
+
+MCMPMcoSeatMessage MCMcoSeats::SeatMessage(const MCSeatSaid& said)
+{
+    MCMPMcoSeatMessage message{};
+    message.Header = PlainHeader(MCMPMessageType::McoSeat);
+    message.Seat = std::to_underlying(said.Seat);
+    Put(message.ClientId, said.Seat == MCSeat::Taken ? std::string_view(said.ClientId) : std::string_view());
+    return message;
+}
+
+std::optional<MCMcoSeats::MCSeatSaid> MCMcoSeats::SeatSaidIn(std::span<const uint8_t> bytes)
+{
+    if (bytes.size() < sizeof(MCMPMcoSeatMessage))
+    {
+        return std::nullopt;
+    }
+
+    const auto message = ReadLinkupMessage<MCMPMcoSeatMessage>(bytes);
+    std::optional<std::string> clientId = Got(message.ClientId);
+    const auto seat = static_cast<MCSeat>(message.Seat);
+    const bool taken = seat == MCSeat::Taken;
+
+    if (message.Seat > std::to_underlying(MCSeat::Taken) || !clientId ||
+        taken != MCMcoApi::IsHex(*clientId, MCMcoApi::ClientIdDigits) || (!taken && !clientId->empty()))
+    {
+        return std::nullopt;
+    }
+
+    return MCSeatSaid{.Seat = seat, .ClientId = std::move(*clientId)};
+}
+
+bool MCMcoSeats::HasNoSeat(const MCGuestSeat& guest, Clock::time_point now)
+{
+    if (!guest.Rules.has_value())
+    {
+        return false;
+    }
+
+    if (!ReduxHd(*guest.Rules))
+    {
+        return true;
+    }
+
+    if (guest.Said.has_value())
+    {
+        return *guest.Said == MCSeat::None;
+    }
+
+    return guest.Told.has_value() && now - *guest.Told >= AnswerWait;
+}
+
+int32_t MCMcoSeats::RoomMost(int32_t gameMost, size_t unseated, size_t seatsTaken)
+{
+    const int32_t open = gameMost - static_cast<int32_t>(std::min<size_t>(unseated, MCMcoApi::RoomMost));
+    return MCMcoApi::MatchCapacity(
+        std::max(open, static_cast<int32_t>(std::min<size_t>(seatsTaken, MCMcoApi::RoomMost))));
+}
+
+std::vector<std::string> MCMcoSeats::WaitingIn(const std::vector<MCMcoApi::MCRoomPlayer>& seats,
+                                               const std::set<std::string>& inSession)
+{
+    std::vector<std::string> waiting;
+
+    for (const MCMcoApi::MCRoomPlayer& seat : seats)
+    {
+        if (!seat.Host && !inSession.contains(seat.ClientId))
+        {
+            waiting.push_back(seat.Username);
+        }
+    }
+
+    return waiting;
+}

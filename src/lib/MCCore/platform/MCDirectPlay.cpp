@@ -2831,6 +2831,11 @@ std::optional<std::string> MCDirectPlay::JoinedAddress() const
                : std::nullopt;
 }
 
+uint16_t MCDirectPlay::HostPort() const
+{
+    return _Impl->State == Impl::Mode::Host ? _Impl->Port : uint16_t{0};
+}
+
 uint32_t MCDirectPlay::Close()
 {
     if (_Impl->State == Impl::Mode::None)

@@ -233,6 +233,9 @@
     <ClCompile Include="tests\McoRoomsTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\McoSeatsTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\MCTest.cpp">
       <Filter>tests</Filter>
     </ClCompile>

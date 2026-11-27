@@ -287,6 +287,7 @@
     <ClCompile Include="network\MCMcoContent.cpp" />
     <ClCompile Include="network\MCMcoRelay.cpp" />
     <ClCompile Include="network\MCMcoRooms.cpp" />
+    <ClCompile Include="network\MCMcoSeats.cpp" />
     <ClCompile Include="network\MCMechHandover.cpp" />
     <ClCompile Include="network\MCMPGameConfiguration.cpp" />
     <ClCompile Include="network\MCMultiPlayer.cpp" />
@@ -804,6 +805,7 @@
     <ClInclude Include="network\MCMcoKeys.h" />
     <ClInclude Include="network\MCMcoRelay.h" />
     <ClInclude Include="network\MCMcoRooms.h" />
+    <ClInclude Include="network\MCMcoSeats.h" />
     <ClInclude Include="network\MCMechHandover.h" />
     <ClInclude Include="network\MCMPGameConfiguration.h" />
     <ClInclude Include="network\MCMultiPlayer.h" />

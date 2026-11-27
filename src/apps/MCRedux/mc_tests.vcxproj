@@ -400,6 +400,7 @@
     <ClCompile Include="tests\McoInternetTests.cpp" />
     <ClCompile Include="tests\McoRelayTests.cpp" />
     <ClCompile Include="tests\McoRoomsTests.cpp" />
+    <ClCompile Include="tests\McoSeatsTests.cpp" />
     <ClCompile Include="tests\MCTest.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>

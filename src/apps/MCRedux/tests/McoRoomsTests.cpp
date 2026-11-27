@@ -625,6 +625,147 @@ TEST_CASE("mco rooms: an internet game's guest sits quietly in its host's room, 
     CHECK(!guest.Seen().Room.has_value());
 }
 
+namespace
+{
+    /// <summary>
+    /// The internet game's room hosted on both by <paramref name="host"/> (ANN), and <paramref name="guest"/> (BOB) sat
+    /// quietly in it: the room's id; empty when it didn't come.
+    /// </summary>
+    std::string HostedWithSeat(MCService& mco, MCMcoRooms& host, MCMcoRooms& guest)
+    {
+        host.OpenLobby("ANN");
+        guest.OpenLobby("BOB");
+
+        if (!Within(HeardMs, [&] { return host.Seen().Listed && guest.Seen().Listed; }))
+        {
+            return {};
+        }
+
+        host.HostBoth(SteelRain());
+
+        if (!Within(HeardMs, [&] { return !OnlyRoom(mco).empty(); }))
+        {
+            return {};
+        }
+
+        const std::string roomId = OnlyRoom(mco);
+        guest.CloseLobby();
+        guest.Sit(roomId, "Steel Rain", 6, "K7QF");
+        return Within(HeardMs, [&] { return guest.Seen().Seated; }) ? roomId : std::string();
+    }
+
+    /// <summary>Whether <paramref name="rooms"/> hosts the internet game's room on both, another than <paramref name="notRoom"/>.</summary>
+    bool HostsBoth(const MCMcoRooms& rooms, std::string_view notRoom = {})
+    {
+        const MCMcoSeen seen = rooms.Seen();
+        return seen.Room.has_value() && seen.Room->Hosting && seen.Room->Both && !seen.Room->RoomId.empty() &&
+               seen.Room->RoomId != notRoom;
+    }
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "When the host leaves", by LEAVE: the host hands the internet game's MCO room to the game's new
+/// host's quiet seat (transfer_host) and leaves; that game, the internet game rolled over to it, takes the same room as
+/// its own, hosted on both, with MCO's waiting player still in it, then describes it and closes it as it leaves.
+/// </summary>
+TEST_CASE("mco rooms: an internet game's room is handed on with the game to its new host's quiet seat, the same room, "
+          "its waiting players still in it")
+{
+    MCService mco;
+    MCMcoRooms host(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    MCMcoRooms guest(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    const std::string roomId = HostedWithSeat(mco, host, guest);
+    REQUIRE(!roomId.empty());
+    mco.AddPlayer(roomId, "CLANNER", true);
+    const std::string bob = guest.Seen().ClientId;
+
+    // The new host's game waits to be handed the room; the old host hands it on as it leaves.
+    guest.TakeBoth(SteelRain());
+    host.HandOnBoth(bob);
+    REQUIRE(Within(HeardMs, [&] { return HostsBoth(guest); }));
+    const MCMcoSeen taken = guest.Seen();
+    CHECK_EQ(taken.Room->RoomId, roomId);
+    CHECK(!taken.Seated);
+    CHECK_EQ(mco.Asked("transfer_host"), size_t{1});
+    CHECK_EQ(mco.LastFields("transfer_host")["target_client_id"], bob);
+    REQUIRE(Within(HeardMs, [&] { return !host.Seen().Room.has_value() && !mco.SeatOf(roomId, "ANN").has_value(); }));
+    CHECK(mco.RoomIds() == std::vector<std::string>{roomId});
+    REQUIRE(mco.RoomOf(roomId).has_value());
+    CHECK_EQ(mco.RoomOf(roomId)->HostClient, bob);
+    CHECK(mco.SeatOf(roomId, "CLANNER").has_value());
+    REQUIRE(Within(HeardMs, [&] { return guest.Seen().Room->Players.size() == 2; }));
+
+    // The room is the new host's own: described by it, and closed as it leaves.
+    guest.Describe("Arena", 6);
+    REQUIRE(Within(HeardMs, [&] { return mco.RoomOf(roomId)->Description == "Arena"; }));
+    guest.LeaveBoth();
+    REQUIRE(Within(HeardMs, [&] { return mco.RoomIds().empty(); }));
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "When the host leaves", a crash: the game an internet game rolled over to hosts the game's MCO
+/// room as a new one when the old host's room is gone (MCO closed it as the host's connection was lost), when it isn't
+/// handed on within the wait, or when it had no seat; a hand-on MCO refuses leaves the old host's room to close.
+/// </summary>
+TEST_CASE(
+    "mco rooms: a game an internet game rolled over to hosts a new room when the old host's is gone, isn't handed "
+    "on in time, or it had no seat")
+{
+    const auto keys = [] { return std::make_shared<MCMemoryKeys>(); };
+
+    // The old host crashed: MCO closes its room, and the new host's game hosts its own at once (long before its wait).
+    {
+        MCService mco;
+        MCMcoSetup waiting = TestSetup(mco, keys());
+        waiting.HandOnWait = std::chrono::minutes(1);
+        MCMcoRooms host(TestSetup(mco, keys()));
+        MCMcoRooms guest(std::move(waiting));
+        const std::string roomId = HostedWithSeat(mco, host, guest);
+        REQUIRE(!roomId.empty());
+        guest.TakeBoth(SteelRain());
+        mco.HostLeaves(roomId);
+        REQUIRE(Within(HeardMs, [&] { return HostsBoth(guest, roomId); }));
+        CHECK_EQ(mco.Asked("transfer_host"), size_t{0});
+        CHECK_EQ(mco.RoomIds().size(), size_t{1});
+        CHECK_EQ(mco.LastFieldsFrom("register_peer", "BOB")["password"], std::string("K7QF"));
+    }
+
+    // Not handed on within the wait: the seat let go, and a new room; the old host's hand-on then refused (its new host
+    // isn't in its room), its room closes as it leaves.
+    {
+        MCService mco;
+        MCMcoSetup waiting = TestSetup(mco, keys());
+        waiting.HandOnWait = std::chrono::milliseconds(200);
+        MCMcoRooms host(TestSetup(mco, keys()));
+        MCMcoRooms guest(std::move(waiting));
+        const std::string roomId = HostedWithSeat(mco, host, guest);
+        REQUIRE(!roomId.empty());
+        const std::string bob = guest.Seen().ClientId;
+        guest.TakeBoth(SteelRain());
+        REQUIRE(Within(HeardMs, [&] { return HostsBoth(guest, roomId); }));
+        CHECK(!mco.SeatOf(roomId, "BOB").has_value());
+        CHECK_EQ(mco.RoomIds().size(), size_t{2});
+
+        host.HandOnBoth(bob);
+        REQUIRE(Within(HeardMs, [&] { return mco.RoomIds().size() == 1; }));
+        CHECK(!mco.RoomOf(roomId).has_value());
+        REQUIRE(Within(HeardMs, [&] { return !host.Seen().Room.has_value(); }));
+        CHECK(host.Seen().Left.empty());
+        CHECK(HostsBoth(guest, roomId));
+    }
+
+    // No seat in the old host's room: a new room at once.
+    {
+        MCService mco;
+        MCMcoRooms solo(TestSetup(mco, keys()));
+        solo.OpenLobby("CAT");
+        REQUIRE(Within(HeardMs, [&] { return solo.Seen().Listed; }));
+        solo.TakeBoth(SteelRain());
+        REQUIRE(Within(HeardMs, [&] { return HostsBoth(solo) && !OnlyRoom(mco).empty(); }));
+        CHECK_EQ(mco.Asked("transfer_host"), size_t{0});
+    }
+}
+
 /// <summary>
 /// SPEC-mco-hosting.md's "The chat": the internet game's room lines said in MCO's room from each game's own seat, the
 /// host's and a guest's quiet one, nothing of it shown; a game with no such seat says nothing there.

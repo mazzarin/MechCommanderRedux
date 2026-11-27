@@ -834,6 +834,8 @@ TEST_CASE("directplay: the host's link cut, the session rolls over to the earlie
     ThreeMachines session(":28961");
     const std::vector<DPSESSIONDESC2> before = Enumerate(session.CatMachine, *session.Host, 0);
     REQUIRE_EQ(before.size(), size_t{1});
+    // The host knows whose machine takes over, as the joiners pick it (its MCO room goes to that player's seat).
+    CHECK(session.Host->SuccessorPlayer() == std::optional(session.Ann));
     session.Host.reset();
 
     const std::vector<Received> ann = Drain(session.AnnMachine, {session.CatMachine});
@@ -1136,6 +1138,7 @@ TEST_CASE("directplay: guests that never take over leave their host no successor
     Drain(ann, {*host, cat});
     Drain(cat, {*host, ann});
     CHECK(!host->HasSuccessor());
+    CHECK(!host->SuccessorPlayer().has_value());
 
     host.reset();
     const std::vector<uint32_t> annHeard = SystemTypes(Drain(ann, {cat}));

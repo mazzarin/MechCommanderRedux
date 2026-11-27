@@ -164,12 +164,25 @@ namespace
         Host.Name = MCServiceGameName(session.Name);
         Host.Password = internet.Public() ? std::string() : internet.Code();
         Host.Most = MCMcoApi::MatchCapacity(static_cast<int32_t>(session.SessionDesc.dwMaxPlayers));
+        MCMcoBoth both{.Name = Host.Name,
+                       .MaxPlayers = Host.Most,
+                       .Password = Host.Password,
+                       .GamePort = port,
+                       .Carry = internet.Carrier()};
+
+        // A guest the game rolled over to sat in its old host's room: that room is handed on to it (the old host's
+        // LEAVE), or, the old host gone without a word, it hosts its own (SPEC-mco-hosting.md's "When the host leaves").
+        if (!Guest.RoomId.empty())
+        {
+            SDL_Log("MCO seats: game %s rolled over to this game; taking its MechCommander Online room over",
+                    internet.Code().c_str());
+            Guest = {};
+            MCMcoRooms::Now().TakeBoth(std::move(both));
+            return;
+        }
+
         SDL_Log("MCO seats: hosting game %s on MechCommander Online too", internet.Code().c_str());
-        MCMcoRooms::Now().HostBoth({.Name = Host.Name,
-                                    .MaxPlayers = Host.Most,
-                                    .Password = Host.Password,
-                                    .GamePort = port,
-                                    .Carry = internet.Carrier()});
+        MCMcoRooms::Now().HostBoth(std::move(both));
     }
 
     /// <summary>The MCO room as the model last heard it.</summary>
@@ -586,8 +599,11 @@ void MCMcoSeats::HostSaidRoom(uint32_t fromId, std::span<const uint8_t> bytes)
         return;
     }
 
+    // The same room from a new host (the game rolled over, its MCO room handed on with it): the seat told to it again.
     if (said->RoomId == Guest.RoomId)
     {
+        Guest.Told.reset();
+        Guest.Revision = 0;
         return;
     }
 
@@ -638,6 +654,27 @@ void MCMcoSeats::Ended()
 
     Host = {};
     Guest = {};
+}
+
+void MCMcoSeats::HandOn(uint32_t successor)
+{
+    const auto seat = Host.Seats.find(successor);
+
+    if (!MCMcoRooms::Available() || Host.RoomId.empty())
+    {
+        return;
+    }
+
+    if (seat == Host.Seats.end() || seat->second.Seat != MCSeat::Taken)
+    {
+        SDL_Log("MCO seats: the game's new host (player %u) has no seat in its MCO room; the room closes as this game "
+                "leaves",
+                successor);
+        return;
+    }
+
+    SDL_Log("MCO seats: the game's MCO room goes with it to its new host (player %u)", successor);
+    MCMcoRooms::Now().HandOnBoth(seat->second.ClientId);
 }
 
 bool MCMcoSeats::KeepOut(std::optional<uint32_t> playerId, std::string_view name)

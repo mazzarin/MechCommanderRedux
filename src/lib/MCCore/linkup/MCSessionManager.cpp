@@ -1255,6 +1255,15 @@ bool MCSessionManager::LeaveSession()
 {
     const bool handOn = std::exchange(HandsOn, true);
 
+    // Port-only (Redux HD; SPEC-mco-hosting.md): an internet game's MCO room goes with the session to its new host.
+    if (handOn && IsHost && Internet != nullptr && !Internet->KeepsPlace() && DirectPlay != nullptr)
+    {
+        if (const std::optional<uint32_t> successor = DirectPlay->SuccessorPlayer(); successor.has_value())
+        {
+            MCMcoSeats::HandOn(*successor);
+        }
+    }
+
     if (!ForgetSession())
     {
         return false;

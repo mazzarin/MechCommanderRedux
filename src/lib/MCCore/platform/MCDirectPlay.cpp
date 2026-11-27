@@ -2947,6 +2947,30 @@ std::optional<uint32_t> MCDirectPlay::PlayerIp(uint32_t playerID) const
     return impl.Joiners[found->second.Owner].From.Ip;
 }
 
+std::optional<uint32_t> MCDirectPlay::SuccessorPlayer() const
+{
+    const Impl& impl = *_Impl;
+
+    if (impl.State != Impl::Mode::Host || (impl.Session.Desc.dwFlags & DPSESSION_MIGRATEHOST) == 0)
+    {
+        return std::nullopt;
+    }
+
+    // The joiners' own pick (StartRollover): the machines in the order the hub shared them, its own left out.
+    const auto successor = std::ranges::find_if(impl.Machines, [&](const auto& machine)
+                                                { return machine.Id != impl.SelfMachine && machine.TakesOver(); });
+
+    if (successor == impl.Machines.end())
+    {
+        return std::nullopt;
+    }
+
+    const auto player = std::ranges::find_if(
+        impl.Entities, [&](const auto& entity)
+        { return entity.second.Type == DPPLAYERTYPE_PLAYER && entity.second.Machine == successor->Id; });
+    return player != impl.Entities.end() ? std::optional(player->first) : std::nullopt;
+}
+
 bool MCDirectPlay::RemovePlayer(uint32_t playerID, std::chrono::milliseconds grace)
 {
     Impl& impl = *_Impl;

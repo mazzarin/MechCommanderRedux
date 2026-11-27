@@ -1170,6 +1170,112 @@ void MCMcoRooms::DoKick(const std::string& clientId)
     }
 }
 
+void MCMcoRooms::HandOnBoth(std::string clientId)
+{
+    Post([this, clientId = std::move(clientId)] { DoHandOnBoth(clientId); });
+}
+
+void MCMcoRooms::DoHandOnBoth(const std::string& clientId)
+{
+    if (!_Seat || !_Seat->Host || !_Both)
+    {
+        DoLeaveBoth();
+        return;
+    }
+
+    // The host's match first: its MCO players' links end with this game (their games close, as MCO's do when the host
+    // goes), and the room's next host starts its own.
+    EndMatch(false);
+
+    if (const auto handed = _Service->TransferHost(_Peer, clientId); handed)
+    {
+        SDL_Log("MechCommander Online: the internet game's room handed on to %s", clientId.c_str());
+        _Seat->Host = false;
+    }
+    else
+    {
+        SDL_Log("MechCommander Online: handing the internet game's room on to %s: %s; it closes as this game leaves",
+                clientId.c_str(), MCMcoApi::Describe(handed.error()).c_str());
+    }
+
+    DoLeave();
+}
+
+void MCMcoRooms::TakeBoth(MCMcoBoth both)
+{
+    Post([this, both = std::move(both)]() mutable { DoTakeBoth(std::move(both)); });
+}
+
+void MCMcoRooms::DoTakeBoth(MCMcoBoth both)
+{
+    if (!_Seat || !_Silent)
+    {
+        DoHostBoth(std::move(both));
+        return;
+    }
+
+    SDL_Log("MechCommander Online: the internet game rolled over to this game; waiting for its room to be handed on");
+    _Taking = MCTaking{.Both = std::move(both), .Until = Clock::now() + _Setup.HandOnWait};
+    _NextPoll = Clock::now();
+}
+
+void MCMcoRooms::TakeOverRoom(const MCMcoApi::MCRoomState& state)
+{
+    const bool hosting = std::ranges::any_of(state.Players, [&](const MCMcoApi::MCRoomPlayer& player)
+                                             { return player.Host && player.ClientId == _Peer.ClientId; });
+
+    if (!hosting)
+    {
+        if (Clock::now() >= _Taking->Until)
+        {
+            SDL_Log("MechCommander Online: the internet game's room wasn't handed on in time; hosting a new one");
+            DoLeave();
+            HostTaken();
+        }
+
+        return;
+    }
+
+    MCMcoBoth both = std::move(_Taking->Both);
+    _Taking.reset();
+    Wipe(both.Password);
+    SDL_Log("MechCommander Online: the internet game's room was handed on to this game, as \"%s\"", both.Name.c_str());
+    const int32_t players = MCMcoApi::MatchCapacity(both.MaxPlayers);
+    const std::string name = state.Name.empty() ? both.Name : state.Name;
+    _Seat->Host = true;
+    _Silent = false;
+    _SilentMatch.clear();
+    // Described afresh: the old host's description and seats are its own.
+    _Described.clear();
+    _DescribedMax = 0;
+    _Both = std::move(both);
+    Show(
+        [&](MCMcoSeen& seen)
+        {
+            seen.Seated = false;
+            seen.ClientId = _Peer.ClientId;
+            seen.Room = MCMcoRoomSeen{.RoomId = _Seat->RoomId,
+                                      .Name = name,
+                                      .Hosting = true,
+                                      .Players = state.Players,
+                                      .MaxPlayers = players,
+                                      .Host = _Peer.Username,
+                                      .Both = true};
+        });
+}
+
+void MCMcoRooms::HostTaken()
+{
+    if (!_Taking)
+    {
+        return;
+    }
+
+    MCMcoBoth both = std::move(_Taking->Both);
+    _Taking.reset();
+    DoHostBoth(std::move(both));
+}
+
 void MCMcoRooms::Sit(std::string roomId, std::string name, int32_t maxPlayers, std::string password)
 {
     Post([this, roomId = std::move(roomId), name = std::move(name), maxPlayers,
@@ -1225,6 +1331,12 @@ void MCMcoRooms::Unsit()
     Post(
         [this]
         {
+            if (_Taking)
+            {
+                Wipe(_Taking->Both.Password);
+                _Taking.reset();
+            }
+
             if (_Silent)
             {
                 DoLeave();
@@ -1257,14 +1369,24 @@ void MCMcoRooms::Leave()
 
 void MCMcoRooms::LeaveBoth()
 {
-    Post(
-        [this]
-        {
-            if (_Both.has_value())
-            {
-                DoLeave();
-            }
-        });
+    Post([this] { DoLeaveBoth(); });
+}
+
+void MCMcoRooms::DoLeaveBoth()
+{
+    // A quiet seat being taken over is the internet game's room too.
+    const bool taking = _Taking.has_value();
+
+    if (taking)
+    {
+        Wipe(_Taking->Both.Password);
+        _Taking.reset();
+    }
+
+    if (_Both.has_value() || (taking && _Silent))
+    {
+        DoLeave();
+    }
 }
 
 void MCMcoRooms::DoLeave()
@@ -1509,6 +1631,8 @@ void MCMcoRooms::LeftRoom(std::string why)
         EndMatch(false);
         _InLobby = false;
         LetSeatGo();
+        // A room being taken over gone (its host crashed: MCO closed it): the game's own, new.
+        HostTaken();
         return;
     }
 
@@ -1571,6 +1695,13 @@ void MCMcoRooms::PollRoom()
     if (_Silent)
     {
         _SilentMatch = state->Start ? state->Start->SessionHex : std::string();
+
+        // Port-only (Redux HD): the internet game rolled over to this game, which waits to be handed the room.
+        if (_Taking)
+        {
+            TakeOverRoom(*state);
+        }
+
         return;
     }
 

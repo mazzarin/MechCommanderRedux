@@ -47,6 +47,12 @@ struct MCMcoSetup
     /// <summary>How long the host's game has to answer its session query before the ticket is asked (the launcher's).</summary>
     static constexpr int DefaultHostGameMs = 45000;
     int HostGameMs = DefaultHostGameMs;
+    /// <summary>
+    /// Port-only (Redux HD): how long a game an internet game rolled over to waits for MCO to hand it the game's room
+    /// (MCMcoRooms::TakeBoth) before hosting a new one: the old host's hand-on comes as it leaves, a moment before.
+    /// </summary>
+    static constexpr std::chrono::milliseconds DefaultHandOnWait{10000};
+    std::chrono::milliseconds HandOnWait = DefaultHandOnWait;
 };
 
 /// <summary>
@@ -226,6 +232,20 @@ public:
     void HostBoth(MCMcoBoth both);
     /// <summary>The internet game's MCO room left, if it's the room this game is in (one MCO refused, nothing).</summary>
     void LeaveBoth();
+    /// <summary>
+    /// SPEC-mco-hosting.md's "When the host leaves": the host's LEAVE hands its internet game on, and the game's MCO
+    /// room with it: handed to the player <paramref name="clientId"/> in it (transfer_host, its match first closed),
+    /// then left, so it goes on under the game's new host. Refused, the room is left all the same (it closes, and the
+    /// new host hosts another: <see cref="TakeBoth"/>).
+    /// </summary>
+    void HandOnBoth(std::string clientId);
+    /// <summary>
+    /// The internet game this game was a guest of has rolled over to it: its quiet seat in the game's MCO room becomes
+    /// the host's room on both (as <see cref="HostBoth"/> leaves it) once MCO says this game hosts it, the old host's
+    /// hand-on; past MCMcoSetup::HandOnWait, or with the room gone (its host crashed: MCO closes it), the seat is let
+    /// go and <paramref name="both"/> hosted as a new room. With no quiet seat, a new room at once.
+    /// </summary>
+    void TakeBoth(MCMcoBoth both);
     /// <summary>The internet game's room describes <paramref name="description"/> (its mission) for <paramref name="maxPlayers"/>.</summary>
     void Describe(std::string description, int32_t maxPlayers);
     /// <summary>A guest of an internet game sits in its host's MCO room, READY, never playing its match.</summary>
@@ -366,6 +386,14 @@ private:
     void HostMatch(const MCMcoApi::MCMatch& match);
     void DoStartBoth(bool battle);
     void DoKick(const std::string& clientId);
+    void DoHandOnBoth(const std::string& clientId);
+    void DoTakeBoth(MCMcoBoth both);
+    /// <summary>The internet game's room (or the quiet seat being taken over) left, quietly.</summary>
+    void DoLeaveBoth();
+    /// <summary>A quiet seat being taken over (<see cref="TakeBoth"/>), as a poll found its room: hosted now, or not yet.</summary>
+    void TakeOverRoom(const MCMcoApi::MCRoomState& state);
+    /// <summary>The room being taken over gone or not handed on in time: hosted as a new room.</summary>
+    void HostTaken();
     /// <summary>The internet game's room off MCO for the battle (MCO won't start it): left quietly, with why.</summary>
     void OffForBattle(std::string_view why);
     void EndMatch(bool played);
@@ -425,6 +453,15 @@ private:
     /// <summary>A guest's quiet seat, and the match its room runs (reported as running: its game is in it, on our links).</summary>
     bool _Silent = false;
     std::string _SilentMatch;
+
+    /// <summary>Port-only (Redux HD): the quiet seat's room being taken over (TakeBoth), until when.</summary>
+    struct MCTaking
+    {
+        MCMcoBoth Both;
+        std::chrono::steady_clock::time_point Until;
+    };
+
+    std::optional<MCTaking> _Taking;
 
     std::thread _Thread;
 };

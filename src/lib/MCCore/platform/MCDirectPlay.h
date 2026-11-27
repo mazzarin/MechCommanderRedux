@@ -453,6 +453,12 @@ public:
     /// </summary>
     std::optional<uint32_t> PlayerIp(uint32_t playerID) const;
     /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "When the host leaves"), a host: a player of the machine that takes the
+    /// session over should this one leave (<see cref="HasSuccessor"/>: the earliest joined that can, as every joiner
+    /// picks it); none without one.
+    /// </summary>
+    std::optional<uint32_t> SuccessorPlayer() const;
+    /// <summary>
     /// Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"), a host: the machine of player <paramref name="playerID"/>
     /// leaves the session <paramref name="grace"/> from now, if it hasn't by then (time for the host's word to reach it,
     /// and for its game to leave on its own). Whether the player is a joiner's.

@@ -70,6 +70,14 @@ namespace MCMcoSeats
     /// <summary>The game's internet game ends: a host's MCO room left, a guest's seat let go.</summary>
     void Ended();
 
+    /// <summary>
+    /// SPEC-mco-hosting.md's "When the host leaves": the host's LEAVE hands its session on to the machine of player
+    /// <paramref name="successor"/> (MCDirectPlay::SuccessorPlayer), and its MCO room goes to that player's seat
+    /// (MCMcoRooms::HandOnBoth). A successor with no seat there (an earlier build's, or one MCO refused): the room is
+    /// left as the game ends (<see cref="Ended"/>), and the new host hosts its own.
+    /// </summary>
+    void HandOn(uint32_t successor);
+
     /// <summary>A player removed from the game (network/MCRemove.h), as MCO's room knows it, and when.</summary>
     struct MCKeptOut
     {

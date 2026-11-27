@@ -4,8 +4,8 @@
    elements: #logistics, the lifted card and the buy window. The INVENTORY keeps the left side on PURCHASING and the
    'MECH BAY (A2, the user's, 26 Nov): what is beside it changes with the tab, never where it is. */
 
-/* A list's switch under its column's name (PURCHASING's kinds under STORE, 1998's tabs MECHS, MECHWARRIORS,
-   COMPONENTS, VEHICLES, choosing what both lists show; the INVENTORY's MECHS, MECHWARRIORS and COMPONENTS). */
+/* The INVENTORY's switch under its name: 1998's tabs MECHS, MECHWARRIORS, COMPONENTS, VEHICLES (PURCHASING's choosing
+   what both lists show). */
 #logistics .kinds { display: flex; flex-direction: row; margin-bottom: 8dp; }
 #logistics .kinds > * { flex: 0 0 auto; }
 
@@ -309,33 +309,36 @@
     #logistics .grid > .card-cell { flex-basis: 127dp; }
     #logistics #inventory .grid.mechs > .card-cell { flex-basis: 100%; }
 }
-/* Port-only, 4:3 and 5:4: the INVENTORY 16:10's 220, so its switch keeps one row with Z and C; the force (or the
-   store) one card a row (148); the details the rest (216, 16:10's arrangement). */
+/* Port-only, 4:3 and 5:4: the three columns near-equal, the INVENTORY and the store (or the force) 184 each, the
+   details the rest (216), each list one card a row across its column (the switch over the INVENTORY two rows: below). */
 @media (max-aspect-ratio: 3/2) {
-    #logistics #inventory { flex-basis: 220dp; }
-    #logistics #units, #logistics #store { flex-basis: 148dp; }
-    #logistics .grid > .card-cell { flex-basis: 136dp; }
+    #logistics #inventory { flex-basis: 184dp; }
+    #logistics #units, #logistics #store { flex-basis: 184dp; }
+    #logistics .grid > .card-cell { flex-basis: 100%; }
     #logistics #inventory > .head > .data { display: block; }
 }
 
-/* A list's switch with Z and C at its ends (the user's keys for it): the switch spans the column between them, its
-   segments sharing it, so a narrower column never wraps it; the store's four kinds set closer. */
+/* The INVENTORY's switch (the user's, 26 Nov): one switch over it on PURCHASING and the 'MECH BAY, the same four kinds
+   (MECHS, MECHWARRIORS, COMPONENTS, VEHICLES), spanning the column, their words set close; Z and C, which step it,
+   named in the key hint line beside Q and E. PURCHASING's chooses what both lists show (the 'MECH BAY's is hidden
+   there); the store's list starts under its name, as the force's. */
 #logistics .kinds { align-items: center; }
-/* PURCHASING: the store's switch alone chooses what both lists show (its Z and C step it), so the INVENTORY's, which
-   only ever matched it, is gone, its room kept so the two lists' first cards line up (the user's, 26 Nov: "Makes sense
-   to drop"). */
-#logistics #inventory .kinds.room { visibility: hidden; }
-#logistics .kinds > .key { flex: 0 0 auto; height: 16dp; margin-right: 0dp; padding: 0dp 4dp; font-size: 9.51dp; line-height: 14dp; }
-#logistics .kinds > .key.first { margin-right: 4dp; }
-#logistics .kinds > .key.last { margin-left: 4dp; }
+#logistics #inventory .kinds.gone { display: none; }
 #logistics .kinds > .switch { flex: 1 1 auto; }
 #logistics .kinds > .switch > div, #logistics #inventory .kinds > .switch.small > div { flex: 1 1 auto; text-align: center; padding: 0dp 4dp; }
 #logistics .kinds > .switch.many > div { padding: 0dp 2dp; letter-spacing: 0.02em; }
-/* 16:10, 4:3: the INVENTORY's switch kept on one row, its words set closer. */
+/* 16:10: the switch kept on one row in the INVENTORY's 220, its words set closer. */
 @media (max-aspect-ratio: 17/10) {
     #logistics #inventory .switch { flex-wrap: nowrap; padding: 0dp; }
     #logistics #inventory .switch > div, #logistics #inventory .kinds > .switch.small > div { padding: 0dp 2dp; letter-spacing: 0.02em; margin-bottom: 0dp; }
     #logistics #inventory .switch > div:last-child { margin-right: 0dp; }
+}
+/* 4:3 and 5:4: too wide for the INVENTORY's 184, the switch on two rows, two a row (MECHS and MECHWARRIORS over
+   COMPONENTS and VEHICLES), sharing their borders. */
+@media (max-aspect-ratio: 3/2) {
+    #logistics #inventory .kinds > .switch { flex-wrap: wrap; padding: 0dp 1dp 1dp 0dp; }
+    #logistics #inventory .kinds > .switch > div, #logistics #inventory .kinds > .switch.small > div { flex: 1 1 40%; margin-bottom: -1dp; }
+    #logistics #inventory .kinds > .switch > div:last-child { margin-right: -1dp; }
 }
 
 /* The details narrower: the pilot's face beside the callsign and rank on one line, the four skills two a row under

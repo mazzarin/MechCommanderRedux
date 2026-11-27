@@ -143,9 +143,11 @@ namespace
     constexpr std::string_view OwnedNote = "owned";
     /// <summary>A unit the INVENTORY stores, before its tons.</summary>
     constexpr std::string_view StoredWord = "Stored";
-    /// <summary>The hint line's keys for the tabs (Z and C are drawn at the ends of the list's switch they step).</summary>
+    /// <summary>The hint line's keys for the tabs, and for the list's switch (each screen has one).</summary>
     constexpr std::string_view TabKeys = "Q E";
     constexpr std::string_view TabKeysDo = "Change tab";
+    constexpr std::string_view ListKeys = "Z C";
+    constexpr std::string_view ListKeysDo = "Change list";
     /// <summary>The force's count against the most it holds; the INVENTORY's.</summary>
     constexpr std::string_view ForceCountFormat = "{} / {}";
     /// <summary>The FORCE's head after its count: its tons, then the mission's drop limit.</summary>
@@ -154,8 +156,6 @@ namespace
     constexpr std::string_view CountFormat = "{} {}";
     constexpr std::string_view MechWord = "mech";
     constexpr std::string_view MechsWord = "mechs";
-    constexpr std::string_view UnitWord = "unit";
-    constexpr std::string_view UnitsWord = "units";
     constexpr std::string_view VehicleWord = "vehicle";
     constexpr std::string_view VehiclesWord = "vehicles";
     constexpr std::string_view MechWarriorWord = "MechWarrior";
@@ -655,15 +655,17 @@ std::vector<MCRmlKeyHint> MCLogisticsTabs::Keys() const
         return {{"← →", "How many"}, {"Enter", _DealTitle}, {"Esc", "Cancel"}};
     }
 
-    // Z and C step the list's switch (the store's kinds, the 'MECH BAY's INVENTORY): their caps stand at its ends.
+    // Z and C step the screen's one switch (PURCHASING's kinds, the 'MECH BAY's INVENTORY), beside Q and E in the
+    // hint line (the user's, 26 Nov).
+    const MCRmlKeyHint list{std::string(ListKeys), std::string(ListKeysDo)};
     const MCRmlKeyHint tabs{std::string(TabKeys), std::string(TabKeysDo)};
 
     if (Purchasing())
     {
-        return {{"Enter", "Buy or sell"}, {"Space", "Pick"}, tabs};
+        return {{"Enter", "Buy or sell"}, {"Space", "Pick"}, list, tabs};
     }
 
-    return {{"Enter", "Fit, board, or in and out of the force"}, {"Space", "Pick"}, tabs};
+    return {{"Enter", "Fit, board, or in and out of the force"}, {"Space", "Pick"}, list, tabs};
 }
 
 void MCLogisticsTabs::Changed()
@@ -893,14 +895,21 @@ void MCLogisticsTabs::FillUnits()
         add(vehicle, MCPlace::Force);
     }
 
-    for (const std::shared_ptr<MCLogMech>& mech : logistics.MechList->Mechs)
+    // The INVENTORY's MECHS its 'Mechs alone, its VEHICLES its vehicles (each its own list: the user's, 26 Nov).
+    if (Stock() != MCStock::Vehicles)
     {
-        add(mech, MCPlace::Stored);
+        for (const std::shared_ptr<MCLogMech>& mech : logistics.MechList->Mechs)
+        {
+            add(mech, MCPlace::Stored);
+        }
     }
 
-    for (const std::shared_ptr<MCLogVehicle>& vehicle : logistics.VehicleList->Vehicles)
+    if (Stock() != MCStock::Mechs)
     {
-        add(vehicle, MCPlace::Stored);
+        for (const std::shared_ptr<MCLogVehicle>& vehicle : logistics.VehicleList->Vehicles)
+        {
+            add(vehicle, MCPlace::Stored);
+        }
     }
 
     _ForceCount = std::format(ForceCountFormat, _Force.size(), MCMechBay::ForceUnits);
@@ -924,8 +933,9 @@ MCLogisticsTabs::MCStock MCLogisticsTabs::Shelf() const
             return MCStock::MechWarriors;
         case MCKind::Components:
             return MCStock::Components;
-        case MCKind::Mechs:
         case MCKind::Vehicles:
+            return MCStock::Vehicles;
+        case MCKind::Mechs:
             return MCStock::Mechs;
     }
 
@@ -1049,12 +1059,11 @@ void MCLogisticsTabs::FillStock()
     _StockThings.clear();
     const MCLogistics& logistics = *GlobalLog();
 
-    // MECHS: the units stored (FillUnits made their cards): "3 mechs", or with a vehicle among them "4 units".
-    if (Stock() == MCStock::Mechs)
+    // MECHS or VEHICLES: the units stored (FillUnits made their cards), "3 mechs", "1 vehicle".
+    if (StocksUnits())
     {
-        const size_t units = _Stored.size();
-        const bool vehicles = !logistics.VehicleList->Vehicles.empty();
-        _StockCount = vehicles ? CountText(units, UnitWord, UnitsWord) : CountText(units, MechWord, MechsWord);
+        const bool vehicles = Stock() == MCStock::Vehicles;
+        _StockCount = CountText(_Stored.size(), vehicles ? VehicleWord : MechWord, vehicles ? VehiclesWord : MechsWord);
         return;
     }
 
@@ -1545,7 +1554,7 @@ std::optional<MCLogisticsTabs::MCSpot> MCLogisticsTabs::SpotAt(float x, float y)
     }
 
     // The INVENTORY's column is its MECHS' while they show, else its goods'.
-    const MCPlace inventory = Stock() == MCStock::Mechs ? MCPlace::Stored : MCPlace::Stock;
+    const MCPlace inventory = StocksUnits() ? MCPlace::Stored : MCPlace::Stock;
 
     for (const auto& [id, place] :
          {std::pair{UnitsId, MCPlace::Force}, std::pair{StoreId, MCPlace::Store}, std::pair{InfoId, MCPlace::Store},
@@ -1892,14 +1901,15 @@ void MCLogisticsTabs::ChooseKind(MCKind kind)
 
 void MCLogisticsTabs::ChooseStock(MCStock stock)
 {
-    // PURCHASING's INVENTORY follows the store's kind (it shows no switch of its own there: the user's, 26 Nov); its
-    // stock chooses that kind (MECHS keeps VEHICLES).
+    // PURCHASING's INVENTORY follows the store's kind (one switch, over the INVENTORY: the user's, 26 Nov); its
+    // stock chooses that kind.
     if (Purchasing())
     {
         if (stock != Shelf())
         {
             ChooseKind(stock == MCStock::MechWarriors ? MCKind::MechWarriors
                        : stock == MCStock::Components ? MCKind::Components
+                       : stock == MCStock::Vehicles   ? MCKind::Vehicles
                                                       : MCKind::Mechs);
         }
 

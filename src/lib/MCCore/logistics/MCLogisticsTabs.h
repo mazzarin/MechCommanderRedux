@@ -37,7 +37,7 @@ class MCLogisticsTabs
 {
 public:
     /// <summary>
-    /// PURCHASING's switch: what the store lists (and the INVENTORY with it: VEHICLES shows its MECHS).
+    /// PURCHASING's switch: what the store lists, and the INVENTORY with it.
     /// </summary>
     enum class MCKind : uint8_t
     {
@@ -48,20 +48,22 @@ public:
     };
 
     /// <summary>
-    /// The INVENTORY's switch: the mechs and vehicles stored (outside the force), the MechWarriors no mech carries, the
-    /// spare parts. The 'MECH BAY's own; PURCHASING's follows the store's kind.
+    /// The INVENTORY's switch, the same four as the store's (the user's, 26 Nov: "align where possible"): the mechs
+    /// stored (outside the force), the MechWarriors no mech carries, the spare parts, the vehicles stored. The 'MECH
+    /// BAY's own; PURCHASING's follows the store's kind.
     /// </summary>
     enum class MCStock : uint8_t
     {
         Mechs,
         MechWarriors,
         Components,
+        Vehicles,
     };
 
     /// <summary>
-    /// Where a card is: the force, the INVENTORY's MECHS (a unit stored outside the force), the store, the INVENTORY's
-    /// MECHWARRIORS or COMPONENTS (its goods), the lab's fitted parts and MechWarrior; a FORCE card's MechWarrior, by
-    /// their photo (its index the card's: the user's, 26 Nov, "pick the pilot out of the mech").
+    /// Where a card is: the force, the INVENTORY's MECHS or VEHICLES (a unit stored outside the force), the store, the
+    /// INVENTORY's MECHWARRIORS or COMPONENTS (its goods), the lab's fitted parts and MechWarrior; a FORCE card's
+    /// MechWarrior, by their photo (its index the card's: the user's, 26 Nov, "pick the pilot out of the mech").
     /// </summary>
     enum class MCPlace : uint8_t
     {
@@ -212,7 +214,7 @@ public:
     /// <summary>What the INVENTORY shows (PURCHASING: its store's kind's).</summary>
     MCStock Stock() const { return static_cast<MCStock>(_StockKind); }
     const std::vector<MCCampaignScreen::MCCard>& ForceCards() const { return _Force; }
-    /// <summary>The INVENTORY's MECHS: the units stored outside the force.</summary>
+    /// <summary>The INVENTORY's MECHS or VEHICLES (as it shows): those stored outside the force.</summary>
     const std::vector<MCCampaignScreen::MCCard>& StoredCards() const { return _Stored; }
     /// <summary>The force's count against the most it holds ("11 / 15"), and the INVENTORY's ("3 mechs").</summary>
     const std::string& ForceCount() const { return _ForceCount; }
@@ -303,6 +305,8 @@ private:
     /// What the INVENTORY shows: PURCHASING's by its store's kind, the 'MECH BAY's by its own switch.
     /// </summary>
     MCStock Shelf() const;
+    /// <summary>Whether the INVENTORY shows units (its MECHS or VEHICLES), not goods.</summary>
+    bool StocksUnits() const { return Stock() == MCStock::Mechs || Stock() == MCStock::Vehicles; }
     /// <summary>The lists made again from the logistics data; the details and the lab with them.</summary>
     void Fill();
     void FillUnits();

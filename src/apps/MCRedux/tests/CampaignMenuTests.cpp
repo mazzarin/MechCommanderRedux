@@ -70,6 +70,7 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/ElementText.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include "object/MCMasterComponent.h"
 #include "logistics/MCMenuDialog.h"
 #include "main/MCLogisticsShared.h"
@@ -2681,7 +2682,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(screen.ChatLines().back().Text, std::string("Lasers for everyone"));
     CHECK(screen.ChatLines().back().Team);
     CHECK_EQ(ElementOf(screen, "say-logistics").GetAttribute<Rml::String>("value", "unread"), std::string());
-    DrawnEach(*display, clock, "purchase_mp", {0x871b37c1, 0x510ade7e, 0x76606702});
+    DrawnEach(*display, clock, "purchase_mp", {0x78cfce17, 0xe275f5df, 0x983b45af});
     CheckLaidOut(menus, "purchase mp");
 
     // Z and C pressed in the chat's box are its letters, not the list's keys.
@@ -2713,7 +2714,7 @@ TEST_CASE_ISOLATED(
     CHECK(tabs.LabUnit() != nullptr);
     CHECK(!tabs.Repairs());
     CHECK(!RepairForceShown(screen));
-    DrawnEach(*display, clock, "mechbay_mp", {0xf532a67e, 0x8f4ec99f, 0x870381c9});
+    DrawnEach(*display, clock, "mechbay_mp", {0x9fc08380, 0xcb8fea8c, 0x78b17c21});
     CheckLaidOut(menus, "mechbay mp");
 }
 
@@ -3053,7 +3054,7 @@ TEST_CASE_ISOLATED("game: PURCHASING buys and sells by 1998's rules, from the mo
     REQUIRE_EQ(logistics->MechList->Mechs.size(), storedBefore + 1);
     CHECK_EQ(ResourcePoints, before - data.Cost);
     CHECK_EQ(data.NumAvailable, 1);
-    REQUIRE_EQ(tabs.StoredCards().size(), logistics->MechList->Mechs.size() + logistics->VehicleList->Vehicles.size());
+    REQUIRE_EQ(tabs.StoredCards().size(), logistics->MechList->Mechs.size());
     MCTestGame::RunFrame(FlowFrame);
     Shot("purchase_stored");
 
@@ -3844,36 +3845,12 @@ namespace
                MCMechBay::RestCost(mech, MCMechBay::MCKnob::Engine);
     }
 
-    /// <summary>The keys that change the list (the caps at its switch's ends; the keys' line names them no more).</summary>
+    /// <summary>The keys that change the list, named on the key hint line beside Q and E.</summary>
     constexpr std::string_view ListKeys = "Z C";
-    /// <summary>The caps at the ends of a list's switch: Z before it, C after it.</summary>
-    constexpr std::string_view FirstCap = "Z";
-    constexpr std::string_view LastCap = "C";
-
-    /// <summary>
-    /// The caps beside the switch <paramref name="id"/> (Z before it, C after it) shown, or none shown: what fault is
-    /// found where, as "<switch>: <fault>; ".
-    /// </summary>
-    std::string CapsFaults(const MCCampaignScreen& screen, const std::string& id, bool shown)
+    /// <summary>Whether <paramref name="tabs"/>' key hint line names Z and C.</summary>
+    bool NamesListKeys(const MCLogisticsTabs& tabs)
     {
-        Rml::Element& control = ElementOf(screen, id);
-        Rml::Element* before = control.GetPreviousSibling();
-        Rml::Element* after = control.GetNextSibling();
-        const auto capShown = [](Rml::Element* cap, std::string_view letter)
-        { return cap != nullptr && cap->IsClassSet("key") && cap->IsVisible(true) && cap->GetInnerRML() == letter; };
-        std::string faults;
-
-        if (capShown(before, FirstCap) != shown)
-        {
-            faults += std::format("{}: Z {}; ", id, shown ? "missing" : "shown");
-        }
-
-        if (capShown(after, LastCap) != shown)
-        {
-            faults += std::format("{}: C {}; ", id, shown ? "missing" : "shown");
-        }
-
-        return faults;
+        return std::ranges::any_of(tabs.Keys(), [](const MCRmlKeyHint& hint) { return hint.Key == ListKeys; });
     }
 
     /// <summary>The look's class of a button that can't act now.</summary>
@@ -3885,11 +3862,12 @@ namespace
 }
 
 /// <summary>
-/// Z and C change the list a screen's switch shows as Q and E its tabs (the user's, 26 Nov): PURCHASING's store from
-/// MECHS to VEHICLES, the 'MECH BAY's INVENTORY from MECHS to COMPONENTS, C on and Z back, round from either end, the tab
-/// kept; their caps stand at the ends of the switch they step (the user's A, 26 Nov), and the keys' line no longer names
-/// them. With Command they're a shortcut (copy), not the list; the buy window open takes them as every key. (A chat's
-/// box keeps them as typing: the match's logistics test.)
+/// Z and C change the list a screen's switch shows as Q and E its tabs (the user's, 26 Nov): MECHS to VEHICLES on
+/// PURCHASING and the 'MECH BAY alike, C on and Z back, round from either end, the tab kept; the key hint line names them
+/// beside Q and E, no caps at the switch (the user's, 26 Nov: "move to the key bar"). One switch a screen, over the
+/// INVENTORY: PURCHASING's, choosing both lists, in the 'MECH BAY's place, none over the store. With Command they're a
+/// shortcut (copy), not the list; the buy window open takes them as every key. (A chat's box keeps them as typing: the
+/// match's logistics test.)
 /// </summary>
 TEST_CASE_ISOLATED("game: Z and C change PURCHASING's and the MECH BAY's list, round from either end")
 {
@@ -3917,20 +3895,19 @@ TEST_CASE_ISOLATED("game: Z and C change PURCHASING's and the MECH BAY's list, r
     Press(SDL_SCANCODE_C);
     CHECK(tabs.Kind() == MCKind::Mechs);
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
-    // Their caps at the ends of the store's switch, none at the INVENTORY's (the store's kind chooses it), none on the
-    // keys' line.
-    CHECK_EQ(CapsFaults(screen, "kinds", true) + CapsFaults(screen, "stock-kinds", false), "");
-    CHECK(std::ranges::none_of(tabs.Keys(), [](const MCRmlKeyHint& hint) { return hint.Key == ListKeys; }));
-    // One switch (the user's, 26 Nov, "Makes sense to drop"): the INVENTORY's, which only matched the store's, is not
-    // shown, its room kept level with the store's switch and over its list, so the two lists start level wherever the
-    // store's switch is one row.
-    Rml::Element& stockKinds = ElementOf(screen, "stock-kinds");
-    CHECK(!stockKinds.IsVisible(true));
-    Rml::Element* inventoryList = ElementOf(screen, "inventory").QuerySelector(".scroll-box");
+    CHECK(NamesListKeys(tabs));
+    // One switch, over the INVENTORY (the user's, 26 Nov): PURCHASING's shown, the 'MECH BAY's hidden, none over the
+    // store; the INVENTORY's list under it.
+    Rml::Element& kinds = ElementOf(screen, "kinds");
+    Rml::Element& inventory = ElementOf(screen, "inventory");
+    CHECK(kinds.IsVisible(true));
+    CHECK(inventory.Contains(&kinds));
+    CHECK(!ElementOf(screen, "stock-kinds").IsVisible(true));
+    CHECK(ElementOf(screen, "store").QuerySelector(".switch") == nullptr);
+    Rml::Element* inventoryList = inventory.QuerySelector(".scroll-box");
     REQUIRE(inventoryList != nullptr);
     const auto top = [](Rml::Element& element) { return element.GetAbsoluteOffset(Rml::BoxArea::Border).y; };
-    CHECK_EQ(std::format("{:.1f}", top(stockKinds)), std::format("{:.1f}", top(ElementOf(screen, "kinds"))));
-    CHECK(top(*inventoryList) >= top(stockKinds) + stockKinds.GetBox().GetSize(Rml::BoxArea::Border).y);
+    CHECK(top(*inventoryList) >= top(kinds) + kinds.GetBox().GetSize(Rml::BoxArea::Border).y);
 
     // Command-C is copy's; with the buy window open, C is the window's.
     Press(SDL_SCANCODE_C, SDL_KMOD_GUI);
@@ -3945,7 +3922,7 @@ TEST_CASE_ISOLATED("game: Z and C change PURCHASING's and the MECH BAY's list, r
     tabs.DealCancel();
     MCTestGame::RunFrame(FlowFrame);
 
-    // The 'MECH BAY: the INVENTORY's.
+    // The 'MECH BAY: the INVENTORY's, the same four.
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
     tabs.ChooseStock(MCStock::Mechs);
     MCTestGame::RunFrame(FlowFrame);
@@ -3954,12 +3931,14 @@ TEST_CASE_ISOLATED("game: Z and C change PURCHASING's and the MECH BAY's list, r
     Press(SDL_SCANCODE_C);
     CHECK(tabs.Stock() == MCStock::Components);
     Press(SDL_SCANCODE_C);
+    CHECK(tabs.Stock() == MCStock::Vehicles);
+    Press(SDL_SCANCODE_C);
     CHECK(tabs.Stock() == MCStock::Mechs);
     Press(SDL_SCANCODE_Z);
-    CHECK(tabs.Stock() == MCStock::Components);
+    CHECK(tabs.Stock() == MCStock::Vehicles);
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::MechBay);
-    CHECK_EQ(CapsFaults(screen, "stock-kinds", true), "");
-    CHECK(std::ranges::none_of(tabs.Keys(), [](const MCRmlKeyHint& hint) { return hint.Key == ListKeys; }));
+    CHECK(ElementOf(screen, "stock-kinds").IsVisible(true));
+    CHECK(NamesListKeys(tabs));
 }
 
 /// <summary>
@@ -4318,8 +4297,9 @@ TEST_CASE_ISOLATED("game: the INVENTORY's count agrees with its number")
 /// <summary>
 /// A vehicle's card reads as a 'Mech's without a MechWarrior (the user's tenth note, 26 Nov): its name in its own case,
 /// VEHICLE under it in NO PILOT's grey capitals, its tons; a name longer than the card holds a size smaller, and one
-/// longer still smaller again. Every vehicle the store sells, in the FORCE, the INVENTORY's MECHS (the 'MECH BAY's and
-/// PURCHASING's) and DEPLOY's READY AREA and drop: laid out and read at every window the players' reports name.
+/// longer still smaller again. Every vehicle the store sells, in the FORCE, the INVENTORY's VEHICLES (the 'MECH BAY's
+/// and PURCHASING's; none in its MECHS) and DEPLOY's READY AREA and drop: laid out and read at every window the players'
+/// reports name.
 /// </summary>
 TEST_CASE_ISOLATED("game: a vehicle's card reads as a 'Mech's without a MechWarrior, at every window")
 {
@@ -4383,10 +4363,21 @@ TEST_CASE_ISOLATED("game: a vehicle's card reads as a 'Mech's without a MechWarr
 
     CHECK_EQ(vehicles, sold.size() - 1);
     CheckLaidOut(menus, "mechbay vehicles");
+    CHECK(std::ranges::none_of(tabs.StoredCards(), &MCCampaignScreen::MCCard::Vehicle));
+    tabs.ChooseStock(MCLogisticsTabs::MCStock::Vehicles);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(tabs.StoredCards().size(), 1);
+    CHECK(tabs.StoredCards().front().Vehicle);
+    CHECK_EQ(tabs.StockCount(), std::string("1 vehicle"));
+    CheckLaidOut(menus, "mechbay stored vehicle");
     screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
     tabs.ChooseKind(MCLogisticsTabs::MCKind::Mechs);
     MCTestGame::RunFrame(FlowFrame);
-    REQUIRE(std::ranges::any_of(tabs.StoredCards(), &MCCampaignScreen::MCCard::Vehicle));
+    CHECK(std::ranges::none_of(tabs.StoredCards(), &MCCampaignScreen::MCCard::Vehicle));
+    tabs.ChooseKind(MCLogisticsTabs::MCKind::Vehicles);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE_EQ(tabs.StoredCards().size(), 1);
+    CHECK(tabs.StoredCards().front().Vehicle);
     CheckLaidOut(menus, "purchase stored vehicle");
 
     // DEPLOY: in READY AREA, and the first in the drop.
@@ -4889,21 +4880,21 @@ TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY draw the same on every mac
 
     screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
-    DrawnEach(*display, clock, "purchase", {0x2f01d917, 0xc5aa8233, 0x4e6fad7b});
+    DrawnEach(*display, clock, "purchase", {0x0c68eb4e, 0xcf573635, 0x211352d6});
     tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, FirstInStore(tabs));
-    DrawnEach(*display, clock, "purchase_parts", {0x9db6ac1a, 0xcad17b5d, 0x99645a2c});
+    DrawnEach(*display, clock, "purchase_parts", {0xc76c93d4, 0xfba0841a, 0xac5d7816});
     tabs.PressDeal();
     REQUIRE(tabs.DealOpen());
-    DrawnEach(*display, clock, "purchase_buy", {0xb028c21f, 0x393493a6, 0xad786778});
+    DrawnEach(*display, clock, "purchase_buy", {0x2acd5d94, 0xea00ab23, 0x94ce71be});
     tabs.DealCancel();
 
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
-    DrawnEach(*display, clock, "mechbay", {0xbd037dae, 0x4b701986, 0xa8e970aa});
+    DrawnEach(*display, clock, "mechbay", {0x51288ca4, 0x8d5c1219, 0xc5aa507a});
     ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
-    DrawnEach(*display, clock, "mechbay_repair", {0x8393a1d1, 0x79200992, 0xbe3ae2a7});
+    DrawnEach(*display, clock, "mechbay_repair", {0x85e4447b, 0xe33a2bc9, 0xac7371df});
 }
 
 /// <summary>
@@ -5008,7 +4999,7 @@ namespace
 
         if (aspect <= SquareTo)
         {
-            return {.Inventory = 220, .Middle = 148, .MechsARow = 1};
+            return {.Inventory = 184, .Middle = 184, .MechsARow = 1};
         }
 
         return aspect <= SixteenTenTo ? MCColumns{.Inventory = 220, .Middle = 268, .MechsARow = 1}
@@ -5024,39 +5015,52 @@ namespace
     }
 
     /// <summary>
-    /// What is wrong with the switch <paramref name="id"/> in its column <paramref name="column"/>: its segments not on
-    /// one row, its caps (Z before it, C after it) not level with it beside its ends, any of it out of its column.
+    /// What is wrong with the switch <paramref name="id"/> over the INVENTORY: its segments not on <paramref name="rows"/>
+    /// rows of as many each, any out of the column or narrower than its word, a cap (Z or C) beside it (the key hint line
+    /// names them).
     /// </summary>
-    std::string SwitchRowFaults(const MCCampaignScreen& screen, const std::string& id, const std::string& column)
+    std::string SwitchRowFaults(const MCCampaignScreen& screen, const std::string& id, int rows)
     {
         constexpr float Slack = 0.5f;
         Rml::Element& control = ElementOf(screen, id);
-        const std::array<float, 4> box = BoxOf(control);
-        const std::array<float, 4> inside = BoxOf(ElementOf(screen, column));
+        const std::array<float, 4> inside = BoxOf(ElementOf(screen, "inventory"));
+        const int perRow = control.GetNumChildren() / rows;
         std::string faults;
 
         for (int child = 0; child < control.GetNumChildren(); child++)
         {
-            if (std::abs(BoxOf(*control.GetChild(child))[1] - box[1]) > Slack)
+            Rml::Element& segment = *control.GetChild(child);
+            const std::array<float, 4> at = BoxOf(segment);
+            const int first = child / perRow * perRow;
+
+            if (std::abs(at[1] - BoxOf(*control.GetChild(first))[1]) > Slack ||
+                (child == first && child > 0 && at[1] <= BoxOf(*control.GetChild(child - perRow))[1] + Slack))
             {
-                faults += std::format("{} segment {} off the row; ", id, child);
+                faults += std::format("{} segment {} off its row; ", id, child);
+            }
+
+            if (at[0] < inside[0] - Slack || at[2] > inside[2] + Slack)
+            {
+                faults += std::format("{} segment {} out of the column; ", id, child);
+            }
+
+            std::string word = segment.GetInnerRML();
+
+            if (segment.GetComputedValues().text_transform() == Rml::Style::TextTransform::Uppercase)
+            {
+                std::ranges::transform(word, word.begin(), [](unsigned char letter) { return std::toupper(letter); });
+            }
+
+            if (segment.GetBox().GetSize(Rml::BoxArea::Content).x + Slack <
+                static_cast<float>(Rml::ElementUtilities::GetStringWidth(&segment, word)))
+            {
+                faults += std::format("{} segment {} narrower than its word; ", id, child);
             }
         }
 
-        const std::array<std::pair<Rml::Element*, bool>, 2> caps = {
-            {{control.GetPreviousSibling(), true}, {control.GetNextSibling(), false}}};
-
-        for (const auto& [cap, first] : caps)
+        if (control.GetPreviousSibling() != nullptr || control.GetNextSibling() != nullptr)
         {
-            REQUIRE(cap != nullptr);
-            const std::array<float, 4> at = BoxOf(*cap);
-            const float middle = (at[1] + at[3]) / 2.0f;
-            const bool beside = first ? at[2] <= box[0] + Slack : at[0] >= box[2] - Slack;
-
-            if (!beside || middle < box[1] || middle > box[3] || at[0] < inside[0] - Slack || at[2] > inside[2] + Slack)
-            {
-                faults += std::format("{} cap {} out of place; ", id, first ? FirstCap : LastCap);
-            }
+            faults += std::format("{} has caps beside it; ", id);
         }
 
         return faults;
@@ -5084,12 +5088,11 @@ namespace
 /// <summary>
 /// The user's A of 26 Nov, at every window the players' reports name: PURCHASING's and the 'MECH BAY's three columns
 /// near-equal (the INVENTORY and the force 264 units at 16:9, the details the rest; 220 and 268 at 16:10, 284 and 426
-/// at 21:9; port-only, 220 and 148 at 4:3), the INVENTORY's MECHS two a row as the force's cards (one at 16:10 and
-/// 4:3), the INVENTORY's switch on one row between its Z and C caps on the 'MECH BAY, and the store's on PURCHASING
-/// (wrapped between them at 4:3, where the store is one card wide).
+/// at 21:9; port-only, 184 and 184 at 4:3), the INVENTORY's MECHS two a row as the force's cards (one at 16:10 and
+/// 4:3), and each screen's one switch over the INVENTORY (the user's, 26 Nov), its four kinds on one row, each word
+/// whole, no caps beside it (two rows of two at 4:3).
 /// </summary>
-TEST_CASE_ISOLATED(
-    "game: PURCHASING's and the MECH BAY's columns near-equal, each list's switch on one row with Z and C")
+TEST_CASE_ISOLATED("game: PURCHASING's and the MECH BAY's columns near-equal, the switch over the INVENTORY on one row")
 {
     if (!MCTestGame::Available())
     {
@@ -5140,14 +5143,8 @@ TEST_CASE_ISOLATED(
             CHECK(width(bay ? "lab" : "info") + NearEqual >= std::min(columns.Inventory, columns.Middle));
             CHECK_EQ(where + std::to_string(MechsOnFirstRow(screen)), where + std::to_string(columns.MechsARow));
 
-            if (bay)
-            {
-                CHECK_EQ(where + SwitchRowFaults(screen, "stock-kinds", "inventory"), where);
-            }
-            else if (static_cast<float>(window.Width) / static_cast<float>(window.Height) > SquareTo)
-            {
-                CHECK_EQ(where + SwitchRowFaults(screen, "kinds", "store"), where);
-            }
+            const bool square = static_cast<float>(window.Width) / static_cast<float>(window.Height) <= SquareTo;
+            CHECK_EQ(where + SwitchRowFaults(screen, bay ? "stock-kinds" : "kinds", square ? 2 : 1), where);
         }
     }
 }
@@ -5646,7 +5643,7 @@ namespace
         return *card;
     }
 
-    /// <summary>The card of the unit <paramref name="unit"/> (the FORCE's or the INVENTORY's MECHS'): its id.</summary>
+    /// <summary>The card of the unit <paramref name="unit"/> (the FORCE's or the INVENTORY's MECHS' or VEHICLES'): its id.</summary>
     std::string UnitCardId(const MCLogisticsTabs& tabs, const std::shared_ptr<MCLogPart>& unit)
     {
         const std::shared_ptr<MCLogistics> logistics = GlobalLog();
@@ -5732,9 +5729,9 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
              ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Purchasing));
              CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
          },
-         0xe07bb31a},
-        {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory")); }, 0x8eabe5d5},
-        {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0x55fe7998},
+         0xb0e34594},
+        {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory")); }, 0xc45c5010},
+        {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0xcbb9f7d9},
         {"purchase_accept",
          [&]
          {
@@ -5743,91 +5740,97 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
              REQUIRE(!logistics->MechList->Mechs.empty());
              boughtMech = logistics->MechList->Mechs.back();
          },
-         0x2b63f9f0},
-        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x742e2b36},
+         0xb99da916},
+        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0xb03db4c4},
         {"purchase_variant",
          [&]
          {
              ClickOn(ElementOf(screen, "store0"));
              ClickOn(ElementOf(screen, "variant1"));
          },
-         0x4cc51ea4},
+         0x04c08282},
         {"purchase_scroll",
          [&]
          {
              Hover(ElementOf(screen, "store0"));
              MCScreenInput::RealWheel(-1);
          },
-         0x33ad2595},
+         0xaa6d8957},
         {"purchase_too_poor",
          [&]
          {
              ResourcePoints = 0;
              DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory"));
          },
-         0xcb6d1bc0},
-        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0xeea2364b},
-        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x8dceb272},
+         0xa4a0086a},
+        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0xf6d513c1},
+        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0xd284717c},
         {"purchase_pilots_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x9f047be8},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x86ee00af},
         {"purchase_components_tab",
          [&]
          {
              ResourcePoints = RecordedPoints;
              ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Components));
          },
-         0xa9140e38},
+         0x57582263},
         {"purchase_component_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "inventory")); },
-         0x7cb84d51},
-        {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x7ab019d6},
+         0xa1384d69},
+        {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x9c4c9f70},
         {"purchase_vehicles_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0xefd408d2},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0xf73963ac},
         {"purchase_vehicle_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "inventory")); },
-         0x3f1f18a2},
-        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x9ba758d2},
+         0x0c8c2b8d},
+        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xd9b6edfb},
         {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
-         0x9309f323},
+         0x68456bf1},
         {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
-         0xd2706c5d},
-        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xfe70e5c9},
-        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0xf971d4a9},
-        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xa0cbeec4},
-        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0xa87b97b7},
-        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0xe663f415},
-        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x161ad3d2},
+         0x5167ce1e},
+        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0x8de72e5e},
+        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0x78919516},
+        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xee170373},
+        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0x986e8218},
+        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x504db6f2},
+        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x23705741},
         {"repair_mount_laser",
          [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
-         0x546d5c74},
+         0xb5a9f12b},
         {"repair_pilots_tab", [&]
-         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0xde680d64},
-        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xec01d32c},
+         { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x8e85fc53},
+        {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x893c14e7},
         {"repair_vehicles_tab",
          [&]
          {
-             // The 1998 bay's vehicles tab: the INVENTORY's MECHS, the bought vehicle picked there.
+             // The 1998 bay's vehicles tab: the INVENTORY's VEHICLES, the bought vehicle picked there.
              REQUIRE(!logistics->VehicleList->Vehicles.empty());
-             ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::Mechs));
+             ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::Vehicles));
              ClickOn(ElementOf(screen, UnitCardId(tabs, logistics->VehicleList->Vehicles.back())));
          },
-         0xf0b44ed6},
-        {"repair_mechs_tab", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x60f3483a},
-        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x60f3483a},
+         0x671a6111},
+        {"repair_mechs_tab",
+         [&]
+         {
+             ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::Mechs));
+             ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech)));
+         },
+         0x3e81b598},
+        {"repair_mech_row_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x3e81b598},
         {"repair_mech_into_force",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0xdec4f0df},
-        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0xdec4f0df},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "force0")); }, 0x42637fe2},
+        {"repair_select_first", [&] { ClickOn(ElementOf(screen, "force0")); }, 0x07de68b3},
         {"repair_mech_out",
-         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "inventory")); }, 0x2378c657},
+         [&] { DragTo(ElementOf(screen, UnitCardId(tabs, boughtMech)), ElementOf(screen, "inventory")); }, 0x8903856d},
         {"repair_weapon_list_scroll",
          [&]
          {
              Hover(ElementOf(screen, "fit0"));
              MCScreenInput::RealWheel(-1);
          },
-         0x4dd97ff3},
+         0xd51ac54d},
         {"repair_first_mech_out", [&] { DragTo(ElementOf(screen, "force0"), ElementOf(screen, "inventory")); },
-         0xfd43fc0b},
+         0xaae0aecf},
         {"briefing_after_repair",
          [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Briefing)); }, 0xb9a0ae24},
         {"deploy_after_repair", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Deploy)); },
@@ -5845,7 +5848,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0xbe356404u);
+    CHECK_EQ(frames, 0x04162b4eu);
 }
 
 /// <summary>

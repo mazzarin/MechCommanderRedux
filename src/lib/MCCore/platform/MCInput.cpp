@@ -38,8 +38,8 @@ namespace
         std::shared_ptr<SDL_Cursor> GameCursor;
         /// <summary>The game's ClipCursor rectangle (logical screen), if it set one.</summary>
         std::optional<MCClipRect> ClipRect;
-        /// <summary>The window area keeping the cursor off the screen's corners (GuardCorners), if any.</summary>
-        std::optional<SDL_Rect> CornerGuard;
+        /// <summary>The window area keeping the cursor off the screen's corners and foot (GuardEdges), if any.</summary>
+        std::optional<SDL_Rect> EdgeGuard;
         /// <summary>The mouse is over the window's letterbox bars, not the picture.</summary>
         bool OutsidePicture = false;
         /// <summary>Port-only: where the last mouse event (or warp) put the mouse, in window points (MousePixel).</summary>
@@ -192,9 +192,10 @@ namespace
         point.x = std::clamp(static_cast<int32_t>(std::floor(x)), area.left, area.right - 1);
         point.y = std::clamp(static_cast<int32_t>(std::floor(y)), area.top, area.bottom - 1);
 
-        if (const std::optional<SDL_Rect>& guard = state().CornerGuard; guard.has_value())
+        if (const std::optional<SDL_Rect>& guard = state().EdgeGuard; guard.has_value())
         {
             point.x = MCInput::GuardedX(windowX, *guard, point.x, area.left, area.right);
+            point.y = MCInput::GuardedY(windowY, *guard, point.y, area.top, area.bottom);
         }
 
         return point;
@@ -348,6 +349,25 @@ namespace
     }
 
     /// <summary>The window points a rectangle of the logical screen covers whole (at least one point each way).</summary>
+    /// <summary>
+    /// MCInput::GuardedX and GuardedY's one axis: the area's first point the cursor reaches is <paramref name="low"/>,
+    /// its last (SDL's confinement holds start + length - 1) <paramref name="high"/> - 1, else the plain mapping.
+    /// </summary>
+    int32_t guardedAxis(float window, int start, int length, int32_t mapped, int32_t low, int32_t high)
+    {
+        if (window < static_cast<float>(start + 1))
+        {
+            return low;
+        }
+
+        if (window >= static_cast<float>(start + length - 1))
+        {
+            return high - 1;
+        }
+
+        return mapped;
+    }
+
     SDL_Rect windowArea(const MCDisplay& display, const MCClipRect& logical)
     {
         float left = 0.0f;
@@ -369,13 +389,13 @@ namespace
     /// full screen and focused, the picture. The original's full screen switched the monitor to the game's resolution,
     /// so the mouse never left the picture; letterboxed, the hidden cursor would wander into the bars while the game's
     /// cursor stuck at the edge. Port-only (SPEC-menus.md): while the remade menus fill the window (their screen is the
-    /// window), the whole window. Kept to either, the cursor stays off its corners too (MCInput::GuardCorners).
+    /// window), the whole window. Kept to either, the cursor stays off its corners and foot too (MCInput::GuardEdges).
     /// </summary>
     void applyMouseRect()
     {
         MCInputState& input = state();
         const std::shared_ptr<MCDisplay> display = input.Display.lock();
-        input.CornerGuard.reset();
+        input.EdgeGuard.reset();
 
         if (display == nullptr)
         {
@@ -404,7 +424,7 @@ namespace
 
         if (mouse && !area.Clip)
         {
-            input.CornerGuard = mouse;
+            input.EdgeGuard = mouse;
         }
 
         SDL_SetWindowMouseRect(window, mouse ? &*mouse : nullptr);
@@ -684,7 +704,7 @@ namespace MCInput
 
         if (display == nullptr)
         {
-            input.CornerGuard.reset();
+            input.EdgeGuard.reset();
             return;
         }
 
@@ -962,12 +982,17 @@ namespace MCInput
         applyMouseRect();
     }
 
-    SDL_Rect GuardCorners(SDL_Rect picture)
+    SDL_Rect GuardEdges(SDL_Rect picture)
     {
-        if (picture.w > 2 * CornerGuardPoints)
+        if (picture.w > 2 * EdgeGuardPoints)
         {
-            picture.x += CornerGuardPoints;
-            picture.w -= 2 * CornerGuardPoints;
+            picture.x += EdgeGuardPoints;
+            picture.w -= 2 * EdgeGuardPoints;
+        }
+
+        if (picture.h > 2 * EdgeGuardPoints)
+        {
+            picture.h -= EdgeGuardPoints;
         }
 
         return picture;
@@ -975,18 +1000,12 @@ namespace MCInput
 
     int32_t GuardedX(float windowX, const SDL_Rect& guarded, int32_t x, int32_t left, int32_t right)
     {
-        // The cursor reaches the area's first point and its last (SDL's confinement holds x + w - 1).
-        if (windowX < static_cast<float>(guarded.x + 1))
-        {
-            return left;
-        }
+        return guardedAxis(windowX, guarded.x, guarded.w, x, left, right);
+    }
 
-        if (windowX >= static_cast<float>(guarded.x + guarded.w - 1))
-        {
-            return right - 1;
-        }
-
-        return x;
+    int32_t GuardedY(float windowY, const SDL_Rect& guarded, int32_t y, int32_t top, int32_t bottom)
+    {
+        return guardedAxis(windowY, guarded.y, guarded.h, y, top, bottom);
     }
 
     std::optional<SDL_Rect> MouseArea(const MCMouseAreaState& area)
@@ -1004,10 +1023,10 @@ namespace MCInput
         // A window with no size yet (none read) keeps the picture's.
         if (area.LayerFillsWindow && area.Window.x > 0 && area.Window.y > 0)
         {
-            return GuardCorners(SDL_Rect{0, 0, area.Window.x, area.Window.y});
+            return GuardEdges(SDL_Rect{0, 0, area.Window.x, area.Window.y});
         }
 
-        return GuardCorners(area.Picture);
+        return GuardEdges(area.Picture);
     }
 
     std::optional<SDL_Rect> PictureArea()
@@ -1234,7 +1253,7 @@ namespace MCInput
         input.DoubleClickTime = 500;
         input.Active = false;
         input.TextInput = false;
-        input.CornerGuard.reset();
+        input.EdgeGuard.reset();
         input.LastClickButton = -1;
         input.LastClickTime = 0;
         input.LastClickPos = {};

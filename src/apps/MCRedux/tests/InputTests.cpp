@@ -48,18 +48,18 @@ namespace
         return asked != nullptr ? std::optional<SDL_Rect>(*asked) : std::nullopt;
     }
 
-    /// <summary>The wide window kept off its corners: where the mouse may go over the remade menus, full screen.</summary>
+    /// <summary>The wide window kept off its corners and foot: where the mouse may go over the remade menus, full screen.</summary>
     SDL_Rect WideWindowGuarded()
     {
-        return MCInput::GuardCorners(SDL_Rect{0, 0, WideWidth, WideHeight});
+        return MCInput::GuardEdges(SDL_Rect{0, 0, WideWidth, WideHeight});
     }
 
-    /// <summary>The picture (the game's screen) kept off its corners: where the mouse may go over the game's own, full screen.</summary>
+    /// <summary>The picture (the game's screen) kept off its corners and foot: where the mouse may go over the game's own, full screen.</summary>
     SDL_Rect PictureGuarded()
     {
         const std::optional<SDL_Rect> picture = MCInput::PictureArea();
         REQUIRE(picture.has_value());
-        return MCInput::GuardCorners(*picture);
+        return MCInput::GuardEdges(*picture);
     }
 
     /// <summary>Frames while a change of screen runs, then one (a change queued behind it starts), then its own.</summary>
@@ -97,14 +97,15 @@ TEST_CASE("input: key lParam and Windows-1252")
     CHECK_EQ(MCInput::MakePointLParam(-1, 2), 0x0002ffff);
 }
 
-TEST_CASE("input: full screen, the cursor stays off the screen's corners and still reaches its sides")
+TEST_CASE("input: full screen, the cursor stays off the screen's corners and foot and still reaches its sides")
 {
-    // A 1512x982-point screen showing a 1663x1080 picture: the cursor keeps two points from either side.
-    const SDL_Rect guarded = MCInput::GuardCorners(SDL_Rect{0, 0, 1512, 982});
-    CHECK_EQ(guarded.x, MCInput::CornerGuardPoints);
-    CHECK_EQ(guarded.x + guarded.w, 1512 - MCInput::CornerGuardPoints);
+    // A 1512x982-point screen showing a 1663x1080 picture: the cursor keeps two points from either side and from the
+    // foot, where macOS brings up a full-screen window's Dock (the user's, 26 Nov); the top, its menu bar hidden, whole.
+    const SDL_Rect guarded = MCInput::GuardEdges(SDL_Rect{0, 0, 1512, 982});
+    CHECK_EQ(guarded.x, MCInput::EdgeGuardPoints);
+    CHECK_EQ(guarded.x + guarded.w, 1512 - MCInput::EdgeGuardPoints);
     CHECK_EQ(guarded.y, 0);
-    CHECK_EQ(guarded.h, 982);
+    CHECK_EQ(guarded.y + guarded.h, 982 - MCInput::EdgeGuardPoints);
 
     // The last point it reaches at a side is that side, for edge scrolling; inside, the plain mapping holds.
     CHECK_EQ(MCInput::GuardedX(2.0f, guarded, 2, 0, 1663), 0);
@@ -112,16 +113,23 @@ TEST_CASE("input: full screen, the cursor stays off the screen's corners and sti
     CHECK_EQ(MCInput::GuardedX(3.0f, guarded, 3, 0, 1663), 3);
     CHECK_EQ(MCInput::GuardedX(1508.9f, guarded, 1659, 0, 1663), 1659);
     CHECK_EQ(MCInput::GuardedX(1509.0f, guarded, 1659, 0, 1663), 1662);
+    CHECK_EQ(MCInput::GuardedY(0.0f, guarded, 0, 0, 1080), 0);
+    CHECK_EQ(MCInput::GuardedY(978.9f, guarded, 1075, 0, 1080), 1075);
+    CHECK_EQ(MCInput::GuardedY(979.0f, guarded, 1076, 0, 1080), 1079);
 
-    // Too narrow to lose four points, an area is kept whole.
-    const SDL_Rect narrow = MCInput::GuardCorners(SDL_Rect{10, 0, 4, 10});
+    // Too small to lose four points a way, an area is kept whole that way.
+    const SDL_Rect narrow = MCInput::GuardEdges(SDL_Rect{10, 0, 4, 10});
     CHECK_EQ(narrow.x, 10);
     CHECK_EQ(narrow.w, 4);
+    CHECK_EQ(narrow.h, 10 - MCInput::EdgeGuardPoints);
+    const SDL_Rect flat = MCInput::GuardEdges(SDL_Rect{0, 10, 10, 4});
+    CHECK_EQ(flat.y, 10);
+    CHECK_EQ(flat.h, 4);
 }
 
 /// <summary>
 /// Full screen, the mouse is kept to the picture over the game's own screens and to the whole window while the layer over
-/// the game fills it (the remade menus, whose screen is the window), either off its corners; the game's ClipCursor
+/// the game fills it (the remade menus, whose screen is the window), either off its corners and foot; the game's ClipCursor
 /// rectangle wins; windowed it goes anywhere.
 /// </summary>
 TEST_CASE("input: full screen, the mouse reaches the whole window while the menus fill it, else the picture")
@@ -131,14 +139,14 @@ TEST_CASE("input: full screen, the mouse reaches the whole window while the menu
     area.FullscreenFocused = true;
     area.Picture = SDL_Rect{101, 0, 1309, 982};
     area.Window = SDL_Point{1512, 982};
-    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(SDL_Rect{103, 0, 1305, 982}));
+    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(SDL_Rect{103, 0, 1305, 980}));
 
     area.LayerFillsWindow = true;
-    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(SDL_Rect{2, 0, 1508, 982}));
+    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(SDL_Rect{2, 0, 1508, 980}));
 
     // A window whose size couldn't be read keeps the picture's.
     area.Window = SDL_Point{0, 0};
-    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(SDL_Rect{103, 0, 1305, 982}));
+    CHECK_EQ(AreaWords(MCInput::MouseArea(area)), AreaWords(SDL_Rect{103, 0, 1305, 980}));
     area.Window = SDL_Point{1512, 982};
 
     const SDL_Rect clip{200, 100, 300, 200};
@@ -233,7 +241,7 @@ TEST_CASE_ISOLATED(
     REQUIRE(menus.has_value());
     const MCOptionalRef<MCRmlScreen> top = menus->get().Menus().Top();
     REQUIRE(top.has_value());
-    MCScreenInput::PixelMove(static_cast<float>(MCInput::CornerGuardPoints), static_cast<float>(WideHeight / 2),
+    MCScreenInput::PixelMove(static_cast<float>(MCInput::EdgeGuardPoints), static_cast<float>(WideHeight / 2),
                              FlowFrame);
     const Rml::Element* hovered = menus->get().Menus().Context().GetHoverElement();
     REQUIRE(hovered != nullptr);

@@ -188,30 +188,39 @@ namespace MCInput
     /// <summary>
     /// Confines the cursor to a rectangle of the logical screen (<c>ClipCursor</c>). None frees it, back to the
     /// default (<see cref="MouseArea"/>): while full screen and focused, the picture, or the whole window while the
-    /// layer over the game fills it (<see cref="SetEventLayer"/>), kept off its corners (<see cref="GuardCorners"/>);
+    /// layer over the game fills it (<see cref="SetEventLayer"/>), kept off its corners and foot (<see cref="GuardEdges"/>);
     /// anywhere otherwise.
     /// </summary>
     void ClipCursor(std::optional<MCClipRect> rect);
 
     /// <summary>
-    /// How far (window points) the cursor is kept from the picture's left and right sides while full screen and
-    /// focused: then the picture's corners are the screen's, where macOS's hot corners (Lock Screen, Mission
-    /// Control...) fire, and edge scrolling pushes the cursor into them.
+    /// How far (window points) the cursor is kept from the picture's left, right and bottom sides while full screen
+    /// and focused: then the picture's sides are the screen's, where macOS fires its hot corners (Lock Screen, Mission
+    /// Control...) and brings up the Dock (a full-screen window's Dock hides until the cursor reaches its edge: the
+    /// user's, 26 Nov, at the remade screens' foot), and edge scrolling pushes the cursor there.
     /// </summary>
-    inline constexpr int CornerGuardPoints = 2;
+    inline constexpr int EdgeGuardPoints = 2;
 
     /// <summary>
-    /// The window area the cursor may cover full screen: <paramref name="picture"/>'s, <see cref="CornerGuardPoints"/>
-    /// in from its left and right sides, so it reaches no corner (all of it, if too narrow for that).
+    /// The window area the cursor may cover full screen: <paramref name="picture"/>'s, <see cref="EdgeGuardPoints"/>
+    /// in from its left, right and bottom sides, so it reaches no corner and no Dock (each way kept whole, if too
+    /// small for that). The top is left: full screen, SDL hides the menu bar there.
     /// </summary>
-    SDL_Rect GuardCorners(SDL_Rect picture);
+    SDL_Rect GuardEdges(SDL_Rect picture);
 
     /// <summary>
-    /// The logical x of a window x inside a <see cref="GuardCorners"/> area: <paramref name="x"/>, its plain mapping,
+    /// The logical x of a window x inside a <see cref="GuardEdges"/> area: <paramref name="x"/>, its plain mapping,
     /// except at the last point the cursor reaches at either side, which is that side of the screen (from
     /// <paramref name="left"/> to <paramref name="right"/>, exclusive), so edge scrolling still works there.
     /// </summary>
     int32_t GuardedX(float windowX, const SDL_Rect& guarded, int32_t x, int32_t left, int32_t right);
+
+    /// <summary>
+    /// The logical y of a window y inside a <see cref="GuardEdges"/> area, as <see cref="GuardedX"/>: the last point
+    /// the cursor reaches at the top or bottom is that side of the screen (<paramref name="top"/> to
+    /// <paramref name="bottom"/>, exclusive).
+    /// </summary>
+    int32_t GuardedY(float windowY, const SDL_Rect& guarded, int32_t y, int32_t top, int32_t bottom);
 
     /// <summary>What sets where the system mouse may go (<see cref="MouseArea"/>), in window points.</summary>
     struct MCMouseAreaState
@@ -232,7 +241,7 @@ namespace MCInput
     /// Where the system mouse may go (<c>SDL_SetWindowMouseRect</c>; none: anywhere): the game's ClipCursor rectangle if
     /// it set one; else, full screen and focused, the whole window while the layer over the game fills it (port-only:
     /// the remade menus, whose screen is the window) and the picture otherwise (the game's screen, where its cursor
-    /// stops), either kept off its corners (<see cref="GuardCorners"/>); else anywhere.
+    /// stops), either kept off its corners and foot (<see cref="GuardEdges"/>); else anywhere.
     /// </summary>
     std::optional<SDL_Rect> MouseArea(const MCMouseAreaState& area);
 

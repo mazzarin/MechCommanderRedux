@@ -2601,7 +2601,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(screen.ChatLines().back().Text, std::string("Lasers for everyone"));
     CHECK(screen.ChatLines().back().Team);
     CHECK_EQ(ElementOf(screen, "say-logistics").GetAttribute<Rml::String>("value", "unread"), std::string());
-    DrawnEach(*display, clock, "purchase_mp", {0xd19723ad, 0x1199d595, 0xf53caf5c});
+    DrawnEach(*display, clock, "purchase_mp", {0x871b37c1, 0x510ade7e, 0x76606702});
     CheckLaidOut(menus, "purchase mp");
 
     // Z and C pressed in the chat's box are its letters, not the list's keys.
@@ -3841,6 +3841,16 @@ TEST_CASE_ISOLATED("game: Z and C change PURCHASING's and the MECH BAY's list, r
     // keys' line.
     CHECK_EQ(CapsFaults(screen, "kinds", true) + CapsFaults(screen, "stock-kinds", false), "");
     CHECK(std::ranges::none_of(tabs.Keys(), [](const MCRmlKeyHint& hint) { return hint.Key == ListKeys; }));
+    // One switch (the user's, 26 Nov, "Makes sense to drop"): the INVENTORY's, which only matched the store's, is not
+    // shown, its room kept level with the store's switch and over its list, so the two lists start level wherever the
+    // store's switch is one row.
+    Rml::Element& stockKinds = ElementOf(screen, "stock-kinds");
+    CHECK(!stockKinds.IsVisible(true));
+    Rml::Element* inventoryList = ElementOf(screen, "inventory").QuerySelector(".scroll-box");
+    REQUIRE(inventoryList != nullptr);
+    const auto top = [](Rml::Element& element) { return element.GetAbsoluteOffset(Rml::BoxArea::Border).y; };
+    CHECK_EQ(std::format("{:.1f}", top(stockKinds)), std::format("{:.1f}", top(ElementOf(screen, "kinds"))));
+    CHECK(top(*inventoryList) >= top(stockKinds) + stockKinds.GetBox().GetSize(Rml::BoxArea::Border).y);
 
     // Command-C is copy's; with the buy window open, C is the window's.
     Press(SDL_SCANCODE_C, SDL_KMOD_GUI);
@@ -4799,13 +4809,13 @@ TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY draw the same on every mac
 
     screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
-    DrawnEach(*display, clock, "purchase", {0x2e1daaea, 0xb90fc3a6, 0xca358f5c});
+    DrawnEach(*display, clock, "purchase", {0x2f01d917, 0xc5aa8233, 0x4e6fad7b});
     tabs.ChooseKind(MCLogisticsTabs::MCKind::Components);
     tabs.Pick(MCLogisticsTabs::MCPlace::Store, FirstInStore(tabs));
-    DrawnEach(*display, clock, "purchase_parts", {0xdb92758e, 0xb47a7eda, 0x2cb37df2});
+    DrawnEach(*display, clock, "purchase_parts", {0x9db6ac1a, 0xcad17b5d, 0x99645a2c});
     tabs.PressDeal();
     REQUIRE(tabs.DealOpen());
-    DrawnEach(*display, clock, "purchase_buy", {0xc62ba02f, 0x72bca6e7, 0xd37288c3});
+    DrawnEach(*display, clock, "purchase_buy", {0xb028c21f, 0x393493a6, 0xad786778});
     tabs.DealCancel();
 
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
@@ -5642,9 +5652,9 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
              ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::Purchasing));
              CHECK(screen.Tab() == MCCampaignScreen::MCTab::Purchasing);
          },
-         0x75ced697},
-        {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory")); }, 0x920a17ef},
-        {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0xf7ef94b2},
+         0xe07bb31a},
+        {"purchase_buy_drag", [&] { DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory")); }, 0x8eabe5d5},
+        {"purchase_quantity_up", [] { MCScreenInput::RealKey(SDL_SCANCODE_RIGHT); }, 0x55fe7998},
         {"purchase_accept",
          [&]
          {
@@ -5653,52 +5663,52 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
              REQUIRE(!logistics->MechList->Mechs.empty());
              boughtMech = logistics->MechList->Mechs.back();
          },
-         0x650297b9},
-        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x169d8867},
+         0x2b63f9f0},
+        {"purchase_inventory_row", [&] { ClickOn(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x742e2b36},
         {"purchase_variant",
          [&]
          {
              ClickOn(ElementOf(screen, "store0"));
              ClickOn(ElementOf(screen, "variant1"));
          },
-         0x03a46b85},
+         0x4cc51ea4},
         {"purchase_scroll",
          [&]
          {
              Hover(ElementOf(screen, "store0"));
              MCScreenInput::RealWheel(-1);
          },
-         0x9dba50e0},
+         0x33ad2595},
         {"purchase_too_poor",
          [&]
          {
              ResourcePoints = 0;
              DragTo(ElementOf(screen, "store0"), ElementOf(screen, "inventory"));
          },
-         0x557a336a},
-        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0xa5f73862},
-        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x7987da13},
+         0xcb6d1bc0},
+        {"purchase_message_ok", [] { MCScreenInput::RealKey(SDL_SCANCODE_RETURN); }, 0xeea2364b},
+        {"purchase_inventory_info", [&] { Hover(ElementOf(screen, UnitCardId(tabs, boughtMech))); }, 0x8dceb272},
         {"purchase_pilots_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0xf8842ceb},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::MechWarriors)); }, 0x9f047be8},
         {"purchase_components_tab",
          [&]
          {
              ResourcePoints = RecordedPoints;
              ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Components));
          },
-         0x2c4e5a33},
+         0xa9140e38},
         {"purchase_component_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "inventory")); },
-         0xb3ae6f84},
-        {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x08cc192d},
+         0x7cb84d51},
+        {"purchase_component_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x7ab019d6},
         {"purchase_vehicles_tab",
-         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0xe8b39f8b},
+         [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Vehicles)); }, 0xefd408d2},
         {"purchase_vehicle_drag",
          [&] { DragTo(ElementOf(screen, std::format("store{}", FirstInStore(tabs))), ElementOf(screen, "inventory")); },
-         0x4104e53c},
-        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0xfbb45f73},
+         0x3f1f18a2},
+        {"purchase_vehicle_accept", [&] { ClickOn(ElementOf(screen, "deal-confirm")); }, 0x9ba758d2},
         {"purchase_mechs_tab", [&] { ClickChoice(screen, "kinds", static_cast<int>(MCLogisticsTabs::MCKind::Mechs)); },
-         0xb18ccaf2},
+         0x9309f323},
         {"repair_again", [&] { ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay)); },
          0xd2706c5d},
         {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xfe70e5c9},
@@ -5755,7 +5765,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x26135c70u);
+    CHECK_EQ(frames, 0xbe356404u);
 }
 
 /// <summary>

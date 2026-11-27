@@ -321,6 +321,10 @@
 /* A list's switch with Z and C at its ends (the user's keys for it): the switch spans the column between them, its
    segments sharing it, so a narrower column never wraps it; the store's four kinds set closer. */
 #logistics .kinds { align-items: center; }
+/* PURCHASING: the store's switch alone chooses what both lists show (its Z and C step it), so the INVENTORY's, which
+   only ever matched it, is gone, its room kept so the two lists' first cards line up (the user's, 26 Nov: "Makes sense
+   to drop"). */
+#logistics #inventory .kinds.room { visibility: hidden; }
 #logistics .kinds > .key { flex: 0 0 auto; height: 16dp; margin-right: 0dp; padding: 0dp 4dp; font-size: 9.51dp; line-height: 14dp; }
 #logistics .kinds > .key.first { margin-right: 4dp; }
 #logistics .kinds > .key.last { margin-left: 4dp; }

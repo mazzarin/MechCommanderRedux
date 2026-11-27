@@ -154,7 +154,7 @@
                         <div class="heading caps grow">Inventory</div>
                         <div class="data grey caps nowrap">{{stockCount}}</div>
                     </div>
-                    <div class="kinds"><div class="key first" data-if="tab == 2">Z</div><div class="switch small" id="stock-kinds" data-class-subtabs="tab == 2" data-hint="What the inventory shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div></div><div class="key last" data-if="tab == 2">C</div></div>
+                    <div class="kinds" data-class-room="tab == 1"><div class="key first" data-if="tab == 2">Z</div><div class="switch small" id="stock-kinds" data-class-subtabs="tab == 2" data-hint="What the inventory shows"><div class="on">Mechs</div><div>MechWarriors</div><div>Components</div></div><div class="key last" data-if="tab == 2">C</div></div>
                     <div class="scroll-box grow">
                         <div class="scroller">
                             <div class="grid mechs" data-if="stockKind == 0">

@@ -1892,7 +1892,8 @@ void MCLogisticsTabs::ChooseKind(MCKind kind)
 
 void MCLogisticsTabs::ChooseStock(MCStock stock)
 {
-    // PURCHASING's INVENTORY follows the store's kind, and its switch chooses it (MECHS keeps VEHICLES).
+    // PURCHASING's INVENTORY follows the store's kind (it shows no switch of its own there: the user's, 26 Nov); its
+    // stock chooses that kind (MECHS keeps VEHICLES).
     if (Purchasing())
     {
         if (stock != Shelf())

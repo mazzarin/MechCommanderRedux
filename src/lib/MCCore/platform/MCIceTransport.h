@@ -95,6 +95,96 @@ public:
     virtual std::vector<Heard> Take() = 0;
 };
 
+/// <summary>
+/// Port-only (Redux HD): a guest's link to a hosting game carried by something on this computer instead of ICE
+/// (SPEC-mco-hosting.md): MechCommander Online's relay, through network/MCMcoBridge's host. The host's game takes it as
+/// one more guest link, at an address of its own in 0.0.0.0/8; its carrier speaks for the guest's game, sending its
+/// datagrams and its connections to the host's ports and taking what the host's game sends back. Made by
+/// MCIceTransport::Carry. Thread-safe: the carrier works it from its own thread while the transport's pump moves it along.
+/// </summary>
+class MCCarriedLink
+{
+public:
+    /// <summary>Something the host's game sent the guest, in the order it sent them.</summary>
+    struct MCEvent
+    {
+        enum class Kind
+        {
+            /// <summary>A datagram from the host's port <see cref="FromPort"/> to the guest's <see cref="ToPort"/>.</summary>
+            Datagram,
+            /// <summary>The host's game took the connection <see cref="Stream"/>.</summary>
+            Accepted,
+            /// <summary>Nothing listens on the port it was for, or the listener is full.</summary>
+            Refused,
+            /// <summary>The connection's bytes.</summary>
+            Data,
+            /// <summary>The host's game closed the connection: what came before is all it sends.</summary>
+            Closed,
+        };
+
+        Kind What = Kind::Datagram;
+        uint16_t FromPort = 0;
+        uint16_t ToPort = 0;
+        uint32_t Stream = 0;
+        std::vector<uint8_t> Bytes;
+    };
+
+    MCCarriedLink();
+    ~MCCarriedLink();
+    MCCarriedLink(const MCCarriedLink&) = delete;
+    MCCarriedLink& operator=(const MCCarriedLink&) = delete;
+
+    /// <summary>A datagram from the guest's port <paramref name="fromPort"/> to the host's <paramref name="toPort"/>.</summary>
+    void SendDatagram(uint16_t fromPort, uint16_t toPort, std::span<const uint8_t> bytes);
+    /// <summary>
+    /// The guest's connection from its port <paramref name="fromPort"/> to the host's <paramref name="toPort"/>: its
+    /// number, which an Accepted or Refused event names.
+    /// </summary>
+    uint32_t Connect(uint16_t toPort, uint16_t fromPort);
+    void SendData(uint32_t stream, std::span<const uint8_t> bytes);
+    /// <summary>The guest closed its connection: the host's game reads what came, then reads it as closed.</summary>
+    void CloseStream(uint32_t stream);
+    /// <summary>What the host's game sent since the last call (and the doorbell quietened).</summary>
+    std::vector<MCEvent> Take();
+    /// <summary>Whether the host's game ended the link (it stopped hosting, or the link carried nothing for a while).</summary>
+    bool Ended() const;
+    /// <summary>The carrier is done: the host's game hears the link end, its connections broken.</summary>
+    void End();
+    /// <summary>A socket of this computer's that reads as ready when there is something to take, for a carrier's wait.</summary>
+    MCSocket::Handle Doorbell() const;
+
+private:
+    friend class MCIceTransport;
+
+    /// <summary>The guest's frames, as a link's are framed (the transport's side).</summary>
+    std::vector<uint8_t> TakeFrames();
+    /// <summary>A frame the host's game sends the guest (the transport's side).</summary>
+    void Deliver(uint8_t kind, std::span<const uint8_t> head, std::span<const uint8_t> bytes);
+    /// <summary>The bytes delivered and not yet taken.</summary>
+    size_t Unsent() const;
+    /// <summary>The host's game ended the link.</summary>
+    void EndedHere();
+    /// <summary>Whether the carrier ended it.</summary>
+    bool EndedThere() const;
+    /// <summary>Puts one frame from the guest (under the lock).</summary>
+    void PutFrame(uint8_t kind, std::span<const uint8_t> head, std::span<const uint8_t> bytes);
+    /// <summary>Rings the doorbell once until the next take (under the lock).</summary>
+    void Ring();
+
+    mutable std::mutex _Lock;
+    std::vector<uint8_t> _FromGuest;
+    std::deque<MCEvent> _ToGuest;
+    size_t _ToGuestBytes = 0;
+    bool _EndedHere = false;
+    bool _EndedThere = false;
+    bool _Rung = false;
+    uint32_t _NextStream = 1;
+    MCSocketTransport _Bells;
+    MCSocket::Handle _Bell = MCSocket::InvalidHandle;
+    MCSocket::Handle _Ringer = MCSocket::InvalidHandle;
+    uint16_t _BellPort = 0;
+};
+
 /// <summary>The network of an internet game: MCNetTransport over ICE links (see the file's comment).</summary>
 class MCIceTransport final : public MCNetTransport
 {
@@ -154,6 +244,11 @@ public:
     void Reach(std::string_view host);
     /// <summary>How far the link <see cref="Reach"/> opened to <paramref name="host"/> has got (Failed without one).</summary>
     Reaching Reached(std::string_view host);
+    /// <summary>
+    /// Port-only (Redux HD): one more guest link of this hosting game, carried by the caller (MCCarriedLink); none while
+    /// this game doesn't host, or when it has as many guests' links as it takes.
+    /// </summary>
+    std::shared_ptr<MCCarriedLink> Carry();
 
     bool Startup() override;
     /// <summary>The address of the game named <paramref name="host"/> on the service (the same each time).</summary>
@@ -223,7 +318,10 @@ private:
 
     struct Link
     {
+        /// <summary>Its ICE link; none for a carried one.</summary>
         std::unique_ptr<MCIceLink> Ice;
+        /// <summary>A host end carried by something on this computer (Carry), not by ICE or the service.</summary>
+        std::shared_ptr<MCCarriedLink> Carrier;
         /// <summary>This game reached the other (its guest end), or answered it (its host end).</summary>
         bool Guest = false;
         /// <summary>The game's name (a guest end's), or the guest's as the service names it (a host end's).</summary>

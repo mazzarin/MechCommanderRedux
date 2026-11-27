@@ -144,6 +144,207 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>A carried link's peer, which no guest on the service is named (the service's names are never empty).</summary>
+    constexpr std::string_view CarriedPeer = "";
+    /// <summary>The doorbell's ring: one byte.</summary>
+    constexpr std::array<uint8_t, 1> RingBytes{1};
+}
+
+MCCarriedLink::MCCarriedLink()
+    : _Bell(_Bells.OpenUdpOn(MCSocket::LoopbackIp, 0)), _Ringer(_Bells.OpenUdpOn(MCSocket::LoopbackIp, 0))
+{
+    if (_Bell == MCSocket::InvalidHandle || _Ringer == MCSocket::InvalidHandle)
+    {
+        SDL_Log("MCCarriedLink: its doorbell couldn't open on this computer's loopback: its carrier hears what the "
+                "host's game sends only at the end of each wait");
+        return;
+    }
+
+    _BellPort = _Bells.LocalPort(_Bell);
+}
+
+MCCarriedLink::~MCCarriedLink()
+{
+    _Bells.Close(_Ringer);
+    _Bells.Close(_Bell);
+}
+
+void MCCarriedLink::SendDatagram(uint16_t fromPort, uint16_t toPort, std::span<const uint8_t> bytes)
+{
+    // A datagram no link carries is lost, as UDP's too large for the network.
+    if (bytes.size() > MaxDatagramBytes)
+    {
+        return;
+    }
+
+    std::vector<uint8_t> head;
+    PutU16(head, fromPort);
+    PutU16(head, toPort);
+    const std::scoped_lock lock(_Lock);
+    PutFrame(DatagramFrame, head, bytes);
+}
+
+uint32_t MCCarriedLink::Connect(uint16_t toPort, uint16_t fromPort)
+{
+    const std::scoped_lock lock(_Lock);
+    const uint32_t stream = _NextStream++;
+    std::vector<uint8_t> head = StreamHead(stream);
+    PutU16(head, toPort);
+    PutU16(head, fromPort);
+    PutFrame(ConnectFrame, head, {});
+    return stream;
+}
+
+void MCCarriedLink::SendData(uint32_t stream, std::span<const uint8_t> bytes)
+{
+    const std::vector<uint8_t> head = StreamHead(stream);
+    const std::scoped_lock lock(_Lock);
+
+    // In pieces, as a link's own connections send (MCIceTransport::Send): a frame holds a datagram's most.
+    for (size_t at = 0; at < bytes.size(); at += DataPieceBytes)
+    {
+        PutFrame(DataFrame, head, bytes.subspan(at, std::min(DataPieceBytes, bytes.size() - at)));
+    }
+}
+
+void MCCarriedLink::CloseStream(uint32_t stream)
+{
+    const std::scoped_lock lock(_Lock);
+    PutFrame(CloseFrame, StreamHead(stream), {});
+}
+
+std::vector<MCCarriedLink::MCEvent> MCCarriedLink::Take()
+{
+    // The rings first: a delivery after them rings again, one before is taken below.
+    std::array<uint8_t, RingBytes.size()> rung{};
+    MCSocket::Address from;
+
+    while (_Bell != MCSocket::InvalidHandle && _Bells.ReceiveFrom(_Bell, rung, from) > 0)
+    {
+    }
+
+    const std::scoped_lock lock(_Lock);
+    _Rung = false;
+    std::vector<MCEvent> events(std::make_move_iterator(_ToGuest.begin()), std::make_move_iterator(_ToGuest.end()));
+    _ToGuest.clear();
+    _ToGuestBytes = 0;
+    return events;
+}
+
+bool MCCarriedLink::Ended() const
+{
+    const std::scoped_lock lock(_Lock);
+    return _EndedHere;
+}
+
+void MCCarriedLink::End()
+{
+    const std::scoped_lock lock(_Lock);
+    _EndedThere = true;
+}
+
+MCSocket::Handle MCCarriedLink::Doorbell() const
+{
+    return _Bell;
+}
+
+std::vector<uint8_t> MCCarriedLink::TakeFrames()
+{
+    const std::scoped_lock lock(_Lock);
+    return std::exchange(_FromGuest, {});
+}
+
+void MCCarriedLink::Deliver(uint8_t kind, std::span<const uint8_t> head, std::span<const uint8_t> bytes)
+{
+    MCEvent event;
+
+    switch (kind)
+    {
+        case DatagramFrame:
+            event = {.What = MCEvent::Kind::Datagram, .FromPort = U16(head, 0), .ToPort = U16(head, 2)};
+            break;
+        case AcceptFrame:
+            event = {.What = MCEvent::Kind::Accepted, .Stream = U32(head, 0)};
+            break;
+        case RefuseFrame:
+            event = {.What = MCEvent::Kind::Refused, .Stream = U32(head, 0)};
+            break;
+        case DataFrame:
+            event = {.What = MCEvent::Kind::Data, .Stream = U32(head, 0)};
+            break;
+        case CloseFrame:
+            event = {.What = MCEvent::Kind::Closed, .Stream = U32(head, 0)};
+            break;
+        default:
+        {
+            SDL_Log("MCCarriedLink: the host's game sent a frame of kind %u, which no guest takes",
+                    static_cast<unsigned>(kind));
+            return;
+        }
+    }
+
+    event.Bytes.assign(bytes.begin(), bytes.end());
+    const std::scoped_lock lock(_Lock);
+
+    if (_EndedThere)
+    {
+        return;
+    }
+
+    _ToGuestBytes += event.Bytes.size();
+    _ToGuest.push_back(std::move(event));
+    Ring();
+}
+
+size_t MCCarriedLink::Unsent() const
+{
+    const std::scoped_lock lock(_Lock);
+    return _ToGuestBytes;
+}
+
+void MCCarriedLink::EndedHere()
+{
+    const std::scoped_lock lock(_Lock);
+    _EndedHere = true;
+    Ring();
+}
+
+bool MCCarriedLink::EndedThere() const
+{
+    const std::scoped_lock lock(_Lock);
+    return _EndedThere;
+}
+
+void MCCarriedLink::PutFrame(uint8_t kind, std::span<const uint8_t> head, std::span<const uint8_t> bytes)
+{
+    if (_EndedHere || _EndedThere)
+    {
+        return;
+    }
+
+    _FromGuest.push_back(kind);
+    PutU32(_FromGuest, static_cast<uint32_t>(head.size() + bytes.size()));
+    _FromGuest.insert(_FromGuest.end(), head.begin(), head.end());
+    _FromGuest.insert(_FromGuest.end(), bytes.begin(), bytes.end());
+}
+
+void MCCarriedLink::Ring()
+{
+    if (_Rung || _Ringer == MCSocket::InvalidHandle || _BellPort == 0)
+    {
+        return;
+    }
+
+    _Rung = true;
+
+    if (!_Bells.SendTo(_Ringer, MCSocket::Address{MCSocket::LoopbackIp, _BellPort}, RingBytes))
+    {
+        SDL_Log("MCCarriedLink: its doorbell's ring didn't go: its carrier hears it at the end of its wait");
+    }
+}
+
 MCIceTransport::MCIceTransport(std::shared_ptr<MCIceSignaling> signaling)
     : MCIceTransport(std::move(signaling), Deadlines{})
 {
@@ -222,6 +423,42 @@ MCIceTransport::Reaching MCIceTransport::Reached(std::string_view host)
     }
 
     return IsOpen(link->second) ? Reaching::Open : Reaching::Opening;
+}
+
+std::shared_ptr<MCCarriedLink> MCIceTransport::Carry()
+{
+    const std::scoped_lock lock(_Lock);
+    Pump();
+
+    if (!Listening())
+    {
+        SDL_Log("MCIceTransport: a carried guest's link turned away: this game doesn't host");
+        return nullptr;
+    }
+
+    if (std::ranges::count_if(_Links, [](const auto& entry) { return !entry.second.Guest; }) >=
+        static_cast<std::ptrdiff_t>(MaxHostLinks))
+    {
+        SDL_Log("MCIceTransport: a carried guest's link turned away: %zu guests' links are open already", MaxHostLinks);
+        return nullptr;
+    }
+
+    auto carrier = std::make_shared<MCCarriedLink>();
+    const auto now = std::chrono::steady_clock::now();
+    const uint32_t id = _NextLink++;
+    Link link;
+    link.Carrier = carrier;
+    link.Peer = std::string(CarriedPeer);
+    link.Number = id;
+    link.Ip = _NextIp++;
+    link.Started = now;
+    link.Heard = true;
+    link.HeardAt = now;
+    link.WasOpen = true;
+    link.IdleSince = now;
+    _Links.emplace(id, std::move(link));
+    SDL_Log("MCIceTransport: a carried guest's link opened");
+    return carrier;
 }
 
 bool MCIceTransport::Startup()
@@ -559,6 +796,21 @@ void MCIceTransport::Pump()
             continue;
         }
 
+        // Carried on this computer: its frames to read, and its end from its carrier.
+        if (link.Carrier != nullptr)
+        {
+            if (link.Carrier->EndedThere())
+            {
+                EndLink(id, MCTelemetry::MCLinkEnd::Closed, "its carrier ended it");
+            }
+            else if (!ReadFrames(id, link))
+            {
+                EndLink(id, MCTelemetry::MCLinkEnd::CutOff, "it sent what this game can't take");
+            }
+
+            continue;
+        }
+
         // The service carries it: its frames to read, and its end comes through the service (a close, or the peer gone).
         if (link.ServiceSince.has_value())
         {
@@ -654,7 +906,7 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
 
         for (const auto& [id, link] : _Links)
         {
-            if (link.Guest != fromGuest && link.Peer == heard.Peer &&
+            if (link.Carrier == nullptr && link.Guest != fromGuest && link.Peer == heard.Peer &&
                 (!link.Ice->OpenedAt() || link.ServiceSince.has_value()))
             {
                 ended.push_back(id);
@@ -694,9 +946,12 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
         return;
     }
 
-    auto found = std::ranges::find_if(
-        _Links, [&](const auto& entry)
-        { return !entry.second.Guest && entry.second.Peer == heard.Peer && entry.second.Number == heard.Link; });
+    auto found = std::ranges::find_if(_Links,
+                                      [&](const auto& entry)
+                                      {
+                                          return entry.second.Carrier == nullptr && !entry.second.Guest &&
+                                                 entry.second.Peer == heard.Peer && entry.second.Number == heard.Link;
+                                      });
 
     if (found == _Links.end())
     {
@@ -886,22 +1141,43 @@ void MCIceTransport::SendBytes(Link& link, std::span<const uint8_t> bytes)
 
 bool MCIceTransport::IsOpen(const Link& link)
 {
-    return link.ServiceSince.has_value() || link.Ice->GetState() == MCIceLink::State::Open;
+    return link.Carrier != nullptr || link.ServiceSince.has_value() || link.Ice->GetState() == MCIceLink::State::Open;
 }
 
 size_t MCIceTransport::Unsent(const Link& link)
 {
+    if (link.Carrier != nullptr)
+    {
+        return link.Carrier->Unsent();
+    }
+
     return link.ServiceSince.has_value() ? _Signaling->Unsent() : link.Ice->Unsent();
 }
 
 bool MCIceTransport::ReadFrames(uint32_t id, Link& link)
 {
-    // Not zeroed: only what Receive wrote is read, and zeroing it was most of an idle link's read.
-    std::array<uint8_t, ReadChunkBytes> chunk;
-
-    for (size_t got = 0; (got = link.Ice->Receive(chunk)) != 0;)
+    if (link.Carrier != nullptr)
     {
-        link.Input.insert(link.Input.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(got));
+        const std::vector<uint8_t> frames = link.Carrier->TakeFrames();
+
+        if (link.Input.size() + frames.size() > MaxServiceUnreadBytes)
+        {
+            SDL_Log("MCIceTransport: a carried guest's link got over %zu bytes unread", MaxServiceUnreadBytes);
+            link.Input.clear();
+            return false;
+        }
+
+        link.Input.insert(link.Input.end(), frames.begin(), frames.end());
+    }
+    else
+    {
+        // Not zeroed: only what Receive wrote is read, and zeroing it was most of an idle link's read.
+        std::array<uint8_t, ReadChunkBytes> chunk;
+
+        for (size_t got = 0; (got = link.Ice->Receive(chunk)) != 0;)
+        {
+            link.Input.insert(link.Input.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(got));
+        }
     }
 
     const std::span<const uint8_t> input(link.Input);
@@ -1057,6 +1333,17 @@ bool MCIceTransport::HandleFrame(uint32_t id, Link& link, uint8_t kind, std::spa
 
 void MCIceTransport::SendFrame(Link& link, uint8_t kind, std::span<const uint8_t> head, std::span<const uint8_t> bytes)
 {
+    // A carried link's carrier takes each frame as it's sent; a datagram waits only while there's room, as below.
+    if (link.Carrier != nullptr)
+    {
+        if (kind != DatagramFrame || link.Carrier->Unsent() < SendWindowBytes)
+        {
+            link.Carrier->Deliver(kind, head, bytes);
+        }
+
+        return;
+    }
+
     const size_t size = head.size() + bytes.size();
     const bool open = IsOpen(link);
 
@@ -1105,29 +1392,34 @@ void MCIceTransport::EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::strin
 
     const auto now = std::chrono::steady_clock::now();
     const bool service = link.ServiceSince.has_value();
+    const bool carried = link.Carrier != nullptr;
 
-    // The service brings a link's last bytes and its end in one batch: what came whole is the game's to read before
-    // the close, as an ICE link's is (Pump).
-    if (service && !ReadFrames(id, link))
+    // The service brings a link's last bytes and its end in one batch, and a carrier may have put its last ones: what
+    // came whole is the game's to read before the close, as an ICE link's is (Pump).
+    if ((service || carried) && !ReadFrames(id, link))
     {
-        SDL_Log("MCIceTransport: %s's last bytes through the service held what isn't a frame",
-                LinkName(link.Guest, link.Peer).c_str());
+        SDL_Log("MCIceTransport: %s's last bytes %s held what isn't a frame", LinkName(link.Guest, link.Peer).c_str(),
+                carried ? "from its carrier" : "through the service");
     }
 
-    // Opened as libdatachannel saw it (a link can open and end between two pumps), or as the service took it.
-    const std::optional<std::chrono::steady_clock::time_point> openedAt =
-        service ? link.ServiceSince : link.Ice->OpenedAt();
-    _Reports({
-        .Guest = link.Guest,
-        .Opened = openedAt.has_value(),
-        .Path = service ? link.Path : link.Ice->GetPath(),
-        .Setup = std::chrono::duration_cast<std::chrono::milliseconds>(openedAt.value_or(now) - link.Started),
-        .Open = std::chrono::duration_cast<std::chrono::milliseconds>(now - openedAt.value_or(now)),
-        .Carried = service ? link.ServiceCarried : link.Ice->Carried(),
-        .Here = link.Ice->OfferedHere(),
-        .There = link.Ice->OfferedThere(),
-        .End = end,
-    });
+    // A carried link is this computer's, not the network's: it makes no report.
+    if (!carried)
+    {
+        // Opened as libdatachannel saw it (a link can open and end between two pumps), or as the service took it.
+        const std::optional<std::chrono::steady_clock::time_point> openedAt =
+            service ? link.ServiceSince : link.Ice->OpenedAt();
+        _Reports({
+            .Guest = link.Guest,
+            .Opened = openedAt.has_value(),
+            .Path = service ? link.Path : link.Ice->GetPath(),
+            .Setup = std::chrono::duration_cast<std::chrono::milliseconds>(openedAt.value_or(now) - link.Started),
+            .Open = std::chrono::duration_cast<std::chrono::milliseconds>(now - openedAt.value_or(now)),
+            .Carried = service ? link.ServiceCarried : link.Ice->Carried(),
+            .Here = link.Ice->OfferedHere(),
+            .There = link.Ice->OfferedThere(),
+            .End = end,
+        });
+    }
 
     for (auto& [handle, socket] : _Sockets)
     {
@@ -1144,7 +1436,15 @@ void MCIceTransport::EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::strin
         SendSignal(link, {.Kind = std::string(CloseKind)});
     }
 
-    link.Ice->Close();
+    if (carried)
+    {
+        link.Carrier->EndedHere();
+    }
+    else
+    {
+        link.Ice->Close();
+    }
+
     _Links.erase(found);
 }
 

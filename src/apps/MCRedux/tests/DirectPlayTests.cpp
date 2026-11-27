@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "fakes/MCFakeMcoRelay.h"
 #include "fakes/MCFakeSignaling.h"
+#include "fakes/MCFakeSplitNet.h"
 #include "fakes/MCLoopbackTransport.h"
 #include "lib/MCOptionalRef.h"
 #include "linkup/MCSessionManager.h"
@@ -1292,4 +1293,105 @@ TEST_CASE(
     REQUIRE(destroyed.has_value());
     CHECK_EQ(destroyed->SystemType(), uint32_t{DPSYS_DESTROYPLAYERORGROUP});
     CHECK_EQ(destroyed->As<DPMSG_DESTROYPLAYERORGROUP>().dpId, guestPlayer);
+}
+
+/// <summary>
+/// Port-only (Redux HD): an internet game hosted on both (SPEC-mco-hosting.md): one guest over the game's own links,
+/// another from MechCommander Online through its relay, the host's bridge carrying it into the game's network as a link
+/// of its own (MCCarriedLink). The MCO guest's game plays on this computer's sockets, as upstream's does; the two guests
+/// meet in one session through its host.
+/// </summary>
+TEST_CASE("directplay: an internet game takes one guest over its links and one through MCO's relay, carried into its "
+          "network, in one session")
+{
+    constexpr uint16_t gamePort = 28881;
+    constexpr int linkSearchAttempts = 250;
+    constexpr int relaySearchAttempts = 60;
+    MCTestContextScope scope;
+    MCFakeSignalBoard board;
+    board.Host("K7QF", "this game");
+    const auto ice = std::make_shared<MCIceTransport>(board.Endpoint("this game"));
+    auto split = std::make_unique<MCFakeSplitNet>(std::make_unique<MCSocketTransport>(), ice);
+    MCFakeSplitNet& net = *split;
+    scope.Context().SetNet(std::move(split));
+
+    net.OpenOnInternet(true);
+    MCDirectPlay host;
+    REQUIRE_EQ(Connect(host, std::format("K7QF:{}", gamePort)), DP_OK);
+    REQUIRE_EQ(Host(host, "On both", 6, GameSessionFlags, MultiPlayerAppGuid), DP_OK);
+    uint32_t hostPlayer = 0;
+    REQUIRE_EQ(NewPlayer(host, "Commander", hostPlayer), DP_OK);
+
+    MCFakeMcoRelay::MCRelay relay;
+    auto hostBridge =
+        MCMcoBridge::MCHost::Start(relay.Dial(), "host-ticket", gamePort, [ice] { return ice->Carry(); }, {});
+    REQUIRE(hostBridge.has_value());
+    auto guestBridge = MCMcoBridge::MCGuest::Start(relay.Dial(), "join-ticket", {});
+    REQUIRE(guestBridge.has_value());
+
+    // MCO's guest: its game on this computer's sockets, joining the guest bridge's address.
+    net.OpenOnInternet(false);
+    MCDirectPlay mcoGuest;
+    REQUIRE_EQ(Connect(mcoGuest, std::format("127.0.0.1:{}", (*guestBridge)->Port())), DP_OK);
+    const std::vector<DPSESSIONDESC2> found =
+        Enumerate(mcoGuest, host, DPENUMSESSIONS_AVAILABLE, relaySearchAttempts, MultiPlayerAppGuid);
+    REQUIRE_EQ(found.size(), size_t{1});
+    CHECK(found[0].SessionName == std::optional<std::string>("On both"));
+    DPSESSIONDESC2 join = found[0];
+    REQUIRE_EQ(WithHostRunning(host, [&] { return mcoGuest.Open(join, DPOPEN_JOIN | DPOPEN_RETURNSTATUS); }), DP_OK);
+    CHECK((*guestBridge)->Connected());
+    CHECK((*hostBridge)->Carried().Through);
+    uint32_t mcoPlayer = 0;
+    REQUIRE_EQ(WithHostRunning(host, [&] { return NewPlayer(mcoGuest, "Clanner", mcoPlayer); }), DP_OK);
+    std::optional<Received> mcoCreated = Next(host);
+    REQUIRE(mcoCreated.has_value());
+    CHECK_EQ(mcoCreated->SystemType(), uint32_t{DPSYS_CREATEPLAYERORGROUP});
+    CHECK_EQ(mcoCreated->As<DPMSG_CREATEPLAYERORGROUP>().dpId, mcoPlayer);
+
+    // The guest over the game's own links.
+    net.OpenOnInternet(true);
+    MCDirectPlay linkGuest;
+    REQUIRE_EQ(Connect(linkGuest, std::format("K7QF:{}", gamePort)), DP_OK);
+    const std::vector<DPSESSIONDESC2> sessions =
+        Enumerate(linkGuest, host, DPENUMSESSIONS_AVAILABLE, linkSearchAttempts, MultiPlayerAppGuid);
+    REQUIRE_EQ(sessions.size(), size_t{1});
+    CHECK_EQ(sessions[0].dwCurrentPlayers, 2u);
+    REQUIRE_EQ(WithHostRunning(host, [&] { return linkGuest.Open(sessions[0], DPOPEN_JOIN | DPOPEN_RETURNSTATUS); }),
+               DP_OK);
+    uint32_t linkPlayer = 0;
+    REQUIRE_EQ(WithHostRunning(host, [&] { return NewPlayer(linkGuest, "Bob", linkPlayer); }), DP_OK);
+    std::optional<Received> linkCreated = Next(host);
+    REQUIRE(linkCreated.has_value());
+    CHECK_EQ(linkCreated->As<DPMSG_CREATEPLAYERORGROUP>().dpId, linkPlayer);
+    std::optional<Received> seenByMco = Next(mcoGuest, host);
+    REQUIRE(seenByMco.has_value());
+    CHECK_EQ(seenByMco->SystemType(), uint32_t{DPSYS_CREATEPLAYERORGROUP});
+    CHECK_EQ(seenByMco->As<DPMSG_CREATEPLAYERORGROUP>().dpId, linkPlayer);
+    const std::map<uint32_t, std::string> everyone{
+        {hostPlayer, "Commander"}, {mcoPlayer, "Clanner"}, {linkPlayer, "Bob"}};
+    CHECK(Listed(host, false) == everyone);
+    CHECK(Listed(linkGuest, false) == everyone);
+
+    // Each guest's messages reach the other through the host.
+    REQUIRE_EQ(mcoGuest.Send(mcoPlayer, linkPlayer, 0, Bytes("from mco")), DP_OK);
+    std::optional<Received> fromMco = Next(linkGuest, host);
+    REQUIRE(fromMco.has_value());
+    CHECK_EQ(fromMco->From, mcoPlayer);
+    CHECK_EQ(fromMco->Text(), std::string("from mco"));
+    REQUIRE_EQ(linkGuest.Send(linkPlayer, DPID_ALLPLAYERS, 0, Bytes("from the link")), DP_OK);
+    std::optional<Received> fromLink = Next(mcoGuest, host);
+    REQUIRE(fromLink.has_value());
+    CHECK_EQ(fromLink->From, linkPlayer);
+    CHECK_EQ(fromLink->Text(), std::string("from the link"));
+    std::optional<Received> hostsCopy = Next(host);
+    REQUIRE(hostsCopy.has_value());
+    CHECK_EQ(hostsCopy->Text(), std::string("from the link"));
+    CHECK_EQ(relay.Pairs(), size_t{1});
+
+    // The MCO guest leaving reaches the host through the relay and the carried link: its player is destroyed there.
+    mcoGuest.Close();
+    std::optional<Received> destroyed = Next(host);
+    REQUIRE(destroyed.has_value());
+    CHECK_EQ(destroyed->SystemType(), uint32_t{DPSYS_DESTROYPLAYERORGROUP});
+    CHECK_EQ(destroyed->As<DPMSG_DESTROYPLAYERORGROUP>().dpId, mcoPlayer);
 }

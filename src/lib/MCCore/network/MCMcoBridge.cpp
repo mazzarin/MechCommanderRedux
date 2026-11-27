@@ -3,6 +3,7 @@
 
 #include "network/MCMcoApi.h"
 #include "network/MCMultiPlayer.h"
+#include "platform/MCIceTransport.h"
 
 #include <array>
 #include <chrono>
@@ -29,6 +30,8 @@ namespace
     constexpr size_t GuestsMost = 8;
     /// <summary>A read from the relay or the game: up to a stream frame's worth.</summary>
     constexpr size_t ReadBytes = MCMcoRelay::StreamMost;
+    /// <summary>The longest a carried guest's pair waits when its link's doorbell couldn't open (MCCarriedLink).</summary>
+    constexpr int CarrierPollMs = 5;
 
     int MsSince(Clock::time_point then)
     {
@@ -261,6 +264,20 @@ namespace
             return pair;
         }
 
+        /// <summary>
+        /// A host's pair for one guest carried into the hosting game's own network (<paramref name="carry"/> makes its
+        /// link there as its game first needs it), the game listening on <paramref name="gamePort"/> in it.
+        /// </summary>
+        static MCPair Carried(std::unique_ptr<MCRelayLink> link, MCMcoBridge::MCCarry carry, uint16_t gamePort,
+                              MCMcoBridge::MCNote note, MCMcoBridge::MCCarried& carried)
+        {
+            MCPair pair(std::move(link), std::move(note), carried);
+            pair._Carry = std::move(carry);
+            pair._Port = gamePort;
+            pair._GameKnown = true;
+            return pair;
+        }
+
         MCPair(MCPair&& other) noexcept
             : _Link(std::move(other._Link))
             , _Note(std::move(other._Note))
@@ -272,6 +289,8 @@ namespace
             , _Port(other._Port)
             , _Game(other._Game)
             , _GameKnown(other._GameKnown)
+            , _Carry(std::move(other._Carry))
+            , _Carrier(std::move(other._Carrier))
         {
         }
 
@@ -281,6 +300,11 @@ namespace
 
         ~MCPair()
         {
+            if (_Carrier != nullptr)
+            {
+                _Carrier->End();
+            }
+
             _Sockets.Close(_Tcp);
             _Sockets.Close(_Listener);
             _Sockets.Close(_Udp);
@@ -292,14 +316,23 @@ namespace
         {
             while (!stop)
             {
+                const bool carried = static_cast<bool>(_Carry);
+                const MCSocket::Handle bell = _Carrier != nullptr ? _Carrier->Doorbell() : MCSocket::InvalidHandle;
                 std::array<MCSocketTransport::MCWaiting, 4> waiting{
                     MCSocketTransport::MCWaiting{_Link->Stream().Socket()},
-                    MCSocketTransport::MCWaiting{_Udp},
-                    MCSocketTransport::MCWaiting{_Tcp == MCSocket::InvalidHandle ? _Listener : MCSocket::InvalidHandle},
-                    MCSocketTransport::MCWaiting{_GameDone ? MCSocket::InvalidHandle : _Tcp},
+                    MCSocketTransport::MCWaiting{carried ? bell : _Udp},
+                    MCSocketTransport::MCWaiting{carried || _Tcp != MCSocket::InvalidHandle ? MCSocket::InvalidHandle
+                                                                                            : _Listener},
+                    MCSocketTransport::MCWaiting{carried || _GameDone ? MCSocket::InvalidHandle : _Tcp},
                 };
 
-                const int wait = _Link->Stream().Buffered() ? 0 : std::min(LoopWaitMs, _Link->UntilKeepAliveMs());
+                int wait = _Link->Stream().Buffered() ? 0 : std::min(LoopWaitMs, _Link->UntilKeepAliveMs());
+
+                if (_Carrier != nullptr && bell == MCSocket::InvalidHandle)
+                {
+                    wait = std::min(wait, CarrierPollMs);
+                }
+
                 MCSocketTransport::Wait(waiting, wait);
 
                 if (std::string ended = FromRelay(); !ended.empty())
@@ -312,17 +345,7 @@ namespace
                     return "the relay went quiet";
                 }
 
-                if (std::string ended = FromGameUdp(); !ended.empty())
-                {
-                    return ended;
-                }
-
-                if (std::string ended = AcceptGame(); !ended.empty())
-                {
-                    return ended;
-                }
-
-                if (std::string ended = FromGameTcp(); !ended.empty())
+                if (std::string ended = carried ? FromCarrier() : FromGame(); !ended.empty())
                 {
                     return ended;
                 }
@@ -398,6 +421,18 @@ namespace
 
                     // The other game has sent all it will: this game reads its end (as MCO's helper's CloseWrite), and
                     // what this game still sends goes on until it closes too.
+                    if (_Carry)
+                    {
+                        if (_Carrier != nullptr && _Stream != 0 && !_PeerClosed)
+                        {
+                            _PeerClosed = true;
+                            Note("the other game closed its side");
+                            _Carrier->CloseStream(_Stream);
+                        }
+
+                        return {};
+                    }
+
                     if (_Tcp != MCSocket::InvalidHandle && !_PeerClosed)
                     {
                         _PeerClosed = true;
@@ -437,6 +472,19 @@ namespace
                 MCMcoRelay::SetAnswerPort(datagram, _Port);
             }
 
+            if (_Carry)
+            {
+                if (std::string ended = CarrierNow(); !ended.empty())
+                {
+                    return ended;
+                }
+
+                // From the game's own port at the guest's address, as a launcher's game asks from it.
+                _Carrier->SendDatagram(_Port, _Port, datagram);
+                _Carried.DatagramsIn++;
+                return {};
+            }
+
             _Sockets.SendTo(_Udp, _Game, datagram);
             _Carried.DatagramsIn++;
             return {};
@@ -458,6 +506,21 @@ namespace
                 return {};
             }
 
+            // A guest's game connected: so does the host's bridge, to the game's port in its own network, saying so once
+            // the game takes it (FromCarrier).
+            if (_Carry)
+            {
+                if (std::string ended = CarrierNow(); !ended.empty())
+                {
+                    return ended;
+                }
+
+                _Stream = _Carrier->Connect(_Port, _Port);
+                _Connecting = true;
+                _ConnectingSince = Clock::now();
+                return {};
+            }
+
             // A guest's game connected: so does the host's bridge, to the game's port, and says so.
             _Tcp = _Sockets.ConnectTcp(MCSocket::Address{MCSocket::LoopbackIp, _Port}, MCMcoRelay::GameConnectMs);
 
@@ -476,6 +539,18 @@ namespace
             if (!_PeerOpened)
             {
                 return "the relay sent the game's bytes before its connection";
+            }
+
+            if (_Carry)
+            {
+                // Sent at once: the hosting game's network holds what its game hasn't read (MCIceTransport's).
+                if (_Carrier != nullptr && _Stream != 0 && !_PeerClosed)
+                {
+                    _Carrier->SendData(_Stream, bytes);
+                    _Carried.BytesIn += bytes.size();
+                }
+
+                return {};
             }
 
             if (_Tcp == MCSocket::InvalidHandle || _PeerClosed)
@@ -514,6 +589,136 @@ namespace
             }
 
             _Carried.BytesIn += bytes.size();
+            return {};
+        }
+
+        /// <summary>The game's datagrams, its connection taken, and its bytes, each to the relay.</summary>
+        std::string FromGame()
+        {
+            if (std::string ended = FromGameUdp(); !ended.empty())
+            {
+                return ended;
+            }
+
+            if (std::string ended = AcceptGame(); !ended.empty())
+            {
+                return ended;
+            }
+
+            return FromGameTcp();
+        }
+
+        /// <summary>The guest's link in the hosting game's network, made as the guest's game first needs it.</summary>
+        std::string CarrierNow()
+        {
+            if (_Carrier == nullptr)
+            {
+                _Carrier = _Carry();
+            }
+
+            return _Carrier != nullptr ? std::string() : std::string("the hosting game takes no more guests");
+        }
+
+        /// <summary>What the hosting game sent the guest over its link, each to the relay.</summary>
+        std::string FromCarrier()
+        {
+            if (_Carrier == nullptr)
+            {
+                return {};
+            }
+
+            for (MCCarriedLink::MCEvent& event : _Carrier->Take())
+            {
+                if (std::string ended = FromCarried(event); !ended.empty())
+                {
+                    return ended;
+                }
+            }
+
+            if (_Carrier->Ended())
+            {
+                return "the hosting game ended the guest's link";
+            }
+
+            if (_Connecting && MsSince(_ConnectingSince) > MCMcoRelay::GameConnectMs)
+            {
+                return std::format("the game didn't take a guest's connection on port {} in time", _Port);
+            }
+
+            return {};
+        }
+
+        std::string FromCarried(const MCCarriedLink::MCEvent& event)
+        {
+            using Kind = MCCarriedLink::MCEvent::Kind;
+
+            if (event.What == Kind::Datagram)
+            {
+                // Only the session's answer passes, as from the game's own socket (FromGameUdp).
+                if (!MCMcoRelay::IsAnswer(event.Bytes))
+                {
+                    return {};
+                }
+
+                std::string ended = Send(MCFrameType::Datagram, event.Bytes);
+                _Carried.DatagramsOut++;
+                return ended;
+            }
+
+            if (event.Stream != _Stream)
+            {
+                return {};
+            }
+
+            switch (event.What)
+            {
+                case Kind::Accepted:
+                {
+                    if (!_Connecting)
+                    {
+                        return {};
+                    }
+
+                    _Connecting = false;
+                    _Carried.Through = true;
+                    Note("a guest's game connected");
+                    return Send(MCFrameType::StreamOpen);
+                }
+                case Kind::Refused:
+                    return std::format("the game didn't take a guest's connection on port {}", _Port);
+                case Kind::Data:
+                {
+                    for (size_t at = 0; at < event.Bytes.size(); at += MCMcoRelay::StreamMost)
+                    {
+                        const std::span<const uint8_t> piece =
+                            std::span<const uint8_t>(event.Bytes)
+                                .subspan(at, std::min(MCMcoRelay::StreamMost, event.Bytes.size() - at));
+
+                        if (std::string ended = Send(MCFrameType::StreamData, piece); !ended.empty())
+                        {
+                            return ended;
+                        }
+                    }
+
+                    _Carried.BytesOut += event.Bytes.size();
+                    return {};
+                }
+                case Kind::Closed:
+                {
+                    // The game has sent all it will: the relay is told; what the other game sends still reaches it.
+                    if (!_GameDone)
+                    {
+                        _GameDone = true;
+                        Note("the game closed its side");
+                        TellClosed();
+                    }
+
+                    return {};
+                }
+                case Kind::Datagram:
+                    break;
+            }
+
             return {};
         }
 
@@ -680,6 +885,13 @@ namespace
         /// <summary>This game closed its side (its end of file read): the relay was told; its reads are done.</summary>
         bool _GameDone = false;
         bool _SentClose = false;
+        /// <summary>A carried guest's: its link in the hosting game's network, made by <c>_Carry</c> as first needed.</summary>
+        MCMcoBridge::MCCarry _Carry;
+        std::shared_ptr<MCCarriedLink> _Carrier;
+        /// <summary>Its game's connection there, and whether the game has yet to take it.</summary>
+        uint32_t _Stream = 0;
+        bool _Connecting = false;
+        Clock::time_point _ConnectingSince;
     };
 
     /// <summary>A thread's word on why it stopped, read from others.</summary>
@@ -862,6 +1074,8 @@ namespace MCMcoBridge
         MCDial Dial;
         MCNote Note;
         uint16_t GamePort = 0;
+        /// <summary>Port-only (Redux HD): set when each guest is carried into the hosting game's own network.</summary>
+        MCCarry Carry;
         std::list<MCGuestPair> Pairs;
 
         void Tell(std::string_view text) const
@@ -904,6 +1118,12 @@ namespace MCMcoBridge
                     if (!negotiated)
                     {
                         ended = negotiated.error();
+                    }
+                    else if (Carry)
+                    {
+                        Tell("a guest joined through the relay");
+                        MCPair pair = MCPair::Carried(std::move(negotiated->first), Carry, GamePort, Note, Carried);
+                        ended = pair.Run(Stopping);
                     }
                     else
                     {
@@ -999,6 +1219,12 @@ namespace MCMcoBridge
     std::expected<std::unique_ptr<MCHost>, std::string> MCHost::Start(const MCDial& dial, std::string_view ticket,
                                                                       uint16_t gamePort, MCNote note)
     {
+        return Start(dial, ticket, gamePort, MCCarry(), std::move(note));
+    }
+
+    std::expected<std::unique_ptr<MCHost>, std::string> MCHost::Start(const MCDial& dial, std::string_view ticket,
+                                                                      uint16_t gamePort, MCCarry carry, MCNote note)
+    {
         auto negotiated = Negotiate(dial, MCMode::Host, ticket);
 
         if (!negotiated)
@@ -1010,6 +1236,7 @@ namespace MCMcoBridge
         state->Dial = dial;
         state->Note = std::move(note);
         state->GamePort = gamePort;
+        state->Carry = std::move(carry);
         MCState& running = *state;
         std::shared_ptr<MCRelayLink> control = std::move(negotiated->first);
         state->Thread = std::thread(

@@ -476,6 +476,7 @@
     <ClInclude Include="tests\fakes\MCFakeMcoService.h" />
     <ClInclude Include="tests\fakes\MCFakeMemorySystem.h" />
     <ClInclude Include="tests\fakes\MCFakeSignaling.h" />
+    <ClInclude Include="tests\fakes\MCFakeSplitNet.h" />
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h" />
     <ClInclude Include="tests\fakes\MCManualClock.h" />
     <ClInclude Include="tests\fakes\MCMemoryFileSource.h" />

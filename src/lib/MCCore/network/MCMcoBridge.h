@@ -13,6 +13,8 @@
 #include <string>
 #include <string_view>
 
+class MCCarriedLink;
+
 /// <summary>
 /// Port-only (Redux HD): a game on this computer carried over MechCommander Online's match relay (network/MCMcoRelay.h),
 /// as MCO's helper carries its own game: the game hosts or joins on this computer's loopback as a launcher's game does,
@@ -49,6 +51,12 @@ namespace MCMcoBridge
 
     /// <summary>Told what happens (from the bridge's threads, so it must be safe to call from any).</summary>
     using MCNote = std::function<void(std::string_view)>;
+
+    /// <summary>
+    /// Port-only (Redux HD): a link of its own in the hosting game's network for a guest (platform/MCIceTransport's
+    /// Carry), none when the game takes no more. Called from the bridge's threads.
+    /// </summary>
+    using MCCarry = std::function<std::shared_ptr<MCCarriedLink>()>;
 
     /// <summary>The relay's epoch, from a probe connection (MCO's server writes it into the match's ticket).</summary>
     std::expected<std::string, std::string> Probe(const MCDial& dial);
@@ -114,6 +122,14 @@ namespace MCMcoBridge
         /// </summary>
         static std::expected<std::unique_ptr<MCHost>, std::string> Start(const MCDial& dial, std::string_view ticket,
                                                                          uint16_t gamePort, MCNote note);
+
+        /// <summary>
+        /// Port-only (Redux HD): as above, but each guest reaches the hosting game in its own network, as a link of its
+        /// own there (<paramref name="carry"/>), the game listening on <paramref name="gamePort"/> in it
+        /// (SPEC-mco-hosting.md). The game's sockets are never this computer's.
+        /// </summary>
+        static std::expected<std::unique_ptr<MCHost>, std::string> Start(const MCDial& dial, std::string_view ticket,
+                                                                         uint16_t gamePort, MCCarry carry, MCNote note);
 
         ~MCHost();
         MCHost(const MCHost&) = delete;

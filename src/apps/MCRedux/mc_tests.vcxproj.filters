@@ -433,6 +433,9 @@
     <ClInclude Include="tests\fakes\MCFakeSignaling.h">
       <Filter>tests\fakes</Filter>
     </ClInclude>
+    <ClInclude Include="tests\fakes\MCFakeSplitNet.h">
+      <Filter>tests\fakes</Filter>
+    </ClInclude>
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h">
       <Filter>tests\fakes</Filter>
     </ClInclude>

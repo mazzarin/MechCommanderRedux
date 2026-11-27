@@ -21,8 +21,8 @@
 
 // Port-only (Redux HD; SPEC-mco-rooms.md): MechCommander Online's rooms in INTERNET's list like any other game, its
 // player a guest under INTERNET's name with no sign-in: the rooms beside the service's games, JOIN GAME on an open room
-// and a locked one (its password's window), the room's players and whom it waits for, LEAVE, the room closing under
-// the player, and a match joined through the stand-in relay (tests/fakes/MCFakeMcoRelay.h) into the session screen and
+// and a locked one (its password's window), the room's players and whom it waits for, its chat, LEAVE, the room closing
+// under the player or its host removing them, and a match joined through the stand-in relay (tests/fakes/MCFakeMcoRelay.h) into the session screen and
 // back to the room. Against a stand-in MCO (tests/fakes/MCFakeMcoService.h). --shots saves each step's screen.
 
 using MCTestGuest::DialogText;
@@ -108,6 +108,41 @@ namespace
         return screen;
     }
 
+    /// <summary>BOB's game, on another computer: it hosts the match's session on its port, its MCO helper's bridge on
+    /// the relay, ready for BOB's START.</summary>
+    struct MCBobsGame
+    {
+        MCTestGuest::Host Game;
+        std::unique_ptr<MCMcoBridge::MCHost> Bridge;
+
+        explicit MCBobsGame(MCFakeMcoRelay::MCRelay& relay)
+        {
+            const uint16_t port = MCMcoBridge::FreeGamePort();
+            REQUIRE(port != 0);
+            REQUIRE(Game.Open(std::to_string(port), "BOB", "MCO 0123456789ab", 0, 3));
+            auto bridge = MCMcoBridge::MCHost::Start(relay.Dial(), "host-ticket", port, {});
+            REQUIRE(bridge.has_value());
+            Bridge = std::move(*bridge);
+        }
+
+        ~MCBobsGame() { Bridge->Stop(); }
+        MCBobsGame(const MCBobsGame&) = delete;
+        MCBobsGame& operator=(const MCBobsGame&) = delete;
+    };
+
+    /// <summary>MCO with the relay's dial, in the test's game.</summary>
+    MCMcoSetup RelaySetup(MCFakeMcoService::MCService& mco, MCFakeMcoRelay::MCRelay& relay)
+    {
+        return MCFakeMcoService::Setup(
+            mco, std::make_shared<MCFakeMcoService::MCMemoryKeys>(), [&relay](const MCMcoApi::MCMatch&)
+            { return relay.Dial(); }, MCFakeMcoService::Content, PollLeast, PollMost);
+    }
+
+    bool Has(const Rows& rows, std::string_view row)
+    {
+        return std::ranges::find(rows, row) != rows.end();
+    }
+
     /// <summary>The row of the game named <paramref name="name"/>, picked.</summary>
     void PickNamed(MCGamesScreen& screen, std::string_view name)
     {
@@ -175,6 +210,37 @@ TEST_CASE_ISOLATED("game: INTERNET lists MechCommander Online's rooms with the s
     CHECK_EQ(keys->Now()->Username, "Rahman");
     CHECK(DialogText().empty());
     CHECK(OnInternet());
+
+    // The room's chat under whom it waits for: MCO's own lines and the players', the keys in its box from the start.
+    mco.Say(SolarisId, "BOB", "gl hf");
+    REQUIRE(SettleUntil([&] { return Has(screen.Seen().RoomChat, "BOB: gl hf"); }));
+    CHECK((screen.Seen().RoomChat == Rows{"Rahman joined the room.", "BOB: gl hf"}));
+    Rml::Element* say = MCTestGuest::ElementOf(screen, "room-say");
+    REQUIRE(say != nullptr);
+    REQUIRE(say->GetContext() != nullptr);
+    CHECK(say->GetContext()->GetFocusElement() == say);
+    Rows hints;
+
+    for (const MCRmlKeyHint& hint : screen.Keys)
+    {
+        hints.push_back(std::format("{} {}", hint.Key, hint.Does));
+    }
+
+    CHECK((hints == Rows{"ENTER Say", "ESC Leave"}));
+
+    // Typed and Enter: said in MCO's room, the box emptied, the keys still in it.
+    MCTestGuest::RealClickOn(*say);
+    MCTestGuest::RealType("On my way");
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    REQUIRE(SettleUntil([&] { return Has(screen.Seen().RoomChat, "Rahman: On my way"); }));
+    CHECK(SettleUntil(
+        [&]
+        {
+            const std::vector<Json> lines = mco.MessagesIn(SolarisId);
+            return !lines.empty() && lines.back().value("message", std::string()) == "On my way";
+        }));
+    CHECK_EQ(say->GetAttribute<Rml::String>("value", "unread"), std::string());
+    CHECK(say->GetContext()->GetFocusElement() == say);
     Shot("mco internet 3 room");
 
     // LEAVE: the list again, out of MCO's room.
@@ -256,23 +322,14 @@ TEST_CASE_ISOLATED("game: the host's START in a MechCommander Online room takes 
     ThreeRooms(mco);
     MCFakeMcoRelay::MCRelay relay;
     REQUIRE(relay.Port() != 0);
-    const MCMcoScope mcoScope(MCFakeMcoService::Setup(
-        mco, std::make_shared<MCFakeMcoService::MCMemoryKeys>(),
-        [&relay](const MCMcoApi::MCMatch&) { return relay.Dial(); }, MCFakeMcoService::Content, PollLeast, PollMost));
+    const MCMcoScope mcoScope(RelaySetup(mco, relay));
     REQUIRE(MCTestGame::StartLogistics());
     MCGamesScreen& screen = OpenWithRooms(list, 4);
     screen.SetPlayerName("Rahman");
     PickNamed(screen, "Solaris Night");
     screen.PressJoin();
     REQUIRE(SettleUntil([&] { return screen.Seen().InRoom; }));
-
-    // BOB's game, on another computer: it hosts the match's session on its port, its MCO helper's bridge on the relay.
-    const uint16_t bobsPort = MCMcoBridge::FreeGamePort();
-    REQUIRE(bobsPort != 0);
-    MCTestGuest::Host bobsGame;
-    REQUIRE(bobsGame.Open(std::to_string(bobsPort), "BOB", "MCO 0123456789ab", 0, 3));
-    auto bobsBridge = MCMcoBridge::MCHost::Start(relay.Dial(), "host-ticket", bobsPort, {});
-    REQUIRE(bobsBridge.has_value());
+    MCBobsGame bobs(relay);
 
     // BOB's START: the game connects through the relay and opens the match's session screen, in the match as BOB's
     // room's players see it (its polls say its game is running).
@@ -283,15 +340,69 @@ TEST_CASE_ISOLATED("game: the host's START in a MechCommander Online room takes 
     CHECK_EQ(MCMcoRooms::Now().Seen().Match, MCMcoMatchStage::Playing);
     CHECK(SettleUntil(
         [&] { return mco.LastFieldsFrom("room_poll", screen.PlayerName())["redux_process_running"] == "1"; }));
-    CHECK_EQ(bobsGame.Joined().size(), size_t{1});
+    CHECK_EQ(bobs.Game.Joined().size(), size_t{1});
     CHECK_EQ(RoomPlace(), "Internet");
     Shot("mco internet 7 match");
 
     // BOB's game leaving: back to INTERNET, in BOB's room, the match closed played.
-    bobsGame.Close();
+    bobs.Game.Close();
     REQUIRE(SettleUntil([&] { return OnInternet() && screen.Seen().InRoom; }));
     CHECK(SettleUntil([&] { return MCMcoRooms::Now().Seen().Match == MCMcoMatchStage::None; }));
     CHECK_EQ(screen.Seen().RoomName, "Solaris Night");
     Shot("mco internet 8 back in room");
-    (*bobsBridge)->Stop();
+}
+
+TEST_CASE_ISOLATED("game: a player removed from a MechCommander Online room is told who removed them over INTERNET's "
+                   "list, in the room or in its match, in one dialog")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    std::string asked;
+    MCServiceScript::SetupScope scope(MCServiceScript::ListOpener(list),
+                                      MCServiceScript::Answering(R"({"online":3})", asked), Service,
+                                      MCInternetSpots::Version);
+    MCFakeMcoService::MCService mco;
+    ThreeRooms(mco);
+    MCFakeMcoRelay::MCRelay relay;
+    REQUIRE(relay.Port() != 0);
+    const MCMcoScope mcoScope(RelaySetup(mco, relay));
+    REQUIRE(MCTestGame::StartLogistics());
+    MCGamesScreen& screen = OpenWithRooms(list, 4);
+    screen.SetPlayerName("Rahman");
+
+    // In the room: BOB removes the player, said over the list, which is back.
+    PickNamed(screen, "Solaris Night");
+    screen.PressJoin();
+    REQUIRE(SettleUntil([&] { return screen.Seen().InRoom; }));
+    mco.Kick(SolarisId, "Rahman", "BOB");
+    REQUIRE(SettleUntil([] { return DialogText() == "BOB removed you from the room."; }));
+    CHECK(!screen.Seen().InRoom);
+    Shot("mco internet 9 removed");
+    PressDialogOk();
+    REQUIRE(SettleUntil([&] { return DialogText().empty(); }));
+    CHECK(OnInternet());
+    CHECK_EQ(screen.Seen().Rows.size(), size_t{4});
+
+    // Back in, and in BOB's match: removed there, the match ends and INTERNET's list is back, with that one line.
+    screen.PressJoin();
+    REQUIRE(SettleUntil([&] { return screen.Seen().InRoom; }));
+    MCBobsGame bobs(relay);
+    mco.StartMatch(SolarisId);
+    REQUIRE(SettleUntil([] { return InRoom(); }));
+    REQUIRE(SettleUntil([] { return MCMcoRooms::Now().Seen().Match == MCMcoMatchStage::Playing; }));
+    mco.Kick(SolarisId, "Rahman", "BOB");
+    REQUIRE(SettleUntil([] { return OnInternet() && !DialogText().empty(); }));
+    CHECK_EQ(DialogText(), "BOB removed you from the room.");
+    CHECK(!screen.Seen().InRoom);
+    CHECK(MultiPlayer() == nullptr || MultiPlayer()->SessionManager->CurrentSession() == nullptr);
+    PressDialogOk();
+    REQUIRE(SettleUntil([&] { return DialogText().empty(); }));
+    // No second dialog (the match's own ending) after it.
+    Settle();
+    CHECK(DialogText().empty());
+    CHECK(OnInternet());
 }

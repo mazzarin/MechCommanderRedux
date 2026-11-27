@@ -167,6 +167,29 @@ namespace MCMcoApi
         bool Host = false;
     };
 
+    /// <summary>A line of a room's chat, as room_poll's messages give it (MCO's launcher's reading).</summary>
+    struct MCRoomMessage
+    {
+        int64_t Id = 0;
+        /// <summary>Who said it: none for MCO's own lines (<see cref="System"/>).</summary>
+        std::string SenderId;
+        std::string Username;
+        /// <summary>What was said (MCO's own line's text when it names no event).</summary>
+        std::string Text;
+        /// <summary>MCO's own line: a player joining, leaving or taken out, the host handing on, the game started.</summary>
+        bool System = false;
+        /// <summary>MCO's own line's event (room_event: "joined", "left", "removed", ...) and its kind (event_kind).</summary>
+        std::string Event;
+        std::string EventKind;
+        /// <summary>Whom MCO's own line is about.</summary>
+        std::string EventPlayer;
+        /// <summary>The message's kind (type): a picture's, a GIF's or a voice message's carry no text.</summary>
+        std::string Kind;
+        /// <summary>Its sender's own id for it (send_message's request_id), which the sender's copy is matched by.</summary>
+        std::string RequestId;
+        bool operator==(const MCRoomMessage&) const = default;
+    };
+
     /// <summary>Where a player sits: the room it registered in and how far its polls have read the room's messages.</summary>
     struct MCSeat
     {
@@ -188,9 +211,12 @@ namespace MCMcoApi
         std::string EngineContent;
         /// <summary>The match the host started, when there is one (a guest's start_signal).</summary>
         std::optional<MCMatch> Start;
-        /// <summary>The player is no longer in the room, and why (MCO's exit_reason, its kind).</summary>
+        /// <summary>The room's chat since the seat's cursor, oldest first.</summary>
+        std::vector<MCRoomMessage> Messages;
+        /// <summary>The player is no longer in the room, and why (MCO's exit_reason: its kind, and by whom).</summary>
         bool Gone = false;
         std::string GoneWhy;
+        std::string GoneBy;
     };
 
     /// <summary>A form's fields, in order.</summary>
@@ -327,6 +353,12 @@ namespace MCMcoApi
         /// </summary>
         MCResult<MCRoomState> RoomPoll(MCPeer& peer, MCSeat& seat, std::string_view matchSession = {},
                                        bool matchRunning = false);
+
+        /// <summary>
+        /// Says <paramref name="text"/> in the room <paramref name="peer"/> is in (send_message), with
+        /// <paramref name="requestId"/>, by which MCO's copy of it comes back.
+        /// </summary>
+        MCResult<void> SendMessage(MCPeer& peer, std::string_view text, std::string_view requestId);
 
         /// <summary>READY, or not (heartbeat).</summary>
         MCResult<void> SetReady(MCPeer& peer, MCSeat& seat, bool ready);

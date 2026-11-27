@@ -7,7 +7,8 @@
 <!-- Port-only (SPEC-menus.md's stage 3, "LAN and INTERNET"): the service's public games in a list with columns, as tall
      as the panel; beside it the picked game's players and its lines; PLAYER NAME, CODE, HOST GAME and JOIN GAME along
      the foot. MechCommander Online's rooms (SPEC-mco-rooms.md) are in the list like any other game; in one, the list is
-     its players, READY or not, the picked game's place says whom it waits for, and LEAVE takes the foot's buttons' place. -->
+     its players, READY or not, the picked game's place says whom it waits for over the room's chat, and LEAVE takes the
+     foot's buttons' place. -->
 <body class="painting" data-model="internet">
     <div class="stage16">
         <div id="frame" class="content">
@@ -58,9 +59,13 @@
                         </div>
                     </div>
                     <div id="pick" class="column">
-                        <div data-if="in_room">
-                            <div class="heading caps nowrap">{{room_name}}</div>
-                            <div class="data grey caps">{{room_line}}</div>
+                        <div class="heading caps nowrap" data-if="in_room">{{room_name}}</div>
+                        <div class="data grey caps" data-if="in_room">{{room_line}}</div>
+                        <div id="room-talk" class="chat" data-if="in_room">
+                            <div class="chat-lines">
+                                <div class="chat-line" data-for="line : room_chat" data-class-game="line.event"><span class="name" data-if="!line.event">{{line.name}}</span><span data-if="!line.event">: </span>{{line.text}}</div>
+                            </div>
+                            <div class="chat-say"><input type="text" class="field" id="room-say" maxlength="255" data-line=""/></div>
                         </div>
                         <div data-if="picked >= 0 &amp;&amp; !in_room">
                             <div class="heading caps nowrap">{{pick_name}}</div>

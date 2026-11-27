@@ -481,6 +481,7 @@ int32_t MCSessionManager::SetCurrentConnection(MCNetProtocol type)
 
     // Port-only (Redux HD): a goodbye riding an internet game ends first (the sockets opened from now on would be its).
     EndInternetGoodbye();
+    McoMatch = false;
     // Port fix: recreating the DirectPlay object below re-enumerates the connections, which frees the data just found
     // (the original went on using it); a copy is kept.
     std::vector<uint8_t> copy = (*found)->ConnectionBuffer;
@@ -510,6 +511,8 @@ void MCSessionManager::ConnectIpx()
 
 void MCSessionManager::ConnectTcp(std::string_view ipAddress)
 {
+    McoMatch = false;
+
     if (CurrentConnection == MCNetProtocol::TcpIp)
     {
         DestroyDirectPlayInterface();

@@ -18,6 +18,7 @@ namespace
 {
     using Clock = std::chrono::steady_clock;
     using MCFakeMcoService::MCService;
+    using Json = nlohmann::json;
 
     /// <summary>How long the model gets to hear MCO (each of its polls comes every 20-30 ms here).</summary>
     constexpr int HeardMs = 5000;
@@ -411,4 +412,116 @@ TEST_CASE("mco rooms: a match the host's game couldn't host is called off, and t
     REQUIRE(Within(HeardMs, [&] { return mco.Closed().size() == 1; }));
     CHECK(mco.Closed()[0].second.empty());
     CHECK(host.Seen().Room.has_value());
+}
+
+namespace
+{
+    /// <summary>The room's chat as INTERNET shows it: "BOB: gl hf", or MCO's own line.</summary>
+    std::vector<std::string> ChatOf(const MCMcoSeen& seen)
+    {
+        std::vector<std::string> lines;
+
+        if (seen.Room)
+        {
+            for (const MCMcoChatLine& line : seen.Room->Chat)
+            {
+                lines.push_back(line.Name.empty() ? line.Text : std::format("{}: {}", line.Name, line.Text));
+            }
+        }
+
+        return lines;
+    }
+
+    bool Has(const std::vector<std::string>& lines, std::string_view line)
+    {
+        return std::ranges::find(lines, line) != lines.end();
+    }
+}
+
+TEST_CASE("mco rooms: a joined room's chat: what was said before joining, the player's own line at once and MCO's copy "
+          "in its place, others' lines, MCO's own sentences, and a refused line saying why")
+{
+    MCService mco;
+    const std::string roomId(32, '1');
+    mco.AddRoom(OthersRoom(roomId, "Solaris Night"));
+    mco.AddPlayer(roomId, "BOB", true, true);
+    mco.Say(roomId, "BOB", "gl hf");
+    MCMcoRooms rooms(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    rooms.OpenLobby("HAWKEYE");
+    REQUIRE(Within(HeardMs, [&] { return rooms.Seen().Rooms.size() == 1; }));
+
+    // Before joining, the room's history: as MCO's launcher's room window, the room's last lines.
+    rooms.Join(roomId, "");
+    REQUIRE(Within(HeardMs, [&] { return Has(ChatOf(rooms.Seen()), "HAWKEYE joined the room."); }));
+    CHECK((ChatOf(rooms.Seen()) == std::vector<std::string>{"BOB: gl hf", "HAWKEYE joined the room."}));
+
+    // The player's own line: shown at once, then MCO's copy in its place (once, with MCO's id).
+    rooms.Say("  ready when you are  ");
+    CHECK(Has(ChatOf(rooms.Seen()), "HAWKEYE: ready when you are"));
+    REQUIRE(Within(HeardMs, [&] { return rooms.Seen().Room->Chat.back().Id != 0; }));
+    CHECK_EQ(std::ranges::count(ChatOf(rooms.Seen()), std::string("HAWKEYE: ready when you are")), 1);
+    const std::vector<Json> said = mco.MessagesIn(roomId);
+    REQUIRE(!said.empty());
+    CHECK_EQ(said.back()["message"].get<std::string>(), std::string("ready when you are"));
+    CHECK_EQ(mco.LastFields("send_message")["rich_text_version"], std::string("1"));
+    // A blank line isn't sent.
+    rooms.Say("   ");
+    CHECK_EQ(mco.Asked("send_message"), size_t{1});
+
+    // Others' lines, a GIF as what it was, and MCO's own sentences.
+    mco.Say(roomId, "BOB", "launching in 10");
+    mco.AddLine(roomId, {{"username", "BOB"}, {"message", ""}, {"type", "gif"}});
+    mco.AddPlayer(roomId, "CLANNER", true);
+    mco.AddLine(roomId, {{"sender_client_id", ""},
+                         {"username", "System"},
+                         {"message", ""},
+                         {"room_event", "joined"},
+                         {"event_player", "CLANNER"}});
+    REQUIRE(Within(HeardMs, [&] { return Has(ChatOf(rooms.Seen()), "CLANNER joined the room."); }));
+    const std::vector<std::string> chat = ChatOf(rooms.Seen());
+    CHECK(Has(chat, "BOB: launching in 10"));
+    CHECK(Has(chat, "BOB sent a GIF."));
+
+    // A line MCO refuses gives way to MCO's sentence.
+    mco.ChatRefused = true;
+    rooms.Say("can anyone hear me");
+    REQUIRE(Within(HeardMs, [&] { return Has(ChatOf(rooms.Seen()), "You can't chat in this room."); }));
+    CHECK(!Has(ChatOf(rooms.Seen()), "HAWKEYE: can anyone hear me"));
+}
+
+TEST_CASE("mco rooms: a player removed from the room hears who removed them, and is back in the lobby")
+{
+    MCService mco;
+    const std::string roomId(32, '1');
+    mco.AddRoom(OthersRoom(roomId, "Solaris Night"));
+    mco.AddPlayer(roomId, "BOB", true, true);
+    MCMcoRooms rooms(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    rooms.OpenLobby("HAWKEYE");
+    REQUIRE(Within(HeardMs, [&] { return rooms.Seen().Rooms.size() == 1; }));
+    rooms.Join(roomId, "");
+    REQUIRE(Within(HeardMs, [&] { return rooms.Seen().Room.has_value(); }));
+
+    mco.Kick(roomId, "HAWKEYE", "BOB");
+    REQUIRE(Within(HeardMs, [&] { return !rooms.Seen().Left.empty(); }));
+    CHECK_EQ(rooms.Seen().Left, std::string("BOB removed you from the room."));
+    CHECK(!rooms.Seen().Room.has_value());
+    // The room's other players heard it in its chat.
+    CHECK(Has(
+        [&]
+        {
+            std::vector<std::string> events;
+
+            for (const Json& line : mco.MessagesIn(roomId))
+            {
+                events.push_back(line.value("room_event", std::string()) + " " +
+                                 line.value("event_player", std::string()));
+            }
+
+            return events;
+        }(),
+        "removed HAWKEYE"));
+
+    // Removed without MCO saying by whom: the room's host is named.
+    CHECK_EQ(MCMcoRooms::LeftText("kicked", "BOB", false), std::string("BOB removed you from the room."));
+    CHECK_EQ(MCMcoRooms::LeftText("kicked", "", true), std::string("The host removed you from the room."));
 }

@@ -51,6 +51,8 @@ namespace
     constexpr std::string_view ReadyText = "Ready";
     constexpr std::string_view NotReadyText = "Not ready";
     constexpr std::string_view WaitingFormat = "Waiting for {} to start.";
+    /// <summary>MCO's room's chat box (INTERNET's only).</summary>
+    constexpr const char* RoomSayId = "room-say";
     constexpr std::string_view SomeHost = "the host";
     constexpr std::string_view LanLine = "On this network";
     constexpr std::string_view OnMissionFormat = "{}, on {}";
@@ -360,6 +362,8 @@ void MCGamesScreen::MakeModels(Rml::Context& context)
     model.List("pick_players", _PickPlayers, std::pair{"text", &MCPlayer::Text});
     model.List("room_players", _RoomPlayers, std::pair{"name", &MCRoomRow::Name}, std::pair{"now", &MCRoomRow::Now},
                std::pair{"ready", &MCRoomRow::Ready}, std::pair{"host", &MCRoomRow::Host});
+    model.List("room_chat", _RoomChat, std::pair{"name", &MCRoomChatLine::Name},
+               std::pair{"text", &MCRoomChatLine::Text}, std::pair{"event", &MCRoomChatLine::Event});
     model.Value("in_room", _InRoom);
     model.Value("room_name", _RoomName);
     model.Value("room_line", _RoomLine);
@@ -413,10 +417,34 @@ void MCGamesScreen::OnLoaded(Rml::ElementDocument& document)
                 }
             });
 
-    // LEAVE: INTERNET's only (MCO's room); LAN has none.
+    // LEAVE and the room's chat: INTERNET's only (MCO's room); LAN has neither.
     if (document.GetElementById("leave") != nullptr)
     {
         OnClick("leave", [this] { PressLeave(); });
+    }
+
+    if (document.GetElementById(RoomSayId) != nullptr)
+    {
+        OnText(RoomSayId,
+               [this](const std::string& typed, bool enter)
+               {
+                   if (!enter)
+                   {
+                       return;
+                   }
+
+                   if (MCMcoRooms::Available())
+                   {
+                       MCMcoRooms::Now().Say(typed);
+                   }
+
+                   const MCOptionalRef<Rml::ElementDocument> shown = Document();
+
+                   if (Rml::Element* box = shown.has_value() ? shown->get().GetElementById(RoomSayId) : nullptr)
+                   {
+                       box->SetAttribute(ValueAttribute, std::string());
+                   }
+               });
     }
 }
 
@@ -433,10 +461,12 @@ MCOptionalRef<Rml::Element> MCGamesScreen::FirstFocus(Rml::ElementDocument& docu
 
     std::erase_if(rows, [](Rml::Element* row) { return !row->IsVisible(); });
 
-    // In MCO's room: LEAVE, the one thing to press while the room waits for its host.
-    if (Rml::Element* leave = document.GetElementById("leave"); _InRoom && leave != nullptr)
+    // In MCO's room: its chat's box, what a player waiting for the host does (as the room screen's; LEAVE is ESC).
+    // Laid out by the context's next update: until it shows, none (FocusFirstRow tries again).
+    if (_InRoom)
     {
-        return MCOptionalRef<Rml::Element>(*leave);
+        Rml::Element* say = document.GetElementById(RoomSayId);
+        return say != nullptr && say->IsVisible(true) ? MCOptionalRef<Rml::Element>(*say) : std::nullopt;
     }
 
     const size_t picked = _PickedRow >= 0 ? static_cast<size_t>(_PickedRow) : 0;
@@ -588,9 +618,10 @@ void MCGamesScreen::FocusFirstRow()
     Rml::Context* context = document->get().GetContext();
     Rml::Element* focused = context != nullptr ? context->GetFocusElement() : nullptr;
 
-    // Only from where the screen put it (HOST GAME, with no games): a box the player is typing in keeps it. The ring
-    // as it was: a keys player sees it move to the game, a mouse player sees none.
-    if (focused == nullptr || focused == host || focused == &document->get())
+    // Only from where the screen put it (HOST GAME, with no games) or from what no longer shows (JOIN GAME, the list's
+    // rows, once in MCO's room): a box the player is typing in keeps it. The ring as it was: a keys player sees it move
+    // to the game, a mouse player sees none.
+    if (focused == nullptr || focused == host || focused == &document->get() || !focused->IsVisible(true))
     {
         first->get().Focus(focused != nullptr && focused->IsPseudoClassSet(FocusVisible));
     }
@@ -706,6 +737,7 @@ void MCGamesScreen::ShowList()
 
     if (_InRoom)
     {
+        keys.push_back({"ENTER", "Say"});
         keys.push_back({"ESC", "Leave"});
     }
     else
@@ -860,6 +892,11 @@ MCGamesScreen::MCSeen MCGamesScreen::Seen() const
     {
         shown.RoomPlayers.push_back(player.Host ? std::format("{} | HOST | {}", player.Name, player.Now)
                                                 : std::format("{} | {}", player.Name, player.Now));
+    }
+
+    for (const MCRoomChatLine& line : _RoomChat)
+    {
+        shown.RoomChat.push_back(line.Event ? line.Text : std::format("{}: {}", line.Name, line.Text));
     }
 
     return shown;
@@ -1397,11 +1434,17 @@ void MCGamesScreen::TendMco()
 void MCGamesScreen::ShowMcoRoom(const MCMcoSeen& seen)
 {
     std::vector<MCRoomRow> players;
+    std::vector<MCRoomChatLine> chat;
     std::string name;
     std::string line;
 
     if (seen.Room.has_value())
     {
+        for (const MCMcoChatLine& said : seen.Room->Chat)
+        {
+            chat.push_back(MCRoomChatLine{.Name = said.Name, .Text = said.Text, .Event = said.Name.empty()});
+        }
+
         name = MCMcoApi::Printable(seen.Room->Name);
         const std::string host = MCMcoApi::Printable(seen.Room->Host);
         line = std::format(WaitingFormat, host.empty() ? SomeHost : std::string_view(host));
@@ -1420,6 +1463,7 @@ void MCGamesScreen::ShowMcoRoom(const MCMcoSeen& seen)
     changed |= Keep(_RoomName, std::move(name));
     changed |= Keep(_RoomLine, std::move(line));
     changed |= Keep(_RoomPlayers, std::move(players));
+    changed |= Keep(_RoomChat, std::move(chat));
 
     if (changed && _Model != nullptr)
     {
@@ -1427,9 +1471,10 @@ void MCGamesScreen::ShowMcoRoom(const MCMcoSeen& seen)
         _Model->Changed("room_name");
         _Model->Changed("room_line");
         _Model->Changed("room_players");
+        _Model->Changed("room_chat");
     }
 
-    // In or out of the room: the hint line and the focus follow (LEAVE, or the list's first game).
+    // In or out of the room: the hint line and the focus follow (the chat's box, or the list's first game).
     if (entered)
     {
         _FocusFirstRow = true;

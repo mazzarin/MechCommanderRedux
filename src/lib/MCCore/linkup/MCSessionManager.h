@@ -413,6 +413,12 @@ public:
     std::deque<std::shared_ptr<MCFidpMessage>> PreIDServerMessages;
     /// <summary>The kind of the current connection.</summary>
     MCNetProtocol CurrentConnection = MCNetProtocol::None;
+    /// <summary>
+    /// Port-only (Redux HD): the connection is to MechCommander Online's match, through its bridge on this computer
+    /// (network/MCGamesList's MCO join, SPEC-mco-rooms.md): its end goes back to MCO's room, though the room has gone
+    /// (the player taken out mid-match). Each new connection clears it.
+    /// </summary>
+    bool McoMatch = false;
     /// <summary>This machine's player's DPID (0 when none).</summary>
     uint32_t MyPlayerID = 0;
     /// <summary>The server's DPID.</summary>

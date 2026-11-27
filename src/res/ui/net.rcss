@@ -14,6 +14,7 @@
 #room-players > * { flex: 0 0 auto; }
 #pick { flex: 1 1 0; padding-left: 12dp; border-left: 1dp #2a3742; }
 #pick > * { flex: 0 0 auto; }
+#pick > #room-talk { flex: 1 1 0; margin-top: 12dp; }  /* MCO's room's chat: the column under whom it waits for */
 .c-players { flex: 0 0 52dp; }
 .c-where { flex: 0 0 88dp; }
 .c-now { flex: 0 0 136dp; }

@@ -475,7 +475,8 @@ auto MCRoomEnd::GamesOf() -> MCGames
         return MCGames::Internet;
     }
 
-    if (MCMcoRooms::InMatch())
+    // MCO's match, though the room has gone under it (the player taken out mid-match ends it from MCO's side first).
+    if (MCMcoRooms::InMatch() || game->SessionManager->McoMatch)
     {
         return MCGames::Mco;
     }
@@ -684,9 +685,12 @@ auto MCRoomEnd::SessionLost() -> bool
 
     // Said over the games list (remade: SPEC-menus.md's stage 3), in a sentence. MCO's match's link closing mid-match is
     // its host leaving, as MCO says it (SPEC-mco-rooms.md).
+    // When MCO said why the player is out of its room (taken out, the room closed), INTERNET says that instead.
     const bool mcoMatch = games == MCGames::Mco && (game->PrepareScenarioReceived || game->InMission);
-    std::string line = mcoMatch ? std::format(MCMcoRooms::MatchEndedFormat, HostName(*game, false))
-                                : SentenceOf(closedBy, HostName(*game, false));
+    const bool mcoSaid = games == MCGames::Mco && MCMcoRooms::Available() && !MCMcoRooms::Now().Seen().Left.empty();
+    std::string line = mcoSaid    ? std::string()
+                       : mcoMatch ? std::format(MCMcoRooms::MatchEndedFormat, HostName(*game, false))
+                                  : SentenceOf(closedBy, HostName(*game, false));
     SDL_Log("Room end: the room ended under this game (%s)", line.c_str());
 
     // A match: back to the games once its scenario has ended (MCRoomEnd::AfterMatch).

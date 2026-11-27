@@ -37,7 +37,78 @@ namespace
     constexpr std::string_view KeptAccountToken = "account_token";
     constexpr std::string_view KeptUsername = "username";
 
+    /// <summary>MCO's own chat lines, in the screens' words, by their room_event (as MCO's launcher says them).</summary>
+    struct MCEventSaid
+    {
+        std::string_view Event;
+        std::string_view Format;
+    };
+
+    constexpr std::array<MCEventSaid, 14> EventsSaid{{
+        {"joined", "{} joined the room."},
+        {"left", "{} left the room."},
+        {"removed", "{} was removed from the room."},
+        {"disconnected", "{} lost their connection."},
+        {"lease_expired", "{} lost their connection."},
+        {"reconnected", "{} reconnected."},
+        {"host_transferred", "{} is now the host."},
+        {"host_closed", "{} closed the room."},
+        {"host_connection_lost", "The room closed after {} lost their connection."},
+        {"name_changed", "{} renamed the room."},
+        {"description_changed", "{} changed the room's description."},
+        {"locked", "{} locked the room."},
+        {"unlocked", "{} unlocked the room."},
+        {"password_changed", "{} changed the room's password."},
+    }};
+    /// <summary>MCO's own lines of a match's start (event_kind), and what its line says of the second.</summary>
+    constexpr std::string_view LaunchRequestedKind = "LaunchRequested";
+    constexpr std::string_view LaunchRequestedFormat = "{} started the game.";
+    constexpr std::string_view GameStartedKind = "GameStarted";
+    constexpr std::string_view GameStartedText = "The game started.";
+
+    /// <summary>A message that carries no text, by its kind (type), as its sender's line says it.</summary>
+    struct MCKindSaid
+    {
+        std::string_view Kind;
+        std::string_view Said;
+    };
+
+    constexpr std::array<MCKindSaid, 4> KindsSaid{{
+        {"gif", "sent a GIF."},
+        {"image", "sent a picture."},
+        {"voice", "sent a voice message."},
+        {"audio", "sent a voice message."},
+    }};
+
     std::unique_ptr<MCMcoRooms> Current;
+
+    /// <summary><paramref name="text"/> without its leading and trailing spaces, at most <paramref name="most"/> bytes (a whole character last).</summary>
+    std::string Trimmed(std::string_view text, size_t most)
+    {
+        const size_t first = text.find_first_not_of(" \t\r\n");
+
+        if (first == std::string_view::npos)
+        {
+            return {};
+        }
+
+        text = text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
+
+        if (text.size() <= most)
+        {
+            return std::string(text);
+        }
+
+        // Cut before a UTF-8 character's continuation bytes, never inside it.
+        size_t end = most;
+
+        while (end > 0 && (static_cast<unsigned char>(text[end]) & 0xC0u) == 0x80u)
+        {
+            end--;
+        }
+
+        return std::string(text.substr(0, end));
+    }
 
     /// <summary>Whether <paramref name="text"/> says a match's session has gone (any case).</summary>
     bool SaysSessionGone(std::string_view text)
@@ -909,6 +980,8 @@ void MCMcoRooms::DoJoin(const std::string& roomId, std::string password)
     }
 
     _Seat = std::move(*seat);
+    // The room's chat from its start, as MCO's launcher's room reads it: the first poll brings its latest lines.
+    _Seat->LastMessageId = 0;
     _InLobby = false;
     _NextPoll = Clock::now();
     Show(
@@ -1019,6 +1092,191 @@ void MCMcoRooms::ClearLeft()
     Show([](MCMcoSeen& seen) { seen.Left.clear(); });
 }
 
+void MCMcoRooms::Say(std::string text)
+{
+    text = Trimmed(text, SayMost);
+
+    if (text.empty())
+    {
+        return;
+    }
+
+    // Shown at once, as MCO's launcher shows it; MCO's copy takes its place (TakeMessages).
+    std::string requestId = MCMcoApi::NewClientId();
+    bool inRoom = false;
+    Show(
+        [&](MCMcoSeen& seen)
+        {
+            if (!seen.Room)
+            {
+                return;
+            }
+
+            inRoom = true;
+            seen.Room->Chat.push_back(MCMcoChatLine{
+                .Name = MCMcoApi::Printable(seen.Username), .Text = MCMcoApi::Printable(text), .RequestId = requestId});
+
+            if (seen.Room->Chat.size() > ChatLinesKept)
+            {
+                seen.Room->Chat.erase(seen.Room->Chat.begin());
+            }
+        });
+
+    if (inRoom)
+    {
+        Post([this, text = std::move(text), requestId = std::move(requestId)] { DoSay(text, requestId); });
+    }
+}
+
+void MCMcoRooms::DoSay(const std::string& text, const std::string& requestId)
+{
+    if (!_Seat)
+    {
+        return;
+    }
+
+    const auto sent = _Service->SendMessage(_Peer, text, requestId);
+
+    if (sent)
+    {
+        // MCO's copy, with its id, at once.
+        _NextPoll = Clock::now();
+        return;
+    }
+
+    if (SignsOut(sent.error()))
+    {
+        return;
+    }
+
+    SDL_Log("MechCommander Online: the room's chat line (%zu bytes) wasn't sent: %s", text.size(),
+            MCMcoApi::Describe(sent.error()).c_str());
+
+    // Unsent: the line gives way to why (MCO's own sentence, when it said one).
+    const std::string why = RefusalText(sent.error());
+    const std::string said = why == UnreachableText ? std::string(NotSentText) : why;
+    Show(
+        [&](MCMcoSeen& seen)
+        {
+            if (!seen.Room)
+            {
+                return;
+            }
+
+            const auto own = std::ranges::find_if(seen.Room->Chat, [&](const MCMcoChatLine& line)
+                                                  { return line.Id == 0 && line.RequestId == requestId; });
+
+            if (own != seen.Room->Chat.end())
+            {
+                *own = MCMcoChatLine{.Text = said};
+            }
+        });
+}
+
+void MCMcoRooms::TakeMessages(const std::vector<MCMcoApi::MCRoomMessage>& messages)
+{
+    if (messages.empty())
+    {
+        return;
+    }
+
+    Show(
+        [&](MCMcoSeen& seen)
+        {
+            if (!seen.Room)
+            {
+                return;
+            }
+
+            std::vector<MCMcoChatLine>& chat = seen.Room->Chat;
+
+            for (const MCMcoApi::MCRoomMessage& message : messages)
+            {
+                if (std::ranges::any_of(chat, [&](const MCMcoChatLine& line) { return line.Id == message.Id; }))
+                {
+                    continue;
+                }
+
+                std::optional<MCMcoChatLine> line = ChatLineOf(message);
+
+                if (!line)
+                {
+                    continue;
+                }
+
+                // The player's own line, shown as it was said: MCO's copy takes its place.
+                const auto own =
+                    message.RequestId.empty()
+                        ? chat.end()
+                        : std::ranges::find_if(chat, [&](const MCMcoChatLine& said)
+                                               { return said.Id == 0 && said.RequestId == message.RequestId; });
+
+                if (own != chat.end())
+                {
+                    *own = std::move(*line);
+                }
+                else
+                {
+                    chat.push_back(std::move(*line));
+                }
+            }
+
+            if (chat.size() > ChatLinesKept)
+            {
+                chat.erase(chat.begin(), chat.begin() + static_cast<std::ptrdiff_t>(chat.size() - ChatLinesKept));
+            }
+        });
+}
+
+std::optional<MCMcoChatLine> MCMcoRooms::ChatLineOf(const MCMcoApi::MCRoomMessage& message)
+{
+    MCMcoChatLine line{.Id = message.Id, .RequestId = message.RequestId};
+
+    if (message.System)
+    {
+        const std::string player = MCMcoApi::Printable(message.EventPlayer);
+        const auto said = std::ranges::find(EventsSaid, std::string_view(message.Event), &MCEventSaid::Event);
+
+        if (!player.empty() && said != EventsSaid.end())
+        {
+            line.Text = std::vformat(said->Format, std::make_format_args(player));
+        }
+        else if (!player.empty() && message.EventKind == LaunchRequestedKind)
+        {
+            line.Text = std::format(LaunchRequestedFormat, player);
+        }
+        else if (message.EventKind == GameStartedKind)
+        {
+            line.Text = std::string(GameStartedText);
+        }
+        else
+        {
+            line.Text = MCMcoApi::Printable(message.Text);
+        }
+
+        return line.Text.empty() ? std::nullopt : std::optional<MCMcoChatLine>(std::move(line));
+    }
+
+    line.Name = MCMcoApi::Printable(message.Username);
+    line.Text = MCMcoApi::Printable(message.Text);
+
+    // A picture, a GIF or a voice message: what it was, said as the sender's.
+    if (line.Text.empty())
+    {
+        const auto kind = std::ranges::find(KindsSaid, std::string_view(message.Kind), &MCKindSaid::Kind);
+
+        if (kind == KindsSaid.end() || line.Name.empty())
+        {
+            return std::nullopt;
+        }
+
+        line.Text = std::format("{} {}", line.Name, kind->Said);
+        line.Name.clear();
+    }
+
+    return line;
+}
+
 void MCMcoRooms::LeftRoom(std::string why)
 {
     EndMatch(false);
@@ -1069,9 +1327,11 @@ void MCMcoRooms::PollRoom()
 
     if (state->Gone)
     {
-        LeftRoom(LeftText(state->GoneWhy, host, _Match.has_value()));
+        LeftRoom(LeftText(state->GoneWhy, host, _Match.has_value(), state->GoneBy));
         return;
     }
+
+    TakeMessages(state->Messages);
 
     Show(
         [&](MCMcoSeen& seen)
@@ -1466,7 +1726,7 @@ std::string MCMcoRooms::RefusalText(const MCMcoApi::MCError& error)
     return text.empty() ? std::string(UnreachableText) : text;
 }
 
-std::string MCMcoRooms::LeftText(std::string_view why, std::string_view host, bool inMatch)
+std::string MCMcoRooms::LeftText(std::string_view why, std::string_view host, bool inMatch, std::string_view by)
 {
     const std::string named = host.empty() ? std::string("The host") : MCMcoApi::Printable(host);
 
@@ -1477,7 +1737,8 @@ std::string MCMcoRooms::LeftText(std::string_view why, std::string_view host, bo
 
     if (why == "kicked")
     {
-        return "The host took you out of the room.";
+        const std::string remover = MCMcoApi::Printable(by);
+        return std::format(RemovedFormat, remover.empty() ? named : remover);
     }
 
     if (why == "moderator_closed")

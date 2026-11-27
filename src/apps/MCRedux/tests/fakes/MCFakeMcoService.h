@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <functional>
 #include <map>
@@ -82,6 +83,10 @@ namespace MCFakeMcoService
     inline constexpr int HttpForbidden = 403;
     /// <summary>A relay's ticket's least length (the launcher's), each role's its own letter.</summary>
     inline constexpr size_t TicketLength = 64;
+    /// <summary>The room's chat lines a poll brings at most (as room_poll's limit asks).</summary>
+    inline constexpr size_t MessagesPerPoll = 50;
+    /// <summary>The name MCO's own chat lines carry.</summary>
+    inline constexpr std::string_view SystemName = "System";
 
     /// <summary>The stand-in (see the file's comment).</summary>
     class MCService final : public MCHttpSource::MCGet
@@ -111,6 +116,15 @@ namespace MCFakeMcoService
             std::optional<Json> Match;
             /// <summary>The host said its game is hosting the match (publish_ready): the guests are told of it.</summary>
             bool Published = false;
+            /// <summary>The room's chat, oldest first, each line as room_poll gives it.</summary>
+            std::vector<Json> Messages;
+        };
+
+        /// <summary>Why a player is out of their room (room_poll's exit_reason).</summary>
+        struct MCExit
+        {
+            std::string Kind;
+            std::string By;
         };
 
         /// <summary>A transfer for one game's MCO, asking this stand-in (the setup's Get makes one each).</summary>
@@ -188,6 +202,54 @@ namespace MCFakeMcoService
         {
             const std::scoped_lock lock(_Lock);
             CloseRoom(std::string(roomId), "host_connection_lost");
+        }
+
+        /// <summary>MCO refuses the chat's lines (send_message), saying so.</summary>
+        std::atomic<bool> ChatRefused = false;
+
+        /// <summary><paramref name="username"/> in <paramref name="roomId"/> says <paramref name="text"/> (a text line).</summary>
+        void Say(std::string_view roomId, std::string_view username, std::string text)
+        {
+            const std::scoped_lock lock(_Lock);
+            AppendLine(std::string(roomId), {{"sender_client_id", ClientOf(username)},
+                                             {"username", username},
+                                             {"message", std::move(text)},
+                                             {"type", "text"}});
+        }
+
+        /// <summary>A line of <paramref name="fields"/> in <paramref name="roomId"/>'s chat (a picture's, MCO's own).</summary>
+        void AddLine(std::string_view roomId, Json fields)
+        {
+            const std::scoped_lock lock(_Lock);
+            AppendLine(std::string(roomId), std::move(fields));
+        }
+
+        /// <summary>
+        /// <paramref name="by"/> takes <paramref name="username"/> out of <paramref name="roomId"/> (kick_peer): its
+        /// next poll says so, and the room's chat.
+        /// </summary>
+        void Kick(std::string_view roomId, std::string_view username, std::string by)
+        {
+            const std::scoped_lock lock(_Lock);
+
+            for (auto& [id, peer] : _Peers)
+            {
+                if (peer.RoomId == roomId && peer.Username == username)
+                {
+                    peer.RoomId.clear();
+                    _Removed[id] = {.Kind = "kicked", .By = std::move(by)};
+                    AppendLine(std::string(roomId), Event("removed", username));
+                    return;
+                }
+            }
+        }
+
+        /// <summary>The room's chat as it stands (each line's text, or MCO's own line's event and player).</summary>
+        std::vector<Json> MessagesIn(std::string_view roomId) const
+        {
+            const std::scoped_lock lock(_Lock);
+            const auto room = _Rooms.find(std::string(roomId));
+            return room == _Rooms.end() ? std::vector<Json>{} : room->second.Messages;
         }
 
         /// <summary>The actions asked, in order.</summary>
@@ -457,11 +519,44 @@ namespace MCFakeMcoService
                 if (peer.RoomId == roomId)
                 {
                     peer.RoomId.clear();
-                    _Removed[id] = why;
+                    _Removed[id] = {.Kind = why};
                 }
             }
 
             _Rooms.erase(roomId);
+        }
+
+        /// <summary>MCO's own line of <paramref name="event"/> about <paramref name="player"/>.</summary>
+        static Json Event(std::string_view event, std::string_view player)
+        {
+            return {{"sender_client_id", ""},
+                    {"username", SystemName},
+                    {"message", ""},
+                    {"room_event", event},
+                    {"event_player", player}};
+        }
+
+        /// <summary>A line in the room's chat, numbered on from MCO's last (under the lock).</summary>
+        void AppendLine(const std::string& roomId, Json fields)
+        {
+            if (const auto room = _Rooms.find(roomId); room != _Rooms.end())
+            {
+                fields["id"] = ++_MessageId;
+                room->second.Messages.push_back(std::move(fields));
+            }
+        }
+
+        std::string ClientOf(std::string_view username) const
+        {
+            for (const auto& [id, peer] : _Peers)
+            {
+                if (peer.Username == username)
+                {
+                    return id;
+                }
+            }
+
+            return {};
         }
 
         MCAnswer Chat(const std::string& action, MCFields& fields)
@@ -477,11 +572,15 @@ namespace MCFakeMcoService
                 peer.PeerToken = fresh ? NextHex(MCMcoApi::TokenDigits) : peer.PeerToken;
                 _Removed.erase(client);
 
-                // Out of a room it hosted: the room closes for the others.
+                // Out of a room it hosted: the room closes for the others; a guest's leaving is said in its chat.
                 if (peer.Host && !peer.RoomId.empty())
                 {
                     peer.Host = false;
                     CloseRoom(std::exchange(peer.RoomId, {}), "closed");
+                }
+                else if (!peer.RoomId.empty())
+                {
+                    AppendLine(peer.RoomId, Event("left", peer.Username));
                 }
 
                 peer.RoomId.clear();
@@ -517,6 +616,7 @@ namespace MCFakeMcoService
 
                     peer.RoomId = room->first;
                     peer.Ready = fields["is_ready"] == "1";
+                    AppendLine(room->first, Event("joined", peer.Username));
                 }
 
                 return {HttpOk, Success({{"peer_token", peer.PeerToken}, {"peer", PeerJson(peer)}})};
@@ -564,7 +664,14 @@ namespace MCFakeMcoService
             {
                 if (const auto removed = _Removed.find(client); removed != _Removed.end())
                 {
-                    return {HttpOk, Success({{"removed", true}, {"exit_reason", {{"kind", removed->second}}}})};
+                    Json reason = {{"kind", removed->second.Kind}};
+
+                    if (!removed->second.By.empty())
+                    {
+                        reason["by"] = removed->second.By;
+                    }
+
+                    return {HttpOk, Success({{"removed", true}, {"exit_reason", reason}})};
                 }
 
                 const auto room = _Rooms.find(peer.RoomId);
@@ -599,6 +706,26 @@ namespace MCFakeMcoService
                     answer["start_signal"] = *room->second.Match;
                 }
 
+                // The chat after the poll's last_id: its newest lines when there are more than a poll brings.
+                int64_t after = 0;
+                std::from_chars(fields["last_id"].data(), fields["last_id"].data() + fields["last_id"].size(), after);
+                Json messages = Json::array();
+
+                for (const Json& message : room->second.Messages)
+                {
+                    if (message["id"].get<int64_t>() > after)
+                    {
+                        messages.push_back(message);
+                    }
+                }
+
+                if (messages.size() > MessagesPerPoll)
+                {
+                    messages.erase(messages.begin(), messages.end() - static_cast<std::ptrdiff_t>(MessagesPerPoll));
+                }
+
+                answer["messages"] = messages;
+                answer["last_id"] = _MessageId;
                 return {HttpOk, answer};
             }
 
@@ -613,6 +740,21 @@ namespace MCFakeMcoService
             if (room == _Rooms.end())
             {
                 return Error(HttpForbidden, "not_in_room", "Not in a room.");
+            }
+
+            if (action == "send_message")
+            {
+                if (ChatRefused)
+                {
+                    return Error(HttpForbidden, "chat_blocked", "You can't chat in this room.");
+                }
+
+                AppendLine(room->first, {{"sender_client_id", client},
+                                         {"username", peer.Username},
+                                         {"message", fields["message"]},
+                                         {"request_id", fields["request_id"]},
+                                         {"type", "text"}});
+                return {HttpOk, Success()};
             }
 
             if (action == "create_session")
@@ -668,7 +810,8 @@ namespace MCFakeMcoService
         std::string _AccountToken;
         std::map<std::string, MCPeer> _Peers;
         std::map<std::string, MCRoom> _Rooms;
-        std::map<std::string, std::string> _Removed;
+        std::map<std::string, MCExit> _Removed;
+        int64_t _MessageId = 0;
         std::vector<std::string> _Actions;
         std::map<std::string, MCFields> _Last;
         std::map<std::pair<std::string, std::string>, MCFields> _LastFrom;

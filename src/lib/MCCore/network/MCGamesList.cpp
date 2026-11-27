@@ -513,6 +513,7 @@ bool MCGameJoin::Begin(MCAsk ask)
     {
         MCSessionManager& manager = *multiPlayer->SessionManager;
         manager.ConnectTcp(std::format("{}:{}", LoopbackHost, _Ask->Port));
+        manager.McoMatch = true;
 
         if (manager.DirectPlay != nullptr)
         {

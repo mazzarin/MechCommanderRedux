@@ -77,6 +77,19 @@ enum class MCMcoMatchStage : uint8_t
     Playing,
 };
 
+/// <summary>A line of the room's chat as the screens show it.</summary>
+struct MCMcoChatLine
+{
+    /// <summary>MCO's id for it; 0 for the player's own line on its way.</summary>
+    int64_t Id = 0;
+    /// <summary>Who said it; none for MCO's own line (a player joining, leaving or taken out).</summary>
+    std::string Name;
+    std::string Text;
+    /// <summary>The player's own line's request id, by which MCO's copy of it takes its place.</summary>
+    std::string RequestId;
+    bool operator==(const MCMcoChatLine&) const = default;
+};
+
 /// <summary>The room the player is in, as its last poll had it.</summary>
 struct MCMcoRoomSeen
 {
@@ -88,6 +101,8 @@ struct MCMcoRoomSeen
     int32_t MaxPlayers = 0;
     /// <summary>The host's name (the players' host's, else the room's).</summary>
     std::string Host;
+    /// <summary>The room's chat, oldest first (its last <see cref="MCMcoRooms::ChatLinesKept"/>).</summary>
+    std::vector<MCMcoChatLine> Chat;
     bool operator==(const MCMcoRoomSeen&) const = default;
 };
 
@@ -176,6 +191,11 @@ public:
     void Start();
     /// <summary>The room's closing said (its OK): <see cref="MCMcoSeen::Left"/> cleared.</summary>
     void ClearLeft();
+    /// <summary>
+    /// Says <paramref name="text"/> in the room's chat: shown at once, MCO's copy taking its place as a poll brings it;
+    /// one MCO refuses gives way to why.
+    /// </summary>
+    void Say(std::string text);
 
     // The match, as the game plays it (the screens act on MCMcoSeen::Match and say how it went).
 
@@ -196,8 +216,17 @@ public:
 
     /// <summary>A refusal of MCO's in the screens' words (one sentence, sentence case).</summary>
     static std::string RefusalText(const MCMcoApi::MCError& error);
-    /// <summary>Why the player is no longer in the room, in a sentence naming its host.</summary>
-    static std::string LeftText(std::string_view why, std::string_view host, bool inMatch);
+    /// <summary>
+    /// Why the player is no longer in the room, in a sentence naming its host (or <paramref name="by"/>, who took the
+    /// player out).
+    /// </summary>
+    static std::string LeftText(std::string_view why, std::string_view host, bool inMatch, std::string_view by = {});
+    /// <summary>A line of the room's chat as the screens show it; none for one with nothing to show.</summary>
+    static std::optional<MCMcoChatLine> ChatLineOf(const MCMcoApi::MCRoomMessage& message);
+
+    /// <summary>The room's chat lines kept, and the longest line said (the room's chat box's, as the room screen's).</summary>
+    static constexpr size_t ChatLinesKept = 100;
+    static constexpr size_t SayMost = 255;
 
     /// <summary>The screens' words.</summary>
     static constexpr std::string_view SigningInText = "Signing in...";
@@ -222,6 +251,8 @@ public:
     static constexpr std::string_view SomeRoom = "the room";
     static constexpr std::string_view RoomClosedFormat = "{} left. The room has closed.";
     static constexpr std::string_view MatchEndedFormat = "{} left. The match has ended.";
+    static constexpr std::string_view RemovedFormat = "{} removed you from the room.";
+    static constexpr std::string_view NotSentText = "Your message wasn't sent.";
     /// <summary>A guest's name when INTERNET's isn't one MCO takes (MCO's launcher names every new guest so).</summary>
     static constexpr std::string_view GuestNameNone = "Player";
 
@@ -256,6 +287,9 @@ private:
     void DoHost(const std::string& name, int32_t maxPlayers, std::string password);
     void DoLeave();
     void DoStart();
+    void DoSay(const std::string& text, const std::string& requestId);
+    /// <summary>A poll's chat lines into the room's, the player's own taking their places.</summary>
+    void TakeMessages(const std::vector<MCMcoApi::MCRoomMessage>& messages);
     void PlayAsGuest(const MCMcoApi::MCMatch& match);
     void HostMatch(const MCMcoApi::MCMatch& match);
     void EndMatch(bool played);

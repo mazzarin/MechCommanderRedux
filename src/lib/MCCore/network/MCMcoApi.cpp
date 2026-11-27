@@ -16,6 +16,7 @@
 namespace
 {
     using Json = nlohmann::json;
+    using MCMcoApi::MCRoomMessage;
 
     constexpr std::string_view JsonType = "application/json";
     constexpr std::string_view FormType = "application/x-www-form-urlencoded";
@@ -40,6 +41,10 @@ namespace
     constexpr std::string_view ReadyFlag = "1";
     /// <summary>The room's messages a poll asks for at once, as the launcher asks.</summary>
     constexpr std::string_view RoomMessagesAsked = "50";
+    /// <summary>The name MCO's own chat lines carry (with no sender).</summary>
+    constexpr std::string_view SystemName = "System";
+    /// <summary>The chat's text as the launcher sends it (send_message's rich_text_version).</summary>
+    constexpr std::string_view RichTextVersion = "1";
     /// <summary>A match's role on the relay.</summary>
     constexpr std::string_view HostRole = "host";
     constexpr std::string_view JoinRole = "join";
@@ -369,6 +374,44 @@ namespace
         }
 
         return cursor;
+    }
+
+    /// <summary>A room's chat lines in <paramref name="answer"/> (room_poll's messages), oldest first; none without an id.</summary>
+    std::vector<MCRoomMessage> MessagesFrom(const Json& answer)
+    {
+        std::vector<MCRoomMessage> messages;
+        const auto found = answer.find("messages");
+
+        if (found == answer.end() || !found->is_array())
+        {
+            return messages;
+        }
+
+        for (const Json& message : *found)
+        {
+            const int64_t id = NumberOf(message, "id", 0);
+
+            if (id <= 0)
+            {
+                continue;
+            }
+
+            const std::string sender = TextOf(message, "sender_client_id");
+            const std::string username = TextOf(message, "username");
+            messages.push_back(MCRoomMessage{.Id = id,
+                                             .SenderId = sender,
+                                             .Username = username,
+                                             .Text = TextOf(message, "message"),
+                                             .System = sender.empty() && username == SystemName,
+                                             .Event = TextOf(message, "room_event"),
+                                             .EventKind = TextOf(message, "event_kind"),
+                                             .EventPlayer = TextOf(message, "event_player"),
+                                             .Kind = TextOf(message, "type"),
+                                             .RequestId = TextOf(message, "request_id")});
+        }
+
+        std::ranges::sort(messages, {}, &MCRoomMessage::Id);
+        return messages;
     }
 
     /// <summary>
@@ -936,6 +979,7 @@ namespace MCMcoApi
         seat.LastMessageId = RoomCursorFrom(object, seat.LastMessageId);
         MCRoomState state;
         state.Players = PlayersFrom(object);
+        state.Messages = MessagesFrom(object);
 
         if (const auto settings = object.find("room_settings"); settings != object.end() && settings->is_object())
         {
@@ -968,6 +1012,7 @@ namespace MCMcoApi
             if (const auto reason = object.find("exit_reason"); reason != object.end() && reason->is_object())
             {
                 state.GoneWhy = TextOf(*reason, "kind");
+                state.GoneBy = TextOf(*reason, "by");
             }
         }
 
@@ -980,6 +1025,22 @@ namespace MCMcoApi
         }
 
         return state;
+    }
+
+    MCResult<void> MCService::SendMessage(MCPeer& peer, std::string_view text, std::string_view requestId)
+    {
+        const auto answer = AskChat("send_message",
+                                    {{"message", std::string(text)},
+                                     {"request_id", std::string(requestId)},
+                                     {"rich_text_version", std::string(RichTextVersion)}},
+                                    peer);
+
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+
+        return {};
     }
 
     MCResult<void> MCService::SetReady(MCPeer& peer, MCSeat& seat, bool ready)

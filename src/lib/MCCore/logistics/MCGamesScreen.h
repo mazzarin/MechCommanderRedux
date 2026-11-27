@@ -116,6 +116,8 @@ public:
         std::string RoomName;
         std::string RoomLine;
         std::vector<std::string> RoomPlayers;
+        /// <summary>The room's chat: "BOB: gl hf", or MCO's own line ("CLANNER joined the room.").</summary>
+        std::vector<std::string> RoomChat;
     };
 
     MCSeen Seen() const;
@@ -255,6 +257,16 @@ private:
         bool operator==(const MCRoomRow&) const = default;
     };
 
+    /// <summary>A line of MCO's room's chat: who said it (none for MCO's own line) and what.</summary>
+    struct MCRoomChatLine
+    {
+        std::string Name;
+        std::string Text;
+        bool Event = false;
+
+        bool operator==(const MCRoomChatLine&) const = default;
+    };
+
     // MCO, as last heard: its revision; the player has joined (or is joining) a room, so what it says is said; the wait
     // shown; the match port the game joined; the refusal and the room's end last said (each once).
     uint64_t _McoRevision = 0;
@@ -284,6 +296,7 @@ private:
     std::string _RoomName;
     std::string _RoomLine;
     std::vector<MCRoomRow> _RoomPlayers;
+    std::vector<MCRoomChatLine> _RoomChat;
 };
 
 /// <summary>INTERNET's and LAN's kinds in the screen flow (logistics/MCMenuScreens registers them).</summary>

@@ -41,6 +41,8 @@ namespace
     constexpr std::string_view Service = MCFakeGames::ServiceUrl;
     constexpr auto PollLeast = std::chrono::milliseconds(20);
     constexpr auto PollMost = std::chrono::milliseconds(30);
+    /// <summary>Past MCGamesList::McoListWait by this, the wait is surely over.</summary>
+    constexpr auto PastWait = MCGamesList::McoListWait + std::chrono::milliseconds(500);
 
     const std::string SolarisId(MCMcoApi::ClientIdDigits, '1');
     const std::string BunkerId(MCMcoApi::ClientIdDigits, '2');
@@ -139,15 +141,21 @@ namespace
             3, 0);
     }
 
-    /// <summary>INTERNET opened from MULTIPLAYER, the service's one game listed and MCO's three rooms with it.</summary>
-    MCGamesScreen& OpenWithRooms(MCServiceScript::ListScript& list, size_t rows)
+    /// <summary>INTERNET opened from MULTIPLAYER, the service's list not yet come.</summary>
+    MCGamesScreen& OpenInternet()
     {
         MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
         Settle();
         MCTestGuest::PressInternet();
         REQUIRE(SettleUntil([] { return OnInternet(); }));
+        return Internet();
+    }
+
+    /// <summary>INTERNET opened from MULTIPLAYER, the service's one game listed and MCO's three rooms with it.</summary>
+    MCGamesScreen& OpenWithRooms(MCServiceScript::ListScript& list, size_t rows)
+    {
+        MCGamesScreen& screen = OpenInternet();
         list.Send(BobsListing());
-        MCGamesScreen& screen = Internet();
         REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == rows; }));
         return screen;
     }
@@ -542,5 +550,75 @@ TEST_CASE_ISOLATED("game: INTERNET leaves out MechCommander Online's room of a g
 
     // That game gone from the service: MCO's room shows again.
     standIns.List.Send(BobsListing());
+    REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 4; }));
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "On MCO": MCO's rooms wait for the service's list (its games' own MCO rooms are in it), at most
+/// MCGamesList::McoListWait: none while it waits, then MCO's rooms alone; the list come, MCO's copy of its game goes.
+/// </summary>
+TEST_CASE_ISOLATED("game: INTERNET's MechCommander Online rooms wait for the service's list, 3 seconds at most, and "
+                   "its games' copies go as it comes")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCStandIns standIns;
+    REQUIRE(MCTestGame::StartLogistics());
+    // Taken before INTERNET opens: the list starts its wait later.
+    const std::chrono::steady_clock::time_point opened = std::chrono::steady_clock::now();
+    MCGamesScreen& screen = OpenInternet();
+
+    // MCO's lobby heard, the list not: nothing yet (unless the machine took the whole wait to get here).
+    REQUIRE(SettleUntil([] { return MCMcoRooms::Now().Seen().Listed; }));
+    Settle();
+    CHECK((screen.Seen().Rows.empty() || std::chrono::steady_clock::now() - opened >= MCGamesList::McoListWait));
+
+    // The wait over: MCO's rooms alone.
+    REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 3; }));
+    CHECK(std::chrono::steady_clock::now() - opened >= MCGamesList::McoListWait);
+    CHECK((screen.Seen().Rows ==
+           Rows{"Solaris Night | 2/6 |  | Open", "Bunker | 1/4 |  | Locked", "Night raid | 3/6 |  | In battle"}));
+    Shot("mco internet 10 past the wait");
+
+    // The list comes: its game, and Solaris Night gone as its game's copy.
+    Json listing = BobsListing();
+    listing["mcoRooms"] = Json::array({Json{{"id", SolarisId}, {"name", "Solaris Night"}}});
+    standIns.List.Send(listing);
+    REQUIRE(SettleUntil([&] { return screen.Seen().Rows.front() == "Bob's game | 2/6 | Europe | Open"; }));
+    CHECK((screen.Seen().Rows ==
+           Rows{"Bob's game | 2/6 | Europe | Open", "Bunker | 1/4 |  | Locked", "Night raid | 3/6 |  | In battle"}));
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "The switch": its rooms part heard off before (kept in the user folder) keeps MCO's rooms hidden
+/// past the wait; the list's switch on shows them.
+/// </summary>
+TEST_CASE_ISOLATED("game: INTERNET keeps MechCommander Online's rooms hidden past the wait while the switch last heard "
+                   "is off")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCSwitchRestore restore;
+    MCStandIns standIns;
+    REQUIRE(MCTestGame::StartLogistics());
+    MCMcoSwitch::Heard({.Rooms = false, .Hosts = false});
+    MCMcoSwitch::ReadAgainForTests();
+    MCGamesScreen& screen = OpenInternet();
+    const std::chrono::steady_clock::time_point opened = std::chrono::steady_clock::now();
+
+    // Past the wait, no list: nothing.
+    REQUIRE(SettleUntil([&] { return std::chrono::steady_clock::now() - opened >= PastWait; }));
+    CHECK(screen.Seen().Rows.empty());
+
+    // The list says MCO's rooms are on: shown with its game.
+    Json listing = BobsListing();
+    listing["mco"] = {{"rooms", true}, {"hosts", false}};
+    standIns.List.Send(listing);
     REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 4; }));
 }

@@ -246,6 +246,8 @@ void MCGamesList::Open()
         _List = MCInternetList::Open();
         _McoRevision = 0;
         _McoSwitch.reset();
+        _OpenedAt = Clock::now();
+        _ListHeard = false;
         KeepMcoLobby();
         return;
     }
@@ -322,6 +324,7 @@ bool MCGamesList::Update()
     if (_Where == MCGamesWhere::Internet)
     {
         bool changed = _List != nullptr && _List->Update();
+        _ListHeard |= _List != nullptr && _List->Listing().has_value();
 
         // MCO's switch as the service says it: MCO's rooms shown or not, INTERNET's games hosted there or not.
         if (_List != nullptr && _List->McoSwitch().has_value() && _List->McoSwitch() != _McoSwitch)
@@ -455,7 +458,7 @@ std::vector<MCListedGame> MCGamesList::McoGames() const
 {
     std::vector<MCListedGame> games;
 
-    if (!MCMcoRooms::Available() || !MCMcoSwitch::RoomsOn())
+    if (!MCMcoRooms::Available() || !MCMcoSwitch::RoomsOn() || !McoWaitOver())
     {
         return games;
     }
@@ -488,6 +491,14 @@ std::vector<MCListedGame> MCGamesList::McoGames() const
     return games;
 }
 
+bool MCGamesList::McoWaitOver() const
+{
+    // Before the list, MCO's copies of its games would show; past the wait (the service slow, or not answering), MCO's
+    // rooms show anyway, and the copies go as the list comes.
+    return (_List != nullptr && _List->Listing().has_value()) ||
+           (!_ListHeard && Clock::now() - _OpenedAt >= McoListWait);
+}
+
 MCGamesState MCGamesList::State() const
 {
     if (_Where == MCGamesWhere::Lan)
@@ -505,7 +516,8 @@ MCGamesState MCGamesList::State() const
         return *refusal == MCServiceRefusal::Update ? MCGamesState::Update : MCGamesState::Blocked;
     }
 
-    if (_List->Listing().has_value())
+    // MCO's rooms shown without the service's list (McoWaitOver): listed, whatever the list's trouble.
+    if (_List->Listing().has_value() || !_Games.empty())
     {
         return MCGamesState::Listed;
     }

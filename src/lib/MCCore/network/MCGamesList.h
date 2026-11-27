@@ -125,6 +125,12 @@ bool MCSocketOffline(std::string_view whyClosed);
 class MCGamesList
 {
 public:
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "On MCO"): how long INTERNET's MCO rooms wait for the service's first
+    /// list (its games' own MCO rooms, and the switch, are in it) before they show without it.
+    /// </summary>
+    static constexpr std::chrono::seconds McoListWait{3};
+
     explicit MCGamesList(MCGamesWhere where);
     ~MCGamesList();
     MCGamesList(const MCGamesList&) = delete;
@@ -168,6 +174,11 @@ private:
     /// </summary>
     std::vector<MCListedGame> McoGames() const;
     /// <summary>
+    /// Whether MCO's rooms show: with the service's list, or before its first since <see cref="Open"/> once
+    /// <see cref="McoListWait"/> has passed (never while a list heard since comes back after a drop).
+    /// </summary>
+    bool McoWaitOver() const;
+    /// <summary>
     /// Port-only (Redux HD; SPEC-mco-hosting.md's "The switch"): INTERNET in MCO's lobby while the switch shows MCO's
     /// rooms (MCMcoSwitch::RoomsOn), out of it otherwise; whether that changed.
     /// </summary>
@@ -183,6 +194,9 @@ private:
     /// <summary>INTERNET: whether this list opened MCO's lobby, and MCO's switch as it last applied it.</summary>
     bool _McoLobby = false;
     std::optional<MCMcoSwitchSaid> _McoSwitch;
+    /// <summary>INTERNET: when it opened, and whether the service's list has come since.</summary>
+    std::chrono::steady_clock::time_point _OpenedAt;
+    bool _ListHeard = false;
     /// <summary>LAN: whether this network has been asked and its answers read once (Looking until then).</summary>
     bool _LanListed = false;
     /// <summary>LAN: the next time this network's games are read (its answers come in between).</summary>

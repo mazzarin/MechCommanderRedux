@@ -22,8 +22,9 @@ namespace
     {
         /// <summary>The internet game it's for: a new one starts again.</summary>
         const MCInternetGame* For = nullptr;
-        /// <summary>HostBoth was asked.</summary>
+        /// <summary>HostBoth was asked, and when last.</summary>
         bool Asked = false;
+        Clock::time_point AskedAt;
         /// <summary>The room as hosted, for the guests: its name, password and most players.</summary>
         std::string Name;
         std::string Password;
@@ -114,6 +115,7 @@ namespace
 
         MCInternetGame& internet = *manager.Internet;
         Host.Asked = true;
+        Host.AskedAt = Clock::now();
         Host.Name = session.Name.substr(0, MCServiceGameNameMost);
         Host.Password = internet.Public() ? std::string() : internet.Code();
         Host.Most = MCMcoApi::MatchCapacity(static_cast<int32_t>(session.SessionDesc.dwMaxPlayers));
@@ -135,7 +137,15 @@ namespace
             Host.Revision = revision;
             const MCMcoSeen seen = mco.Seen();
             const bool ours = seen.Room.has_value() && seen.Room->Both && seen.Room->Hosting;
-            Host.RoomId = ours ? seen.Room->RoomId : std::string();
+            std::string roomId = ours ? seen.Room->RoomId : std::string();
+
+            // A new room is described afresh.
+            if (roomId != Host.RoomId)
+            {
+                Host.Described.reset();
+            }
+
+            Host.RoomId = std::move(roomId);
             Host.RoomSeats = ours ? seen.Room->Players : std::vector<MCMcoApi::MCRoomPlayer>();
         }
     }
@@ -212,16 +222,16 @@ namespace
             Host = {.For = &internet};
         }
 
-        if (!Host.Asked)
-        {
-            AskHost(manager, *session);
-            return;
-        }
-
         HearRoom();
 
+        // No room (not yet asked, or gone: off for a battle, refused, MCO not answering): asked for again in the room.
         if (Host.RoomId.empty())
         {
+            if (!game.InMission && (!Host.Asked || Clock::now() - Host.AskedAt >= MCMcoSeats::RehostEvery))
+            {
+                AskHost(manager, *session);
+            }
+
             return;
         }
 
@@ -412,6 +422,33 @@ void MCMcoSeats::Ended()
 
     Host = {};
     Guest = {};
+}
+
+void MCMcoSeats::LetIn()
+{
+    if (const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+        game != nullptr && game->SessionManager->IsHost && !Host.RoomId.empty())
+    {
+        MCMcoRooms::Now().StartBoth(false);
+    }
+}
+
+void MCMcoSeats::MatchStarts()
+{
+    if (const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+        game != nullptr && game->SessionManager->IsHost && !Host.RoomId.empty())
+    {
+        MCMcoRooms::Now().StartBoth(true);
+    }
+}
+
+void MCMcoSeats::MatchOver()
+{
+    if (const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+        game != nullptr && game->SessionManager->IsHost && Host.Asked)
+    {
+        MCMcoRooms::Now().BothMatchOver();
+    }
 }
 
 void MCMcoSeats::SetHostsOn(bool on)

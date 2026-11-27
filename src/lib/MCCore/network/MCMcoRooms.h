@@ -227,6 +227,15 @@ public:
     void Sit(std::string roomId, std::string name, int32_t maxPlayers, std::string password);
     /// <summary>The guest's seat is let go (the guest left the game).</summary>
     void Unsit();
+    /// <summary>
+    /// The internet game's room starts on MCO (MCO's START): its host's LET IN, or its BEGIN PLANNING with no one let in
+    /// (<paramref name="battle"/>). MCO's players come into the game through the relay, carried into its network. A
+    /// room MCO won't start leaves MCO for the battle, quietly; LET IN's failure is said (<see cref="LetInFailedText"/>).
+    /// A room already started is left as it is.
+    /// </summary>
+    void StartBoth(bool battle);
+    /// <summary>The internet game's match is over (its scenario ended): MCO's session closed, the room waiting again.</summary>
+    void BothMatchOver();
     void Start();
     /// <summary>The room's closing said (its OK): <see cref="MCMcoSeen::Left"/> cleared.</summary>
     void ClearLeft();
@@ -292,6 +301,8 @@ public:
     static constexpr std::string_view MatchEndedFormat = "{} left. The match has ended.";
     static constexpr std::string_view RemovedFormat = "{} removed you from the room.";
     static constexpr std::string_view NotSentText = "Your message wasn't sent.";
+    /// <summary>Port-only (Redux HD): the host's LET IN failed (MCO refused START, or its relay can't be reached).</summary>
+    static constexpr std::string_view LetInFailedText = "Couldn't let them in. Try again.";
     /// <summary>A guest's name when INTERNET's isn't one MCO takes (MCO's launcher names every new guest so).</summary>
     static constexpr std::string_view GuestNameNone = "Player";
 
@@ -337,6 +348,9 @@ private:
     void TakeMessages(const std::vector<MCMcoApi::MCRoomMessage>& messages);
     void PlayAsGuest(const MCMcoApi::MCMatch& match);
     void HostMatch(const MCMcoApi::MCMatch& match);
+    void DoStartBoth(bool battle);
+    /// <summary>The internet game's room off MCO for the battle (MCO won't start it): left quietly, with why.</summary>
+    void OffForBattle(std::string_view why);
     void EndMatch(bool played);
     /// <summary>The room left behind (closed, or the player taken out), with why.</summary>
     void LeftRoom(std::string why);

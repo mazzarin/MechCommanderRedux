@@ -209,10 +209,12 @@ bool MCMcoRooms::InMatch()
         return false;
     }
 
+    // Port-only (Redux HD): an internet game's room on MCO plays its match on our links, the room's end its own.
     const std::scoped_lock lock(Current->_Lock);
     const MCMcoMatchStage stage = Current->_Seen.Match;
-    return stage == MCMcoMatchStage::HostGame || stage == MCMcoMatchStage::JoinGame ||
-           stage == MCMcoMatchStage::Playing;
+    const bool both = Current->_Seen.Room.has_value() && Current->_Seen.Room->Both;
+    return !both && (stage == MCMcoMatchStage::HostGame || stage == MCMcoMatchStage::JoinGame ||
+                     stage == MCMcoMatchStage::Playing);
 }
 
 MCMcoRooms::MCMcoRooms(MCMcoSetup setup)
@@ -1612,10 +1614,100 @@ void MCMcoRooms::DoStart()
     HostMatch(*match);
 }
 
+void MCMcoRooms::StartBoth(bool battle)
+{
+    Post([this, battle] { DoStartBoth(battle); });
+}
+
+void MCMcoRooms::DoStartBoth(bool battle)
+{
+    if (!_Both || !_Seat || !_Seat->Host || _Match)
+    {
+        return;
+    }
+
+    std::optional<MCMcoRoomSeen> room;
+
+    {
+        const std::scoped_lock lock(_Lock);
+        room = _Seen.Room;
+    }
+
+    // MCO's Start wants two players at least in its room, every one READY (its launcher's rule).
+    if (!room || !Startable(*room))
+    {
+        if (battle)
+        {
+            OffForBattle("it has fewer than two players there, or one not READY");
+        }
+        else
+        {
+            Refused(std::string(LetInFailedText));
+        }
+
+        return;
+    }
+
+    Show(
+        [](MCMcoSeen& seen)
+        {
+            seen.Match = MCMcoMatchStage::Starting;
+            seen.Refusal.clear();
+        });
+    const auto match = _Service->CreateSession(_Peer, _Stock, _Content);
+
+    if (!match)
+    {
+        Show([](MCMcoSeen& seen) { seen.Match = MCMcoMatchStage::None; });
+        SDL_Log("MechCommander Online refused the internet game's START: %s",
+                MCMcoApi::Describe(match.error()).c_str());
+
+        if (battle)
+        {
+            OffForBattle("MCO refused its START");
+        }
+        else
+        {
+            Refused(std::string(LetInFailedText));
+        }
+
+        return;
+    }
+
+    HostMatch(*match);
+
+    if (battle && !_Match)
+    {
+        OffForBattle("its relay couldn't be reached");
+    }
+}
+
+void MCMcoRooms::BothMatchOver()
+{
+    Post(
+        [this]
+        {
+            if (_Both && _Match)
+            {
+                EndMatch(true);
+            }
+        });
+}
+
+void MCMcoRooms::OffForBattle(std::string_view why)
+{
+    SDL_Log("MechCommander Online: the internet game's battle is off MCO: %.*s", static_cast<int>(why.size()),
+            why.data());
+    Show([](MCMcoSeen& seen) { seen.Refusal.clear(); });
+    DoLeave();
+}
+
 // The match.
 
 void MCMcoRooms::HostMatch(const MCMcoApi::MCMatch& match)
 {
+    // Port-only (Redux HD): the internet game's room is already hosted, on its own port in its own network.
+    const bool both = _Both.has_value();
     const auto callOff = [&](std::string why)
     {
         if (const auto closed = _Service->CloseSession(_Peer, match.SessionHex); !closed)
@@ -1627,11 +1719,11 @@ void MCMcoRooms::HostMatch(const MCMcoApi::MCMatch& match)
         _Match.reset();
         SDL_Log("MechCommander Online: the match couldn't start: %s", why.c_str());
         Show(
-            [](MCMcoSeen& seen)
+            [&](MCMcoSeen& seen)
             {
                 seen.Match = MCMcoMatchStage::None;
                 seen.GamePort = 0;
-                seen.Refusal = std::string(NoMatchText);
+                seen.Refusal = std::string(both ? LetInFailedText : NoMatchText);
             });
     };
 
@@ -1644,7 +1736,7 @@ void MCMcoRooms::HostMatch(const MCMcoApi::MCMatch& match)
         return;
     }
 
-    const uint16_t port = _Setup.GamePort();
+    const uint16_t port = both ? _Both->GamePort : _Setup.GamePort();
 
     if (port == 0)
     {
@@ -1654,18 +1746,22 @@ void MCMcoRooms::HostMatch(const MCMcoApi::MCMatch& match)
 
     _Cancel = false;
     _Match = match;
-    Show(
-        [&](MCMcoSeen& seen)
-        {
-            seen.Match = MCMcoMatchStage::HostGame;
-            seen.GamePort = port;
-            seen.SessionName = MCMcoApi::MatchSession(match.SessionHex);
-            seen.Capacity = MCMcoApi::MatchCapacity(match.Capacity);
-            seen.MatchName = MCMcoApi::MatchName(_Peer.Username);
-        });
+
+    if (!both)
+    {
+        Show(
+            [&](MCMcoSeen& seen)
+            {
+                seen.Match = MCMcoMatchStage::HostGame;
+                seen.GamePort = port;
+                seen.SessionName = MCMcoApi::MatchSession(match.SessionHex);
+                seen.Capacity = MCMcoApi::MatchCapacity(match.Capacity);
+                seen.MatchName = MCMcoApi::MatchName(_Peer.Username);
+            });
+    }
 
     // The game hosts on the port (the screens do it): its answer to the session query is awaited, as the launcher's.
-    if (!MCMcoBridge::WaitForHostGame(port, _Setup.HostGameMs, _Cancel))
+    if (!both && !MCMcoBridge::WaitForHostGame(port, _Setup.HostGameMs, _Cancel))
     {
         callOff(_Cancel ? "the game couldn't host it" : "the game didn't answer on its port");
         return;
@@ -1679,9 +1775,10 @@ void MCMcoRooms::HostMatch(const MCMcoApi::MCMatch& match)
         return;
     }
 
-    auto hosted = MCMcoBridge::MCHost::Start(
-        dial, ticket->Ticket, port, [](std::string_view note)
-        { SDL_Log("MechCommander Online's relay: %.*s", static_cast<int>(note.size()), note.data()); });
+    const auto note = [](std::string_view said)
+    { SDL_Log("MechCommander Online's relay: %.*s", static_cast<int>(said.size()), said.data()); };
+    auto hosted = both ? MCMcoBridge::MCHost::Start(dial, ticket->Ticket, port, _Both->Carry, note)
+                       : MCMcoBridge::MCHost::Start(dial, ticket->Ticket, port, note);
 
     if (!hosted)
     {

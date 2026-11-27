@@ -25,6 +25,7 @@
 #include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerHandlers.h"
+#include "network/MCMcoSeats.h"
 #include "network/MCRoomEnd.h"
 #include "sound/MCSoundSystem.h"
 
@@ -1648,8 +1649,10 @@ auto MCRoomModel::PublishMatchState() -> void
     ToView([](MCRoomView& view) { view.TakeTypedPoints(); });
     match.Team1Points = std::atoi(PointsText[0].c_str());
     match.Team2Points = std::atoi(PointsText[1].c_str());
-    // Port-only (Redux HD): the room the match is played from, which its end goes back to (network/MCRoomEnd.h).
+    // Port-only (Redux HD): the room the match is played from, which its end goes back to (network/MCRoomEnd.h); an
+    // internet game's room on MCO shown in game there (network/MCMcoSeats.h).
     MCRoomEnd::MatchStarts();
+    MCMcoSeats::MatchStarts();
 }
 
 auto MCRoomModel::CheckGoodToGo() -> void

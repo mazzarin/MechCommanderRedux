@@ -1942,7 +1942,10 @@ auto MCMission::BackToLogistics() -> void
     MCScreenFlow::Land({MCMenuScreens::Main()});
     MCScreenFlow::Noted();
 
-    // Port-only (Redux HD): a game the menus took to its room goes back to its games screen (network/MCRoomEnd.h).
+    // Port-only (Redux HD): an internet game's MCO session closed (network/MCMcoSeats.h); a game the menus took to its
+    // room goes back to its games screen (network/MCRoomEnd.h).
+    MCMcoSeats::MatchOver();
+
     if (MCRoomEnd::AfterMatch())
     {
         return;

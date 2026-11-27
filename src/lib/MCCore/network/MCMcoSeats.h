@@ -42,6 +42,19 @@ namespace MCMcoSeats
     /// <summary>The game's internet game ends: a host's MCO room left, a guest's seat let go.</summary>
     void Ended();
 
+    /// <summary>The host's LET IN: MCO's waiting players come into the game (MCO's START).</summary>
+    void LetIn();
+    /// <summary>
+    /// The match starts (MCRoomModel::PublishMatchState): a host's room starts on MCO, if LET IN hasn't, so MCO shows it
+    /// in game; where MCO won't, the room is off MCO for the battle and hosted again after it.
+    /// </summary>
+    void MatchStarts();
+    /// <summary>The match's scenario has ended: a host's MCO session closed, its room waiting again.</summary>
+    void MatchOver();
+
+    /// <summary>How often a host whose MCO room is gone (off for a battle, refused, MCO not answering) asks for one again.</summary>
+    inline constexpr std::chrono::seconds RehostEvery{30};
+
     /// <summary>
     /// The switch's <c>hosts</c> part (SPEC-mco-hosting.md, "The switch"), as INTERNET's list last said: off until it
     /// has. A game already hosting keeps its MCO room.

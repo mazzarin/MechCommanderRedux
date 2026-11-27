@@ -624,3 +624,69 @@ TEST_CASE("mco rooms: an internet game's guest sits quietly in its host's room, 
     CHECK(guest.Seen().Left.empty());
     CHECK(!guest.Seen().Room.has_value());
 }
+
+TEST_CASE("mco rooms: an internet game's room starts on MCO at LET IN, its bridge open on the game's own port, closes "
+          "played at the match's end, and leaves MCO quietly for a battle MCO won't start")
+{
+    MCService mco;
+    MCFakeMcoRelay::MCRelay relay;
+    REQUIRE(relay.Port() != 0);
+    MCMcoRooms host(TestSetup(mco, std::make_shared<MCMemoryKeys>(), relay));
+    MCMcoRooms guest(TestSetup(mco, std::make_shared<MCMemoryKeys>(), relay));
+    host.OpenLobby("ANN");
+    guest.OpenLobby("BOB");
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Listed && guest.Seen().Listed; }));
+    MCMcoBoth both = SteelRain();
+    size_t carried = 0;
+    both.Carry = [&carried]
+    {
+        carried++;
+        return std::shared_ptr<MCCarriedLink>();
+    };
+
+    host.HostBoth(std::move(both));
+    REQUIRE(Within(HeardMs, [&] { return !OnlyRoom(mco).empty(); }));
+    const std::string roomId = OnlyRoom(mco);
+
+    // Alone in MCO's room, LET IN can't start it: said, the room kept.
+    host.StartBoth(false);
+    REQUIRE(Within(HeardMs, [&] { return !host.Seen().Refusal.empty(); }));
+    CHECK_EQ(host.Seen().Refusal, std::string(MCMcoRooms::LetInFailedText));
+    CHECK_EQ(mco.Asked("create_session"), size_t{0});
+    CHECK(host.Seen().Room.has_value());
+
+    // With the internet game's guest seated, READY: LET IN starts it, the game already hosting (no wait on its port).
+    guest.CloseLobby();
+    guest.Sit(roomId, "Steel Rain", 6, "K7QF");
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Room && host.Seen().Room->Players.size() == 2; }));
+    host.StartBoth(false);
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Match == MCMcoMatchStage::Playing; }));
+    CHECK(host.Seen().Refusal.empty());
+    CHECK_EQ(host.Seen().GamePort, uint16_t{0});
+    CHECK_EQ(mco.Asked("create_session"), size_t{1});
+    CHECK_EQ(mco.Asked("publish_ready"), size_t{1});
+    // Started already: the battle's start asks nothing more; the quiet seat plays none of it.
+    host.StartBoth(true);
+    std::this_thread::sleep_for(PollMost * 2);
+    CHECK_EQ(mco.Asked("create_session"), size_t{1});
+    CHECK(guest.Seen().Seated);
+    CHECK_EQ(guest.Seen().Match, MCMcoMatchStage::None);
+
+    // The match over: closed as played, with the room's engine; the room waits again.
+    host.BothMatchOver();
+    REQUIRE(Within(HeardMs, [&] { return mco.Closed().size() == 1; }));
+    CHECK_EQ(mco.Closed()[0].second, std::string(MCFakeMcoService::StockBuild));
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Match == MCMcoMatchStage::None; }));
+    CHECK(host.Seen().Room.has_value());
+
+    // The guest gone, the battle's start finds MCO's room alone: it leaves MCO for the battle, without a word.
+    guest.Unsit();
+    REQUIRE(Within(HeardMs, [&] { return host.Seen().Room && host.Seen().Room->Players.size() == 1; }));
+    host.StartBoth(true);
+    REQUIRE(Within(HeardMs, [&] { return mco.RoomIds().empty(); }));
+    REQUIRE(Within(HeardMs, [&] { return !host.Seen().Room.has_value(); }));
+    CHECK(host.Seen().Refusal.empty());
+    CHECK(host.Seen().Left.empty());
+    CHECK_EQ(mco.Asked("create_session"), size_t{1});
+    CHECK_EQ(carried, size_t{0});
+}

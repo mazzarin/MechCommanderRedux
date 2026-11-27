@@ -251,8 +251,11 @@ public:
 
 private:
     void Refuse(std::string text, bool canRetry = false, bool needsUpdate = false);
-    /// <summary>The service's refusal (or nothing answering) in the screens' words.</summary>
-    void RefuseFor(std::optional<MCServiceRefusal> refusal);
+    /// <summary>
+    /// The service's refusal (or nothing answering) in the screens' words; a removed player's with the time it's still
+    /// kept out (<paramref name="keptOut"/>).
+    /// </summary>
+    void RefuseFor(std::optional<MCServiceRefusal> refusal, std::optional<std::chrono::seconds> keptOut = std::nullopt);
     MCEnd TendInternet();
     MCEnd TendLan();
     MCEnd TendMco();

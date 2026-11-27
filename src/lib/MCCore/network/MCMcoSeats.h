@@ -60,6 +60,24 @@ namespace MCMcoSeats
     /// <summary>The game's internet game ends: a host's MCO room left, a guest's seat let go.</summary>
     void Ended();
 
+    /// <summary>A player removed from the game (network/MCRemove.h), as MCO's room knows it, and when.</summary>
+    struct MCKeptOut
+    {
+        /// <summary>Its MCO id, when its seat was known; empty otherwise.</summary>
+        std::string ClientId;
+        /// <summary>Its name: MCO's launcher names its game's player as its account.</summary>
+        std::string Name;
+        std::chrono::steady_clock::time_point At;
+    };
+
+    /// <summary>
+    /// The host (SPEC-mco-hosting.md's "REMOVE"): a removed player out of the MCO room for MCRemove::KeptOutFor, its
+    /// seat kicked (kick_peer) now and whenever it comes back, and never waiting: guest <paramref name="playerId"/>'s
+    /// seat as it said, or the seat named <paramref name="name"/> (MCO's waiting players, and those let in).
+    /// </summary>
+    /// <returns>Whether the room had its seat.</returns>
+    bool KeepOut(std::optional<uint32_t> playerId, std::string_view name);
+
     /// <summary>The host's LET IN: MCO's waiting players come into the game (MCO's START).</summary>
     void LetIn();
     /// <summary>
@@ -166,6 +184,13 @@ namespace MCMcoSeats
     /// </summary>
     std::vector<std::string> RoomPlayers(std::vector<std::string> players, const std::vector<MCWaiting>& waiting,
                                          int32_t most);
+
+    /// <summary>
+    /// The MCO ids of the room's seats (<paramref name="seats"/>) that are a removed player's (<paramref name="kept"/>,
+    /// by id, or by name for one whose seat wasn't known), never the host's.
+    /// </summary>
+    std::vector<std::string> KeptOutSeats(const std::vector<MCMcoApi::MCRoomPlayer>& seats,
+                                          const std::vector<MCKeptOut>& kept);
 
     /// <summary>The McoWaiting for <paramref name="waiting"/> (its first six), and what one says (none: it isn't one).</summary>
     MCMPMcoWaitingMessage WaitingMessage(const std::vector<MCWaiting>& waiting);

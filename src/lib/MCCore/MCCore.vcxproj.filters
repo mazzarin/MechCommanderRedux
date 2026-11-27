@@ -811,6 +811,9 @@
     <ClCompile Include="network\MCRejoinNote.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCRemove.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCRoomEnd.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -2272,6 +2275,9 @@
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCRejoinNote.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCRemove.h">
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCRoomEnd.h">

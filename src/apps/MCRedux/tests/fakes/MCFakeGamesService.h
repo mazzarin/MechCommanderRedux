@@ -70,6 +70,8 @@ namespace MCFakeGames
         bool HostLeaveHandsOver = false;
         /// <summary>What a join is refused with ("crowded"...), whatever the game: none, and joins go as usual.</summary>
         std::optional<std::string> RefuseJoinsWith;
+        /// <summary>The seconds a join's refusal says (removed's: how long the copy is kept out), if any.</summary>
+        std::optional<uint32_t> RefusalSeconds;
         /// <summary>
         /// Port-only (Redux HD): the host's socket, still open, has answered no ping for the service's HOST_SILENT_MS (its
         /// computer gone without a word): a guest's takeover is taken, and the host's socket closed.
@@ -422,7 +424,14 @@ namespace MCFakeGames
 
             if (path.starts_with("/join/") && RefuseJoinsWith.has_value())
             {
-                Say(line, Json{{"t", *RefuseJoinsWith}}.dump());
+                Json refusal{{"t", *RefuseJoinsWith}};
+
+                if (RefusalSeconds.has_value())
+                {
+                    refusal["seconds"] = *RefusalSeconds;
+                }
+
+                Say(line, refusal.dump());
                 line.Open = false;
                 return;
             }

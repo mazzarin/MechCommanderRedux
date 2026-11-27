@@ -435,16 +435,29 @@ public:
 
     /// <summary>
     /// Port, the host: its say on each player a joiner asks to create, before anyone hears of it: the player's name and
-    /// data in, the reason for refusing it out (none: it is created). A refused joiner's game is told the reason with
-    /// DPERR_CANTCREATEPLAYER (an older one reads only the code), and its link closes. None set: every player comes in.
+    /// data in, and (Port-only, Redux HD) the IPv4 address (host order) its machine joined from; the reason for refusing
+    /// it out (none: it is created). A refused joiner's game is told the reason with DPERR_CANTCREATEPLAYER (an older one
+    /// reads only the code), and its link closes. None set: every player comes in.
     /// </summary>
-    using Admission = std::function<std::optional<std::string>(std::string_view name, std::span<const uint8_t> data)>;
+    using Admission =
+        std::function<std::optional<std::string>(std::string_view name, std::span<const uint8_t> data, uint32_t ip)>;
     void SetAdmission(Admission admission);
     /// <summary>
     /// Port-only (Redux HD), a host: <paramref name="places"/> held for players coming another way (an internet game's
     /// MCO players waiting: network/MCMcoSeats.h), taken at its door: a join past the most is refused as full.
     /// </summary>
     void SetReserved(uint32_t places);
+    /// <summary>
+    /// Port-only (Redux HD), a host: the IPv4 address (host order) the machine of player <paramref name="playerID"/>
+    /// joined from; none for the host's own players, or a player it doesn't know.
+    /// </summary>
+    std::optional<uint32_t> PlayerIp(uint32_t playerID) const;
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"), a host: the machine of player <paramref name="playerID"/>
+    /// leaves the session <paramref name="grace"/> from now, if it hasn't by then (time for the host's word to reach it,
+    /// and for its game to leave on its own). Whether the player is a joiner's.
+    /// </summary>
+    bool RemovePlayer(uint32_t playerID, std::chrono::milliseconds grace);
 
     /// <summary>Creates a group; <paramref name="groupID"/> receives its id.</summary>
     uint32_t CreateGroup(uint32_t& groupID, const DPNAME& name, std::span<const uint8_t> data, uint32_t flags);

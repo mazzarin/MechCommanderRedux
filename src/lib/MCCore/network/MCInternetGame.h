@@ -132,6 +132,19 @@ public:
     /// guest its bridge brings in (MCIceTransport::Carry); none once the game has ended. Safe from any thread.
     /// </summary>
     std::function<std::shared_ptr<MCCarriedLink>()> Carrier() const;
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"), a host: whose game the joiner at <paramref name="ip"/> in
+    /// the game's network is: the guest as the service names it, empty for an MCO player's carried link; none when it
+    /// came no way of the game's own (a game on this computer's network).
+    /// </summary>
+    std::optional<std::string> GuestAt(uint32_t ip) const;
+    /// <summary>A host: removes its guest <paramref name="guest"/> (GuestAt's) from the game on the service.</summary>
+    void Remove(std::string_view guest);
+    /// <summary>
+    /// Port-only (Redux HD), a guest: how long this copy is still kept out of the game (its host removed it, as the
+    /// service said); none otherwise.
+    /// </summary>
+    std::optional<std::chrono::seconds> KeptOut() const;
 
     /// <summary>
     /// Port-only (Redux HD), a guest: its session rolled over to this game (SPEC-host-rollover.md), which takes the game

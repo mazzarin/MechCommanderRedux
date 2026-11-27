@@ -7,9 +7,11 @@
 #include "network/MCInternetGame.h"
 #include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRemove.h"
 #include "platform/MCDirectPlay.h"
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <map>
 #include <utility>
 
@@ -44,6 +46,8 @@ namespace
         /// <summary>MCO's waiting players, and what the guests were last told of them.</summary>
         std::vector<MCMcoSeats::MCWaiting> Waiting;
         std::map<uint32_t, std::vector<MCMcoSeats::MCWaiting>> ToldWaiting;
+        /// <summary>Each removed player's seat kicked, by its MCO id: the room's revision then (once a poll).</summary>
+        std::map<std::string, uint64_t> Kicked;
     };
 
     /// <summary>A guest's seat in its host's MCO room.</summary>
@@ -70,6 +74,8 @@ namespace
 
     MCHostSide Host;
     MCGuestSide Guest;
+    /// <summary>The players the host removed, kept out of its MCO room a while (past one internet game: its host's).</summary>
+    std::vector<MCMcoSeats::MCKeptOut> KeptOut;
     bool HostsSwitch = false;
     std::optional<MCTestsMco> TestsMco;
 
@@ -321,9 +327,29 @@ namespace
             }
         }
 
+        // A removed player back in the room is taken out again (once a poll), and never waits.
+        const Clock::time_point now = Clock::now();
+        std::erase_if(KeptOut,
+                      [&](const MCMcoSeats::MCKeptOut& kept) { return now - kept.At >= MCRemove::KeptOutFor; });
+        const std::vector<std::string> kicks = MCMcoSeats::KeptOutSeats(Host.RoomSeats, KeptOut);
+
+        for (const std::string& clientId : kicks)
+        {
+            if (const auto kicked = Host.Kicked.find(clientId);
+                kicked == Host.Kicked.end() || kicked->second != Host.Revision)
+            {
+                Host.Kicked[clientId] = Host.Revision;
+                MCMcoRooms::Now().Kick(clientId);
+            }
+        }
+
+        std::vector<MCMcoApi::MCRoomPlayer> seats;
+        std::ranges::copy_if(Host.RoomSeats, std::back_inserter(seats), [&](const MCMcoApi::MCRoomPlayer& seat)
+                             { return std::ranges::find(kicks, seat.ClientId) == kicks.end(); });
+
         // After LET IN no one waits: an MCO player whose game closed waits for the next match, its place not held.
-        Host.Waiting = Host.Live ? std::vector<MCMcoSeats::MCWaiting>()
-                                 : MCMcoSeats::WaitingIn(Host.RoomSeats, seated, NamesOf(manager));
+        Host.Waiting =
+            Host.Live ? std::vector<MCMcoSeats::MCWaiting>() : MCMcoSeats::WaitingIn(seats, seated, NamesOf(manager));
         manager.DirectPlay->SetReserved(static_cast<uint32_t>(Host.Waiting.size()));
         TellWaiting(manager);
 
@@ -515,6 +541,63 @@ void MCMcoSeats::Ended()
 
     Host = {};
     Guest = {};
+}
+
+bool MCMcoSeats::KeepOut(std::optional<uint32_t> playerId, std::string_view name)
+{
+    // The tests' MCO: its waiting player goes.
+    if (TestsMco.has_value())
+    {
+        return std::erase_if(TestsMco->Waiting, [&](const MCWaiting& waiting) { return waiting.Name == name; }) != 0;
+    }
+
+    // Its seat: a guest's as it said, else the one named (not the host's).
+    std::string clientId;
+
+    if (const auto said = playerId.has_value() ? Host.Seats.find(*playerId) : Host.Seats.end();
+        said != Host.Seats.end() && said->second.Seat == MCSeat::Taken)
+    {
+        clientId = said->second.ClientId;
+    }
+    else if (const auto seat = std::ranges::find_if(Host.RoomSeats, [&](const MCMcoApi::MCRoomPlayer& one)
+                                                    { return !one.Host && one.Username == name; });
+             seat != Host.RoomSeats.end())
+    {
+        clientId = seat->ClientId;
+    }
+
+    // Kept by name too: a player whose seat wasn't known is taken out should it sit down.
+    KeptOut.push_back({.ClientId = clientId, .Name = std::string(name), .At = Clock::now()});
+    std::erase_if(Host.Waiting, [&](const MCWaiting& waiting) { return waiting.Name == name; });
+
+    if (clientId.empty() || Host.RoomId.empty() || !MCMcoRooms::Available())
+    {
+        return false;
+    }
+
+    SDL_Log("MCO seats: %.*s removed from the internet game's MCO room", static_cast<int>(name.size()), name.data());
+    Host.Kicked[clientId] = Host.Revision;
+    MCMcoRooms::Now().Kick(clientId);
+    return true;
+}
+
+std::vector<std::string> MCMcoSeats::KeptOutSeats(const std::vector<MCMcoApi::MCRoomPlayer>& seats,
+                                                  const std::vector<MCKeptOut>& kept)
+{
+    std::vector<std::string> ids;
+
+    for (const MCMcoApi::MCRoomPlayer& seat : seats)
+    {
+        if (!seat.Host &&
+            std::ranges::any_of(
+                kept, [&](const MCKeptOut& one)
+                { return (!one.ClientId.empty() && one.ClientId == seat.ClientId) || one.Name == seat.Username; }))
+        {
+            ids.push_back(seat.ClientId);
+        }
+    }
+
+    return ids;
 }
 
 std::vector<MCMcoSeats::MCWaiting> MCMcoSeats::Waiting()

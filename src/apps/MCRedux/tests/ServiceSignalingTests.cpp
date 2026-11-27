@@ -603,7 +603,7 @@ TEST_CASE("service signaling: a guest's socket coming back to a full game tries 
 
 TEST_CASE("service signaling: the service's refusals, each its reason, none tried again")
 {
-    const std::array<std::pair<std::string_view, MCServiceRefusal>, 8> refusals{{
+    const std::array<std::pair<std::string_view, MCServiceRefusal>, 9> refusals{{
         {"nogame", MCServiceRefusal::NoGame},
         {"hostaway", MCServiceRefusal::HostAway},
         {"battle", MCServiceRefusal::InBattle},
@@ -612,6 +612,7 @@ TEST_CASE("service signaling: the service's refusals, each its reason, none trie
         {"slow", MCServiceRefusal::TooManyTries},
         {"update", MCServiceRefusal::Update},
         {"crowded", MCServiceRefusal::Crowded},
+        {"removed", MCServiceRefusal::Removed},
     }};
 
     for (const auto& [type, refusal] : refusals)
@@ -792,6 +793,44 @@ TEST_CASE("service signaling: a room hosted on MCO too names its MCO room's id")
     CHECK_EQ(host.Sent[0].Data,
              std::string(R"({"battle":false,"max":6,"mco":"0123456789abcdef0123456789abcdef",)"
                          R"("mission":"","name":"GAME","players":["BOB"],"public":true,"t":"room"})"));
+}
+
+/// <summary>
+/// Port-only (SPEC-mco-hosting.md's "REMOVE"): the host removes its guest as the service names it, and a removed copy's
+/// socket is refused with the time it's still kept out (none for any other refusal).
+/// </summary>
+TEST_CASE("service signaling: the host removes its guest, and a removed copy hears how long it's kept out")
+{
+    MCScriptedService host;
+    MCServiceSignaling hosting(std::string(Service), host.Opener(), Identity, true);
+    hosting.Remove("g1");
+    hosting.Host();
+    CHECK(host.At(HostUrl).Sent.empty());
+    host.At(HostUrl).Arrived.push_back(Text(HostedMessage));
+    CHECK(hosting.Take().empty());
+    hosting.Remove("g1");
+    REQUIRE_EQ(host.At(HostUrl).Sent.size(), size_t{1});
+    CHECK_EQ(host.At(HostUrl).Sent[0].Data, std::string(R"({"guest":"g1","t":"remove"})"));
+
+    MCScriptedService service;
+    MCServiceSignaling signaling(std::string(Service), service.Opener(), Identity, false, AtOnce);
+    signaling.Join(GameCode);
+    service.At(JoinUrl).Arrived.push_back(Text(R"({"t":"removed","seconds":480})"));
+    service.At(JoinUrl).Now = MCWebSocket::State::Closed;
+    signaling.Take();
+    CHECK(signaling.Refusal(GameCode) == std::optional(MCServiceRefusal::Removed));
+    const std::optional<std::chrono::seconds> left = signaling.KeptOut(GameCode);
+    REQUIRE(left.has_value());
+    CHECK(*left <= std::chrono::seconds(480));
+    CHECK(*left > std::chrono::seconds(470));
+
+    MCScriptedService other;
+    MCServiceSignaling full(std::string(Service), other.Opener(), Identity, false, AtOnce);
+    full.Join(GameCode);
+    other.At(JoinUrl).Arrived.push_back(Text(R"({"t":"full"})"));
+    other.At(JoinUrl).Now = MCWebSocket::State::Closed;
+    full.Take();
+    CHECK(!full.KeptOut(GameCode).has_value());
 }
 
 TEST_CASE("internet copy: an ID made once and kept in internet.cfg, and one that isn't an ID made again")

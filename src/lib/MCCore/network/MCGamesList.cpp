@@ -7,6 +7,7 @@
 #include "network/MCInternetGame.h"
 #include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRemove.h"
 #include "platform/MCDirectPlay.h"
 
 #include <charconv>
@@ -155,6 +156,16 @@ namespace
                                [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
         std::erase_if(named, [](unsigned char c) { return c < ' ' || c > '~'; });
         return std::format(LacksFormat, named.empty() ? std::string(LacksNothing) : named);
+    }
+
+    /// <summary>
+    /// What a join to <paramref name="game"/> says of its host's refusal at the door <paramref name="refusal"/>: kept out
+    /// since the host removed this game's player (SPEC-mco-hosting.md's "REMOVE"), else the options it lacks.
+    /// </summary>
+    std::string DoorText(std::string_view refusal, std::string_view game)
+    {
+        const std::optional<std::chrono::seconds> left = MCRemove::DoorLeft(refusal);
+        return left.has_value() ? MCRemove::KeptOutLine(game, *left) : LacksText(refusal);
     }
 }
 
@@ -559,7 +570,7 @@ void MCGameJoin::Refuse(std::string text, bool canRetry, bool needsUpdate)
     }
 }
 
-void MCGameJoin::RefuseFor(std::optional<MCServiceRefusal> refusal)
+void MCGameJoin::RefuseFor(std::optional<MCServiceRefusal> refusal, std::optional<std::chrono::seconds> keptOut)
 {
     const MCAsk& ask = *_Ask;
 
@@ -599,6 +610,13 @@ void MCGameJoin::RefuseFor(std::optional<MCServiceRefusal> refusal)
         case MCServiceRefusal::Crowded:
         {
             Refuse(std::string(CrowdedText));
+            return;
+        }
+
+        // Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): its host removed this game's player a while ago.
+        case MCServiceRefusal::Removed:
+        {
+            Refuse(MCRemove::KeptOutLine(ask.Shown, keptOut.value_or(MCRemove::KeptOutFor)));
             return;
         }
 
@@ -684,7 +702,7 @@ auto MCGameJoin::TendLan() -> MCEnd
     // The host refused this game at the door, saying why, or the room can't be joined.
     if (const std::string refusal = manager.RefusalReason(); !refusal.empty())
     {
-        Refuse(LacksText(refusal));
+        Refuse(DoorText(refusal, ask.Shown));
         return _End;
     }
 
@@ -719,7 +737,7 @@ auto MCGameJoin::TendInternet() -> MCEnd
 
     if (stage == MCInternetGame::Stage::Failed)
     {
-        RefuseFor(manager.Internet->Refusal());
+        RefuseFor(manager.Internet->Refusal(), manager.Internet->KeptOut());
         return _End;
     }
 
@@ -800,7 +818,7 @@ auto MCGameJoin::FindAndJoin(MCSessionManager& manager, const std::string& unrea
 
     // The host refused this game at the door, saying why, or the room can't be joined.
     const std::string refusal = manager.RefusalReason();
-    Refuse(!refusal.empty() ? LacksText(refusal) : unreachable, refusal.empty() && canRetry);
+    Refuse(!refusal.empty() ? DoorText(refusal, ask.Shown) : unreachable, refusal.empty() && canRetry);
     return _End;
 }
 

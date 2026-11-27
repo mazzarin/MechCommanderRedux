@@ -726,7 +726,7 @@ namespace MCTestGuest
 
             // The admission runs on the listener, which owns the connection once it is open.
             _DirectPlay.SetAdmission(
-                [this](std::string_view, std::span<const uint8_t> data) -> std::optional<std::string>
+                [this](std::string_view, std::span<const uint8_t> data, uint32_t) -> std::optional<std::string>
                 {
                     const std::lock_guard lock(_Mutex);
                     _Cards.push_back(MCJoinCardRules(data));

@@ -301,6 +301,24 @@ std::function<std::shared_ptr<MCCarriedLink>()> MCInternetGame::Carrier() const
     };
 }
 
+std::optional<std::string> MCInternetGame::GuestAt(uint32_t ip) const
+{
+    return _Hosting && _Transport != nullptr ? _Transport->GuestAt(ip) : std::nullopt;
+}
+
+void MCInternetGame::Remove(std::string_view guest)
+{
+    if (_Hosting && _Signaling != nullptr && !guest.empty())
+    {
+        _Signaling->Remove(guest);
+    }
+}
+
+std::optional<std::chrono::seconds> MCInternetGame::KeptOut() const
+{
+    return !_Hosting && _Signaling != nullptr ? _Signaling->KeptOut(_Code) : std::nullopt;
+}
+
 bool MCInternetGame::TakeUnlistedNotice()
 {
     if (!_Hosting || _UnlistedTold || _Signaling == nullptr || !_Signaling->Unlisted())

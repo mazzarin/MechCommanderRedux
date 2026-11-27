@@ -236,6 +236,11 @@ public:
     void StartBoth(bool battle);
     /// <summary>The internet game's match is over (its scenario ended): MCO's session closed, the room waiting again.</summary>
     void BothMatchOver();
+    /// <summary>
+    /// The internet game's room takes the player <paramref name="clientId"/> out (kick_peer: the host's REMOVE, and again
+    /// should they come back while kept out). MCO's refusal is only logged.
+    /// </summary>
+    void Kick(std::string clientId);
     void Start();
     /// <summary>The room's closing said (its OK): <see cref="MCMcoSeen::Left"/> cleared.</summary>
     void ClearLeft();
@@ -349,6 +354,7 @@ private:
     void PlayAsGuest(const MCMcoApi::MCMatch& match);
     void HostMatch(const MCMcoApi::MCMatch& match);
     void DoStartBoth(bool battle);
+    void DoKick(const std::string& clientId);
     /// <summary>The internet game's room off MCO for the battle (MCO won't start it): left quietly, with why.</summary>
     void OffForBattle(std::string_view why);
     void EndMatch(bool played);

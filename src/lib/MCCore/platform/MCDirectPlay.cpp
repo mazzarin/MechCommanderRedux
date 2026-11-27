@@ -131,12 +131,6 @@ namespace
     constexpr uint64_t LanRolloverTryEveryMs = 500;
     /// <summary>Port-only (Redux HD): the bytes of the key a machine proves itself with as it resumes.</summary>
     constexpr size_t MachineKeyBytes = 32;
-    /// <summary>
-    /// Port-only (Redux HD): the addresses of an internet game's links (0.0.0.0/8, platform/MCIceTransport): a machine
-    /// seen at one is reached by the game's own name, where its hub was (<see cref="MCDirectPlay::RolloverIp"/>).
-    /// </summary>
-    constexpr uint32_t LinkAddressMask = 0xff000000u;
-
     using MachineKey = std::array<uint8_t, MachineKeyBytes>;
 
     /// <summary>The connection data EnumConnections hands out and InitializeConnection takes (the port's own layout).</summary>
@@ -497,6 +491,8 @@ namespace
         /// session to come back to (its players' messages held in <see cref="Output"/> meanwhile).
         /// </summary>
         std::optional<uint64_t> ResumeBy;
+        /// <summary>Port-only (Redux HD), host side: the host removed its player: the machine is dropped then.</summary>
+        std::optional<uint64_t> DropBy;
     };
 
     /// <summary>A session that answered a query.</summary>
@@ -1479,7 +1475,7 @@ struct MCDirectPlay::Impl
 
                 if (result == DP_OK && entity.Type == DPPLAYERTYPE_PLAYER && Admit)
                 {
-                    refusal = Admit(entity.ShortName, entity.Data);
+                    refusal = Admit(entity.ShortName, entity.Data, Joiners[index].From.Ip);
                     result = refusal.has_value() ? DPERR_CANTCREATEPLAYER : DP_OK;
                 }
 
@@ -1671,6 +1667,17 @@ struct MCDirectPlay::Impl
                 SDL_Log("MCDirectPlay: machine %u never came back to \"%s\"", Joiners[i].Machine, Session.Name.c_str());
                 DropJoiner(i);
                 continue;
+            }
+
+            // Port-only (Redux HD): a machine whose player the host removed, still here once its time is up: told the
+            // session ends for it, so it never takes the session over, its link closing once that's sent.
+            if (Joiners[i].DropBy.has_value() && NowMs() >= *Joiners[i].DropBy &&
+                Joiners[i].Socket != MCSocket::InvalidHandle)
+            {
+                SDL_Log("MCDirectPlay: machine %u removed from \"%s\"", Joiners[i].Machine, Session.Name.c_str());
+                Joiners[i].DropBy.reset();
+                Queue(Joiners[i], FrameType::Ending, Writer{});
+                Joiners[i].CloseWhenFlushed = true;
             }
 
             if (Joiners[i].Socket == MCSocket::InvalidHandle)
@@ -2884,7 +2891,7 @@ uint32_t MCDirectPlay::RolloverIp(uint32_t sharedIp, uint32_t hubIp)
     // An internet game's machine is reached by the game's name, as its hub was (MCIceTransport); a machine on the hub's
     // own computer (the hub saw it on its loopback: a LAN search finds a host on the same computer there too) at that
     // computer's address, unless this machine is on it too.
-    if ((sharedIp & LinkAddressMask) == 0 || (MCSocket::IsLoopback(sharedIp) && !MCSocket::IsLoopback(hubIp)))
+    if (MCSocket::IsLinkIp(sharedIp) || (MCSocket::IsLoopback(sharedIp) && !MCSocket::IsLoopback(hubIp)))
     {
         return hubIp;
     }
@@ -2924,6 +2931,37 @@ void MCDirectPlay::SetAdmission(Admission admission)
 void MCDirectPlay::SetReserved(uint32_t places)
 {
     _Impl->Reserved = places;
+}
+
+std::optional<uint32_t> MCDirectPlay::PlayerIp(uint32_t playerID) const
+{
+    const Impl& impl = *_Impl;
+    const auto found = impl.Entities.find(playerID);
+
+    if (impl.State != Impl::Mode::Host || found == impl.Entities.end() || found->second.Owner < 0 ||
+        std::cmp_greater_equal(found->second.Owner, impl.Joiners.size()))
+    {
+        return std::nullopt;
+    }
+
+    return impl.Joiners[found->second.Owner].From.Ip;
+}
+
+bool MCDirectPlay::RemovePlayer(uint32_t playerID, std::chrono::milliseconds grace)
+{
+    Impl& impl = *_Impl;
+    const auto found = impl.Entities.find(playerID);
+
+    if (impl.State != Impl::Mode::Host || found == impl.Entities.end() || found->second.Type != DPPLAYERTYPE_PLAYER ||
+        found->second.Owner < 0 || std::cmp_greater_equal(found->second.Owner, impl.Joiners.size()))
+    {
+        return false;
+    }
+
+    Link& joiner = impl.Joiners[found->second.Owner];
+    const uint64_t by = NowMs() + static_cast<uint64_t>(std::max<int64_t>(grace.count(), 0));
+    joiner.DropBy = std::min(joiner.DropBy.value_or(by), by);
+    return true;
 }
 
 uint32_t MCDirectPlay::CreatePlayer(uint32_t& playerID, const DPNAME& name, std::span<const uint8_t> data,

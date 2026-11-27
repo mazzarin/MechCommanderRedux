@@ -21,6 +21,7 @@
 #include "network/MCMcoRooms.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
+#include "network/MCRemove.h"
 #include "platform/MCDirectPlay.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
@@ -98,6 +99,8 @@ namespace
     std::optional<MCEnding> Ending;
     /// <summary>The host said it closed the room (its name), the guest's leave coming.</summary>
     std::optional<std::string> ClosedBy;
+    /// <summary>Port-only (Redux HD): the host said it removed this game's player (its name), the guest's leave coming.</summary>
+    std::optional<std::string> RemovedBy;
     std::optional<MCMatchRoom> MatchRoom;
     std::optional<MCBackToGames> AfterScenario;
     /// <summary>The host's REMATCH, its guests gone: the room is hosted again once the results have closed.</summary>
@@ -188,13 +191,31 @@ namespace
         return mission != nullptr && mission->State == MCMissionState::Results && mission->ResultsUp();
     }
 
-    /// <summary>Tells every player the room ends, <paramref name="how"/>.</summary>
-    void SendRoomEnds(MCMultiPlayer& game, MCRoomEnd::MCHow how)
+    /// <summary>Tells player <paramref name="to"/> (0: every player) the room ends, <paramref name="how"/>.</summary>
+    void SendRoomEnds(MCMultiPlayer& game, MCRoomEnd::MCHow how, uint32_t to = 0)
     {
         MCMPLongMessage message{};
         message.Header = PlainHeader(MCMPMessageType::RoomEnds);
         message.Value = std::to_underlying(how);
-        game.SessionManager->SendPlainMessage(0, LinkupBytes(message));
+        game.SessionManager->SendPlainMessage(to, LinkupBytes(message));
+    }
+
+    /// <summary>
+    /// Port-only (Redux HD): who removed this game's player, if its host did: as its host said, or as an internet game's
+    /// service said (its copy kept out of the game), the host <paramref name="host"/> then.
+    /// </summary>
+    std::optional<std::string> RemovedByHost(const MCMultiPlayer& game, std::string_view host)
+    {
+        if (RemovedBy.has_value())
+        {
+            return RemovedBy;
+        }
+
+        // A joined guest's internet game plays on over its links when the service ends its socket: what the service
+        // said is the socket's.
+        const MCSessionManager& manager = *game.SessionManager;
+        return manager.Internet != nullptr && manager.Internet->KeptOut().has_value() ? std::optional(std::string(host))
+                                                                                      : std::nullopt;
     }
 
     /// <summary>
@@ -450,6 +471,17 @@ auto MCRoomEnd::GuestLine() -> std::string
     // Port-only (SPEC-menus.md's stage 4): over the remade room, in a sentence with the names as typed.
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
 
+    // Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): removed, the host named (its OK ends the game all the same).
+    if (game != nullptr && game->SessionManager != nullptr)
+    {
+        if (const std::optional<std::string> removedBy = RemovedByHost(*game, HostName(*game, false));
+            removedBy.has_value())
+        {
+            const std::string line = MCRemove::RemovedLine(*removedBy);
+            return MCRmlFlow::Showing() ? line : Upper(line);
+        }
+    }
+
     if (MCRmlFlow::Showing())
     {
         return SentenceOf(ClosedBy, game != nullptr && game->SessionManager != nullptr ? HostName(*game, false)
@@ -596,6 +628,14 @@ auto MCRoomEnd::FinishGoodbye(std::chrono::milliseconds internetWait) -> void
     MCSessionManager::FinishGoodbye(internetWait);
 }
 
+void MCRoomEnd::TellRemoved(uint32_t playerId)
+{
+    if (const std::shared_ptr<MCMultiPlayer> game = MultiPlayer(); game != nullptr && game->IsHost && playerId != 0)
+    {
+        SendRoomEnds(*game, MCHow::Removed, playerId);
+    }
+}
+
 auto MCRoomEnd::HostSaid(uint32_t fromId, int32_t how) -> bool
 {
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
@@ -629,6 +669,15 @@ auto MCRoomEnd::HostSaid(uint32_t fromId, int32_t how) -> bool
         return false;
     }
 
+    // Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): the host removed this game's player: it leaves as the host
+    // closing the room would make it.
+    if (how == std::to_underlying(MCHow::Removed))
+    {
+        RemovedBy = HostName(*game, false);
+        SDL_Log("Room end: %s removed this game's player", RemovedBy->c_str());
+        return true;
+    }
+
     if (how != std::to_underlying(MCHow::Closed))
     {
         SDL_Log("Room end: the host's word %d isn't one this game knows", how);
@@ -645,6 +694,11 @@ auto MCRoomEnd::SessionLost() -> bool
 {
     const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
     const std::optional<std::string> closedBy = std::exchange(ClosedBy, std::nullopt);
+    // Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): removed by its host, as it said or the service did.
+    const std::optional<std::string> removedBy = game != nullptr && game->SessionManager != nullptr
+                                                     ? RemovedByHost(*game, HostName(*game, false))
+                                                     : std::nullopt;
+    RemovedBy.reset();
 
     // Only the room's own screens need the logistics (below): a mission has none while it plays and through its results
     // (MCMission drops it as the scenario loads). Asked first, it sent every match's end the original's way, which ended
@@ -688,9 +742,10 @@ auto MCRoomEnd::SessionLost() -> bool
     // When MCO said why the player is out of its room (taken out, the room closed), INTERNET says that instead.
     const bool mcoMatch = games == MCGames::Mco && (game->PrepareScenarioReceived || game->InMission);
     const bool mcoSaid = games == MCGames::Mco && MCMcoRooms::Available() && !MCMcoRooms::Now().Seen().Left.empty();
-    std::string line = mcoSaid    ? std::string()
-                       : mcoMatch ? std::format(MCMcoRooms::MatchEndedFormat, HostName(*game, false))
-                                  : SentenceOf(closedBy, HostName(*game, false));
+    std::string line = removedBy.has_value() ? MCRemove::RemovedLine(*removedBy)
+                       : mcoSaid             ? std::string()
+                       : mcoMatch            ? std::format(MCMcoRooms::MatchEndedFormat, HostName(*game, false))
+                                             : SentenceOf(closedBy, HostName(*game, false));
     SDL_Log("Room end: the room ended under this game (%s)", line.c_str());
 
     // A match: back to the games once its scenario has ended (MCRoomEnd::AfterMatch).

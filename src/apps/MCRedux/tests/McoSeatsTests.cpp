@@ -133,6 +133,24 @@ TEST_CASE("mco seats: our list counts MCO's waiting players in the host's room, 
     CHECK((MCMcoSeats::RoomPlayers({"ANN", "BOB"}, {}, 6) == full));
 }
 
+TEST_CASE("mco seats: a removed player's seat is kicked by its MCO id, or by name when its seat wasn't known")
+{
+    const std::vector<MCMcoApi::MCRoomPlayer> seats{
+        {.ClientId = "a", .Username = "ANN", .Ready = true, .Host = true},
+        {.ClientId = "b", .Username = "BOB", .Ready = true},
+        {.ClientId = "c", .Username = "CLANNER", .Ready = false},
+    };
+
+    using MCMcoSeats::MCKeptOut;
+    const std::vector<std::string> bob{"b"};
+    CHECK((MCMcoSeats::KeptOutSeats(seats, {MCKeptOut{.ClientId = "b", .Name = "ROBERT"}}) == bob));
+    const std::vector<std::string> clanner{"c"};
+    CHECK((MCMcoSeats::KeptOutSeats(seats, {MCKeptOut{.Name = "CLANNER"}}) == clanner));
+    // The host is never taken out of its own room.
+    CHECK(MCMcoSeats::KeptOutSeats(seats, {MCKeptOut{.ClientId = "a", .Name = "ANN"}}).empty());
+    CHECK(MCMcoSeats::KeptOutSeats(seats, {}).empty());
+}
+
 TEST_CASE("mco seats: who waits in the host's MCO room reaches its guests whole, six at most")
 {
     using MCMcoSeats::MCWaiting;

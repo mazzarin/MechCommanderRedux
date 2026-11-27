@@ -1150,6 +1150,26 @@ void MCMcoRooms::DoDescribe(const std::string& description, int32_t maxPlayers)
         });
 }
 
+void MCMcoRooms::Kick(std::string clientId)
+{
+    Post([this, clientId = std::move(clientId)] { DoKick(clientId); });
+}
+
+void MCMcoRooms::DoKick(const std::string& clientId)
+{
+    if (!_Seat || !_Seat->Host || !_Both)
+    {
+        SDL_Log("MechCommander Online: removing %s: this game doesn't host the internet game's room", clientId.c_str());
+        return;
+    }
+
+    if (const auto kicked = _Service->KickPeer(_Peer, clientId); !kicked)
+    {
+        SDL_Log("MechCommander Online: removing %s from the internet game's room: %s", clientId.c_str(),
+                MCMcoApi::Describe(kicked.error()).c_str());
+    }
+}
+
 void MCMcoRooms::Sit(std::string roomId, std::string name, int32_t maxPlayers, std::string password)
 {
     Post([this, roomId = std::move(roomId), name = std::move(name), maxPlayers,

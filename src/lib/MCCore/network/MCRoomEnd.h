@@ -48,6 +48,11 @@ namespace MCRoomEnd
         Closed = 0,
         /// <summary>The host hosts its room again for a rematch (REMATCH at the results): its guests join it again.</summary>
         Rematch = 1,
+        /// <summary>
+        /// Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): to one guest, the host removed its player: it leaves,
+        /// saying who removed it. An earlier build ignores it, and its link closes a moment later.
+        /// </summary>
+        Removed = 2,
     };
 
     /// <summary>
@@ -96,6 +101,9 @@ namespace MCRoomEnd
     /// press on its room, though it's shown again (a guest's join).
     /// </summary>
     bool WaitsForGuests();
+
+    /// <summary>The host tells player <paramref name="playerId"/> it removed it (MCHow::Removed).</summary>
+    void TellRemoved(uint32_t playerId);
 
     /// <summary>
     /// The host's MCMPMessageType::RoomEnds from player <paramref name="fromId"/>, saying <paramref name="how"/>.

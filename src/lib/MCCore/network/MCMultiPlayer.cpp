@@ -6,6 +6,7 @@
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMechHandover.h"
 #include "network/MCMultiPlayerHandlers.h"
+#include "network/MCRemove.h"
 #include "gui/MCUpdateDisplay.h"
 #include "gui/MCGuiGlobals.h"
 #include "lib/MCFatal.h"
@@ -158,8 +159,15 @@ int32_t MCMultiPlayer::Start()
     SessionManager->SystemCallback = MultiPlayerSystemCallback;
     // Port: this game's rules go with its player as it joins, and as host it checks a joiner's at the door.
     SessionManager->PlayerData = MCJoinCard(MCMatchRule::Supported);
-    SessionManager->Admission = [](std::string_view name, std::span<const uint8_t> data) -> std::optional<std::string>
+    SessionManager->Admission = [](std::string_view name, std::span<const uint8_t> data,
+                                   uint32_t ip) -> std::optional<std::string>
     {
+        // Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): a removed player's computer kept out a while.
+        if (std::optional<std::string> keptOut = MCRemove::AtDoor(ip); keptOut.has_value())
+        {
+            return keptOut;
+        }
+
         const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
         return game != nullptr ? game->AdmitJoiner(name, data) : std::nullopt;
     };

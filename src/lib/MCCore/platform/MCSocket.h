@@ -43,6 +43,16 @@ namespace MCSocket
         return (ip & LoopbackMask) == (LoopbackIp & LoopbackMask);
     }
 
+    /// <summary>
+    /// Port-only (Redux HD): whether <paramref name="ip"/> (host order) is one of an internet game's links' own addresses
+    /// (0.0.0.0/8, platform/MCIceTransport), at which no computer is ever reached.
+    /// </summary>
+    constexpr bool IsLinkIp(uint32_t ip)
+    {
+        constexpr uint32_t linkMask = 0xff000000u;
+        return (ip & linkMask) == 0;
+    }
+
     /// <summary>Starts the socket library (once per process; later calls do nothing).</summary>
     /// <returns>Whether sockets are usable.</returns>
     bool Startup();

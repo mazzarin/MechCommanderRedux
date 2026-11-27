@@ -249,6 +249,12 @@ public:
     /// this game doesn't host, or when it has as many guests' links as it takes.
     /// </summary>
     std::shared_ptr<MCCarriedLink> Carry();
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"), a host: whose game its guest link at <paramref name="ip"/>
+    /// (a joiner's address in the game's network) carries: the guest as the service names it, empty for a carried link
+    /// (an MCO player's: <see cref="Carry"/>); none when no guest link is there.
+    /// </summary>
+    std::optional<std::string> GuestAt(uint32_t ip);
 
     bool Startup() override;
     /// <summary>The address of the game named <paramref name="host"/> on the service (the same each time).</summary>

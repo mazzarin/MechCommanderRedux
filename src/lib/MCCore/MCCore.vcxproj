@@ -294,6 +294,7 @@
     <ClCompile Include="network\MCMultiPlayerHandlers.cpp" />
     <ClCompile Include="network\MCMultiPlayerSend.cpp" />
     <ClCompile Include="network\MCRejoinNote.cpp" />
+    <ClCompile Include="network\MCRemove.cpp" />
     <ClCompile Include="network\MCRoomEnd.cpp" />
     <ClCompile Include="network\MCWorldStateChunk.cpp" />
     <ClCompile Include="object\MCAIControl.cpp" />
@@ -812,6 +813,7 @@
     <ClInclude Include="network\MCMultiPlayerHandlers.h" />
     <ClInclude Include="network\MCMultiPlayerMessages.h" />
     <ClInclude Include="network\MCRejoinNote.h" />
+    <ClInclude Include="network\MCRemove.h" />
     <ClInclude Include="network\MCRoomEnd.h" />
     <ClInclude Include="network\MCWorldStateChunk.h" />
     <ClInclude Include="object\MCAIControl.h" />

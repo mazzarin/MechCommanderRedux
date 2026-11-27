@@ -461,6 +461,13 @@ std::shared_ptr<MCCarriedLink> MCIceTransport::Carry()
     return carrier;
 }
 
+std::optional<std::string> MCIceTransport::GuestAt(uint32_t ip)
+{
+    const std::scoped_lock lock(_Lock);
+    const std::optional<uint32_t> id = LinkAt(ip);
+    return id.has_value() ? std::optional(_Links.at(*id).Peer) : std::nullopt;
+}
+
 bool MCIceTransport::Startup()
 {
     return true;

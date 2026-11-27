@@ -70,6 +70,11 @@ enum class MCServiceRefusal
     Update,
     /// <summary>The joiner's network already holds too many relay credentials in live games.</summary>
     Crowded,
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): the game's host removed this copy of the game, which is
+    /// kept out of it a while (MCServiceSignaling::KeptOut).
+    /// </summary>
+    Removed,
     /// <summary>Anything else the service refused.</summary>
     Refused,
     /// <summary>The service couldn't be reached, or a dropped socket couldn't come back while its place waited.</summary>
@@ -198,6 +203,12 @@ public:
     /// already private.
     /// </summary>
     void Unlist();
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "REMOVE"): the hosted game's host removes its guest
+    /// <paramref name="guest"/> (as the service names it: MCIceTransport's guest links): the service frees its places and
+    /// keeps its copy out of the game a while. Nothing goes while the host's socket isn't in.
+    /// </summary>
+    void Remove(std::string_view guest);
     /// <summary>Whether the service won't list the room by its name (the host picks another).</summary>
     bool NameRefused();
     /// <summary>
@@ -211,6 +222,11 @@ public:
     void Join(std::string_view game);
     /// <summary>Why the service ended the host's socket or <paramref name="game"/>'s, if it did.</summary>
     std::optional<MCServiceRefusal> Refusal(std::string_view game = {});
+    /// <summary>
+    /// Port-only (Redux HD): how long this copy is still kept out of <paramref name="game"/>, as the service said when it
+    /// refused it as Removed (its host removed it then, or before); none for any other refusal.
+    /// </summary>
+    std::optional<std::chrono::seconds> KeptOut(std::string_view game);
     /// <summary>
     /// Whether the service said <paramref name="game"/>'s host is away since this game's socket joined it. The service
     /// never says when the host is back, so a join still under way can't finish: it tries again.
@@ -293,6 +309,9 @@ private:
         bool Public = true;
         /// <summary>Why the service ended it: no coming back.</summary>
         std::optional<MCServiceRefusal> Refusal;
+        /// <summary>Port-only (Redux HD): with Refusal Removed, how long the copy is kept out (from KeptOutAt).</summary>
+        std::optional<std::chrono::seconds> KeptOut;
+        Clock::time_point KeptOutAt;
         /// <summary>
         /// A guest's: the service said its game's host is away (and never says when it's back, but for a new host).
         /// </summary>

@@ -805,6 +805,16 @@ TEST_CASE_ISOLATED("game: INTERNET hosts a game into its room, its EXIT comes ba
     CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
     PressDialogOk();
     CHECK(DialogText().empty());
+
+    // Port-only (SPEC-mco-hosting.md's "REMOVE"): the game's host removed this copy a while ago: when to try again.
+    service.RefuseJoinsWith = "removed";
+    service.RefusalSeconds = 421;
+    screen.PressJoin();
+    constexpr std::string_view KeptOut = "You were removed from the game M3VD. Try again in 8 minutes.";
+    CHECK(SettleUntil([&] { return DialogText() == KeptOut; }));
+    CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
+    PressDialogOk();
+    CHECK(DialogText().empty());
 }
 
 /// <summary>

@@ -89,7 +89,7 @@ namespace
     constexpr std::string_view HostInType = "hostin";
 
     /// <summary>What the service's refusals and endings are called in its messages.</summary>
-    constexpr std::array<std::pair<std::string_view, MCServiceRefusal>, 11> Refusals{{
+    constexpr std::array<std::pair<std::string_view, MCServiceRefusal>, 12> Refusals{{
         {"nogame", MCServiceRefusal::NoGame},
         {"hostaway", MCServiceRefusal::HostAway},
         {"battle", MCServiceRefusal::InBattle},
@@ -101,6 +101,7 @@ namespace
         {"update", MCServiceRefusal::Update},
         {"refused", MCServiceRefusal::Refused},
         {"crowded", MCServiceRefusal::Crowded},
+        {"removed", MCServiceRefusal::Removed},
     }};
     /// <summary>The service's notices to a host: its room's name isn't listed, its public room isn't listed at all.</summary>
     constexpr std::string_view NameNotice = "name";
@@ -472,6 +473,22 @@ void MCServiceSignaling::Unlist()
     SendRoom();
 }
 
+void MCServiceSignaling::Remove(std::string_view guest)
+{
+    const std::scoped_lock lock(_Lock);
+
+    if (!_Host.has_value() || !_Host->In)
+    {
+        SDL_Log("MCServiceSignaling: the host's removal of %.*s not sent: its socket isn't in",
+                static_cast<int>(guest.size()), guest.data());
+        return;
+    }
+
+    SDL_Log("MCServiceSignaling: game \"%s\" removes its guest %.*s", _Host->Code.c_str(),
+            static_cast<int>(guest.size()), guest.data());
+    _Host->Ws->SendText(Dumped(Json{{"t", "remove"}, {"guest", guest}}));
+}
+
 bool MCServiceSignaling::NameRefused()
 {
     const std::scoped_lock lock(_Lock);
@@ -575,6 +592,21 @@ std::optional<MCServiceRefusal> MCServiceSignaling::Refusal(std::string_view gam
 
     const auto found = _Games.find(game);
     return found != _Games.end() ? found->second.Refusal : std::nullopt;
+}
+
+std::optional<std::chrono::seconds> MCServiceSignaling::KeptOut(std::string_view game)
+{
+    const std::scoped_lock lock(_Lock);
+    const auto found = _Games.find(game);
+
+    if (found == _Games.end() || !found->second.KeptOut.has_value())
+    {
+        return std::nullopt;
+    }
+
+    // Whole seconds left, rounded up: a second's part is still a wait.
+    const Clock::duration left = *found->second.KeptOut - (Clock::now() - found->second.KeptOutAt);
+    return std::max(std::chrono::ceil<std::chrono::seconds>(left), std::chrono::seconds::zero());
 }
 
 bool MCServiceSignaling::HostAway(std::string_view game)
@@ -1199,6 +1231,13 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
         SDL_Log("MCServiceSignaling: game \"%.*s\": the service said %s", static_cast<int>(game.size()), game.data(),
                 type->c_str());
         socket.Refusal = refusal;
+
+        // Port-only (Redux HD): removed by its host, kept out for the seconds the service says.
+        if (refusal == MCServiceRefusal::Removed)
+        {
+            socket.KeptOut = std::chrono::seconds(Uint32Field(parsed, "seconds").value_or(0));
+            socket.KeptOutAt = Clock::now();
+        }
 
         if (!socket.Told)
         {

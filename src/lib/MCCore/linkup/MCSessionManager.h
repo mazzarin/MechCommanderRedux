@@ -438,10 +438,11 @@ public:
     /// </summary>
     std::vector<uint8_t> PlayerData;
     /// <summary>
-    /// Port: the game's say, as host, on each player joining (an MCDirectPlay::Admission), set on the stand-in as a
-    /// session is hosted; none: every player comes in.
+    /// Port: the game's say, as host, on each player joining (an MCDirectPlay::Admission: its name, data and its
+    /// machine's IPv4 address), set on the stand-in as a session is hosted; none: every player comes in.
     /// </summary>
-    std::function<std::optional<std::string>(std::string_view name, std::span<const uint8_t> data)> Admission;
+    std::function<std::optional<std::string>(std::string_view name, std::span<const uint8_t> data, uint32_t ip)>
+        Admission;
     /// <summary>Whether this machine's player has a player number (set at once on the host).</summary>
     bool HasPlayerNumber = false;
     /// <summary>Guards the player list and the outgoing queues.</summary>

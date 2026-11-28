@@ -133,7 +133,7 @@ TEST_CASE("mco rooms: a wrong password, MCO unreachable and the three-account li
     CHECK_EQ(rooms.Seen().Account, MCMcoAccount::SignedOut);
 
     mco.CanCreate = false;
-    rooms.CreateAccount("RAHMAN", "new@example.com", "a password");
+    rooms.CreateAccount("MAVERICK", "new@example.com", "a password");
     REQUIRE(Within(HeardMs, [&] { return rooms.Seen().Refusal == MCMcoRooms::ThreeAccountsText; }));
     CHECK_EQ(mco.Asked("create"), size_t{0});
 
@@ -546,15 +546,19 @@ namespace
     }
 }
 
-TEST_CASE("mco rooms: an internet game hosted on both is a room there, locked with its code and described with its "
-          "mission, with nothing of it on the screens")
+TEST_CASE("mco rooms: an internet game hosted on both is a room there, locked with its code, hosted under the name "
+          "typed on INTERNET and described with its mission, with nothing of it on the screens")
 {
     MCService mco;
-    MCMcoRooms host(TestSetup(mco, std::make_shared<MCMemoryKeys>()));
+    const auto keys = std::make_shared<MCMemoryKeys>();
+    MCMcoRooms host(TestSetup(mco, keys));
+    // The lobby opened with the computer's name (INTERNET's first), the game hosted under the one typed after.
     host.OpenLobby("ANN");
     REQUIRE(Within(HeardMs, [&] { return host.Seen().Listed; }));
 
-    host.HostBoth(SteelRain());
+    MCMcoBoth both = SteelRain();
+    both.GuestName = "FALCON";
+    host.HostBoth(std::move(both));
     REQUIRE(Within(HeardMs, [&] { return host.Seen().Room.has_value() && !OnlyRoom(mco).empty(); }));
     const MCMcoSeen hosting = host.Seen();
     CHECK(hosting.Room->Both);
@@ -566,6 +570,10 @@ TEST_CASE("mco rooms: an internet game hosted on both is a room there, locked wi
     CHECK_EQ(asked["is_host"], std::string("1"));
     CHECK_EQ(asked["password"], std::string("K7QF"));
     CHECK_EQ(asked["room"], std::string("Steel Rain"));
+    CHECK_EQ(asked["username"], std::string("FALCON"));
+    CHECK_EQ(host.Seen().Username, std::string("FALCON"));
+    REQUIRE(keys->Load().has_value());
+    CHECK_EQ(keys->Load()->Username, std::string("FALCON"));
     const std::string roomId = OnlyRoom(mco);
     REQUIRE(Within(HeardMs, [&] { return host.Seen().Room->RoomId == roomId; }));
 

@@ -164,9 +164,11 @@ namespace
         Host.Name = MCServiceGameName(session.Name);
         Host.Password = internet.Public() ? std::string() : internet.Code();
         Host.Most = MCMcoApi::MatchCapacity(static_cast<int32_t>(session.SessionDesc.dwMaxPlayers));
+        const std::shared_ptr<MCFidpPlayer> me = manager.GetPlayer(manager.MyPlayerID);
         MCMcoBoth both{.Name = Host.Name,
                        .MaxPlayers = Host.Most,
                        .Password = Host.Password,
+                       .GuestName = me != nullptr ? me->Name : std::string(),
                        .GamePort = port,
                        .Carry = internet.Carrier()};
 

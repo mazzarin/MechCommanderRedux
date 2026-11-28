@@ -1080,6 +1080,12 @@ void MCMcoRooms::DoHostBoth(MCMcoBoth both)
         return;
     }
 
+    // The room shows its host by the name typed on INTERNET, not the one the lobby opened with.
+    if (!both.GuestName.empty())
+    {
+        Rename(both.GuestName);
+    }
+
     const int32_t players = MCMcoApi::MatchCapacity(both.MaxPlayers);
     auto seat = _Service->HostRoom(_Peer, both.Name, players, both.Password, _Stock, _Content);
     Wipe(both.Password);

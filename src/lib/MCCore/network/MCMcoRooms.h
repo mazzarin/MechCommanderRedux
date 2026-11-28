@@ -65,6 +65,11 @@ struct MCMcoBoth
     int32_t MaxPlayers = 0;
     /// <summary>A private game's code, the room's password; none for a public game.</summary>
     std::string Password;
+    /// <summary>
+    /// The host's player name: a guest's profile takes it before the room is hosted, as JOIN GAME's does (none: the
+    /// name INTERNET opened with stays).
+    /// </summary>
+    std::string GuestName;
     /// <summary>The internet session's port in the game's own network, and the links MCO's guests come in on there.</summary>
     uint16_t GamePort = 0;
     MCMcoBridge::MCCarry Carry;

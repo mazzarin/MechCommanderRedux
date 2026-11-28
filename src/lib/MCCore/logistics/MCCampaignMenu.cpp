@@ -378,6 +378,7 @@ void MCCampaignScreen::OnLoaded(Rml::ElementDocument& document)
     OnClick("repair-all", [this] { _Logistics->RepairAll(); });
     OnClick("refit-all", [this] { _Logistics->RefitAll(); });
     OnClick("repair-force", [this] { _Logistics->RepairForce(); });
+    OnClick("refit-force", [this] { _Logistics->RefitForce(); });
     OnClick("into-force", [this] { _Logistics->IntoTheForce(); });
 
     // A match's chat: each place's line sent on Enter, its switch followed by the others.
@@ -1908,9 +1909,18 @@ namespace
     /// </summary>
     MCCampaignScreen& SetUpToShow()
     {
-        const MCCampaignScreen::MCTab tab = ComingBack ? LeftOn : MCCampaignScreen::MCTab::Briefing;
+        const bool comingBack = ComingBack;
+        const MCCampaignScreen::MCTab tab = comingBack ? LeftOn : MCCampaignScreen::MCTab::Briefing;
         ComingBack = false;
         MCCampaignScreen& made = MCRmlFlow::Needed(TheScreen(), BriefingName);
+
+        // A mission's briefing afresh: PURCHASING's and the 'MECH BAY's INVENTORY at MECHS (the user's, 27 Nov: "Every
+        // mission, it should start at mechs"); back from a save, as it was.
+        if (!comingBack)
+        {
+            made.Logistics().StartAtMechs();
+        }
+
         made.SetUp(tab);
         return made;
     }

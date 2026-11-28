@@ -167,6 +167,24 @@ namespace
     constexpr std::string_view RepairAllWord = "Repair all";
     constexpr std::string_view RepairForceFormat = "Repair force · {} RP";
     constexpr std::string_view RepairForceLabel = "Repair force";
+    constexpr std::string_view RefitAllFormat = "Refit all · {} RP";
+    constexpr std::string_view RefitAllLabel = "Refit all";
+    constexpr std::string_view RefitForceFormat = "Refit force · {} RP";
+    constexpr std::string_view RefitForceLabel = "Refit force";
+    /// <summary>The refit window's title (REFIT ALL's names its 'Mech), its price line and the head of what comes off.</summary>
+    constexpr std::string_view RefitMechHeadingFormat = "Refit {}";
+    constexpr std::string_view RefitForceHeading = "Refit the force";
+    constexpr std::string_view RefitBuyFormat = "Buy {} for {} RP.";
+    constexpr std::string_view RefitDropsHead = "Not in the store, so these come off:";
+    constexpr std::string_view RefitDropFormat = "{}: {}";
+    /// <summary>Short of the price: what the store's parts would have cost, over 1998's question.</summary>
+    constexpr std::string_view RefitShortFormat = "Not enough RP for the store's parts ({} RP).";
+    constexpr std::string_view RefitWord = "Refit";
+    constexpr std::string_view CancelWord = "Cancel";
+    constexpr std::string_view OkWord = "OK";
+    /// <summary>A part named more than once in a list: how many, after it ("SR Missile Pack ×2").</summary>
+    constexpr std::string_view TimesFormat = "{} ×{}";
+    constexpr std::string_view ListSeparator = ", ";
     constexpr std::string_view OfFormat = "{} of {}";
     constexpr std::string_view PayloadOfFormat = "of {:.1f} tons";
     constexpr std::string_view TonsFormat = "{:.1f} tons";
@@ -181,6 +199,133 @@ namespace
     std::string CountText(size_t count, std::string_view one, std::string_view many)
     {
         return std::format(CountFormat, count, count == 1 ? one : many);
+    }
+
+    /// <summary>A button's label with what it costs ("Repair all · 1,200 RP"), or its word alone when it costs nothing.</summary>
+    std::string Priced(std::string_view format, std::string_view label, int32_t cost)
+    {
+        if (cost <= 0)
+        {
+            return std::string(label);
+        }
+
+        const std::string points = MCGroupedPoints(cost);
+        return std::vformat(format, std::make_format_args(points));
+    }
+
+    /// <summary><paramref name="lines"/> joined by <paramref name="between"/>.</summary>
+    std::string Joined(const std::vector<std::string>& lines, std::string_view between)
+    {
+        std::string text;
+
+        for (const std::string& line : lines)
+        {
+            text += text.empty() ? line : std::format("{}{}", between, line);
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// Part names in their order, each once, how many after one named more than once ("SR Missile Pack ×2"), joined by
+    /// <paramref name="between"/>.
+    /// </summary>
+    std::string Counted(const std::vector<std::string>& names, std::string_view between)
+    {
+        std::vector<std::pair<std::string, int32_t>> counted;
+
+        for (const std::string& name : names)
+        {
+            const auto seen = std::ranges::find(counted, name, &std::pair<std::string, int32_t>::first);
+
+            if (seen != counted.end())
+            {
+                ++seen->second;
+                continue;
+            }
+
+            counted.emplace_back(name, 1);
+        }
+
+        std::vector<std::string> lines;
+
+        for (const auto& [name, count] : counted)
+        {
+            lines.push_back(count > 1 ? std::format(TimesFormat, name, count) : name);
+        }
+
+        return Joined(lines, between);
+    }
+
+    /// <summary>The force 'Mechs (the player's own) with a weapon, piece of equipment or jammer damaged, in its order.</summary>
+    std::vector<std::shared_ptr<MCLogMech>> ForceToRefit()
+    {
+        std::vector<std::shared_ptr<MCLogMech>> damaged;
+
+        for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
+        {
+            if (mech->LocalPart != 0 && MCMechBay::ItemsDamaged(*mech))
+            {
+                damaged.push_back(mech);
+            }
+        }
+
+        return damaged;
+    }
+
+    /// <summary>The 'Mechs a refit window asks about, held weakly while it stands, and those still about when it is answered.</summary>
+    std::vector<std::weak_ptr<MCLogMech>> Held(const std::vector<std::shared_ptr<MCLogMech>>& mechs)
+    {
+        return {mechs.begin(), mechs.end()};
+    }
+
+    std::vector<std::shared_ptr<MCLogMech>> StillHeld(const std::vector<std::weak_ptr<MCLogMech>>& held)
+    {
+        std::vector<std::shared_ptr<MCLogMech>> mechs;
+
+        for (const std::weak_ptr<MCLogMech>& weak : held)
+        {
+            if (std::shared_ptr<MCLogMech> mech = weak.lock(); mech != nullptr)
+            {
+                mechs.push_back(std::move(mech));
+            }
+        }
+
+        return mechs;
+    }
+
+    /// <summary>
+    /// Each of <paramref name="mechs"/> out of the drop and refitted from the spares (MCMechBay::Refit, 1998's REFIT
+    /// ALL); with <paramref name="strip"/>, what is still damaged then comes off (1998's question's OK).
+    /// </summary>
+    /// <returns>Each 'Mech's parts that had no spare, by name, in its order.</returns>
+    std::vector<std::vector<std::string>> RefitEach(const std::vector<std::shared_ptr<MCLogMech>>& mechs, bool strip)
+    {
+        constexpr char NameSeparator = ',';
+        std::vector<std::vector<std::string>> missing;
+
+        for (const std::shared_ptr<MCLogMech>& mech : mechs)
+        {
+            MCMechBay::OutOfDrop(*mech);
+            std::vector<std::shared_ptr<MCLogInventoryItem>> used;
+            const std::string names = MCMechBay::Refit(*mech, used);
+            std::vector<std::string>& parts = missing.emplace_back();
+
+            for (size_t start = 0; start < names.size();)
+            {
+                const size_t end = std::min(names.find(NameSeparator, start), names.size());
+                parts.push_back(names.substr(start, end - start));
+                start = end + 1;
+            }
+
+            if (strip)
+            {
+                MCMechBay::StripUnrepaired(*mech);
+            }
+        }
+
+        GlobalLog()->ReIndexInventory();
+        return missing;
     }
 
     double RmlNow()
@@ -609,6 +754,9 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
     model.Value("repairAllWord", _RepairAllWord);
     model.Value("canRepairAll", _CanRepairAll);
     model.Value("canRefit", _CanRefit);
+    model.Value("refitAllWord", _RefitAllWord);
+    model.Value("refitForceWord", _RefitForceWord);
+    model.Value("canRefitForce", _CanRefitForce);
     model.Value("forceRepairs", _ForceRepairs);
     model.Value("repairForceWord", _RepairForceWord);
     model.Value("canRepairForce", _CanRepairForce);
@@ -687,8 +835,7 @@ uint64_t MCLogisticsTabs::Fingerprint() const
         return 0;
     }
 
-    uint64_t hash =
-        Mixed(static_cast<uint64_t>(ResourcePoints), static_cast<uint64_t>(_Kind * 4 + static_cast<int>(_BayStock)));
+    uint64_t hash = Mixed(static_cast<uint64_t>(ResourcePoints), static_cast<uint64_t>(_Kind));
     const auto units = [&hash](const auto& list)
     {
         hash = Mixed(hash, list.size());
@@ -712,6 +859,9 @@ uint64_t MCLogisticsTabs::Fingerprint() const
     for (const std::shared_ptr<MCLogMech>& mech : logistics->ForceMechList->Mechs)
     {
         hash = Mixed(hash, static_cast<uint64_t>(mech->PilotIndex + 1));
+        // A refit window's answer (REFIT FORCE's reaches past the lab's 'Mech): its parts and the drop.
+        hash = Mixed(hash, static_cast<uint64_t>(MCMechBay::ItemsDamaged(*mech)) * 2 +
+                               static_cast<uint64_t>(mech->Deployed != 0));
     }
 
     for (const auto& list : {&logistics->WarriorList->Warriors, &logistics->AssignedWarriorList->Warriors})
@@ -922,11 +1072,6 @@ void MCLogisticsTabs::FillUnits()
 
 MCLogisticsTabs::MCStock MCLogisticsTabs::Shelf() const
 {
-    if (!Purchasing())
-    {
-        return _BayStock;
-    }
-
     switch (Kind())
     {
         case MCKind::MechWarriors:
@@ -1347,6 +1492,7 @@ void MCLogisticsTabs::FillLab()
     _LabPicture = MCCampaignScreen::NoPicture;
     _LabStored = false;
     _Repairs = false;
+    _RefitAllWord = std::string(RefitAllLabel);
     _HasPilot = false;
     _Seat = false;
     _Fits.clear();
@@ -1413,7 +1559,7 @@ void MCLogisticsTabs::FillLab()
     const int32_t allCost = MCMechBay::RestCost(mech, MCMechBay::MCKnob::Armor) +
                             MCMechBay::RestCost(mech, MCMechBay::MCKnob::Internal) +
                             MCMechBay::RestCost(mech, MCMechBay::MCKnob::Engine);
-    _RepairAllWord = allCost > 0 ? std::format(RepairAllFormat, MCGroupedPoints(allCost)) : std::string(RepairAllWord);
+    _RepairAllWord = Priced(RepairAllFormat, RepairAllWord, allCost);
     _CanRepairAll = MCMechBay::StructureDamaged(mech);
 
     // The MechWarrior aboard.
@@ -1469,6 +1615,12 @@ void MCLogisticsTabs::FillLab()
     }
 
     _CanRefit = MCMechBay::ItemsDamaged(mech);
+
+    // What the store's parts for REFIT ALL cost (the user's, 27 Nov), as REPAIR ALL's label says its price.
+    if (_Repairs && _CanRefit)
+    {
+        _RefitAllWord = Priced(RefitAllFormat, RefitAllLabel, MCMechBay::PlanRefit({worked}).Cost);
+    }
 }
 
 void MCLogisticsTabs::FillDeal()
@@ -1890,6 +2042,14 @@ bool MCLogisticsTabs::Back()
 
 // The moves
 
+void MCLogisticsTabs::StartAtMechs()
+{
+    _Kind = static_cast<int>(MCKind::Mechs);
+    _Picked.reset();
+    _Hovered.reset();
+    _Fingerprint = 0;
+}
+
 void MCLogisticsTabs::ChooseKind(MCKind kind)
 {
     _Kind = static_cast<int>(kind);
@@ -1901,22 +2061,25 @@ void MCLogisticsTabs::ChooseKind(MCKind kind)
 
 void MCLogisticsTabs::ChooseStock(MCStock stock)
 {
-    // PURCHASING's INVENTORY follows the store's kind (one switch, over the INVENTORY: the user's, 26 Nov); its
-    // stock chooses that kind.
-    if (Purchasing())
+    if (stock == Shelf())
     {
-        if (stock != Shelf())
-        {
-            ChooseKind(stock == MCStock::MechWarriors ? MCKind::MechWarriors
-                       : stock == MCStock::Components ? MCKind::Components
-                       : stock == MCStock::Vehicles   ? MCKind::Vehicles
-                                                      : MCKind::Mechs);
-        }
-
         return;
     }
 
-    _BayStock = stock;
+    // One choice on both tabs, the store's kind (the user's, 27 Nov). PURCHASING's switch changes what the store
+    // shows, so nothing stays picked there; the 'MECH BAY's leaves the lab and the details as they are.
+    const MCKind kind = stock == MCStock::MechWarriors ? MCKind::MechWarriors
+                        : stock == MCStock::Components ? MCKind::Components
+                        : stock == MCStock::Vehicles   ? MCKind::Vehicles
+                                                       : MCKind::Mechs;
+
+    if (Purchasing())
+    {
+        ChooseKind(kind);
+        return;
+    }
+
+    _Kind = static_cast<int>(kind);
     _Fingerprint = 0;
     Fill();
 }
@@ -2443,7 +2606,9 @@ void MCLogisticsTabs::FillForceRepair()
 {
     _ForceRepairs = !Purchasing() && MultiPlayer() == nullptr;
     _CanRepairForce = false;
+    _CanRefitForce = false;
     int32_t cost = 0;
+    int32_t refitCost = 0;
 
     // What each force 'Mech's REPAIR ALL would cost, as its label says.
     if (_ForceRepairs)
@@ -2458,9 +2623,15 @@ void MCLogisticsTabs::FillForceRepair()
                         MCMechBay::RestCost(*mech, MCMechBay::MCKnob::Engine);
             }
         }
+
+        // And what REFIT FORCE's parts from the store would cost.
+        const std::vector<std::shared_ptr<MCLogMech>> refitted = ForceToRefit();
+        _CanRefitForce = !refitted.empty();
+        refitCost = _CanRefitForce ? MCMechBay::PlanRefit(refitted).Cost : 0;
     }
 
-    _RepairForceWord = cost > 0 ? std::format(RepairForceFormat, MCGroupedPoints(cost)) : std::string(RepairForceLabel);
+    _RepairForceWord = Priced(RepairForceFormat, RepairForceLabel, cost);
+    _RefitForceWord = Priced(RefitForceFormat, RefitForceLabel, refitCost);
 }
 
 void MCLogisticsTabs::RepairForce()
@@ -2507,35 +2678,148 @@ void MCLogisticsTabs::RefitAll()
         return;
     }
 
-    MCMechBay::OutOfDrop(*mech);
-    PlayLogSound(PickedSound);
-    std::vector<std::shared_ptr<MCLogInventoryItem>> used;
-    const std::string missing = MCMechBay::Refit(*mech, used);
-    GlobalLog()->ReIndexInventory();
+    Refit({mech}, std::format(RefitMechHeadingFormat, MechName(*mech)), false);
+}
 
-    if (!missing.empty())
+void MCLogisticsTabs::RefitForce()
+{
+    if (!_ForceRepairs || !_CanRefitForce)
     {
-        // 1998's refit dialog: whether to strip the damaged parts that have no spare.
-        std::string names = missing;
-        std::ranges::replace(names, ',', '\n');
-        const std::weak_ptr<MCLogMech> weak = mech;
-        MCRmlDialogs::Show(MCRmlDialog::MCSay{
-            .Text = std::format("{}\n{}\n{}", GameWord(RefitHeadString), names, GameWord(RefitFootString)),
-            .Main = "OK",
-            .Other = "Cancel",
-            .OnMain = [weak]
-            {
-                if (const std::shared_ptr<MCLogMech> stripped = weak.lock(); stripped != nullptr)
-                {
-                    MCMechBay::StripUnrepaired(*stripped);
-                    GlobalLog()->ReIndexInventory();
-                }
-            }});
-        PlayLogSound(RefusedSound);
+        return;
+    }
+
+    Refit(ForceToRefit(), std::string(RefitForceHeading), true);
+}
+
+std::string MCLogisticsTabs::MechName(const MCLogMech& mech) const
+{
+    const MCCampaignScreen::MCCard card = _Screen.UnitCard(mech, -1);
+    return card.Who.empty() ? card.What : card.Who;
+}
+
+void MCLogisticsTabs::Refit(const std::vector<std::shared_ptr<MCLogMech>>& mechs, const std::string& heading,
+                            bool force)
+{
+    const MCMechBay::MCRefitPlan plan = MCMechBay::PlanRefit(mechs);
+
+    if (!plan.Damaged)
+    {
+        return;
+    }
+
+    PlayLogSound(PickedSound);
+
+    // The resource points don't pay for the store's parts: the spares alone, then 1998's question (the user's, 27 Nov).
+    if (plan.Cost > ResourcePoints)
+    {
+        RefitFromSpares(mechs, heading, plan.Cost, force);
+        return;
+    }
+
+    // Nothing to buy and nothing coming off: refitted at once, no window (the user's).
+    if (plan.Cost == 0 && plan.Drops.empty())
+    {
+        static_cast<void>(RefitEach(mechs, false));
+        _Fingerprint = 0;
+        Fill();
+        return;
+    }
+
+    // The price, then what comes off, each 'Mech's on its own line for the force (the user's, 27 Nov: "a price then an
+    // itemized list of what mechs would drop components because they aren't available in the store").
+    std::vector<std::string> said;
+
+    if (plan.Cost > 0)
+    {
+        size_t parts = 0;
+
+        for (const MCMechBay::MCRefitBuy& buy : plan.Buys)
+        {
+            parts += static_cast<size_t>(buy.Count);
+        }
+
+        said.push_back(std::format(RefitBuyFormat, CountText(parts, PartWord, PartsWord), MCGroupedPoints(plan.Cost)));
+    }
+
+    if (!plan.Drops.empty())
+    {
+        std::vector<std::string> drops{std::string(RefitDropsHead)};
+
+        for (const MCMechBay::MCRefitDrop& drop : plan.Drops)
+        {
+            drops.push_back(force
+                                ? std::format(RefitDropFormat, MechName(*drop.Mech), Counted(drop.Parts, ListSeparator))
+                                : Counted(drop.Parts, "\n"));
+        }
+
+        said.push_back(Joined(drops, "\n"));
+    }
+
+    MCRmlDialogs::Show(MCRmlDialog::MCSay{.Heading = heading,
+                                          .Text = Joined(said, "\n"),
+                                          .Main = std::string(RefitWord),
+                                          .Other = std::string(CancelWord),
+                                          .OnMain = [held = Held(mechs)]
+                                          {
+                                              // Planned again on the answer: the window stood over the screen, so
+                                              // nothing changed meanwhile, the price checked all the same.
+                                              const std::vector<std::shared_ptr<MCLogMech>> mechs = StillHeld(held);
+                                              const MCMechBay::MCRefitPlan again = MCMechBay::PlanRefit(mechs);
+
+                                              if (again.Cost > ResourcePoints)
+                                              {
+                                                  return;
+                                              }
+
+                                              MCMechBay::BuyForRefit(again);
+                                              static_cast<void>(RefitEach(mechs, true));
+                                          }});
+}
+
+void MCLogisticsTabs::RefitFromSpares(const std::vector<std::shared_ptr<MCLogMech>>& mechs, const std::string& heading,
+                                      int32_t cost, bool force)
+{
+    const std::vector<std::vector<std::string>> missing = RefitEach(mechs, false);
+    std::vector<std::string> lines;
+
+    for (size_t at = 0; at < mechs.size(); at++)
+    {
+        if (missing[at].empty())
+        {
+            continue;
+        }
+
+        // 1998's question has a part a line; the force's a 'Mech a line, its parts after its name.
+        lines.push_back(force ? std::format(RefitDropFormat, MechName(*mechs[at]), Counted(missing[at], ListSeparator))
+                              : Joined(missing[at], "\n"));
     }
 
     _Fingerprint = 0;
     Fill();
+
+    // A store's part costs only where there was no spare, so one is always missing; nothing asked otherwise.
+    if (lines.empty())
+    {
+        return;
+    }
+
+    // 1998's refit dialog, what the store's parts would have cost first: whether to strip the damaged parts left.
+    MCRmlDialogs::Show(MCRmlDialog::MCSay{
+        .Heading = heading,
+        .Text = std::format("{}\n{}\n{}\n{}", std::format(RefitShortFormat, MCGroupedPoints(cost)),
+                            GameWord(RefitHeadString), Joined(lines, "\n"), GameWord(RefitFootString)),
+        .Main = std::string(OkWord),
+        .Other = std::string(CancelWord),
+        .OnMain = [held = Held(mechs)]
+        {
+            for (const std::shared_ptr<MCLogMech>& mech : StillHeld(held))
+            {
+                MCMechBay::StripUnrepaired(*mech);
+            }
+
+            GlobalLog()->ReIndexInventory();
+        }});
+    PlayLogSound(RefusedSound);
 }
 
 // The deal window

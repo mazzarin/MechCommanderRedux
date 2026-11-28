@@ -183,7 +183,7 @@
                                         <div class="pic picture" data-style-decorator="g.picture"></div>
                                     </div>
                                     <div class="pic picture" data-if="!g.warrior" data-class-part="g.part" data-style-decorator="g.picture"></div>
-                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == '' &amp;&amp; g.price != ''"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
+                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.price != ''"><div class="cream">{{g.price}}</div><div class="grey note" data-if="g.why == ''">{{g.note}}</div><div class="note why-note" data-if="g.why != ''">{{g.why}}</div></div><div class="row-t" data-if="g.why != '' &amp;&amp; g.price == ''"><div>{{g.why}}</div></div></div>
                                     <div class="wskills" data-if="g.skills.size &gt; 0"><div class="skill" data-for="s : g.skills"><div class="repair-line"><div class="label">{{s.label}}</div><div class="grow"></div><div>{{s.value}}</div></div><div class="meter"><div class="meter-fill" data-style-width="s.value + '%'"></div></div></div></div>
                                 </div></div>
                             </div>
@@ -217,7 +217,7 @@
                         </div>
                         <div class="fade"></div>
                     </div>
-                    <div class="force-foot" data-if="forceRepairs"><div class="grow"></div><div class="button" id="repair-force" data-class-dark="!canRepairForce" data-hint="Repair force">{{repairForceWord}}</div></div>
+                    <div class="force-foot" data-if="forceRepairs"><div class="grow"></div><div class="button" id="repair-force" data-class-dark="!canRepairForce" data-hint="Repair force">{{repairForceWord}}</div><div class="button" id="refit-force" data-class-dark="!canRefitForce" data-hint="Refit force">{{refitForceWord}}</div></div>
                 </div>
                 <div id="store" class="side" data-if="tab == 1">
                     <div class="row bottom head">
@@ -295,7 +295,7 @@
                         </div>
                     </div>
                     <div class="grow"></div>
-                    <div class="lab-foot" data-if="repairs || labStored"><div class="grow"></div><div class="button" id="repair-all" data-if="repairs" data-class-dark="!canRepairAll" data-hint="Repair all">{{repairAllWord}}</div><div class="button" id="refit-all" data-if="repairs" data-class-dark="!canRefit" data-hint="Refit all">Refit all</div><div class="button" id="into-force" data-if="labStored" data-hint="Into the force">Into the force</div></div>
+                    <div class="lab-foot" data-if="repairs || labStored"><div class="grow"></div><div class="button" id="repair-all" data-if="repairs" data-class-dark="!canRepairAll" data-hint="Repair all">{{repairAllWord}}</div><div class="button" id="refit-all" data-if="repairs" data-class-dark="!canRefit" data-hint="Refit all">{{refitAllWord}}</div><div class="button" id="into-force" data-if="labStored" data-hint="Into the force">Into the force</div></div>
                 </div>
                 </div>
                 <div class="chat band" data-if="mp"><div class="chat-lines"><div class="chat-line" data-for="line : chat" data-class-game="line.game" data-class-team="line.team"><span data-if="!line.game" data-attr-class="'name ' + line.colour">{{line.name}}</span><span class="to" data-if="line.team"> to team</span><span data-if="!line.game">: </span>{{line.text}}</div></div><div class="chat-say"><div class="switch small" id="to-logistics" data-hint="Who reads it"><div class="on">Team</div><div>All</div></div><input type="text" class="field" id="say-logistics" maxlength="255" data-line="" data-value="say"/></div></div>

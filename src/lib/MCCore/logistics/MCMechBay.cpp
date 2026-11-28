@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCMechBay.h"
+#include "logistics/MCStore.h"
 #include "logistics/MCUnitLimits.h"
 #include "main/MCInventoryList.h"
 #include "main/MCLogMechList.h"
@@ -609,6 +610,113 @@ void MCMechBay::StripUnrepaired(MCLogMech& mech)
         if (item == nullptr)
         {
             break;
+        }
+    }
+}
+
+MCMechBay::MCRefitPlan MCMechBay::PlanRefit(const std::vector<std::shared_ptr<MCLogMech>>& mechs)
+{
+    MCRefitPlan plan;
+
+    // What is left to take as the mechs go: each master component's spares, and the store's count of it (below zero:
+    // no limit), in the order Refit takes the spares.
+    std::map<uint8_t, int32_t> spares;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& spare : GlobalLog()->ComponentInventory->Items)
+    {
+        // The first of a kind, as Refit takes it (GetIndexFromMasterID).
+        spares.try_emplace(spare->MasterID, std::max(spare->Count, 0));
+    }
+
+    const std::vector<std::shared_ptr<MCLogInventoryItem>> store = MCStore::ListedParts();
+    std::map<uint8_t, int32_t> storeLeft;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& part : store)
+    {
+        storeLeft.try_emplace(part->MasterID, part->Count);
+    }
+
+    for (const std::shared_ptr<MCLogMech>& mech : mechs)
+    {
+        if (mech == nullptr || !ItemsDamaged(*mech))
+        {
+            continue;
+        }
+
+        plan.Damaged = true;
+        MCRefitDrop drop{.Mech = mech};
+
+        for (const std::shared_ptr<MCLogInventoryItem>& item : mech->Inventory->Items)
+        {
+            const MCComponentForm form = ComponentForm(item->MasterID);
+
+            if (!IsWeapon(form) && !IsEquipment(form))
+            {
+                continue;
+            }
+
+            for (const std::shared_ptr<MCLogInventoryStat>& stat : item->Stats)
+            {
+                if (stat->Hits == 0)
+                {
+                    continue;
+                }
+
+                if (int32_t& spare = spares[item->MasterID]; spare > 0)
+                {
+                    --spare;
+                    continue;
+                }
+
+                const auto left = storeLeft.find(item->MasterID);
+
+                if (left == storeLeft.end() || left->second == 0)
+                {
+                    drop.Parts.push_back(item->Name);
+                    continue;
+                }
+
+                if (left->second > 0)
+                {
+                    --left->second;
+                }
+
+                const int32_t each = MasterComponentList[item->MasterID].ResourcePoints;
+                plan.Cost += each;
+                const auto buy = std::ranges::find_if(plan.Buys, [&item](const MCRefitBuy& planned)
+                                                      { return planned.StorePart->MasterID == item->MasterID; });
+
+                if (buy != plan.Buys.end())
+                {
+                    ++buy->Count;
+                    continue;
+                }
+
+                const auto part = std::ranges::find_if(store, [&item](const std::shared_ptr<MCLogInventoryItem>& sold)
+                                                       { return sold->MasterID == item->MasterID; });
+                plan.Buys.push_back(MCRefitBuy{.StorePart = *part, .Count = 1, .Each = each});
+            }
+        }
+
+        if (!drop.Parts.empty())
+        {
+            plan.Drops.push_back(std::move(drop));
+        }
+    }
+
+    return plan;
+}
+
+void MCMechBay::BuyForRefit(const MCRefitPlan& plan)
+{
+    for (const MCRefitBuy& buy : plan.Buys)
+    {
+        std::shared_ptr<MCLogInventoryItem> spare;
+
+        // A spare new, or back from none, gets its row, as the store's BUY does.
+        if (MCStore::BuyParts(*buy.StorePart, buy.Count, buy.Each, spare) == MCStore::MCPartRow::Listed)
+        {
+            GlobalLog()->ReIndexInventory();
         }
     }
 }

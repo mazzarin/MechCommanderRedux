@@ -15,6 +15,8 @@
 #include "lib/MCPacketFile.h"
 #include "logistics/MCLogisticsTabs.h"
 #include "logistics/MCMainMenuModel.h"
+#include "logistics/MCMatchMaps.h"
+#include "logistics/MCMechBay.h"
 #include "logistics/MCMenuDialog.h"
 #include "logistics/MCSmuti.h"
 #include "logistics/MCStore.h"
@@ -453,10 +455,11 @@ TEST_CASE_ISOLATED("game: the message dialog's timeout closes it after its time,
 }
 
 /// <summary>
-/// The 'MECH BAY's REFIT ALL, with damaged parts it has no spare for, asks whether to strip them: 1998's refit dialog's
-/// words before and after, each part on a line of its own between them (three, then one), drawn so.
+/// The 'MECH BAY's REFIT ALL, with damaged parts it has no spare for: none in the store either, its window titled with
+/// the 'Mech's name says what comes off, a line per part; the store's parts not paid for, 1998's refit question, the
+/// price over its words, a line per part between them (three, then one). Drawn so, a line each.
 /// </summary>
-TEST_CASE_ISOLATED("game: REFIT ALL's question has a line per part it has no spare for between its words")
+TEST_CASE_ISOLATED("game: REFIT ALL's windows have a line per part it has no spare for")
 {
     if (!MCTestGame::Available())
     {
@@ -465,7 +468,8 @@ TEST_CASE_ISOLATED("game: REFIT ALL's question has a line per part it has no spa
 
     REQUIRE(MCTestGame::StartLogistics());
     NewCampaign();
-    MCLogisticsTabs& tabs = MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::MechBay).Logistics();
+    MCCampaignScreen& screen = MCRemadeTest::CampaignScreen(MCCampaignScreen::MCTab::MechBay);
+    MCLogisticsTabs& tabs = screen.Logistics();
     const std::shared_ptr<MCLogMech> mech = GlobalLog()->ForceMechList->Mechs.front();
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
@@ -495,30 +499,71 @@ TEST_CASE_ISOLATED("game: REFIT ALL's question has a line per part it has no spa
     }
 
     REQUIRE_EQ(damaged.size(), Damaged);
-    const auto question = [](const std::vector<std::shared_ptr<MCLogInventoryItem>>& parts)
+    // The store's count of each: none (sold out), or no limit.
+    const auto stock = [&damaged](int32_t count)
     {
-        std::string text = LoadGameString(RefitHeadString, StringBuffer);
+        for (const std::shared_ptr<MCLogInventoryItem>& part : GlobalLog()->PurchaseComponents->Items)
+        {
+            if (std::ranges::any_of(damaged, [&part](const auto& item) { return item->MasterID == part->MasterID; }))
+            {
+                part->Count = count;
+            }
+        }
+    };
+
+    const auto lines = [](const std::vector<std::shared_ptr<MCLogInventoryItem>>& parts)
+    {
+        std::string text;
 
         for (const std::shared_ptr<MCLogInventoryItem>& part : parts)
         {
             text += "\n" + part->Name;
         }
 
-        return text + "\n" + LoadGameString(RefitFootString, StringBuffer);
+        return text;
+    };
+
+    // The window's sentence drawn a line each (RmlUi's white space would run them together).
+    const auto linesDrawn = []
+    {
+        REQUIRE(MCRmlDialogs::Dialog()->Document().has_value());
+        Rml::Element* say = MCRmlDialogs::Dialog()->Document()->get().GetElementById("say");
+        REQUIRE(say != nullptr);
+        return say->GetBox().GetSize(Rml::BoxArea::Content).y / say->GetLineHeight();
+    };
+
+    constexpr float LineSlack = 0.5f;
+
+    // None in the store: what comes off, a line each under its head.
+    stock(0);
+    tabs.RefitAll();
+    MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
+    REQUIRE(MCRmlDialogs::Shown());
+    const MCCampaignScreen::MCCard card = screen.UnitCard(*mech, -1);
+    CHECK_EQ(MCRmlDialogs::Dialog()->Said().Heading, "Refit " + (card.Who.empty() ? card.What : card.Who));
+    CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text, "Not in the store, so these come off:" + lines(damaged));
+    CHECK(linesDrawn() > static_cast<float>(Damaged + 1) - LineSlack);
+    // Cancel: the parts stay as they are, still damaged.
+    MCRemadeTest::AnswerDialog(false);
+    CHECK_EQ(damaged.back()->Stats.front()->Hits, 1);
+
+    // The store's without limit, but no points for them: 1998's question, the price over it.
+    stock(-1);
+    ResourcePoints = 0;
+    const auto question = [&lines, &mech](const std::vector<std::shared_ptr<MCLogInventoryItem>>& parts)
+    {
+        const int32_t cost = MCMechBay::PlanRefit({mech}).Cost;
+        REQUIRE(cost > 0);
+        return std::format("Not enough RP for the store's parts ({} RP).\n{}{}\n{}", MCGroupedPoints(cost),
+                           LoadGameString(RefitHeadString, StringBuffer), lines(parts),
+                           LoadGameString(RefitFootString, StringBuffer));
     };
 
     tabs.RefitAll();
     MCTestGame::RunFrame(MCRemadeTest::FrameSeconds);
     REQUIRE(MCRmlDialogs::Shown());
     CHECK_EQ(MCRmlDialogs::Dialog()->Said().Text, question(damaged));
-    // Drawn so, a line each (RmlUi's white space would run them together): its words' two and a part's each.
-    REQUIRE(MCRmlDialogs::Dialog()->Document().has_value());
-    Rml::Element* say = MCRmlDialogs::Dialog()->Document()->get().GetElementById("say");
-    REQUIRE(say != nullptr);
-    constexpr float LineSlack = 0.5f;
-    CHECK(say->GetBox().GetSize(Rml::BoxArea::Content).y / say->GetLineHeight() >
-          static_cast<float>(Damaged + 2) - LineSlack);
-    // Cancel: the parts stay as they are, still damaged.
+    CHECK(linesDrawn() > static_cast<float>(Damaged + 3) - LineSlack);
     MCRemadeTest::AnswerDialog(false);
     CHECK_EQ(damaged.back()->Stats.front()->Hits, 1);
 

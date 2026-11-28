@@ -132,6 +132,43 @@ namespace MCMechBay
     /// <summary>The refit question's OK: every damaged weapon or piece of equipment with no spare leaves the mech.</summary>
     void StripUnrepaired(MCLogMech& mech);
 
+    /// <summary>One of the store's parts a refit buys: how many, at its price.</summary>
+    struct MCRefitBuy
+    {
+        std::shared_ptr<MCLogInventoryItem> StorePart;
+        int32_t Count = 0;
+        int32_t Each = 0;
+    };
+
+    /// <summary>A mech's damaged parts a refit can't replace (no spare, none in the store): they come off.</summary>
+    struct MCRefitDrop
+    {
+        std::shared_ptr<MCLogMech> Mech;
+        std::vector<std::string> Parts;
+    };
+
+    /// <summary>
+    /// Port-only (the user's, 27 Nov: REFIT FORCE "also offers to buy what you need from the store ... a price then an
+    /// itemized list of what mechs would drop components because they aren't available in the store"; REFIT ALL the
+    /// same): what refitting <paramref name="mechs"/>, in order, takes. Each damaged weapon or piece of equipment from a
+    /// spare while one is left, else bought from the store while it has one (a part it has no limit of always), else it
+    /// comes off.
+    /// </summary>
+    struct MCRefitPlan
+    {
+        /// <summary>Whether any of the mechs has a damaged weapon, piece of equipment or jammer (<see cref="ItemsDamaged"/>).</summary>
+        bool Damaged = false;
+        std::vector<MCRefitBuy> Buys;
+        /// <summary>What the buys cost.</summary>
+        int32_t Cost = 0;
+        std::vector<MCRefitDrop> Drops;
+    };
+
+    MCRefitPlan PlanRefit(const std::vector<std::shared_ptr<MCLogMech>>& mechs);
+
+    /// <summary>The plan's buys: each part into the spares, the store's count down and the resource points paying.</summary>
+    void BuyForRefit(const MCRefitPlan& plan);
+
     /// <summary>Why a part can't go into a mech.</summary>
     enum class MCFit : uint8_t
     {

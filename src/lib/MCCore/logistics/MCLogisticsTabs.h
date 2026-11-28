@@ -49,8 +49,9 @@ public:
 
     /// <summary>
     /// The INVENTORY's switch, the same four as the store's (the user's, 26 Nov: "align where possible"): the mechs
-    /// stored (outside the force), the MechWarriors no mech carries, the spare parts, the vehicles stored. The 'MECH
-    /// BAY's own; PURCHASING's follows the store's kind.
+    /// stored (outside the force), the MechWarriors no mech carries, the spare parts, the vehicles stored. One choice
+    /// on PURCHASING and the 'MECH BAY, the store's kind (the user's, 27 Nov: "it's not the same tab between the tab"),
+    /// MECHS at each mission's start (<see cref="StartAtMechs"/>).
     /// </summary>
     enum class MCStock : uint8_t
     {
@@ -178,6 +179,9 @@ public:
     /// <summary>The hint line's keys as the tab stands.</summary>
     std::vector<MCRmlKeyHint> Keys() const;
 
+    /// <summary>A mission's briefing shown afresh: the switch at MECHS, nothing picked (the user's, 27 Nov).</summary>
+    void StartAtMechs();
+
     // The controls' actions (the tests press them).
     void ChooseKind(MCKind kind);
     void ChooseStock(MCStock stock);
@@ -202,17 +206,23 @@ public:
     /// <summary>A repair slider moved to <paramref name="position"/> (1998's knob pixels, KnobLeft to KnobRight).</summary>
     void MoveSlider(MCMechBay::MCKnob knob, int position);
     void RepairAll();
+    /// <summary>
+    /// The lab's REFIT ALL: its 'Mech's damaged weapons and equipment swapped for spares, the store's bought where there
+    /// are none, what neither has coming off (<see cref="Refit"/>).
+    /// </summary>
     void RefitAll();
     /// <summary>
     /// The FORCE's REPAIR FORCE (the user's, 26 Nov): each force 'Mech's REPAIR ALL in the force's order, at its cost, as
     /// far as the resource points go (short, 1998's message, as REPAIR ALL's).
     /// </summary>
     void RepairForce();
+    /// <summary>The FORCE's REFIT FORCE (the user's, 27 Nov): each damaged force 'Mech's REFIT ALL, in the force's order.</summary>
+    void RefitForce();
 
     /// <summary>What shows (the tests read it).</summary>
     MCKind Kind() const { return static_cast<MCKind>(_Kind); }
     /// <summary>What the INVENTORY shows (PURCHASING: its store's kind's).</summary>
-    MCStock Stock() const { return static_cast<MCStock>(_StockKind); }
+    MCStock Stock() const { return Shelf(); }
     const std::vector<MCCampaignScreen::MCCard>& ForceCards() const { return _Force; }
     /// <summary>The INVENTORY's MECHS or VEHICLES (as it shows): those stored outside the force.</summary>
     const std::vector<MCCampaignScreen::MCCard>& StoredCards() const { return _Stored; }
@@ -257,6 +267,11 @@ public:
     /// <summary>REPAIR FORCE: whether anything in the force needs it, and its label (with what it costs).</summary>
     bool CanRepairForce() const { return _CanRepairForce; }
     const std::string& RepairForceWord() const { return _RepairForceWord; }
+    /// <summary>REFIT FORCE: whether a force 'Mech has a part damaged, and its label (with what the store's parts cost).</summary>
+    bool CanRefitForce() const { return _CanRefitForce; }
+    const std::string& RefitForceWord() const { return _RefitForceWord; }
+    /// <summary>REFIT ALL's label (with what the store's parts cost).</summary>
+    const std::string& RefitAllWord() const { return _RefitAllWord; }
     /// <summary>The details' payload (PURCHASING): its rows.</summary>
     const std::vector<MCKitRow>& KitRows() const { return _Kit; }
 
@@ -301,9 +316,7 @@ private:
     };
 
     bool Purchasing() const { return _Screen.Tab() == MCCampaignScreen::MCTab::Purchasing; }
-    /// <summary>
-    /// What the INVENTORY shows: PURCHASING's by its store's kind, the 'MECH BAY's by its own switch.
-    /// </summary>
+    /// <summary>What the INVENTORY shows: the kind chosen, on either tab.</summary>
     MCStock Shelf() const;
     /// <summary>Whether the INVENTORY shows units (its MECHS or VEHICLES), not goods.</summary>
     bool StocksUnits() const { return Stock() == MCStock::Mechs || Stock() == MCStock::Vehicles; }
@@ -397,9 +410,8 @@ private:
 
     // The model's values.
     int _Kind = 0;
-    /// <summary>What the INVENTORY shows (an MCStock), and the 'MECH BAY's choice.</summary>
+    /// <summary>What the INVENTORY shows (an MCStock): the kind's.</summary>
     int _StockKind = 0;
-    MCStock _BayStock = MCStock::Components;
     std::string _ForceCount;
     std::string _ForceWeight;
     std::string _StockCount;
@@ -469,10 +481,27 @@ private:
     std::string _RepairAllWord;
     bool _CanRepairAll = false;
     bool _CanRefit = false;
-    /// <summary>REPAIR FORCE at the FORCE's foot: shown outside a match, its label, and whether it acts.</summary>
+    std::string _RefitAllWord;
+    /// <summary>REPAIR FORCE and REFIT FORCE at the FORCE's foot: shown outside a match, their labels, whether they act.</summary>
     bool _ForceRepairs = false;
     std::string _RepairForceWord;
     bool _CanRepairForce = false;
+    std::string _RefitForceWord;
+    bool _CanRefitForce = false;
+
+    /// <summary>A force 'Mech's or a stored one's first line, as its card's: a callsign, or its chassis.</summary>
+    std::string MechName(const MCLogMech& mech) const;
+    /// <summary>
+    /// REFIT ALL and REFIT FORCE (the user's, 27 Nov): <paramref name="mechs"/>' damaged weapons and equipment, in
+    /// order, from the spares, else bought from the store, else taken off (MCMechBay::PlanRefit). Nothing to buy or
+    /// take off: refitted at once. Otherwise a window titled <paramref name="heading"/> says the price, then what
+    /// comes off (each 'Mech's on its own line when <paramref name="force"/>); REFIT does it. Short of the price: the
+    /// spares alone, then 1998's question whether to take off what is still damaged.
+    /// </summary>
+    void Refit(const std::vector<std::shared_ptr<MCLogMech>>& mechs, const std::string& heading, bool force);
+    /// <summary>The refit with the spares alone, then 1998's question (the store's parts, <paramref name="cost"/> RP, not paid for).</summary>
+    void RefitFromSpares(const std::vector<std::shared_ptr<MCLogMech>>& mechs, const std::string& heading, int32_t cost,
+                         bool force);
 };
 
 namespace MCLogisticsTabsWords

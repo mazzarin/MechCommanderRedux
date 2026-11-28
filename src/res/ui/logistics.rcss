@@ -178,6 +178,9 @@
 }
 /* A good's count and what it is (LEFT, OWNED) in the cards' capitals. */
 #logistics .card .row-t > .grey, #logistics .card .row-t .note { text-transform: uppercase; letter-spacing: 0.06em; }
+/* An INVENTORY part that can't go in keeps its count, the reason in OWNED's place (the user's, 27 Nov: "I have no way
+   of seeing how many of a component I have if it's overweight"). */
+#logistics .card .row-t .why-note { color: #6c7a88; }
 /* The lab's repairs: the sliders the repair line's width; its parts scroll under its repairs, its foot kept in view. */
 #logistics .repair input.range.slider { width: 100%; }
 #logistics #lab > .lab-body { flex: 1 1 0; overflow-y: auto; }
@@ -268,11 +271,13 @@
     #logistics .side .switch > div:last-child { margin-right: -1dp; }
 }
 
-/* REPAIR FORCE at the FORCE's foot (the user's, 26 Nov), as REPAIR ALL at the lab's: at the right, its price in its
-   word; 4:3's one-card column holds it at the small buttons' size. */
-#logistics .force-foot { display: flex; flex-direction: row; align-items: center; margin-top: 10dp; }
+/* REPAIR FORCE and REFIT FORCE at the FORCE's foot (the user's, 26 and 27 Nov), as REPAIR ALL and REFIT ALL at the
+   lab's: at the right, each price in its word, wrapping onto two rows where they don't fit one, as the lab's foot; 4:3's
+   one-card column holds them at the small buttons' size. */
+#logistics .force-foot { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6dp 8dp; margin-top: 10dp; }
 #logistics .force-foot > * { flex: 0 0 auto; }
 #logistics .force-foot > .grow { flex: 1 1 0; }
+#logistics .force-foot .button { padding: 0dp 10dp; }
 @media (max-aspect-ratio: 3/2) {
     #logistics .force-foot > .button { height: 16dp; line-height: 14dp; padding: 0dp 8dp; font-size: 9.51dp; }
 }

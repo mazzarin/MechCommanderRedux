@@ -5,6 +5,7 @@
 #include "lib/MCLz.h"
 #include "lib/MCZstd.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCNeverDestroyed.h"
 
 // xxHash, header-only: its functions inline in this file alone.
 #define XXH_INLINE_ALL
@@ -115,8 +116,9 @@ namespace
 
     KeptStreams& TheKeptStreams()
     {
-        static KeptStreams kept;
-        return kept;
+        // Never destroyed, as the held runs below: the HD art's readers may still use it while the process ends.
+        static MCNeverDestroyed<KeptStreams> kept;
+        return *kept;
     }
 
     /// <summary>Lets go of the oldest streams kept past their most, the latest kept whatever its size. With kept's lock held.</summary>
@@ -158,8 +160,11 @@ namespace
 
     HeldStreams& TheHeldStreams()
     {
-        static HeldStreams held;
-        return held;
+        // Never destroyed: the HD art's readers (MCHdArt's read-ahead threads, which stop only as its own state goes)
+        // may still ask for a run held while the process ends, and a static made after that state would go first, its
+        // mutex with it.
+        static MCNeverDestroyed<HeldStreams> held;
+        return *held;
     }
 
     /// <summary>

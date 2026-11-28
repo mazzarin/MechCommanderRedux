@@ -252,22 +252,22 @@ TEST_CASE_ISOLATED("game: INTERNET lists MechCommander Online's rooms with the s
 
     // JOIN GAME on the open room, under the name typed: the list becomes its players, READY or not (the player READY
     // throughout, as MCO's launcher is), the line says whom it waits for, and LEAVE takes the buttons' place.
-    screen.SetPlayerName("Rahman");
+    screen.SetPlayerName("Hawkeye");
     PickNamed(screen, "Solaris Night");
     screen.PressJoin();
     REQUIRE(SettleUntil([&] { return screen.Seen().InRoom && screen.Seen().RoomPlayers.size() == 3; }));
     CHECK_EQ(screen.Seen().RoomName, "Solaris Night");
     CHECK_EQ(screen.Seen().RoomLine, "Waiting for BOB to start.");
-    CHECK((screen.Seen().RoomPlayers == Rows{"BOB | HOST | Ready", "CLANNER | Not ready", "Rahman | Ready"}));
-    CHECK_EQ(mco.LastFields("register_peer")["username"], "Rahman");
-    CHECK_EQ(keys->Now()->Username, "Rahman");
+    CHECK((screen.Seen().RoomPlayers == Rows{"BOB | HOST | Ready", "CLANNER | Not ready", "Hawkeye | Ready"}));
+    CHECK_EQ(mco.LastFields("register_peer")["username"], "Hawkeye");
+    CHECK_EQ(keys->Now()->Username, "Hawkeye");
     CHECK(DialogText().empty());
     CHECK(OnInternet());
 
     // The room's chat under whom it waits for: MCO's own lines and the players', the keys in its box from the start.
     mco.Say(SolarisId, "BOB", "gl hf");
     REQUIRE(SettleUntil([&] { return Has(screen.Seen().RoomChat, "BOB: gl hf"); }));
-    CHECK((screen.Seen().RoomChat == Rows{"Rahman joined the room.", "BOB: gl hf"}));
+    CHECK((screen.Seen().RoomChat == Rows{"Hawkeye joined the room.", "BOB: gl hf"}));
     Rml::Element* say = MCTestGuest::ElementOf(screen, "room-say");
     REQUIRE(say != nullptr);
     REQUIRE(say->GetContext() != nullptr);
@@ -285,7 +285,7 @@ TEST_CASE_ISOLATED("game: INTERNET lists MechCommander Online's rooms with the s
     MCTestGuest::RealClickOn(*say);
     MCTestGuest::RealType("On my way");
     MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
-    REQUIRE(SettleUntil([&] { return Has(screen.Seen().RoomChat, "Rahman: On my way"); }));
+    REQUIRE(SettleUntil([&] { return Has(screen.Seen().RoomChat, "Hawkeye: On my way"); }));
     CHECK(SettleUntil(
         [&]
         {
@@ -378,7 +378,7 @@ TEST_CASE_ISOLATED("game: the host's START in a MechCommander Online room takes 
     const MCMcoScope mcoScope(RelaySetup(mco, relay));
     REQUIRE(MCTestGame::StartLogistics());
     MCGamesScreen& screen = OpenWithRooms(list, 4);
-    screen.SetPlayerName("Rahman");
+    screen.SetPlayerName("Hawkeye");
     PickNamed(screen, "Solaris Night");
     screen.PressJoin();
     REQUIRE(SettleUntil([&] { return screen.Seen().InRoom; }));
@@ -425,13 +425,13 @@ TEST_CASE_ISOLATED("game: a player removed from a MechCommander Online room is t
     const MCMcoScope mcoScope(RelaySetup(mco, relay));
     REQUIRE(MCTestGame::StartLogistics());
     MCGamesScreen& screen = OpenWithRooms(list, 4);
-    screen.SetPlayerName("Rahman");
+    screen.SetPlayerName("Hawkeye");
 
     // In the room: BOB removes the player, said over the list, which is back.
     PickNamed(screen, "Solaris Night");
     screen.PressJoin();
     REQUIRE(SettleUntil([&] { return screen.Seen().InRoom; }));
-    mco.Kick(SolarisId, "Rahman", "BOB");
+    mco.Kick(SolarisId, "Hawkeye", "BOB");
     REQUIRE(SettleUntil([] { return DialogText() == "BOB removed you from the room."; }));
     CHECK(!screen.Seen().InRoom);
     Shot("mco internet 9 removed");
@@ -447,7 +447,7 @@ TEST_CASE_ISOLATED("game: a player removed from a MechCommander Online room is t
     mco.StartMatch(SolarisId);
     REQUIRE(SettleUntil([] { return InRoom(); }));
     REQUIRE(SettleUntil([] { return MCMcoRooms::Now().Seen().Match == MCMcoMatchStage::Playing; }));
-    mco.Kick(SolarisId, "Rahman", "BOB");
+    mco.Kick(SolarisId, "Hawkeye", "BOB");
     REQUIRE(SettleUntil([] { return OnInternet() && !DialogText().empty(); }));
     CHECK_EQ(DialogText(), "BOB removed you from the room.");
     CHECK(!screen.Seen().InRoom);
@@ -552,6 +552,40 @@ TEST_CASE_ISOLATED("game: INTERNET leaves out MechCommander Online's room of a g
     // That game gone from the service: MCO's room shows again.
     standIns.List.Send(BobsListing());
     REQUIRE(SettleUntil([&] { return screen.Seen().Rows.size() == 4; }));
+}
+
+/// <summary>
+/// SPEC-mco-hosting.md's "On MCO": the internet game's own MCO room is the room screen's. INTERNET never shows it, not
+/// while it's hosted nor as it's let go after the host's LEAVE (the live test of 27 Nov showed it there a few seconds).
+/// </summary>
+TEST_CASE_ISOLATED("game: INTERNET never shows the internet game's own MechCommander Online room, nor as it's let go")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr uint16_t GamePort = 28881;
+    MCStandIns standIns;
+    REQUIRE(MCTestGame::StartLogistics());
+    MCGamesScreen& screen = OpenWithRooms(standIns.List, 4);
+
+    MCMcoRooms::Now().HostBoth({.Name = "Steel Rain", .MaxPlayers = 6, .Password = "K7QF", .GamePort = GamePort});
+    REQUIRE(SettleUntil(
+        []
+        {
+            const MCMcoSeen seen = MCMcoRooms::Now().Seen();
+            return seen.Room.has_value() && seen.Room->Both;
+        }));
+    Settle();
+    CHECK(!screen.Seen().InRoom);
+    CHECK(DialogText().empty());
+
+    MCMcoRooms::Now().LeaveBoth();
+    REQUIRE(SettleUntil([] { return !MCMcoRooms::Now().Seen().Room.has_value(); }));
+    Settle();
+    CHECK(!screen.Seen().InRoom);
+    CHECK(DialogText().empty());
 }
 
 /// <summary>

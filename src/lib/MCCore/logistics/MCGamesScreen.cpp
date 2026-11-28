@@ -20,6 +20,8 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <algorithm>
+#include <cctype>
 
 namespace
 {
@@ -78,6 +80,8 @@ namespace
     constexpr const char* ListId = "list";
     /// <summary>RETRY's button, under the list's line while it's offline or not answering.</summary>
     constexpr const char* RetryId = "retry";
+    /// <summary>PLAYER NAME's box.</summary>
+    constexpr const char* NameId = "name";
     /// <summary>The look's class for a button that's off.</summary>
     constexpr const char* OffClass = "off";
     constexpr const char* ValueAttribute = "value";
@@ -98,10 +102,33 @@ namespace
         return upper;
     }
 
-    /// <summary>The player's name for the games screens: the one remembered, else "Player".</summary>
-    std::string RememberedName()
+    /// <summary>
+    /// Whether INTERNET shows MCO's room <paramref name="seen"/> is in: never the internet game's own (hosted on both),
+    /// which is the room screen's, not even as it's let go after LEAVE.
+    /// </summary>
+    bool ShowsMcoRoom(const MCMcoSeen& seen)
     {
+        return seen.Room.has_value() && !seen.Room->Both;
+    }
+
+    /// <summary>
+    /// The player's name as a games screen opens: LAN's the one remembered, else the computer's account name (as the
+    /// original), else "Player"; INTERNET's only the one remembered, never the account name, so it never goes online.
+    /// </summary>
+    std::string RememberedName(MCGamesWhere where)
+    {
+        if (where == MCGamesWhere::Internet)
+        {
+            return SavedPlayerName().value_or(std::string());
+        }
+
         return MyGetUserName().value_or(std::string(NoPlayerName));
+    }
+
+    /// <summary>Whether <paramref name="name"/> has more than spaces.</summary>
+    bool Named(std::string_view name)
+    {
+        return std::ranges::any_of(name, [](char c) { return std::isspace(static_cast<unsigned char>(c)) == 0; });
     }
 
     /// <summary>Whether the element is a button that's off (its click goes no further).</summary>
@@ -469,6 +496,13 @@ MCOptionalRef<Rml::Element> MCGamesScreen::FirstFocus(Rml::ElementDocument& docu
         return say != nullptr && say->IsVisible(true) ? MCOptionalRef<Rml::Element>(*say) : std::nullopt;
     }
 
+    // INTERNET with no name yet: its box, which HOST GAME and JOIN GAME wait on.
+    if (_Where == MCGamesWhere::Internet && !Named(_PlayerName))
+    {
+        Rml::Element* name = document.GetElementById(NameId);
+        return name != nullptr ? MCOptionalRef<Rml::Element>(*name) : std::nullopt;
+    }
+
     const size_t picked = _PickedRow >= 0 ? static_cast<size_t>(_PickedRow) : 0;
 
     if (_List.State() == MCGamesState::Listed && picked < rows.size() && !_Rows.empty())
@@ -490,7 +524,7 @@ void MCGamesScreen::OnShow()
 {
     SDL_Log("%s: shown", Place().c_str());
     MCRmlDialogs::SetPlace(Place());
-    _PlayerName = RememberedName();
+    _PlayerName = RememberedName(_Where);
     _List.SetGuestName(_PlayerName);
     _Code.clear();
     _PickedKey.reset();
@@ -843,9 +877,12 @@ void MCGamesScreen::ShowButtons()
     const MCGamesState state = _List.State();
     const std::optional<MCListedGame> picked = Picked();
     const bool joinable = picked.has_value() && (picked->Joinable() || (picked->NeedsNewer && !picked->InBattle));
-    const bool canJoin = !_Join.Pending() && (TypedCode().has_value() || joinable);
-    const bool canHost = !_Join.Pending() && (_Where == MCGamesWhere::Lan || state == MCGamesState::Listed ||
-                                              state == MCGamesState::Looking);
+    // INTERNET's HOST GAME and JOIN GAME wait for a name (it starts with none, never the computer's account name).
+    const bool named = _Where == MCGamesWhere::Lan || Named(_PlayerName);
+    const bool canJoin = named && !_Join.Pending() && (TypedCode().has_value() || joinable);
+    const bool canHost =
+        named && !_Join.Pending() &&
+        (_Where == MCGamesWhere::Lan || state == MCGamesState::Listed || state == MCGamesState::Looking);
     const bool changedJoin = Keep(_CanJoin, canJoin);
     const bool changedHost = Keep(_CanHost, canHost);
 
@@ -1377,7 +1414,7 @@ void MCGamesScreen::TendMco()
     const MCMcoSeen seen = MCMcoRooms::Now().Seen();
     _McoRevision = seen.Revision;
 
-    if (seen.Room.has_value())
+    if (ShowsMcoRoom(seen))
     {
         _McoAsked = true;
     }
@@ -1437,8 +1474,9 @@ void MCGamesScreen::ShowMcoRoom(const MCMcoSeen& seen)
     std::vector<MCRoomChatLine> chat;
     std::string name;
     std::string line;
+    const bool shown = ShowsMcoRoom(seen);
 
-    if (seen.Room.has_value())
+    if (shown)
     {
         for (const MCMcoChatLine& said : seen.Room->Chat)
         {
@@ -1458,7 +1496,7 @@ void MCGamesScreen::ShowMcoRoom(const MCMcoSeen& seen)
         }
     }
 
-    const bool entered = Keep(_InRoom, seen.Room.has_value());
+    const bool entered = Keep(_InRoom, shown);
     bool changed = entered;
     changed |= Keep(_RoomName, std::move(name));
     changed |= Keep(_RoomLine, std::move(line));

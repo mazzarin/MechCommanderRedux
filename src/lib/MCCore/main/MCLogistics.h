@@ -752,6 +752,12 @@ private:
 /// </summary>
 std::optional<std::string> MyGetUserName();
 
+/// <summary>
+/// Port-only (Redux HD): the name last entered on the multiplayer screens alone, never the logged-in user's (INTERNET's
+/// start, so the computer's account name never goes online); none when none was entered or it doesn't fit 63 characters.
+/// </summary>
+std::optional<std::string> SavedPlayerName();
+
 /// <summary>A dialog's answer: cancels (and quits a game launched from a lobby).</summary>
 void CancelBool(int32_t answer);
 

@@ -19,6 +19,7 @@
 #include "logistics/MCInternetMenu.h"
 #include "logistics/MCLogChat.h"
 #include "logistics/MCMenuScreens.h"
+#include "logistics/MCRegistrySettings.h"
 #include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdateScreen.h"
 #include "gui/MCGuiStartup.h"
@@ -375,6 +376,59 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER offers INTERNET, with how many are online,
     CHECK_EQ(screen.Seen().Empty, "No open games.");
     CHECK(!screen.Seen().CanJoin);
     SaveShownShot("internet 5 empty");
+}
+
+/// <summary>
+/// INTERNET never starts with the computer's account name, the original's default (LAN keeps it), so the account name
+/// never goes online: with no name entered before, its box is empty and has the focus, and HOST GAME and JOIN GAME wait
+/// for a name (spaces aren't one); a name entered before is the one it starts with.
+/// </summary>
+TEST_CASE_ISOLATED("game: INTERNET starts with the name entered before, never the computer's account name, and waits "
+                   "for one to host or join")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    const MCServicesScope scope(list, service);
+    REQUIRE(MCTestGame::StartLogistics());
+    // No name entered before (the worker's user folder may hold an earlier test's).
+    SaveUserName("");
+    const auto openInternet = [&list]() -> MCGamesScreen&
+    {
+        MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
+        Settle();
+        MCTestGuest::PressInternet();
+        REQUIRE(SettleUntil([] { return OnInternet(); }));
+        list.Send(Listing(Json::array(), 1, 0));
+        REQUIRE(SettleUntil(CountsAre("1 online, 0 in games")));
+        return Internet();
+    };
+
+    MCGamesScreen& screen = openInternet();
+    CHECK(screen.PlayerName().empty());
+    CHECK(!screen.Seen().CanHost);
+    const Rml::Element* focused = screen.Layer().Context().GetFocusElement();
+    REQUIRE(focused != nullptr);
+    CHECK_EQ(focused->GetId(), std::string("name"));
+
+    // A code typed: JOIN GAME still waits for the name; spaces aren't one.
+    screen.SetCode(std::string(MCFakeGames::GameCode));
+    screen.SetPlayerName("   ");
+    Settle();
+    CHECK(!screen.Seen().CanHost);
+    CHECK(!screen.Seen().CanJoin);
+    screen.SetPlayerName("Commander");
+    Settle();
+    CHECK(screen.Seen().CanHost);
+    CHECK(screen.Seen().CanJoin);
+
+    // A name entered before: INTERNET starts with it.
+    SaveUserName("Falcon");
+    CHECK_EQ(openInternet().PlayerName(), std::string("Falcon"));
 }
 
 /// <summary>

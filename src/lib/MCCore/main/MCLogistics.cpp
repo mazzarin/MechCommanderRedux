@@ -861,16 +861,30 @@ auto MCLogistics::ReIndexInventory() const -> int32_t
     return row;
 }
 
+namespace
+{
+    /// <summary>The name buffers on the multiplayer screens hold 63 characters.</summary>
+    constexpr uint32_t NameBufferSize = 0x3f;
+}
+
+auto SavedPlayerName() -> std::optional<std::string>
+{
+    // The name last entered on the multiplayer screens (HKLM\Software\FASA Interactive\MechCommander Expansion,
+    // "Player Name"; the port's registry file).
+    if (std::optional<std::string> saved =
+            MCRegistry::Read("Software\\FASA Interactive\\MechCommander Expansion", "Player Name");
+        saved.has_value() && saved->size() + 1 <= NameBufferSize)
+    {
+        return saved;
+    }
+
+    return std::nullopt;
+}
+
 auto MyGetUserName() -> std::optional<std::string>
 {
-    // The name buffers on the multiplayer screens hold 63 characters.
-    constexpr uint32_t bufferSize = 0x3f;
-
-    // The name last entered on the multiplayer screens (HKLM\Software\FASA Interactive\MechCommander Expansion,
-    // "Player Name"; the port's registry file), else the logged-in user's name.
-    if (const std::optional<std::string> saved =
-            MCRegistry::Read("Software\\FASA Interactive\\MechCommander Expansion", "Player Name");
-        saved.has_value() && saved->size() + 1 <= bufferSize)
+    // The name last entered on the multiplayer screens, else the logged-in user's name.
+    if (std::optional<std::string> saved = SavedPlayerName(); saved.has_value())
     {
         return saved;
     }
@@ -880,7 +894,7 @@ auto MyGetUserName() -> std::optional<std::string>
     // GetUserNameA failed when the name and its terminator didn't fit.
     std::optional<std::string> name = MCPort::GetUserName();
 
-    if (!name.has_value() || name->size() + 1 > bufferSize)
+    if (!name.has_value() || name->size() + 1 > NameBufferSize)
     {
         return std::nullopt;
     }

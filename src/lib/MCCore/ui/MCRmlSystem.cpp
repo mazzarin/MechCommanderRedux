@@ -3,6 +3,7 @@
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCUtf8Path.h"
+#include <atomic>
 
 namespace
 {
@@ -10,6 +11,9 @@ namespace
 
     /// <summary>The folder under the app's own that holds the menus' files.</summary>
     constexpr std::string_view UiFolder = "ui";
+
+    /// <summary>RmlUi's warnings and errors so far (MCRmlSystem::Warnings).</summary>
+    std::atomic<size_t> WarningsLogged = 0;
 
     /// <summary>The name RmlUi's messages of <paramref name="type"/> are logged with.</summary>
     std::string_view TypeName(Rml::Log::Type type)
@@ -48,6 +52,11 @@ double MCRmlSystem::GetElapsedTime()
 
 bool MCRmlSystem::LogMessage(Rml::Log::Type type, const Rml::String& message)
 {
+    if (type == Rml::Log::LT_WARNING || type == Rml::Log::LT_ERROR || type == Rml::Log::LT_ASSERT)
+    {
+        ++WarningsLogged;
+    }
+
     // RmlUi's debug messages say what it does every frame; the rest are worth the log.
     if (type != Rml::Log::LT_DEBUG)
     {
@@ -56,6 +65,11 @@ bool MCRmlSystem::LogMessage(Rml::Log::Type type, const Rml::String& message)
     }
 
     return true;
+}
+
+size_t MCRmlSystem::Warnings()
+{
+    return WarningsLogged;
 }
 
 void MCRmlSystem::SetClipboardText(const Rml::String& text)

@@ -66,6 +66,8 @@ namespace
     {
         SDL_Log("Idle: no answer to STILL THERE?: leaving the room");
         EndQuestion();
+        // The away time starts again: the room, still shown for the frames its leaving takes, never asks again.
+        LastInput = Now();
 
         // A lobby's game goes back to its lobby, as its room's EXIT does.
         if (LaunchedFromLobby)

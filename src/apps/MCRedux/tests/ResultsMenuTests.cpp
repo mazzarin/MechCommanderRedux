@@ -585,6 +585,9 @@ TEST_CASE_ISOLATED("game: a match's results show every pilot by kills, the best 
     CHECK(results->Objectives().empty());
     CHECK(results->Pilots().empty());
     CHECK(!results->List().empty());
+    // Each row's pilot is its MechWarrior's callsign (a match's movers carry their commander's name, its own column).
+    CHECK(
+        std::ranges::none_of(results->List(), [](const MCResultsScreen::MCListRow& row) { return row.Name.empty(); }));
     CHECK(std::ranges::all_of(results->Figures(), [](const MCResultsScreen::MCFigure& figure)
                               { return figure.Shown && !figure.Number.empty(); }));
     CheckLaidOut("results_match");

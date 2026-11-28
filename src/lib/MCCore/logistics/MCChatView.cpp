@@ -4,6 +4,7 @@
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCLogChat.h"
 #include "logistics/MCRoomModel.h"
+#include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
 #include "network/MCMcoSeats.h"
 #include "network/MCMultiPlayer.h"
@@ -56,6 +57,48 @@ namespace
         }
 
         return plain;
+    }
+
+    /// <summary>A sentence of the game's own, by its string's id and the buffer its sender cut it to.</summary>
+    struct MCGameSentence
+    {
+        uint32_t Id;
+        int Length;
+    };
+
+    /// <summary>
+    /// The game's own sentences a game sends as its player's chat line (1998's, said under that player's name): DEPLOY's
+    /// "%s has entered the mission." (MCDeploy), the host's "%s has left the game." and a new server's line
+    /// (MCMultiPlayer::PlayerLeftGame, SetServer).
+    /// </summary>
+    constexpr std::array<MCGameSentence, 3> GameSentences = {MCGameSentence{.Id = 0x379, .Length = 199},
+                                                             MCGameSentence{.Id = 0x382, .Length = 0xfe},
+                                                             MCGameSentence{.Id = 0x378, .Length = 0xfe}};
+    /// <summary>Where a game sentence takes a name.</summary>
+    constexpr std::string_view NameMark = "%s";
+
+    /// <summary>
+    /// Whether <paramref name="text"/> (the chat's bytes) is one of <see cref="GameSentences"/>, with any name where it
+    /// takes one: what every build and the 1998 game send, so read as the game's line whoever's game sent it.
+    /// </summary>
+    bool IsGameSentence(std::string_view text)
+    {
+        return std::ranges::any_of(
+            GameSentences,
+            [text](const MCGameSentence& game)
+            {
+                const std::string sentence = LoadGameString(game.Id, game.Length);
+                const size_t mark = sentence.find(NameMark);
+
+                if (sentence.empty() || mark == sentence.npos)
+                {
+                    return !sentence.empty() && text == sentence;
+                }
+
+                const std::string_view before = std::string_view(sentence).substr(0, mark);
+                const std::string_view after = std::string_view(sentence).substr(mark + NameMark.size());
+                return text.size() > before.size() + after.size() && text.starts_with(before) && text.ends_with(after);
+            });
     }
 
     /// <summary>The chat's unseen mark (MCChatView::Unread).</summary>
@@ -119,8 +162,8 @@ std::vector<MCChatView::MCLine> MCChatView::Read(const MCLogChat& chat)
     const std::string nameEnd = std::format("{}{}", NameEnd, ColourCode);
 
     // A player's line is "%fc<their colour>name: %fc<text colour>text" (MCLogChat::ProcessChatString); the rest are the
-    // game's own (who joined, who left, the code). Names, text and the game's lines all in UTF-8: a name can hold the
-    // chat's accented bytes too (an MCO player's).
+    // game's own (who joined, who left, the code), as are the game's sentences sent as a player's line. Names, text and
+    // the game's lines all in UTF-8: a name can hold the chat's accented bytes too (an MCO player's).
     for (const MCLogChat::HistoryLine& history : chat.Lines)
     {
         const std::string_view text = history.Text;
@@ -138,11 +181,21 @@ std::vector<MCChatView::MCLine> MCChatView::Read(const MCLogChat& chat)
         }
 
         const size_t textColourAt = split + nameEnd.size();
+        const std::string saidText = Uncoded(text.substr(textColourAt + 1));
+
+        // The game's own sentence sent as its player's line ("FALCON: Falcon has entered the mission."): the game's.
+        if (IsGameSentence(saidText))
+        {
+            lines.push_back(MCLine{
+                .Game = true, .Colour = std::string(GameColour), .Text = MCRmlDialogs::AsSentence(AsUtf8(saidText))});
+            continue;
+        }
+
         lines.push_back(
             MCLine{.Game = false,
                    .Name = AsUtf8(Uncoded(text.substr(ColourCode.size() + 1, split - ColourCode.size() - 1))),
                    .Colour = ColourOf(*number),
-                   .Text = AsUtf8(Uncoded(text.substr(textColourAt + 1))),
+                   .Text = AsUtf8(saidText),
                    .Team = text[textColourAt] == TeamTextColour});
     }
 

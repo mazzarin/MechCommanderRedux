@@ -14,6 +14,7 @@
 #include "gui/MCScreenFlow.h"
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCInternetMenu.h"
@@ -787,9 +788,11 @@ TEST_CASE_ISOLATED("game: INTERNET hosts a game into its room, its EXIT comes ba
     CHECK(manager.HostedInternetCode() == std::optional<std::string>(MCFakeGames::GameCode));
     CHECK(DialogText().empty());
     CHECK(!OnInternet());
-    const std::string codeLine = std::format("FRIENDS CAN JOIN WITH CODE {}.", MCFakeGames::GameCode);
+    const std::string codeLine = std::format("Friends can join with code {}.", MCFakeGames::GameCode);
     CHECK(std::ranges::any_of(GlobalLog()->Chat->Lines,
                               [&](const MCLogChat::HistoryLine& line) { return line.Text.contains(codeLine); }));
+    // As the room's chat shows it: the code in its capitals.
+    CHECK(std::ranges::contains(MCChatView::Read(*GlobalLog()->Chat), codeLine, &MCChatView::MCLine::Text));
 
     // The service has the room as the list will show it: public (the window's default), its name, its players.
     REQUIRE(SettleUntil([&] { return service.Room().has_value(); }));
@@ -917,11 +920,21 @@ TEST_CASE_ISOLATED("game: a player away from an internet game is asked STILL THE
     Settle();
     CHECK(InRoom());
 
-    // Asked again, and no answer: the player leaves, the game ends on the service, and the games say why.
+    // Asked again, and no answer: the player leaves, the game ends on the service, and the games say why; the room,
+    // shown while it's left, never asks once more.
     now += MCIdleCheck::AwayTime;
     REQUIRE(SettleUntil([] { return DialogText() == "Are you still there?"; }));
     now += MCIdleCheck::AnswerTime;
-    REQUIRE(SettleUntil([] { return OnInternet(); }));
+    bool askedAgain = false;
+    bool left = false;
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            askedAgain |= left && MCIdleCheck::Asking();
+            left = left || !MCIdleCheck::Asking();
+            return OnInternet();
+        }));
+    CHECK(!askedAgain);
     REQUIRE(SettleUntil([] { return !DialogText().empty(); }));
     CHECK_EQ(DialogText(), "You were away too long and were taken out of the game.");
     CHECK(MultiPlayer()->SessionManager->Internet == nullptr);

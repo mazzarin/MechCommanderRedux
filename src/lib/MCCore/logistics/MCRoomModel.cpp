@@ -71,6 +71,8 @@ namespace
     constexpr int32_t LightCheckingIn = 2;
     /// <summary>Betty's "launch" as the match starts.</summary>
     constexpr uint32_t StartSample = 0x19;
+    /// <summary>How long the file check's wait stays once every player has the file (the original's second).</summary>
+    constexpr int32_t FilesCheckedCloseMs = 1000;
 
     /// <summary>Port: names the players whose game data differ from the host's (as good as without the mission).</summary>
     constexpr std::string_view DiffersText = "These players' game data differs from yours: {}";
@@ -1380,9 +1382,9 @@ auto MCRoomModel::FilesAnswered() -> void
             return;
         }
 
-        // Everyone has it: the waiting dialog closes itself.
+        // Everyone has it: the waiting dialog closes itself (at once when none was said: the host alone).
         MCMenuDialog& dialog = *GlobalLog()->Message;
-        dialog.CloseIn(1000);
+        dialog.CloseIn(dialog.IsShowing() ? FilesCheckedCloseMs : 0);
         dialog.Ok.Exec = nullptr;
         CheckGoodToGo();
         return;
@@ -1615,9 +1617,21 @@ auto MCRoomModel::LoadMission(std::string_view fileName) -> void
                     }
                 }
 
-                ShowDialog(LoadGameString(0xac, 0xfe), MPCancel, "bh_cancl.tga", "bg_cancl.tga", MPLoadWorked);
                 // Port-only (the personal build): with no ready room the host may be alone in the room, and then nobody
-                // answers: the check is done at once.
+                // answers: the check is done at once. Port-only (Redux HD): nothing said then ("Checking for game file
+                // on all machines..." with no other machine), the load going on at once as the closed wait's would.
+                const bool others = std::ranges::any_of(Seats, [serverId](const MCSeat& seat)
+                                                        { return seat.Id != NoPlayer && seat.Id != serverId; });
+
+                if (others)
+                {
+                    ShowDialog(LoadGameString(0xac, 0xfe), MPCancel, "bh_cancl.tga", "bg_cancl.tga", MPLoadWorked);
+                }
+                else
+                {
+                    GlobalLog()->Message->Callback = MPLoadWorked;
+                }
+
                 FilesAnswered();
             }
             else

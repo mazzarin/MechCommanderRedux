@@ -76,8 +76,11 @@ namespace
         MCFrameLog::Note(std::format("logistics: the {} screen", name));
     }
 
-    /// <summary>Port (Redux HD): the room's chat line telling an internet game's host the code its players join by.</summary>
-    constexpr std::string_view InternetCodeFormat = "FRIENDS CAN JOIN WITH CODE {}.";
+    /// <summary>
+    /// Port (Redux HD): the room's chat line telling an internet game's host the code its players join by, as a sentence
+    /// already, so the code keeps its capitals (the remade chat makes a line all in capitals a sentence).
+    /// </summary>
+    constexpr std::string_view InternetCodeFormat = "Friends can join with code {}.";
 
     /// <summary>The chat's history, in pixels (its lines' wrapped heights times the width), as the original's.</summary>
     constexpr int32_t ChatHistorySize = 100000;

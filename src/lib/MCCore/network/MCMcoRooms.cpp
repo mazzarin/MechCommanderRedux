@@ -1133,8 +1133,18 @@ void MCMcoRooms::DoDescribe(const std::string& description, int32_t maxPlayers)
 
     if (!_Seat || !_Seat->Host || !_Both || (description == _Described && players == _DescribedMax))
     {
+        _HeldDescription.reset();
         return;
     }
+
+    // MCO edits no room while its match is on: told when the match ends (EndMatch).
+    if (_Match)
+    {
+        _HeldDescription.emplace(description, maxPlayers);
+        return;
+    }
+
+    _HeldDescription.reset();
 
     if (const auto updated = _Service->UpdateRoom(_Peer, *_Seat, _Both->Name, description, players); !updated)
     {
@@ -2150,6 +2160,13 @@ void MCMcoRooms::EndMatch(bool played)
             seen.GamePort = 0;
             seen.SessionName.clear();
         });
+
+    // What the room came to be during the match, told now MCO takes it.
+    if (_HeldDescription)
+    {
+        const std::pair<std::string, int32_t> held = std::move(*_HeldDescription);
+        DoDescribe(held.first, held.second);
+    }
 }
 
 // What the screens read.

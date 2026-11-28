@@ -2,7 +2,7 @@
 
 // Port-only (SPEC-menus.md's stage 4, the room's chat; stage 8's briefing views it too): the chat (logistics/MCLogChat)
 // as the remade screens show it, and what they say to it. Each line with its sayer's name in their colour (the chat's
-// SMUTI colour codes read), the game's own lines (a join, a leave, the code) grey, a line to a team marked; what's typed
+// SMUTI colour codes read), the game's own lines (a join, a leave, the code, and its sentences a player's game sends) grey, a line to a team marked; what's typed
 // sent as the 1998 chat box (MCLogChatInput) sent it; whether a line came that the player hasn't seen.
 
 #include <cstdint>

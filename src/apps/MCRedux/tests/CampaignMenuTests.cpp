@@ -64,6 +64,7 @@
 #include "ui/MCRmlDialog.h"
 #include "ui/MCRmlKit.h"
 #include "ui/MCRmlMenus.h"
+#include "ui/MCRmlSystem.h"
 
 #include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
@@ -86,6 +87,11 @@ namespace
     constexpr double SettleSeconds = 3.0;
     /// <summary>The pictures' resource points (the first mission gives none; enough for the buy window's).</summary>
     constexpr int32_t ShotPoints = 48600;
+    /// <summary>DEPLOY's "%s has entered the mission." and the buffer it is cut to (MCDeploy's ReadyString).</summary>
+    constexpr uint32_t EnteredString = 0x379;
+    constexpr int EnteredLength = 199;
+    /// <summary>A line to all's text colour, as the 1998 chat box sends it (MCLogChatInput).</summary>
+    constexpr int32_t AllTextColour = 6;
 
     /// <summary>As brf0101.txt writes it: its codes, a title, objectives carried on a line, the fire support, warnings.</summary>
     constexpr std::string_view FirstBriefing = "%fm%fc1%c****CLASSIFIED****%n\r\n"
@@ -2446,15 +2452,22 @@ TEST_CASE_ISOLATED("game: a match's remade briefing shows its players by team wi
     CheckLaidOut(menus, "deploy mp");
 
     // ANN leaves: gone from the bar, the chat saying so as the room's does (the host's line,
-    // MCMultiPlayer::PlayerLeftGame); no dialog (the 1998 one's "Returning you to the Main Menu" returned nowhere).
+    // MCMultiPlayer::PlayerLeftGame, the game's own: no sender's name); no dialog (the 1998 one's "Returning you to the
+    // Main Menu" returned nowhere).
     ann.Leave();
     REQUIRE(MCTestGuest::SettleUntil([&screen] { return screen.OtherTeam().empty(); }));
     MCTestGuest::Settle();
     CHECK_EQ(screen.PlayerCount(), std::string("1"));
     REQUIRE(!screen.ChatLines().empty());
     CHECK_EQ(screen.ChatLines().back(),
-             (MCChatView::MCLine{.Name = "COMMANDER", .Colour = myColour, .Text = "ANN has left the game."}));
+             (MCChatView::MCLine{.Game = true, .Colour = "grey", .Text = "ANN has left the game."}));
     CHECK(MCTestGuest::DialogText().empty());
+
+    // DEPLOY's ready line, which each game sends under its own player's name (MCDeploy): the game's line too.
+    const std::string entered = MCFormatPrintf(LoadGameString(EnteredString, EnteredLength).c_str(), "COMMANDER");
+    GlobalLog()->Chat->ProcessChatString(MultiPlayer()->SessionManager->MyPlayer()->Id, entered, AllTextColour);
+    CHECK_EQ(MCChatView::Read(*GlobalLog()->Chat).back(),
+             (MCChatView::MCLine{.Game = true, .Colour = "grey", .Text = entered}));
     CHECK(MCCampaignMenu::Shown());
 }
 
@@ -3886,6 +3899,8 @@ TEST_CASE_ISOLATED("game: Z and C change PURCHASING's and the MECH BAY's list, r
     screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
     MCTestGame::RunFrame(FlowFrame);
     REQUIRE(tabs.Kind() == MCKind::Mechs);
+    // Lists changing under RmlUi's bindings warn nothing (the store's pips read past a shorter list's end).
+    const size_t warnings = MCRmlSystem::Warnings();
     Press(SDL_SCANCODE_C);
     CHECK(tabs.Kind() == MCKind::MechWarriors);
     Press(SDL_SCANCODE_Z);
@@ -3939,6 +3954,7 @@ TEST_CASE_ISOLATED("game: Z and C change PURCHASING's and the MECH BAY's list, r
     CHECK(screen.Tab() == MCCampaignScreen::MCTab::MechBay);
     CHECK(ElementOf(screen, "stock-kinds").IsVisible(true));
     CHECK(NamesListKeys(tabs));
+    CHECK_EQ(MCRmlSystem::Warnings(), warnings);
 }
 
 /// <summary>
@@ -5173,7 +5189,7 @@ namespace
     {
         std::string pips;
         Rml::ElementList drawn;
-        card.QuerySelectorAll(drawn, ".vpips > div");
+        card.QuerySelectorAll(drawn, ".vpips .pip");
 
         for (const Rml::Element* pip : drawn)
         {

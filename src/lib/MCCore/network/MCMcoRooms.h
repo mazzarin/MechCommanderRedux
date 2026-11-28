@@ -458,6 +458,11 @@ private:
     std::optional<MCMcoBoth> _Both;
     std::string _Described;
     int32_t _DescribedMax = 0;
+    /// <summary>
+    /// A description asked for while a match is on MCO, which refuses a room's edit until its session closes (HTTP 409,
+    /// "Finish the current game/session before editing the room."): told once the match ends.
+    /// </summary>
+    std::optional<std::pair<std::string, int32_t>> _HeldDescription;
     /// <summary>A guest's quiet seat, and the match its room runs (reported as running: its game is in it, on our links).</summary>
     bool _Silent = false;
     std::string _SilentMatch;

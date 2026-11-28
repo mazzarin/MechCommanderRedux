@@ -35,6 +35,8 @@ public:
 
     /// <summary>Whether SDL's text input is on for a text box (tests).</summary>
     bool Typing() const { return _Typing; }
+    /// <summary>RmlUi's warnings and errors logged so far, every window's (tests).</summary>
+    static size_t Warnings();
 
 private:
     /// <summary>The window text is typed into, when there is one.</summary>

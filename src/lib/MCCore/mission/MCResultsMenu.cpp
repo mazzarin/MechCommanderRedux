@@ -429,7 +429,8 @@ void MCResultsScreen::FillMatch()
         const MCOptionalRef<const MCMissionEnd::MCCommanderLine> who = commander(mover->GetCommanderId());
         const std::string whoName = who.has_value() ? who->get().Name : std::string();
         const std::string whoColour = who.has_value() ? MCChatView::ColourOf(who->get().Number) : std::string();
-        _List.push_back(MCListRow{.Name = mover->NetName,
+        // The MechWarrior's callsign (a match's movers carry their commander's name, the next column's).
+        _List.push_back(MCListRow{.Name = warrior->Callsign,
                                   .Mech = std::string(mover->GetIfaceName()),
                                   .Who = whoName,
                                   .WhoColour = whoColour,
@@ -440,7 +441,7 @@ void MCResultsScreen::FillMatch()
         {
             const int32_t kills = result.OldRank;
             _Best = true;
-            _BestWho = mover->NetName;
+            _BestWho = warrior->Callsign;
             _BestWhat = mover->GetIfaceName();
             _BestTons = Tons(mover->TonnageClass);
             _BestMech = Outline(*mover);

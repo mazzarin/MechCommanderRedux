@@ -374,9 +374,12 @@
 #logistics .card.good .pics.chassis > * { flex: 0 0 auto; }
 #logistics .card.good .pic.with-pips { height: 32dp; }
 #logistics .vpips { display: flex; flex-direction: row; gap: 2dp; height: 4dp; margin-top: 2dp; padding-left: 2dp; }
-#logistics .vpips > div { box-sizing: border-box; flex: 0 0 5dp; height: 4dp; background-color: #fcfcb8; }
-#logistics .vpips > div.out { background-color: transparent; border: 1dp #6c7a88; }
-#logistics .vpips > div.shown { background-color: #7cd4ec; }
+/* Each pip in a slot of the variants' list: its bindings a level below the list's own rows, so RmlUi updates them after
+   the list drops a row (bound on the row, a shorter list's dropped rows read past its end first). */
+#logistics .vpips > div { flex: 0 0 5dp; height: 4dp; }
+#logistics .vpips .pip { box-sizing: border-box; width: 5dp; height: 4dp; background-color: #fcfcb8; }
+#logistics .vpips .pip.out { background-color: transparent; border: 1dp #6c7a88; }
+#logistics .vpips .pip.shown { background-color: #7cd4ec; }
 /* The details' VARIANT (for 1998's variant buttons): a row a variant, the one shown teal; each its letter, its word,
    what it changes (its description's own sentence) and how many are left; one none are left of dim. A row takes the
    keys' focus as a list's; a click or Enter shows it. */

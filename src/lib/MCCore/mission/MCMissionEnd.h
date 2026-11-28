@@ -89,7 +89,7 @@ namespace MCMissionEnd
     /// <summary>A commander's line on a match's results: its place by kills, the player's name, the kills.</summary>
     struct MCCommanderLine
     {
-        /// <summary>The place (1-6) by kills.</summary>
+        /// <summary>The place (1-6) by kills, among the commanders listed.</summary>
         int32_t Place = 0;
         /// <summary>The player's name (kept: the session may be left before the results close).</summary>
         std::string Name;

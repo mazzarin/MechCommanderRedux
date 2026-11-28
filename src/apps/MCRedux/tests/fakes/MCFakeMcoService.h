@@ -582,6 +582,13 @@ namespace MCFakeMcoService
 
             if (action == "update_room")
             {
+                // As MCO (27 Nov's live test): no edit while the room's match is on.
+                if (room.Match.has_value())
+                {
+                    return Error(HttpConflict, "session_active",
+                                 "Finish the current game/session before editing the room.");
+                }
+
                 room.Name = fields["new_name"];
                 room.Description = fields["description"];
                 room.MaxPlayers = std::stoi(fields["max_players"]);

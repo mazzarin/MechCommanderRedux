@@ -225,7 +225,7 @@
                             <div class="grid">
                                 <div class="card-cell" data-for="g, i : store"><div class="card good" data-attr-id="'store' + i" data-class-picked="g.picked" data-class-off="g.off"
                                      data-hint="Pick" data-hint-right="Buy">
-                                    <div class="pics chassis" data-if="g.variants.size &gt; 0"><div class="pic picture with-pips" data-style-decorator="g.picture"></div><div class="vpips"><div data-for="v : g.variants" data-class-out="v.off" data-class-shown="v.on &amp;&amp; !v.off"></div></div></div>
+                                    <div class="pics chassis" data-if="g.variants.size &gt; 0"><div class="pic picture with-pips" data-style-decorator="g.picture"></div><div class="vpips"><div data-for="v : g.variants"><div class="pip" data-class-out="v.off" data-class-shown="v.on &amp;&amp; !v.off"></div></div></div></div>
                                     <div class="pic picture" data-if="g.variants.size == 0" data-class-part="g.part" data-style-decorator="g.picture"></div>
                                     <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}<span class="vchip" data-if="g.letter != ''">{{g.letter}}</span></div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.why == ''"><div class="cream">{{g.price}}</div><div class="grow"></div><div class="grey">{{g.note}}</div></div><div class="row-t" data-if="g.why != ''"><div>{{g.why}}</div></div></div>
                                 </div></div>

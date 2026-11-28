@@ -464,10 +464,18 @@ TEST_CASE_ISOLATED("game: a LAN guest's room shows the map its host loads, and w
     CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
     CheckMenusFrames("room guest change map", {0x6b82b674, 0xd92d8408, 0x2b8f982b});
 
-    // The room shown again: afresh, no map and nobody placed. The teams first this time, then the map named again.
+    // The room shown again: afresh, no map and nobody placed, in place (no fade out and back in: the user's, 27 Nov,
+    // "it faded out and back in again at the same lobby"). The teams first this time, then the map named again.
     bob.SendRoomAgain(ann);
-    REQUIRE(SettleUntil([] { return GlobalLog()->Room.LoadedMission.empty(); }));
+    bool changed = false;
+    REQUIRE(SettleUntil(
+        [&changed]
+        {
+            changed |= MCScreenChange::Running() || MCScreenFlow::Waiting();
+            return GlobalLog()->Room.LoadedMission.empty();
+        }));
     Settle();
+    CHECK(!changed);
     seen = RoomSeen();
     CHECK_EQ(seen.Map, std::string());
     CHECK_EQ(seen.Status, std::string("Waiting for Bob to choose a map and the teams."));
@@ -740,8 +748,10 @@ TEST_CASE_ISOLATED("game: every room map's description lies inside its box in CH
         REQUIRE(SettleUntil([&] { return PickedName(choose) == map.Name; }));
         problems += ProblemsAtEveryWindow(std::format("{} in CHOOSE MAP", map.File), choose, PickWordsId);
 
-        // Chosen: the room shows it, the host's, then a guest's.
+        // Chosen: the room shows it, the host's, then a guest's. Nobody else to ask for the file: no "Checking for game
+        // file on all machines...".
         choose.PressChoose();
+        CHECK(MCTestGuest::DialogText().empty());
         REQUIRE(SettleUntil([&] { return !ChooseMapWindowShown() && room.Seen().Map == map.Name; }));
         Settle();
         CHECK(room.Seen().MapText == RoomText(map));

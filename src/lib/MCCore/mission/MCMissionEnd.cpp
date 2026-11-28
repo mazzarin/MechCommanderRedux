@@ -283,9 +283,11 @@ auto MCMissionEnd::CommanderLines(const MCMissionResults& results) -> std::vecto
         const MCMissionCommanderScore& score = results.Commanders[static_cast<size_t>(i)];
         const auto player = score.Score < 0 ? nullptr : game->SessionManager->GetPlayerNumber(score.CommanderId);
 
+        // Port-only (Redux HD): placed among the commanders listed, so a player gone before the results (no name left
+        // to show) leaves no gap ("2. Falcon" alone).
         if (player != nullptr)
         {
-            lines.push_back({.Place = i + 1,
+            lines.push_back({.Place = static_cast<int32_t>(lines.size()) + 1,
                              .Name = player->Name,
                              .Number = score.CommanderId,
                              .Score = score.Score,

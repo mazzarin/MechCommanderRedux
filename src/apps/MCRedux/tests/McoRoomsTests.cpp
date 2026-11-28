@@ -880,9 +880,19 @@ TEST_CASE("mco rooms: an internet game's room starts on MCO at LET IN, its bridg
     CHECK(guest.Seen().Seated);
     CHECK_EQ(guest.Seen().Match, MCMcoMatchStage::None);
 
-    // The match over: closed as played, with the room's engine; the room waits again.
+    // The room described during the match (a mission picked, a seat gone): MCO edits no room in a match, so it's told
+    // once the match closes, never asked meanwhile.
+    const size_t described = mco.Asked("update_room");
+    host.Describe("Arena", 4);
+    std::this_thread::sleep_for(PollMost * 2);
+    CHECK_EQ(mco.Asked("update_room"), described);
+
+    // The match over: closed as played, with the room's engine; the room waits again, then is described.
     host.BothMatchOver();
     REQUIRE(Within(HeardMs, [&] { return mco.Closed().size() == 1; }));
+    REQUIRE(Within(HeardMs, [&] { return mco.RoomOf(roomId)->Description == "Arena"; }));
+    CHECK_EQ(mco.RoomOf(roomId)->MaxPlayers, 4);
+    CHECK_EQ(mco.Asked("update_room"), described + 1);
     CHECK_EQ(mco.Closed()[0].second, std::string(MCFakeMcoService::StockBuild));
     REQUIRE(Within(HeardMs, [&] { return host.Seen().Match == MCMcoMatchStage::None; }));
     CHECK(host.Seen().Room.has_value());

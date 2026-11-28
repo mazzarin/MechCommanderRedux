@@ -150,6 +150,7 @@
     <ClCompile Include="iface\MCTacticalInterfaceKeys.cpp" />
     <ClCompile Include="iface\MCTacticalInterfaceMouseState.cpp" />
     <ClCompile Include="iface\MCTacticalInterfaceSelection.cpp" />
+    <ClCompile Include="iface\MCTouchpadNotice.cpp" />
     <ClCompile Include="lib\MCDice.cpp" />
     <ClCompile Include="lib\MCDiskFile.cpp">
       <!-- The disk file is the system's own, so it includes windows.h, which must not meet the game's Win32
@@ -658,6 +659,7 @@
     <ClInclude Include="iface\MCMechIcon.h" />
     <ClInclude Include="iface\MCOrderSink.h" />
     <ClInclude Include="iface\MCTacticalInterface.h" />
+    <ClInclude Include="iface\MCTouchpadNotice.h" />
     <ClInclude Include="lib\MCDice.h" />
     <ClInclude Include="lib\MCDiskFile.h" />
     <ClInclude Include="lib\MCFastFile.h" />

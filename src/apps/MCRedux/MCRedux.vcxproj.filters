@@ -13,6 +13,7 @@
     <ClCompile Include="MCRestart.cpp" />
     <ClCompile Include="MCSetupRunWin.cpp" />
     <ClCompile Include="MCTelemetryWin.cpp" />
+    <ClCompile Include="MCTouchpadWatchWin.cpp" />
     <ClCompile Include="MCWebSocketWin.cpp" />
     <ClCompile Include="stdafx.cpp" />
   </ItemGroup>
@@ -28,6 +29,7 @@
     <ClInclude Include="MCRestart.h" />
     <ClInclude Include="MCSetupRun.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
+    <ClInclude Include="MCTouchpadWatch.h" />
     <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />

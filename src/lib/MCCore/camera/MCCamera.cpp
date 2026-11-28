@@ -12,6 +12,7 @@
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCPauseScreen.h"
+#include "iface/MCTouchpadNotice.h"
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
@@ -847,8 +848,9 @@ auto MCCamera::Render() -> void
     const auto overlayHalfWidth = static_cast<float>(overlayPane.X1 - overlayPane.X0) * 0.5f;
     const auto overlayHalfHeight = static_cast<float>(overlayPane.Y1 - overlayPane.Y0) * 0.5f;
 
-    // Port-only: the pause menu's own veil and name stand for them while it shows (logistics/MCPauseScreen.h).
-    if (GamePaused != 0 && !MCPauseScreen::Shows())
+    // Port-only: the pause menu's own veil and name stand for them while it shows (logistics/MCPauseScreen.h), and the
+    // touchpad notice says why the battle waits (iface/MCTouchpadNotice.h).
+    if (GamePaused != 0 && !MCPauseScreen::Shows() && !MCTouchpadNotice::Shows())
     {
         DarkenScreen();
 

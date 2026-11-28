@@ -9,6 +9,7 @@
 #include "gui/MCScreenChange.h"
 #include "gui/MCUpdateDisplay.h"
 #include "iface/MCTacticalInterface.h"
+#include "iface/MCTouchpadNotice.h"
 #include "lib/MCVector2D.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCGameStrings.h"
@@ -164,7 +165,8 @@ namespace
                 break;
             case VK_PAUSE:
             {
-                if (Scenario() != nullptr && MultiPlayer() == nullptr && Turn > 0)
+                // Port-only: not under the touchpad notice, whose OK lets the battle go on (iface/MCTouchpadNotice.h).
+                if (Scenario() != nullptr && MultiPlayer() == nullptr && Turn > 0 && !MCTouchpadNotice::Shows())
                 {
                     GamePaused = !GamePaused;
                 }
@@ -681,8 +683,9 @@ auto ScrollScreen() -> void
         return;
     }
 
-    // Port-only: the pause takes the mouse, so the cursor's last place (at an edge, say) doesn't scroll on under it.
-    if (MCPauseScreen::Shows())
+    // Port-only: the pause takes the mouse, so the cursor's last place (at an edge, say) doesn't scroll on under it; so
+    // does the touchpad notice (iface/MCTouchpadNotice.h).
+    if (MCPauseScreen::Shows() || MCTouchpadNotice::Shows())
     {
         return;
     }

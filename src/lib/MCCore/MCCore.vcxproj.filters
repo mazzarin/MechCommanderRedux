@@ -393,6 +393,9 @@
     <ClCompile Include="iface\MCTacticalInterfaceSelection.cpp">
       <Filter>iface</Filter>
     </ClCompile>
+    <ClCompile Include="iface\MCTouchpadNotice.cpp">
+      <Filter>iface</Filter>
+    </ClCompile>
     <ClCompile Include="lib\MCDice.cpp">
       <Filter>lib</Filter>
     </ClCompile>
@@ -1814,6 +1817,9 @@
       <Filter>iface</Filter>
     </ClInclude>
     <ClInclude Include="iface\MCTacticalInterface.h">
+      <Filter>iface</Filter>
+    </ClInclude>
+    <ClInclude Include="iface\MCTouchpadNotice.h">
       <Filter>iface</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCDice.h">

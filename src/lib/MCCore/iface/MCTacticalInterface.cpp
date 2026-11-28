@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "iface/MCTacticalInterface.h"
+#include "iface/MCTouchpadNotice.h"
 #include "camera/MCCamera.h"
 #include "gui/MCGuiInput.h"
 #include "camera/MCMainWindow.h"
@@ -85,6 +86,9 @@ auto UpdateMouseStateCallback() -> void
         MCFrameLog::Scope part("logic.mouseState");
         TacticalInterface()->UpdateMouseState(std::nullopt);
     }
+
+    // Port-only (Redux HD): a click the touchpad dropped with a key held, said once (iface/MCTouchpadNotice.h).
+    MCTouchpadNotice::Tend();
 }
 
 MCTacticalInterface::MCTacticalInterface() = default;

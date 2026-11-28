@@ -9,6 +9,7 @@
 #include "gui/MCScreenFlow.h"
 #include "iface/MCKeyBindings.h"
 #include "iface/MCTacticalInterface.h"
+#include "iface/MCTouchpadNotice.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMenuScreens.h"
@@ -17,6 +18,7 @@
 #include "logistics/MCQuestionWindow.h"
 #include "ui/MCRmlFlow.h"
 #include "logistics/MCSettingsModel.h"
+#include "main/MCPrefs.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCSystemConfig.h"
@@ -28,6 +30,7 @@
 #include "platform/MCPresenter.h"
 #include "sound/MCHdAudio.h"
 #include "ui/MCRmlChecks.h"
+#include "ui/MCRmlDialog.h"
 #include "ui/MCRmlLayer.h"
 #include "ui/MCRmlMenus.h"
 #include "ui/MCRmlScreen.h"
@@ -821,4 +824,152 @@ TEST_CASE_ISOLATED("game: a match that ends under its pause keeps the pause's ch
     pause->Resume();
     RunFrames(SettleFrames);
     CHECK(!Menus().Mission().Showing());
+}
+
+namespace
+{
+    using TouchpadClock = MCTouchpadNotice::Clock;
+
+    /// <summary>What the touchpad's driver leaves for a click it dropped with a key held: its press's and release's packets.</summary>
+    void DroppedClick(TouchpadClock::time_point at = TouchpadClock::now())
+    {
+        constexpr auto PressToRelease = std::chrono::milliseconds(110);
+        MCTouchpadNotice::EmptyPacket(at);
+        MCTouchpadNotice::EmptyPacket(at + PressToRelease);
+    }
+
+    /// <summary>PREFS' "TouchpadNoticeSeen" as written.</summary>
+    bool NoticeSeenInPrefs()
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::SettingsToWrite(PrefsFile)), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        return prefs.Read<bool>("TouchpadNoticeSeen").value_or(MCPrefsDefaults::TouchpadNoticeSeen);
+    }
+}
+
+/// <summary>
+/// The touchpad's empty packets (iface/MCTouchpadNotice.h): a press's and its release's within a second are a click
+/// swallowed; one alone, or two a second apart, aren't; the pair taken, the next packet starts anew.
+/// </summary>
+TEST_CASE("touchpad notice: two empty packets with a key held within a second are a click swallowed")
+{
+    using namespace std::chrono_literals;
+    MCTouchpadNotice::MCSwallowedClicks clicks;
+    const TouchpadClock::time_point start = TouchpadClock::now();
+
+    clicks.EmptyPacket(start);
+    CHECK(!clicks.Waiting());
+    CHECK(!clicks.Take().has_value());
+
+    // Past the second: a press of its own, then its release (the HP's 110 ms).
+    const TouchpadClock::time_point press = start + MCTouchpadNotice::PairWithin + 1ms;
+    clicks.EmptyPacket(press);
+    CHECK(!clicks.Waiting());
+    clicks.EmptyPacket(press + 110ms);
+    REQUIRE(clicks.Waiting());
+    CHECK(clicks.Take() == press + 110ms);
+    CHECK(!clicks.Waiting());
+
+    clicks.EmptyPacket(press + 200ms);
+    CHECK(!clicks.Waiting());
+}
+
+/// <summary>
+/// A click the touchpad dropped in a battle shows the notice once, over the battlefield, naming the driver's setting:
+/// single player waits under it until OK, PREFS keeps that it was seen, and no dropped click shows it again. A single
+/// empty packet shows nothing.
+/// </summary>
+TEST_CASE_ISOLATED("game: a click the touchpad dropped shows its notice once over the battle, which waits until OK")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs keptPrefs;
+    const MCTestGame::SaveGameCleanup saves;
+    // Never seen (the worker's PREFS may hold an earlier test's).
+    TouchpadNoticeSeen = false;
+    MCTouchpadNotice::SetDriver(MCTouchpadNotice::MCDriver::Synaptics);
+    StartBattle();
+    REQUIRE(!GamePaused);
+
+    MCTouchpadNotice::EmptyPacket(TouchpadClock::now());
+    RunFrames(SettleFrames);
+    CHECK(!MCRmlDialogs::Shown());
+
+    MCTouchpadNotice::EmptyPacket(TouchpadClock::now());
+    RunFrames(SettleFrames);
+    REQUIRE(MCTouchpadNotice::Shows());
+    REQUIRE(MCRmlDialogs::Shown());
+    CHECK_EQ(MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->Said().Text, std::string(MCTouchpadNotice::SynapticsText));
+    CHECK_EQ(MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->Said().Eyebrow, std::string(MCTouchpadNotice::Eyebrow));
+    CHECK(GamePaused);
+    CHECK(TouchpadNoticeSeen);
+    CHECK(NoticeSeenInPrefs());
+    const int32_t turn = Turn;
+    RunFrames(SettleFrames);
+    CHECK_EQ(Turn, turn);
+
+    // Laid out with nothing spilling or cut at the recorded frames' windows (saved with --shots).
+    for (const MCWindowSize& window : FrameWindows)
+    {
+        REQUIRE(SetWindowPixels(window.Width, window.Height));
+        RunFrames(SettleFrames);
+        CHECK_EQ(std::format("{}x{}: {}", window.Width, window.Height, Problems(Menus().Mission())),
+                 std::format("{}x{}: ", window.Width, window.Height));
+        MCScreenInput::SaveWindowShot(std::format("touchpad_notice_{}x{}", window.Width, window.Height));
+    }
+
+    MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->PressMain();
+    RunFrames(SettleFrames);
+    CHECK(!MCRmlDialogs::Shown());
+    CHECK(!MCTouchpadNotice::Shows());
+    CHECK(!GamePaused);
+    CHECK(Turn > turn);
+
+    DroppedClick();
+    RunFrames(SettleFrames);
+    CHECK(!MCRmlDialogs::Shown());
+    CHECK(!GamePaused);
+}
+
+/// <summary>
+/// A click dropped while the pause shows waits for it to close, then the notice shows; one dropped longer ago than
+/// MCTouchpadNotice::SayWithin is let go; the other driver's notice names the palm rejection.
+/// </summary>
+TEST_CASE_ISOLATED("game: the touchpad notice waits for the pause, and lets an old dropped click go")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const MCTestGame::KeepPrefs keptPrefs;
+    const MCTestGame::SaveGameCleanup saves;
+    TouchpadNoticeSeen = false;
+    MCTouchpadNotice::SetDriver(MCTouchpadNotice::MCDriver::Other);
+    StartBattle();
+
+    // Long ago: let go.
+    DroppedClick(TouchpadClock::now() - MCTouchpadNotice::SayWithin - std::chrono::seconds(1));
+    RunFrames(SettleFrames);
+    CHECK(!MCRmlDialogs::Shown());
+    CHECK(!TouchpadNoticeSeen);
+
+    PressEscape();
+    REQUIRE(MCPauseScreen::Shows());
+    DroppedClick();
+    RunFrames(SettleFrames);
+    CHECK(!MCTouchpadNotice::Shows());
+
+    ClickOn(Find(*ThePause(), "resume"));
+    RunFrames(SettleFrames);
+    REQUIRE(MCTouchpadNotice::Shows());
+    CHECK_EQ(MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->Said().Text, std::string(MCTouchpadNotice::OtherText));
+    CHECK(GamePaused);
+    MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->PressMain();
+    RunFrames(SettleFrames);
+    CHECK(!GamePaused);
 }

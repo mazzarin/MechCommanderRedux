@@ -8,6 +8,7 @@
 #include "MCMemorySystem.h"
 #include "MCRestart.h"
 #include "MCTelemetryBackend.h"
+#include "MCTouchpadWatch.h"
 #include "MCVersion.h"
 #include "MCWebSocketOpen.h"
 #include "abl/MCAblRuntime.h"
@@ -927,6 +928,10 @@ int main(int argc, char** argv)
     MCBenchmark::SetBuild(MC_VERSION_SHOWN ", commit " MC_VERSION_COMMIT);
     // The HD art frames kept, in memory and on the GPU, by what this machine says it can spare.
     MCMemoryRoom::SetSystem(MCMakeMemorySystem());
+#ifdef _WIN32
+    // Port-only (Redux HD): a touchpad's dropped clicks watched for, said once in a battle (iface/MCTouchpadNotice.h).
+    MCStartTouchpadWatch();
+#endif
     MCInternetGame::Setup({.Open = MCOpenWebSocket, .Get = MCMakeHttpGet, .Version = MC_VERSION_SHOWN});
     // An internet game's leaving reaches the service before the GUI stops (RunGame ends it, waiting up to this).
     const int result = RunGame(options->GameCommandLine, InternetLeaveWait);

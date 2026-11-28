@@ -18,6 +18,7 @@ bool Only45Pixel = false;
 bool Force32MB = false;
 bool Force16MB = false;
 bool DeployMapShown = MCPrefsDefaults::DeployMap;
+bool TouchpadNoticeSeen = MCPrefsDefaults::TouchpadNoticeSeen;
 
 namespace
 {
@@ -89,6 +90,7 @@ void SavePrefs()
     WriteChanged(prefs, "InterfaceSize", GInterfaceSize, AutoInterfaceSize);
     WriteChanged(prefs, "ShowFps", GShowFpsPreference != 0, MCPrefsDefaults::ShowFps);
     WriteChanged(prefs, "DeployMap", DeployMapShown, MCPrefsDefaults::DeployMap);
+    WriteChanged(prefs, "TouchpadNoticeSeen", TouchpadNoticeSeen, MCPrefsDefaults::TouchpadNoticeSeen);
     // Port: never a debug console's art mode (MCArtModes.h), but the player's own.
     {
         const MCPlayersArtScope playersArt;

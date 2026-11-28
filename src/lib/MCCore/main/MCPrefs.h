@@ -23,6 +23,12 @@ extern bool Force16MB;
 extern bool DeployMapShown;
 
 /// <summary>
+/// Port-only (Redux HD): the touchpad notice was shown (PREFS "TouchpadNoticeSeen"; iface/MCTouchpadNotice.h): it never
+/// shows again.
+/// </summary>
+extern bool TouchpadNoticeSeen;
+
+/// <summary>
 /// Port-only: writes the settings as they are now to prefs.cfg (the settings' ACCEPT; the in-mission interface size
 /// keys save through it too): its format (<see cref="PrefsVersion"/>), then only the settings that differ from their
 /// defaults (<see cref="MCPrefsDefaults"/>, <see cref="MCHdSettings::Default"/>), so a missing key follows the build.

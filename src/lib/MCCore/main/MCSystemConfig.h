@@ -57,6 +57,8 @@ namespace MCPrefsDefaults
     inline constexpr bool ShowFps = false;
     /// <summary>"DeployMap": DEPLOY's briefing map shown.</summary>
     inline constexpr bool DeployMap = true;
+    /// <summary>"TouchpadNoticeSeen": the touchpad notice not shown yet.</summary>
+    inline constexpr bool TouchpadNoticeSeen = false;
     /// <summary>"UIResolution": native.</summary>
     inline constexpr int32_t UiResolution = 0;
     inline constexpr int32_t Difficulty = 1;

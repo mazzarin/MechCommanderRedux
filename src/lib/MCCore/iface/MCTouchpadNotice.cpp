@@ -15,7 +15,6 @@
 
 namespace
 {
-    std::atomic<MCTouchpadNotice::MCDriver> Driver = MCTouchpadNotice::MCDriver::Other;
     /// <summary>Single player paused under the notice, to go on at its OK.</summary>
     bool PausedUnder = false;
     /// <summary>The notice shows (said, its OK not yet pressed).</summary>
@@ -78,16 +77,6 @@ void MCTouchpadNotice::EmptyPacket(Clock::time_point at)
     Clicks().EmptyPacket(at);
 }
 
-void MCTouchpadNotice::SetDriver(MCDriver driver)
-{
-    Driver.store(driver);
-}
-
-std::string_view MCTouchpadNotice::Text()
-{
-    return Driver.load() == MCDriver::Synaptics ? SynapticsText : OtherText;
-}
-
 void MCTouchpadNotice::Tend()
 {
     // Seen once: what the watcher finds from then is let go.
@@ -125,7 +114,7 @@ void MCTouchpadNotice::Tend()
         PausedUnder = true;
     }
 
-    MCRmlDialogs::Show({.Eyebrow = std::string(Eyebrow), .Text = std::string(Text()), .OnMain = Answered},
+    MCRmlDialogs::Show({.Eyebrow = std::string(Eyebrow), .Text = std::string(Text), .OnMain = Answered},
                        MCRmlFlow::MCOn::Mission);
 }
 

@@ -876,9 +876,9 @@ TEST_CASE("touchpad notice: two empty packets with a key held within a second ar
 }
 
 /// <summary>
-/// A click the touchpad dropped in a battle shows the notice once, over the battlefield, naming the driver's setting:
-/// single player waits under it until OK, PREFS keeps that it was seen, and no dropped click shows it again. A single
-/// empty packet shows nothing.
+/// A click the touchpad dropped in a battle shows the notice once, over the battlefield, suggesting palm rejection
+/// turned down or a mouse: single player waits under it until OK, PREFS keeps that it was seen, and no dropped click
+/// shows it again. A single empty packet shows nothing.
 /// </summary>
 TEST_CASE_ISOLATED("game: a click the touchpad dropped shows its notice once over the battle, which waits until OK")
 {
@@ -891,7 +891,6 @@ TEST_CASE_ISOLATED("game: a click the touchpad dropped shows its notice once ove
     const MCTestGame::SaveGameCleanup saves;
     // Never seen (the worker's PREFS may hold an earlier test's).
     TouchpadNoticeSeen = false;
-    MCTouchpadNotice::SetDriver(MCTouchpadNotice::MCDriver::Synaptics);
     StartBattle();
     REQUIRE(!GamePaused);
 
@@ -903,7 +902,7 @@ TEST_CASE_ISOLATED("game: a click the touchpad dropped shows its notice once ove
     RunFrames(SettleFrames);
     REQUIRE(MCTouchpadNotice::Shows());
     REQUIRE(MCRmlDialogs::Shown());
-    CHECK_EQ(MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->Said().Text, std::string(MCTouchpadNotice::SynapticsText));
+    CHECK_EQ(MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->Said().Text, std::string(MCTouchpadNotice::Text));
     CHECK_EQ(MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->Said().Eyebrow, std::string(MCTouchpadNotice::Eyebrow));
     CHECK(GamePaused);
     CHECK(TouchpadNoticeSeen);
@@ -937,7 +936,7 @@ TEST_CASE_ISOLATED("game: a click the touchpad dropped shows its notice once ove
 
 /// <summary>
 /// A click dropped while the pause shows waits for it to close, then the notice shows; one dropped longer ago than
-/// MCTouchpadNotice::SayWithin is let go; the other driver's notice names the palm rejection.
+/// MCTouchpadNotice::SayWithin is let go.
 /// </summary>
 TEST_CASE_ISOLATED("game: the touchpad notice waits for the pause, and lets an old dropped click go")
 {
@@ -949,7 +948,6 @@ TEST_CASE_ISOLATED("game: the touchpad notice waits for the pause, and lets an o
     const MCTestGame::KeepPrefs keptPrefs;
     const MCTestGame::SaveGameCleanup saves;
     TouchpadNoticeSeen = false;
-    MCTouchpadNotice::SetDriver(MCTouchpadNotice::MCDriver::Other);
     StartBattle();
 
     // Long ago: let go.
@@ -967,7 +965,7 @@ TEST_CASE_ISOLATED("game: the touchpad notice waits for the pause, and lets an o
     ClickOn(Find(*ThePause(), "resume"));
     RunFrames(SettleFrames);
     REQUIRE(MCTouchpadNotice::Shows());
-    CHECK_EQ(MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->Said().Text, std::string(MCTouchpadNotice::OtherText));
+    CHECK_EQ(MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->Said().Text, std::string(MCTouchpadNotice::Text));
     CHECK(GamePaused);
     MCRmlDialogs::Dialog(MCRmlFlow::MCOn::Mission)->PressMain();
     RunFrames(SettleFrames);

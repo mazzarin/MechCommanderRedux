@@ -7,7 +7,6 @@
 #define NOMINMAX
 #include <windows.h>
 
-#pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "user32.lib")
 
 #include "iface/MCTouchpadNotice.h"
@@ -26,8 +25,6 @@ namespace
     constexpr USHORT MouseUsage = 0x02;
     /// <summary>The window class of the watcher's message-only window.</summary>
     constexpr const wchar_t* WatchClass = L"MCRedux.TouchpadWatch";
-    /// <summary>Where Synaptics' driver keeps a user's touchpad settings (PalmCheck among them).</summary>
-    constexpr const wchar_t* SynapticsKey = L"Software\\Synaptics\\SynTP";
     /// <summary>The first virtual key past the mouse's buttons (VK_BACK), and the last there is (VK_OEM_CLEAR).</summary>
     constexpr int FirstKey = VK_BACK;
     constexpr int LastKey = VK_OEM_CLEAR;
@@ -131,20 +128,6 @@ namespace
         return DefWindowProcW(window, message, wParam, lParam);
     }
 
-    /// <summary>Which setting the notice names: Synaptics' PalmCheck where its driver keeps this user's settings.</summary>
-    MCTouchpadNotice::MCDriver TouchpadDriver()
-    {
-        HKEY key = nullptr;
-
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, SynapticsKey, 0, KEY_READ, &key) != ERROR_SUCCESS)
-        {
-            return MCTouchpadNotice::MCDriver::Other;
-        }
-
-        RegCloseKey(key);
-        return MCTouchpadNotice::MCDriver::Synaptics;
-    }
-
     DWORD WINAPI Watch(LPVOID)
     {
         const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -199,8 +182,6 @@ void MCStartTouchpadWatch()
     {
         return;
     }
-
-    MCTouchpadNotice::SetDriver(TouchpadDriver());
 
     // The watcher runs until the game quits, its window and registration going with the process.
     const HANDLE thread = CreateThread(nullptr, 0, Watch, nullptr, 0, nullptr);

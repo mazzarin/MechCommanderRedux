@@ -3,11 +3,12 @@
 // Port-only (Redux HD): the one-time notice that the touchpad may be dropping orders. Some laptops' touchpad drivers
 // ignore the pad's clicks while a key other than Shift, Ctrl or Alt is held, so Space + click (run) or L + click (long
 // range) never reaches Windows, and nothing above the driver can bring the click back: the HP EliteBook's Synaptics
-// driver (19.0, PalmCheck at HP's 6) drops them for up to a second after such a key. The driver leaves an empty packet
-// in the mouse's raw input where each press and release was (the app's MCTouchpadWatchWin.cpp watches a built-in
-// pointing device's for them, never a plugged-in mouse's); two within PairWithin with a key held are a click swallowed. The first in a battle shows the notice over the battlefield,
-// single player waiting under it; it never shows again (PREFS "TouchpadNoticeSeen"). Standard headers only: the
-// Windows watcher, built without the precompiled header, includes this.
+// driver (19.0) drops them while such a key is held, PalmCheck at its lowest or not. The notice suggests both. The
+// driver leaves an empty packet in the mouse's raw input where each press and release was (the app's
+// MCTouchpadWatchWin.cpp watches a built-in pointing device's for them, never a plugged-in mouse's); two within
+// PairWithin with a key held are a click swallowed. The first in a battle shows the notice over the battlefield, single
+// player waiting under it; it never shows again (PREFS "TouchpadNoticeSeen"). Standard headers only: the Windows
+// watcher, built without the precompiled header, includes this.
 
 #include <atomic>
 #include <chrono>
@@ -24,21 +25,11 @@ namespace MCTouchpadNotice
     /// <summary>How long a swallowed click waits for the battle to be able to say so (the pause shown, a dialog).</summary>
     inline constexpr std::chrono::seconds SayWithin{2};
 
-    /// <summary>Which setting the notice names: Synaptics' PalmCheck, or a touchpad's palm rejection.</summary>
-    enum class MCDriver
-    {
-        Other,
-        Synaptics,
-    };
-
     /// <summary>The notice's words.</summary>
     inline constexpr std::string_view Eyebrow = "Touchpad";
-    inline constexpr std::string_view SynapticsText =
-        "Your touchpad may be dropping clicks made with a key held, like Space + click to run. Set PalmCheck to its "
-        "lowest in the touchpad's settings.";
-    inline constexpr std::string_view OtherText =
-        "Your touchpad may be dropping clicks made with a key held, like Space + click to run. Turn off its palm "
-        "rejection in the touchpad's settings.";
+    inline constexpr std::string_view Text =
+        "Your touchpad may be dropping clicks made with a key held, like Space + click to run. You can try turning "
+        "down palm rejection in your touchpad settings, or get a separate mouse.";
 
     /// <summary>
     /// The empty packets' pairing: one packet with a key held waits for another within <see cref="PairWithin"/>, and
@@ -68,12 +59,6 @@ namespace MCTouchpadNotice
 
     /// <summary>An empty packet with a key held (the watcher's thread): fed to <see cref="Clicks"/>.</summary>
     void EmptyPacket(Clock::time_point at);
-
-    /// <summary>Which setting the notice names (the watcher, from the touchpad's driver).</summary>
-    void SetDriver(MCDriver driver);
-
-    /// <summary>The notice's sentence for the driver set.</summary>
-    std::string_view Text();
 
     /// <summary>
     /// Each frame of a battle: a click swallowed in the last <see cref="SayWithin"/> and the notice never seen shows it

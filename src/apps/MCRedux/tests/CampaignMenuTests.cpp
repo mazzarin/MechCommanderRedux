@@ -31,6 +31,7 @@
 #include "logistics/MCStore.h"
 #include "logistics/MCUnitLimits.h"
 #include "gui/MCUpdateDisplay.h"
+#include "main/MCForceMessages.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameSession.h"
@@ -2232,6 +2233,7 @@ namespace
     constexpr std::string_view InnerSphereZonesPort = "28937";
     constexpr std::string_view ClanZonesPort = "28939";
     constexpr std::string_view DropShareMatchPort = "28961";
+    constexpr std::string_view TeammateDeployPort = "28969";
     /// <summary>The room's teams (MCRoomModel::AssignPlayer's): the first plays the Inner Sphere's side, home team 0.</summary>
     constexpr int32_t InnerSphereTeam = 1;
     constexpr int32_t ClanTeam = 2;
@@ -2633,6 +2635,250 @@ TEST_CASE_ISOLATED("game: a match's BRIEFING shows the player's share of the dro
     screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
     MCTestGame::RunFrame(FlowFrame);
     CHECK_EQ(screen.WeightFree(), std::format(MCCampaignMenu::FreeFormat, MCCampaignMenu::TonsText(share)));
+}
+
+namespace
+{
+    /// <summary>A name as long as the LAN and INTERNET name boxes take (16 letters).</summary>
+    constexpr std::string_view LongestPlayerName = "WOLFHOUND LEADER";
+    /// <summary>The teammate's MechWarrior in netwars.rsp's list (not the store's first, COMMANDER's own).</summary>
+    constexpr uint8_t MatePilot = 5;
+
+    /// <summary>
+    /// A match's force of <paramref name="mechs"/> 'Mechs, as a player makes it (a match starts with none): each the
+    /// store's first, and the store's first MechWarrior, bought at PURCHASING, then at the 'MECH BAY the 'Mech sent
+    /// into the force by its lab's INTO THE FORCE and given the MechWarrior. They wait in DEPLOY's READY AREA.
+    /// </summary>
+    void FieldMechs(MCCampaignScreen& screen, size_t mechs)
+    {
+        MCLogisticsTabs& tabs = screen.Logistics();
+
+        for (size_t bought = 0; bought < mechs; ++bought)
+        {
+            screen.ChooseTab(MCCampaignScreen::MCTab::Purchasing);
+
+            for (const MCLogisticsTabs::MCKind kind :
+                 {MCLogisticsTabs::MCKind::Mechs, MCLogisticsTabs::MCKind::MechWarriors})
+            {
+                tabs.ChooseKind(kind);
+                MCTestGame::RunFrame(FlowFrame);
+                REQUIRE(!tabs.StoreGoods().empty());
+                tabs.Pick(MCLogisticsTabs::MCPlace::Store, 0);
+                tabs.PressDeal();
+                REQUIRE(tabs.DealOpen());
+                tabs.DealConfirm();
+                MCTestGame::RunFrame(FlowFrame);
+            }
+
+            screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
+            tabs.ChooseStock(MCLogisticsTabs::MCStock::Mechs);
+            MCTestGame::RunFrame(FlowFrame);
+            REQUIRE(!tabs.StoredCards().empty());
+            tabs.Pick(MCLogisticsTabs::MCPlace::Stored, 0);
+            tabs.IntoTheForce();
+            MCTestGame::RunFrame(FlowFrame);
+            tabs.ChooseStock(MCLogisticsTabs::MCStock::MechWarriors);
+            MCTestGame::RunFrame(FlowFrame);
+            REQUIRE(!tabs.StockGoods().empty());
+            tabs.Send(MCLogisticsTabs::MCPlace::Stock, 0);
+            MCTestGame::RunFrame(FlowFrame);
+        }
+
+        REQUIRE_EQ(MCDeploy::ReadyUnits().size(), mechs);
+    }
+}
+
+/// <summary>
+/// A match's DEPLOY (deploy_b_mp_mate) with COMMANDER and BOB on one team against ANN: BOB's 'Mech, put in his share of
+/// the drop (his game's deploy message), shows in its slot as COMMANDER's own would, its MechWarrior, chassis and tons,
+/// marked his: his name in his colour, as the bar and the chat name him, the card dim. It isn't COMMANDER's to move: a
+/// click or a drag picks nothing up, the right button sends nothing back, a unit dropped on it goes back to READY AREA,
+/// and the keys pass it by. The groups' tons and the drop's stay COMMANDER's own, as 1998's MpCalcTonnages counts them;
+/// BOB's empty slots stay striped. Laid out at every window the players' reports name; with --shots, each frame saved.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match's DEPLOY shows a teammate's unit in their slot, theirs to move")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    MCTestGuest::Guest ann("ANN", MCMatchRule::Supported);
+    MCTestGuest::Guest bob("BOB", MCMatchRule::Supported);
+    MCCampaignScreen& screen = PlanMatch(ann, TeammateDeployPort, InnerSphereTeam, bob);
+    const std::shared_ptr<MCFidpPlayer> him = MultiPlayer()->SessionManager->GetPlayer(bob.Id());
+    REQUIRE(him != nullptr);
+    FieldMechs(screen, 2);
+    screen.ChooseTab(MCCampaignScreen::MCTab::Deploy);
+    MCTestGame::RunFrame(FlowFrame);
+    const auto slotId = [](size_t slot) { return std::format("slot{}", slot); };
+    const auto cardOf = [&screen](size_t slot) -> const MCCampaignScreen::MCCard&
+    {
+        REQUIRE_EQ(screen.Groups().size(), MCDeploy::Groups);
+        return screen.Groups()[slot / MCDeploy::GroupSlots].Cards[slot % MCDeploy::GroupSlots];
+    };
+
+    // BOB's share: the slots COMMANDER can't fill (two on a team, six each).
+    std::vector<size_t> his;
+    std::vector<size_t> mine;
+
+    for (size_t slot = 0; slot < MCDeploy::Slots; ++slot)
+    {
+        (MCDeploy::Open(slot) ? mine : his).push_back(slot);
+    }
+
+    REQUIRE_EQ(his.size(), MCDeploy::Slots / 2);
+    const size_t his0 = his.front();
+
+    // COMMANDER's own 'Mech in the drop first (the right button's send): the tons are his.
+    REQUIRE(screen.ReadyCards().size() >= 2);
+    const std::shared_ptr<MCLogPart> own = MCDeploy::ReadyUnits()[0];
+    REQUIRE(own->PartType == 1);
+    ClickOn(ElementOf(screen, "ready0"), SDL_BUTTON_RIGHT);
+    REQUIRE(MCDeploy::SlotOf(*own) == mine.front());
+    const int32_t tons = CurDeployTonnage;
+    std::vector<std::string> groupTons;
+
+    for (const MCCampaignScreen::MCGroup& group : screen.Groups())
+    {
+        groupTons.push_back(group.Tons);
+    }
+
+    // BOB's 'Mech as his game sends it (MCLogistics::SendAddMechMessage): a 'Mech of the side's, COMMANDER's own made
+    // over, with its components, in the first slot of BOB's share.
+    const auto& model = static_cast<const MCLogMech&>(*own);
+    MCDeployForce force{.IsMech = true,
+                        .ClanSide = MultiPlayer()->HomeTeamGroupID != MultiPlayer()->InnerSphereGroupID,
+                        .NameVariant = static_cast<uint8_t>(model.NameVariant & 3),
+                        .Lance = static_cast<uint8_t>(his0 / MCDeploy::GroupSlots),
+                        .Slot = static_cast<uint8_t>(his0 % MCDeploy::GroupSlots),
+                        .NameIndex = static_cast<uint8_t>(model.NameIndex),
+                        .PilotNameIndex = MatePilot};
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : model.Inventory->Items)
+    {
+        force.Items.insert(force.Items.end(), item->Stats.size(), item->MasterID);
+    }
+
+    GlobalLog()->HandleDeployForceMessage(bob.Id(), PackDeployForce(force));
+    MCTestGame::RunFrame(FlowFrame);
+    const std::shared_ptr<MCLogPart> mate = MCDeploy::SlotUnit(his0);
+    REQUIRE(mate != nullptr);
+    REQUIRE(mate->LocalPart == 0);
+    REQUIRE(mate->PartType == 1);
+    const std::shared_ptr<MCLogWarrior> pilot = static_cast<const MCLogMech&>(*mate).NetworkPilot.lock();
+    REQUIRE(pilot != nullptr);
+
+    // His card: his MechWarrior, the chassis and its tons, as COMMANDER's own card says them, marked BOB's.
+    const MCCampaignScreen::MCCard& card = cardOf(his0);
+    const MCCampaignScreen::MCCard& ownCard = cardOf(mine.front());
+    CHECK_EQ(card.Kind, static_cast<int>(MCCampaignScreen::MCCardKind::Unit));
+    CHECK(card.Mate);
+    CHECK(!ownCard.Mate);
+    CHECK_EQ(card.Owner, std::string("BOB"));
+    CHECK_EQ(card.OwnerColour, MCChatView::ColourOf(him->PlayerNumber));
+    CHECK_EQ(card.Who, pilot->Callsign);
+    CHECK_EQ(card.What, ownCard.What);
+    CHECK_EQ(card.Tons, ownCard.Tons);
+    CHECK(card.Piloted);
+    CHECK(!card.Target);
+
+    Rml::Element& his0Card = ElementOf(screen, slotId(his0));
+    CHECK(his0Card.IsClassSet("unit"));
+    CHECK(his0Card.IsClassSet("mate"));
+    CHECK(!ElementOf(screen, slotId(mine.front())).IsClassSet("mate"));
+    CHECK_EQ(his0Card.GetAttribute<Rml::String>("data-hint", "unread"), std::string());
+    CHECK_EQ(his0Card.GetAttribute<Rml::String>("data-hint-right", "unread"), std::string());
+    CHECK(his0Card.GetComputedValues().tab_index() == Rml::Style::TabIndex::None);
+
+    // BOB's empty slots stay striped, saying nothing; COMMANDER's tons his own (MpCalcTonnages).
+    for (const size_t slot : his | std::views::drop(1))
+    {
+        CHECK_EQ(cardOf(slot).Kind, static_cast<int>(MCCampaignScreen::MCCardKind::Closed));
+    }
+
+    CHECK_EQ(CurDeployTonnage, tons);
+
+    for (size_t group = 0; group < MCDeploy::Groups; ++group)
+    {
+        CHECK_EQ(screen.Groups()[group].Tons, groupTons[group]);
+    }
+
+    // Laid out at every window the players' reports name (BOB's name within his card), and the frames saved: the
+    // pointer in the window's corner, over no card (a READY AREA card's hints are wider than a match's hint line at
+    // 4:3, which isn't this test's).
+    REQUIRE(MCRmlMenus::Running().has_value());
+    MCRmlMenus& menus = MCRmlMenus::Running()->get();
+    MCScreenInput::PixelMove(1.0f, 1.0f, FlowFrame);
+    HideClock(screen);
+    CheckLaidOut(menus, "deploy mp mate");
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    REQUIRE(display != nullptr);
+
+    for (const MCMenusPictures::MCWindowSize& size : MCMenusPictures::FrameWindows)
+    {
+        REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
+        Shot("deploy_mp_mate");
+    }
+
+    // A name as long as the name boxes take: cut at his card's edge where the room left is shorter (the bar names him
+    // whole), laid out at every window all the same.
+    him->Name = std::string(LongestPlayerName);
+    MCDeploy::Changed();
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK_EQ(cardOf(his0).Owner, std::string(LongestPlayerName));
+    CheckLaidOut(menus, "deploy mp mate long");
+
+    for (const MCMenusPictures::MCWindowSize& size : MCMenusPictures::FrameWindows)
+    {
+        REQUIRE(MCMenusPictures::SetWindowPixels(*display, size.Width, size.Height));
+        Shot("deploy_mp_mate_long");
+    }
+
+    // Not COMMANDER's to move: a click picks nothing up, a drag carries nothing to his own empty slot, the right button
+    // sends nothing back.
+    const size_t myEmpty = mine.back();
+    REQUIRE(MCDeploy::SlotUnit(myEmpty) == nullptr);
+    ClickOn(his0Card);
+    CHECK(screen.Carried() == nullptr);
+    DragTo(his0Card, ElementOf(screen, slotId(myEmpty)));
+    CHECK(screen.Carried() == nullptr);
+    CHECK(MCDeploy::SlotUnit(myEmpty) == nullptr);
+    ClickOn(his0Card, SDL_BUTTON_RIGHT);
+    CHECK(MCDeploy::SlotUnit(his0) == mate);
+
+    // A unit of COMMANDER's dropped on it goes back to READY AREA; BOB's stays.
+    const std::shared_ptr<MCLogPart> second = MCDeploy::ReadyUnits()[0];
+    DragTo(ElementOf(screen, "ready0"), his0Card);
+    CHECK(screen.Carried() == nullptr);
+    CHECK(MCDeploy::SlotUnit(his0) == mate);
+    CHECK(second->Deployed == 0);
+    CHECK_EQ(CurDeployTonnage, tons);
+
+    // The keys: a card carried by them goes over COMMANDER's slots only, his share passed by.
+    Rml::Context& context = menus.Menus().Context();
+    const auto focused = [&context]
+    { return context.GetFocusElement() != nullptr ? context.GetFocusElement()->GetId() : std::string(); };
+    ElementOf(screen, "ready0").Focus();
+    MCScreenInput::RealKey(SDL_SCANCODE_SPACE);
+    MCTestGame::RunFrame(FlowFrame);
+    REQUIRE(screen.Carried() == second);
+
+    for (const SDL_Scancode key : {SDL_SCANCODE_RIGHT, SDL_SCANCODE_DOWN, SDL_SCANCODE_DOWN, SDL_SCANCODE_DOWN,
+                                   SDL_SCANCODE_DOWN, SDL_SCANCODE_RIGHT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_UP,
+                                   SDL_SCANCODE_LEFT, SDL_SCANCODE_DOWN, SDL_SCANCODE_RIGHT, SDL_SCANCODE_DOWN})
+    {
+        MCScreenInput::RealKey(key);
+        MCTestGame::RunFrame(FlowFrame);
+        const std::string at = focused();
+        CHECK(std::ranges::none_of(his, [&](size_t slot) { return at == slotId(slot); }));
+    }
+
+    MCScreenInput::RealKey(SDL_SCANCODE_SPACE);
+    MCTestGame::RunFrame(FlowFrame);
+    CHECK(screen.Carried() == nullptr);
+    CHECK(MCDeploy::SlotUnit(his0) == mate);
 }
 
 /// <summary>

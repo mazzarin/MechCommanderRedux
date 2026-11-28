@@ -98,10 +98,16 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
 /* Chosen: card teal; its grey lines lighter there (#a4b0bc is 4.0:1 on it; this is 5.4). */
 .card.picked { background-color: #045454; }
 .card.picked .what, .card.picked .grey { color: #c4ccd4; }
-/* A drop slot: open and empty, a well a unit is dragged into; closed (the mission doesn't give it, or in multiplayer
-   it's a teammate's), striped and outlined, as 1998 covered it with a plate, and nothing more said. */
+/* A drop slot: open and empty, a well a unit is dragged into; closed (the mission doesn't give it, or in a match it's a
+   teammate's and empty), striped and outlined, as 1998 covered it with a plate, and nothing more said. A match's
+   teammate's unit in their slot: its card as the player's own, dim as one out of reach (.off), the teammate's name in
+   their colour after its tons, as the bar and the chat name them, cut at the card's edge if longer than the room left
+   (the bar names them whole); theirs to move, so no hint, and the keys pass it by. */
 .card.empty { background-color: #0f171e; }
 .card.closed { background-color: transparent; border: 1dp #1e2b36; decorator: image(art/closed.png cover left top); }
+.card .t.owned { display: flex; flex-direction: row; }
+.card .t.owned > .tons { flex: 0 0 auto; }
+.card .t.owned > .owner { flex: 0 1 auto; min-width: 0dp; margin-left: 6dp; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: 0.02em; }
 /* A card out of reach (too dear, too heavy, picked up): dim, the reason in its last line. A card being dragged: lifted
    off its list under the pointer, edged cyan; the slot it would drop into edged cyan too. One that can't go there
    (too heavy for what's free: 1998 refuses it, says why and sounds Betty's warning): the card and the slot edged red,
@@ -134,7 +140,7 @@ body.night > .veil, body.night > .window-place { z-index: 2; }
 /* A refused send's reason, in READY AREA's card's last line. */
 .card .why-line { color: #f26b55; }
 .card { tab-index: auto; nav: auto; focus: auto; }
-.card.closed, .card.empty { tab-index: none; }
+.card.closed, .card.empty, .card.mate { tab-index: none; }
 /* A unit carried by the keys: the arrows move it over the open slots too. */
 .keyscarry .card.empty { tab-index: auto; }
 .card.empty.target, .card.unit.target { border: 1dp #7cd4ec; }

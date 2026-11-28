@@ -6,7 +6,6 @@
 #include "MCHttpGet.h"
 #include "MCIceTrial.h"
 #include "MCMcoClient.h"
-#include "MCMcoKeysStore.h"
 #include "MCMcoProbe.h"
 #include "MCMemorySystem.h"
 #include "MCRestart.h"
@@ -641,8 +640,8 @@ namespace
     }
 
     /// <summary>
-    /// MechCommander Online in the game (SPEC-mco-rooms.md): this copy as MCO's client, its sign-in kept in the system's
-    /// store, its matches over MCO's relay checked by this computer's trust, the room's data fingerprinted as MCO's
+    /// MechCommander Online in the game (SPEC-mco-rooms.md): this copy as MCO's client, its sign-in kept in the user
+    /// folder, its matches over MCO's relay checked by this computer's trust, the room's data fingerprinted as MCO's
     /// launcher does (the game's data overlaid by the user folder's).
     /// </summary>
     void SetupMco(const MCLaunchOptions& options)
@@ -658,7 +657,7 @@ namespace
         const std::shared_ptr<const MCTlsLink::MCTrust> trust = MCMakeSystemTrust();
         MCMcoRooms::Setup({.Get = MCMakeHttpGet,
                            .Client = std::move(*client),
-                           .Keys = MCMakeMcoKeys(),
+                           .Keys = std::make_shared<MCMcoKeysFile>(options.UserFolder),
                            .Dial =
                                [trust](const MCMcoApi::MCMatch& match)
                            {

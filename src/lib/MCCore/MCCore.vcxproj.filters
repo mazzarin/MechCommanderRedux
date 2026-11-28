@@ -784,6 +784,9 @@
     <ClCompile Include="network\MCMcoContent.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCMcoKeys.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMcoRelay.cpp">
       <Filter>network</Filter>
     </ClCompile>

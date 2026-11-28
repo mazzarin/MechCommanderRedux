@@ -285,6 +285,7 @@
     <ClCompile Include="network\MCMcoApi.cpp" />
     <ClCompile Include="network\MCMcoBridge.cpp" />
     <ClCompile Include="network\MCMcoContent.cpp" />
+    <ClCompile Include="network\MCMcoKeys.cpp" />
     <ClCompile Include="network\MCMcoRelay.cpp" />
     <ClCompile Include="network\MCMcoRooms.cpp" />
     <ClCompile Include="network\MCMcoSeats.cpp" />

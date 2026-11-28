@@ -535,7 +535,8 @@ std::expected<void, std::string> MCNoLinks::Check(const std::filesystem::path& p
     return {};
 }
 
-std::expected<MCNewFile, std::string> MCNewFile::Create(const std::filesystem::path& path)
+std::expected<MCNewFile, std::string> MCNewFile::Create(const std::filesystem::path& path,
+                                                        [[maybe_unused]] MCReaders readers)
 {
     const std::string shown = MCFileSystem::ToUtf8(path);
     std::error_code error;
@@ -574,7 +575,9 @@ std::expected<MCNewFile, std::string> MCNewFile::Create(const std::filesystem::p
     return MCNewFile(path, reinterpret_cast<intptr_t>(file));
 #else
     constexpr mode_t ReadableByAll = 0644;
-    const int descriptor = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, ReadableByAll);
+    constexpr mode_t OwnerOnly = 0600;
+    const int descriptor = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                                readers == MCReaders::Owner ? OwnerOnly : ReadableByAll);
 
     if (descriptor < 0)
     {

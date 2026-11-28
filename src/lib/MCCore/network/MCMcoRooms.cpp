@@ -715,8 +715,7 @@ void MCMcoRooms::KeepGuest()
     if (_Setup.Keys &&
         !_Setup.Keys->Save({.ClientId = _Peer.ClientId, .PeerToken = _Peer.PeerToken, .Username = _Peer.Username}))
     {
-        SDL_Log("MechCommander Online: the guest's profile (%s) couldn't be kept in the system's store; it lasts until "
-                "the game quits",
+        SDL_Log("MechCommander Online: the guest's profile (%s) couldn't be kept; it lasts until the game quits",
                 _Peer.Username.c_str());
     }
 }

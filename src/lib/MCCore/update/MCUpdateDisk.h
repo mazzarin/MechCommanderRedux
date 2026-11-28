@@ -113,8 +113,19 @@ std::unique_ptr<MCUpdateDisk> MakeDisk(MCMoves moves = MCMoves::InOneStep);
 class MCNewFile
 {
 public:
+    /// <summary>
+    /// Who may read it: anyone (the game's files), or its owner alone from the moment it's made (a sign-in's tokens;
+    /// on Windows the folder's own permissions decide either way).
+    /// </summary>
+    enum class MCReaders
+    {
+        Anyone,
+        Owner,
+    };
+
     /// <returns>The file, open to read and write, or why it can't be made.</returns>
-    static std::expected<MCNewFile, std::string> Create(const std::filesystem::path& path);
+    static std::expected<MCNewFile, std::string> Create(const std::filesystem::path& path,
+                                                        MCReaders readers = MCReaders::Anyone);
 
     MCNewFile(MCNewFile&& other) noexcept;
     MCNewFile& operator=(MCNewFile&&) = delete;

@@ -1,10 +1,13 @@
 #include "stdafx.h"
+#include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "fakes/MCFakeMcoRelay.h"
 #include "fakes/MCFakeMcoService.h"
 #include "network/MCMcoRooms.h"
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -81,7 +84,7 @@ namespace
 
 }
 
-TEST_CASE("mco rooms: signing in keeps the account's tokens in the system's store, never its password, and while "
+TEST_CASE("mco rooms: signing in keeps the account's tokens, never its password, and while "
           "INTERNET is open the lobby lists MCO's Redux rooms on its stock build")
 {
     MCService mco;
@@ -895,4 +898,105 @@ TEST_CASE("mco rooms: an internet game's room starts on MCO at LET IN, its bridg
     CHECK(host.Seen().Left.empty());
     CHECK_EQ(mco.Asked("create_session"), size_t{1});
     CHECK_EQ(carried, size_t{0});
+}
+
+namespace
+{
+    /// <summary>The scratch folders' group for the sign-in's file.</summary>
+    constexpr std::string_view KeysGroup = "mco_keys_tests";
+
+    /// <summary>A guest's sign-in as MCO could give it, named <paramref name="name"/>.</summary>
+    MCMcoKept GuestKept(std::string name)
+    {
+        return {.ClientId = std::string(MCMcoApi::ClientIdDigits, 'a'),
+                .PeerToken = std::string(MCMcoApi::TokenDigits, 'b'),
+                .Username = std::move(name)};
+    }
+
+    /// <summary>Writes <paramref name="text"/> as the whole of <paramref name="file"/>.</summary>
+    void WriteWhole(const std::filesystem::path& file, std::string_view text)
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << text;
+        REQUIRE(out.good());
+    }
+}
+
+TEST_CASE("mco rooms: the sign-in is kept in the user folder's file, only its owner may read it, a later start reads "
+          "it back and SIGN OUT removes it")
+{
+    const MCScratchFolder scratch(KeysGroup, "kept");
+    // The user folder not made yet: the first save makes it.
+    const std::filesystem::path user = scratch.Path() / "user";
+    const std::filesystem::path file = user / MCMcoKeysFile::FileName;
+    MCMcoKeysFile keys(user);
+    CHECK(!keys.Load().has_value());
+
+    const MCMcoKept guest = GuestKept("HAWKEYE");
+    REQUIRE(keys.Save(guest));
+    CHECK(MCMcoKeysFile(user).Load() == guest);
+    CHECK(!std::filesystem::exists(std::filesystem::path(file).concat(".writing")));
+#ifndef _WIN32
+    CHECK(std::filesystem::status(file).permissions() ==
+          (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
+#endif
+
+    // An account's in its place.
+    const MCMcoKept account{.ClientId = std::string(MCMcoApi::ClientIdDigits, 'c'),
+                            .PeerToken = std::string(MCMcoApi::TokenDigits, 'd'),
+                            .AccountToken = std::string(MCMcoApi::TokenDigits, 'e'),
+                            .Username = "FALCON"};
+    REQUIRE(keys.Save(account));
+    CHECK(MCMcoKeysFile(user).Load() == account);
+
+    keys.Erase();
+    CHECK(!std::filesystem::exists(file));
+    CHECK(!MCMcoKeysFile(user).Load().has_value());
+    // Signed out already: nothing to remove.
+    keys.Erase();
+}
+
+TEST_CASE("mco rooms: a sign-in file that isn't one reads as none, and the next sign-in kept replaces it")
+{
+    const MCScratchFolder scratch(KeysGroup, "unread");
+    const std::filesystem::path file = scratch.Path() / MCMcoKeysFile::FileName;
+    MCMcoKeysFile keys(scratch.Path());
+
+    WriteWhole(file, "not a sign-in");
+    CHECK(!keys.Load().has_value());
+    WriteWhole(file, MCMcoKeptText({.ClientId = "short", .PeerToken = std::string(MCMcoApi::TokenDigits, 'b')}));
+    CHECK(!keys.Load().has_value());
+    // Too long to be one, whatever it starts with.
+    WriteWhole(file, MCMcoKeptText(GuestKept("HAWKEYE")) + std::string(8192, ' '));
+    CHECK(!keys.Load().has_value());
+
+    // A save cut short at an earlier start, readable by anyone: the next save is made anew.
+    const std::filesystem::path writing = std::filesystem::path(file).concat(".writing");
+    WriteWhole(writing, "{\"client_id\":");
+#ifndef _WIN32
+    std::filesystem::permissions(writing, std::filesystem::perms::others_read, std::filesystem::perm_options::add);
+#endif
+    REQUIRE(keys.Save(GuestKept("FALCON")));
+    CHECK(keys.Load() == GuestKept("FALCON"));
+    CHECK(!std::filesystem::exists(writing));
+}
+
+TEST_CASE("mco rooms: a guest kept in the user folder's file is back at the next start without asking MCO")
+{
+    const MCScratchFolder scratch(KeysGroup, "resumed");
+    MCService mco;
+
+    {
+        MCMcoRooms guest(TestSetup(mco, std::make_shared<MCMcoKeysFile>(scratch.Path())));
+        guest.OpenLobby();
+        guest.PlayAsGuest("HAWKEYE");
+        REQUIRE(Within(HeardMs, [&] { return guest.Seen().Account == MCMcoAccount::Guest && guest.Seen().Listed; }));
+    }
+
+    const size_t registered = mco.Asked("register_peer");
+    MCMcoRooms later(TestSetup(mco, std::make_shared<MCMcoKeysFile>(scratch.Path())));
+    later.Resume();
+    REQUIRE(Within(HeardMs, [&] { return later.Seen().Account == MCMcoAccount::Guest; }));
+    CHECK_EQ(later.Seen().Username, std::string("HAWKEYE"));
+    CHECK_EQ(mco.Asked("register_peer"), registered);
 }

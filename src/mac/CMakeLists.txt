@@ -305,8 +305,7 @@ set(MC_APP_NO_PCH ${MC_SRC}/apps/MCRedux/MCConsole.cpp ${MC_SRC}/apps/MCRedux/MC
                   ${MC_SRC}/apps/MCRedux/MCHttpGetWin.cpp ${MC_SRC}/apps/MCRedux/MCRestart.cpp
                   ${MC_SRC}/apps/MCRedux/MCSetupRunWin.cpp ${MC_SRC}/apps/MCRedux/MCWebSocketWin.cpp
                   ${MC_SRC}/apps/MCRedux/MCMemorySystemWin.cpp ${MC_SRC}/apps/MCRedux/MCSystemTrustWin.cpp
-                  ${MC_SRC}/apps/MCRedux/MCGameCopy.cpp ${MC_SRC}/apps/MCRedux/MCMcoKeysWin.cpp
-                  ${MC_SRC}/apps/MCRedux/tests/IceChannelTests.cpp)
+                  ${MC_SRC}/apps/MCRedux/MCGameCopy.cpp ${MC_SRC}/apps/MCRedux/tests/IceChannelTests.cpp)
 set_source_files_properties(${MC_APP_NO_PCH} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 # The game, as "MechCommander Redux.app": upstream's icon at the Mac's sizes (src/res/MCRedux.icns), and the
@@ -334,11 +333,11 @@ set_source_files_properties(${MC_SPARKLE_UPDATER} PROPERTIES SKIP_PRECOMPILE_HEA
                             COMPILE_OPTIONS "-fobjc-arc;-F${MC_SPARKLE}")
 # Personal build: the reports' backend on the Mac (MCTelemetryMac.mm: IOKit for the machine and its power), the
 # updates' downloads (MCHttpGetMac.mm: NSURLSession), the internet games' service (MCWebSocketMac.mm: NSURLSession) and
-# the HD caches' room (MCMemorySystemMac.mm: the memory pressure and Metal's working set); the trust in
-# MechCommander Online's relay (MCSystemTrustMac.mm: Security) and its sign-in, kept in the Keychain (MCMcoKeysMac.mm).
+# the HD caches' room (MCMemorySystemMac.mm: the memory pressure and Metal's working set) and the trust in
+# MechCommander Online's relay (MCSystemTrustMac.mm: Security).
 set(MC_TELEMETRY_BACKEND ${MC_SRC}/apps/MCRedux/MCTelemetryMac.mm ${MC_SRC}/apps/MCRedux/MCHttpGetMac.mm
                          ${MC_SRC}/apps/MCRedux/MCWebSocketMac.mm ${MC_SRC}/apps/MCRedux/MCMemorySystemMac.mm
-                         ${MC_SRC}/apps/MCRedux/MCSystemTrustMac.mm ${MC_SRC}/apps/MCRedux/MCMcoKeysMac.mm)
+                         ${MC_SRC}/apps/MCRedux/MCSystemTrustMac.mm)
 set_source_files_properties(${MC_TELEMETRY_BACKEND} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -fobjc-arc)
 add_executable(MCRedux MACOSX_BUNDLE ${MCREDUX_SOURCES} ${MC_SPARKLE_UPDATER} ${MC_TELEMETRY_BACKEND} ${MC_ICON}
                        ${MC_UI_FILES})

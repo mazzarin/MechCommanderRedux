@@ -322,9 +322,6 @@
     </ClCompile>
     <ClCompile Include="MCIceTrial.cpp" />
     <ClCompile Include="MCMcoClient.cpp" />
-    <ClCompile Include="MCMcoKeysWin.cpp">
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-    </ClCompile>
     <ClCompile Include="MCMcoMatch.cpp" />
     <ClCompile Include="MCMcoProbe.cpp" />
     <ClCompile Include="MCMemorySystemWin.cpp">
@@ -358,7 +355,6 @@
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCIceTrial.h" />
     <ClInclude Include="MCMcoClient.h" />
-    <ClInclude Include="MCMcoKeysStore.h" />
     <ClInclude Include="MCMcoMatch.h" />
     <ClInclude Include="MCMcoProbe.h" />
     <ClInclude Include="MCMemorySystem.h" />

@@ -887,7 +887,7 @@ namespace MCFakeMcoService
         std::vector<std::pair<std::string, std::string>> _Closed;
     };
 
-    /// <summary>The system's store as the tests keep it: in memory.</summary>
+    /// <summary>The sign-in's store as the tests keep it: in memory.</summary>
     class MCMemoryKeys final : public MCMcoKeys
     {
     public:

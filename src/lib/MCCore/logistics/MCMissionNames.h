@@ -9,6 +9,9 @@
 // abbreviations ("CaptIsld", "HvrDmmt"), so the file gives each 1998 map a name to show by, keyed by its room packet's
 // file. Only what the menus show changes: the packet's own name (LongMissionName) is what the room sends and the games
 // service lists, and its file the match's identity. A map not in it (a player's, a mod's) shows by its own name.
+// And it puts a few objectives' 1998 words as the menus show them ("Destroy 12 of 12 Ordnance Trucks": "Destroy all 12
+// Ordnance Trucks"), keyed by the mission's briefing file and the objective's number, where its briefing's line and its
+// mission file's name start with those words; the 1998 files stay as they are.
 
 namespace MCMissionNames
 {
@@ -56,6 +59,14 @@ namespace MCMissionNames
     /// ignored), by the menus' name for it; else by its own name, <paramref name="written"/> (its LongMissionName).
     /// </summary>
     std::string Map(std::string_view file, std::string_view written);
+
+    /// <summary>
+    /// Objective <paramref name="number"/> (from 1, the briefing's and the mission file's order) of the mission whose
+    /// briefing is <paramref name="briefingFile"/> (case ignored), its words <paramref name="written"/> (its briefing's
+    /// line or its mission file's name): the menus' words for the 1998 ones it starts with, the rest kept ("for
+    /// additional Resource Points", "(secondary)"); else as written.
+    /// </summary>
+    std::string Objective(std::string_view briefingFile, int32_t number, std::string_view written);
 
     /// <summary><paramref name="text"/> in lower case (ASCII), as files' names are matched, case ignored.</summary>
     std::string Lowered(std::string_view text);

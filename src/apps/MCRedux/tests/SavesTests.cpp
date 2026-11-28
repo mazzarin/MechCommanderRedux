@@ -134,7 +134,9 @@ TEST_CASE("saves: the menus' names come from the data file, case ignored, and on
     {
         std::ofstream out(file);
         out << R"({"operations": {"SKYHOOK": "Skyhook"}, "missions": {"brf0203.txt": "Destroy enemy convoy", "x": 3},)"
-            << R"("maps": {"captisld.mpk": "Capture Island"}})";
+            << R"("maps": {"captisld.mpk": "Capture Island"},)"
+            << R"("objectives": {"brf0402.txt": {"2": {"written": "Destroy 12 of 12", "shown": "Destroy all 12"},)"
+            << R"("3": {"written": "No words shown"}, "x": {"written": "a", "shown": "b"}}}})";
     }
 
     // "x" has no name: left out.
@@ -147,6 +149,15 @@ TEST_CASE("saves: the menus' names come from the data file, case ignored, and on
     CHECK_EQ(MCMissionNames::Map("CAPTISLD", "CaptIsld"), std::string("Capture Island"));
     CHECK_EQ(MCMissionNames::Map("CaptIsld.MPK", "CaptIsld"), std::string("Capture Island"));
     CHECK_EQ(MCMissionNames::Map("MYISLAND", "CaptIsld"), std::string("CaptIsld"));
+    // An objective by its briefing's file and number: the 1998 words it starts with put as the menus say them, the rest
+    // kept; one that doesn't start with them (a mod's briefing of the same name), another number or an entry without
+    // words shown ("3", "x" left out) as written.
+    CHECK_EQ(MCMissionNames::Objective("BRF0402.TXT", 2, "Destroy 12 of 12 Trucks for points"),
+             std::string("Destroy all 12 Trucks for points"));
+    CHECK_EQ(MCMissionNames::Objective("brf0402.txt", 2, "Destroy 6 of 12 Trucks"),
+             std::string("Destroy 6 of 12 Trucks"));
+    CHECK_EQ(MCMissionNames::Objective("brf0402.txt", 1, "Destroy 12 of 12"), std::string("Destroy 12 of 12"));
+    CHECK_EQ(MCMissionNames::Objective("brf0402.txt", 3, "No words shown"), std::string("No words shown"));
 
     // A file that isn't JSON leaves no names: every one as written.
     {
@@ -164,7 +175,7 @@ TEST_CASE("saves: the menus' names come from the data file, case ignored, and on
 
 /// <summary>
 /// The app's names give 1998's match maps whose room packets name them by their files' abbreviations their names in
-/// words (the user's, 28 Nov; HvrDmmt's its own briefings' title, "***Hoover Dammit***").
+/// words (yours, 28 Nov; HvrDmmt's its own briefings' title, "***Hoover Dammit***"), and two objectives "all".
 /// </summary>
 TEST_CASE("saves: the app's names give 1998's match maps named by their files' abbreviations their names in words")
 {
@@ -175,8 +186,27 @@ TEST_CASE("saves: the app's names give 1998's match maps named by their files' a
     CHECK_EQ(MCMissionNames::Map("HVRDMMT", "HvrDmmt"), std::string("Hoover Dammit"));
     CHECK_EQ(MCMissionNames::Map("KINGISLE", "KingIsle"), std::string("King of the Isle"));
     CHECK_EQ(MCMissionNames::Map("MOUSETRP", "MouseTrp"), std::string("Mousetrap"));
-    // A 1998 map with a name in words keeps it.
+    // Yours of 28 Nov from the rest: names in words, a locked map's (Locked), an NA map's its plain map's.
+    CHECK_EQ(MCMissionNames::Map("BAKWOODS", "Bakwoods"), std::string("Backwoods"));
+    CHECK_EQ(MCMissionNames::Map("WETNWILD", "WetNWild"), std::string("Wet and Wild"));
+    CHECK_EQ(MCMissionNames::Map("THREE", "3 is a Magic Number"), std::string("Three Is a Magic Number"));
+    CHECK_EQ(MCMissionNames::Map("THREENA", "3 is a Magic Number"), std::string("Three Is a Magic Number"));
+    CHECK_EQ(MCMissionNames::Map("CPTRLOCK", "Capture Base LOCKED"), std::string("Capture Base (Locked)"));
+    CHECK_EQ(MCMissionNames::Map("KINGLOCK", "King of the Hill LOCKED"), std::string("King of the Hill (Locked)"));
+    CHECK_EQ(MCMissionNames::Map("MANYLOCK", "Many Bases LOCKED"), std::string("Many Bases (Locked)"));
+    CHECK_EQ(MCMissionNames::Map("POWRLOCK", "Power Surge"), std::string("Power Surge (Locked)"));
+    CHECK_EQ(MCMissionNames::Map("BRCLINNA", "Breach the Line NA"), std::string("Breach the Line"));
+    CHECK_EQ(MCMissionNames::Map("FORTNA", "Fortress Assault NA"), std::string("Fortress Assault"));
+    // A 1998 map with a name in words keeps it; BLOODGRW's one word too (spaced, "Blood Makes the Grass Grow" spills from
+    // CHOOSE MAP's list at 1280x960); and the second Power Surge waits on you.
     CHECK_EQ(MCMissionNames::Map("CPTRBASE", "Capture Base"), std::string("Capture Base"));
+    CHECK_EQ(MCMissionNames::Map("BLOODGRW", "BloodMakesTheGrassGrow"), std::string("BloodMakesTheGrassGrow"));
+    CHECK_EQ(MCMissionNames::Map("POWRSRG2", "Power Surge"), std::string("Power Surge"));
+    // Linchpin 2's and Gorgon 2's every-one objectives (the game test reads them from 1998's files).
+    CHECK_EQ(MCMissionNames::Objective("brf0402.txt", 2, "Destroy 12 of 12 Ordnance Trucks"),
+             std::string("Destroy all 12 Ordnance Trucks"));
+    CHECK_EQ(MCMissionNames::Objective("xbrf0202.txt", 3, "Capture 7 of 7 Salvage Rigs (secondary)"),
+             std::string("Capture all 7 Salvage Rigs (secondary)"));
 }
 
 TEST_CASE("saves: a name no file can have on Windows or the Mac is refused")

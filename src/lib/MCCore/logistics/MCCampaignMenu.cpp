@@ -2039,6 +2039,14 @@ MCCampaignMenu::MCMissionRead MCCampaignMenu::ReadMission()
     const std::string briefingFile = path.substr(path.find_last_of("\\/") + 1);
     MCMissionRead read{.Title = MCMissionNames::Mission(briefingFile, written.Mission),
                        .Briefing = MCBriefingText::Read(text)};
+
+    // A few objectives' 1998 words as the menus put them ("Destroy 12 of 12": "Destroy all 12"), as the battle's do.
+    for (size_t at = 0; at < read.Briefing.Objectives.size(); ++at)
+    {
+        std::string& words = read.Briefing.Objectives[at].Text;
+        words = MCMissionNames::Objective(briefingFile, static_cast<int32_t>(at + 1), words);
+    }
+
     const bool multiplayer = MultiPlayer() != nullptr;
 
     // A match's side briefing: its starred title in sentence case (the app's names are the campaigns').

@@ -14,6 +14,10 @@ namespace
     constexpr const char* OperationsKey = "operations";
     constexpr const char* MissionsKey = "missions";
     constexpr const char* MapsKey = "maps";
+    constexpr const char* ObjectivesKey = "objectives";
+    /// <summary>An objective's entry's keys: its 1998 words, and the menus' words for them.</summary>
+    constexpr const char* WrittenKey = "written";
+    constexpr const char* ShownKey = "shown";
     /// <summary>A match map's file's extension, as the maps' table keys them ("caldera.mpk").</summary>
     constexpr std::string_view MapExtension = ".mpk";
     /// <summary>
@@ -26,6 +30,13 @@ namespace
     /// <summary>The most a data file may hold (it is a few kilobytes): a larger one isn't read.</summary>
     constexpr std::uintmax_t MostFileBytes = 1 << 20;
 
+    /// <summary>An objective's 1998 words, and the menus' words for them.</summary>
+    struct MCObjectiveWords
+    {
+        std::string Written;
+        std::string Shown;
+    };
+
     struct MCNames
     {
         bool Read = false;
@@ -36,6 +47,8 @@ namespace
         std::unordered_map<std::string, std::string> Operations;
         std::unordered_map<std::string, std::string> Missions;
         std::unordered_map<std::string, std::string> Maps;
+        /// <summary>The objectives' words by their briefing's file (lower case) and number.</summary>
+        std::map<std::pair<std::string, int32_t>, MCObjectiveWords> Objectives;
     };
 
     /// <summary>What follows the operation's mark on a briefing's line; none when the line has none.</summary>
@@ -163,6 +176,52 @@ namespace
         return strings;
     }
 
+    /// <summary>
+    /// The objectives' words of <paramref name="table"/> (each briefing's file an object of numbers, each number an object
+    /// with "written" and "shown"); an entry without both, or not numbered from 1, left out.
+    /// </summary>
+    std::map<std::pair<std::string, int32_t>, MCObjectiveWords> ObjectivesOf(const Json& table)
+    {
+        std::map<std::pair<std::string, int32_t>, MCObjectiveWords> objectives;
+
+        if (!table.is_object())
+        {
+            return objectives;
+        }
+
+        const auto text = [](const Json& entry, const char* key)
+        { return entry.contains(key) && entry.at(key).is_string() ? entry.at(key).get<std::string>() : std::string(); };
+
+        for (const auto& [file, numbers] : table.items())
+        {
+            if (!numbers.is_object())
+            {
+                SDL_Log("MCMissionNames: '%s' has no objectives' numbers, so its objectives show as written",
+                        file.c_str());
+                continue;
+            }
+
+            for (const auto& [key, words] : numbers.items())
+            {
+                int32_t number = 0;
+                const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), number);
+                MCObjectiveWords entry{.Written = text(words, WrittenKey), .Shown = text(words, ShownKey)};
+
+                if (error != std::errc() || end != key.data() + key.size() || number < 1 || entry.Written.empty() ||
+                    entry.Shown.empty())
+                {
+                    SDL_Log("MCMissionNames: '%s' objective '%s' has no words to show, so it shows as written",
+                            file.c_str(), key.c_str());
+                    continue;
+                }
+
+                objectives.emplace(std::pair(MCMissionNames::Lowered(file), number), std::move(entry));
+            }
+        }
+
+        return objectives;
+    }
+
     void ReadAppFileOnce()
     {
         if (Names().Read)
@@ -276,6 +335,7 @@ auto MCMissionNames::Load(const std::filesystem::path& file) -> std::expected<vo
     Names().Operations = StringsOf(table(OperationsKey), [](std::string_view key) { return std::string(key); });
     Names().Missions = StringsOf(table(MissionsKey), MCMissionNames::Lowered);
     Names().Maps = StringsOf(table(MapsKey), MCMissionNames::Lowered);
+    Names().Objectives = ObjectivesOf(table(ObjectivesKey));
     return {};
 }
 
@@ -320,4 +380,17 @@ auto MCMissionNames::Map(std::string_view file, std::string_view written) -> std
 
     const auto found = Names().Maps.find(key);
     return found != Names().Maps.end() ? found->second : std::string(written);
+}
+
+auto MCMissionNames::Objective(std::string_view briefingFile, int32_t number, std::string_view written) -> std::string
+{
+    ReadAppFileOnce();
+    const auto found = Names().Objectives.find(std::pair(Lowered(briefingFile), number));
+
+    if (found == Names().Objectives.end() || !written.starts_with(found->second.Written))
+    {
+        return std::string(written);
+    }
+
+    return found->second.Shown + std::string(written.substr(found->second.Written.size()));
 }

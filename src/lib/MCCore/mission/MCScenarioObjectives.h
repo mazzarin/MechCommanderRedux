@@ -67,6 +67,13 @@ public:
     /// <returns>Nothing, or why the objectives can't be read: more than <see cref="MaxObjectives"/>.</returns>
     std::expected<void, std::string> Load(MCFitIniFile& file, uint32_t count);
 
+    /// <summary>
+    /// Port-only (the menus' names, ui/missions.json): each objective's name as the menus put it for the mission whose
+    /// briefing is <paramref name="briefingFile"/> ("Destroy 12 of 12 Ordnance Trucks": "Destroy all 12 Ordnance
+    /// Trucks"), so the tactical map and the results say what the briefing does. MCMissionNames::Objective.
+    /// </summary>
+    void NameAsMenus(std::string_view briefingFile);
+
     /// <summary>The scenario's own objectives (the bonus isn't counted).</summary>
     int32_t Count() const { return _Count; }
 

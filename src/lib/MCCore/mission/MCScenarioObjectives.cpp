@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "mission/MCScenarioObjectives.h"
+#include "logistics/MCMissionNames.h"
 #include "mission/MCScenarioReading.h"
 
 MCObjectiveList::MCObjectiveList()
@@ -37,6 +38,15 @@ auto MCObjectiveList::Load(MCFitIniFile& file, uint32_t count) -> std::expected<
     }
 
     return {};
+}
+
+void MCObjectiveList::NameAsMenus(std::string_view briefingFile)
+{
+    for (int32_t i = 0; i < _Count; i++)
+    {
+        MCScenarioObjective& objective = _Slots[static_cast<size_t>(i)];
+        objective.Name = MCMissionNames::Objective(briefingFile, i + 1, objective.Name);
+    }
 }
 
 auto MCObjectiveList::SetStatus(int32_t number, uint32_t status) -> int32_t

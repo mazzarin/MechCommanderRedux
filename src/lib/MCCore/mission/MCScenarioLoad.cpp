@@ -1249,6 +1249,11 @@ auto MCScenario::LoadCarriers(MCFitIniFile& file) -> void
 
 auto MCScenario::LoadObjectives(MCFitIniFile& file) -> void
 {
+    // Port-only: the briefing the mission's Campaign block names (none for a match's), whose objectives the menus may
+    // word otherwise (NameAsMenus, below).
+    const std::string briefingFile = file.SeekBlock("Campaign") == 0
+                                         ? file.Read<std::string>("BriefingFile").value_or(std::string())
+                                         : std::string();
     RequireFitBlock(file, "Objectives", " Could not find Objective Block ");
     TimeLimit = OptionalFit<int32_t>(file, "TimeLeft", -1);
     TwoMinuteWarningPlayed = false;
@@ -1286,6 +1291,8 @@ auto MCScenario::LoadObjectives(MCFitIniFile& file) -> void
     {
         Fatal(0, " Bad mission objectives: ", loaded.error());
     }
+
+    Objectives.NameAsMenus(briefingFile);
 }
 
 auto MCScenario::LoadGroups(MCFitIniFile& file) -> void

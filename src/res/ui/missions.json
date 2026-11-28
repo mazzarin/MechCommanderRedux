@@ -1,5 +1,5 @@
 {
-  "about": "Port-only (SPEC-menus.md, stages 5 and 7): the campaigns' operations and missions, and the single missions, by the names the remade menus show them. The briefings write them in capitals (FEDCOM:SKYHOOK, ***DESTROY ENEMY CONVOY***); here each in its own case, as the approved frames have them. A mission is its briefing file's (the mission FIT's BriefingFile); an operation is the word its briefings' FEDCOM line gives it. One not here shows as its briefing writes it (logistics/MCMissionNames.h). The match maps (CHOOSE MAP's, the room's), by their room packet's file (data/savegame/*.mpk): 1998's own packets name several by their files' abbreviations (\"CaptIsld\"); here each by its name in words. One not here (a player's, a mod's) shows by the name its packet holds; the packet's name is still what the room sends.",
+  "about": "Port-only (SPEC-menus.md, stages 5 and 7): the campaigns' operations and missions, and the single missions, by the names the remade menus show them. The briefings write them in capitals (FEDCOM:SKYHOOK, ***DESTROY ENEMY CONVOY***); here each in its own case, as the approved frames have them. A mission is its briefing file's (the mission FIT's BriefingFile); an operation is the word its briefings' FEDCOM line gives it. One not here shows as its briefing writes it (logistics/MCMissionNames.h). The match maps (CHOOSE MAP's, the room's), by their room packet's file (data/savegame/*.mpk): 1998's own packets name several by their files' abbreviations (\"CaptIsld\"), the locked ones with LOCKED and two no-artillery ones with NA; here each by its name in words, a locked one with (Locked), the NA ones as their plain maps. One not here (a player's, a mod's) shows by the name its packet holds; the packet's name is still what the room sends. The objectives: a few 1998 objectives' words as the menus say them (\"12 of 12\": \"all 12\"), by the mission's briefing file and the objective's number, where its briefing's line and its mission file's name start with those words.",
   "operations": {
     "BEACHHEAD": "Beachhead",
     "SKYHOOK": "Skyhook",
@@ -60,11 +60,25 @@
     "xsbrf0404.txt": "Port Arthur Redux"
   },
   "maps": {
+    "bakwoods.mpk": "Backwoods",
+    "brclinna.mpk": "Breach the Line",
     "caldera.mpk": "Caldera",
     "captisld.mpk": "Capture Island",
+    "cptrlock.mpk": "Capture Base (Locked)",
     "dvalley.mpk": "Death Valley",
+    "fortna.mpk": "Fortress Assault",
     "hvrdmmt.mpk": "Hoover Dammit",
     "kingisle.mpk": "King of the Isle",
-    "mousetrp.mpk": "Mousetrap"
+    "kinglock.mpk": "King of the Hill (Locked)",
+    "manylock.mpk": "Many Bases (Locked)",
+    "mousetrp.mpk": "Mousetrap",
+    "powrlock.mpk": "Power Surge (Locked)",
+    "three.mpk": "Three Is a Magic Number",
+    "threena.mpk": "Three Is a Magic Number",
+    "wetnwild.mpk": "Wet and Wild"
+  },
+  "objectives": {
+    "brf0402.txt": {"2": {"written": "Destroy 12 of 12 Ordnance Trucks", "shown": "Destroy all 12 Ordnance Trucks"}},
+    "xbrf0202.txt": {"3": {"written": "Capture 7 of 7 Salvage Rigs", "shown": "Capture all 7 Salvage Rigs"}}
   }
 }

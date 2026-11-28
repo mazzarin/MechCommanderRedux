@@ -22,6 +22,7 @@
 #include "logistics/MCMainMenuScreen.h"
 #include "logistics/MCMatchMaps.h"
 #include "logistics/MCMechBay.h"
+#include "logistics/MCMissionNames.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCOperationVideo.h"
 #include "logistics/MCPurMechList.h"
@@ -51,6 +52,7 @@
 #include "mission/MCMission.h"
 #include "mission/MCResultsMenu.h"
 #include "mission/MCScenario.h"
+#include "mission/MCScenarioObjectives.h"
 #include "linkup/MCFidpMessage.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCLinkupMessages.h"
@@ -410,6 +412,61 @@ namespace
         MCScreenInput::SaveShot(std::format("campaign_world_{}", what), MCScreenInput::ScreenHash());
         CHECK(*commonest * 2 < pixels);
         CHECK(counts[Dark] * DarkMostShare < pixels);
+    }
+}
+
+/// <summary>
+/// Two 1998 objectives whose words read as a slip, "Destroy 12 of 12 Ordnance Trucks" (Linchpin 2) and "Capture 7 of 7
+/// Salvage Rigs" (Gorgon 2), say "all" in the briefing (BRIEFING's and the loading screen's read) and in the battle (the
+/// mission file's names, the tactical map's and the results'), the rest of the briefing's line kept: the app's table
+/// (ui/missions.json) matches 1998's own files (you, 28 Nov: "sure"). The other objectives as written.
+/// </summary>
+TEST_CASE_ISOLATED("game: Linchpin 2's and Gorgon 2's objectives say all 12 and all 7, in the briefing and the battle")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // Booted first: the missions' files lie in the game's archives.
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCMissionNames::Load(MCMissionNames::AppFile()).has_value());
+
+    struct MCAllOf
+    {
+        std::string_view Mission;
+        std::string_view Briefing;
+        int32_t Number = 0;
+        std::string_view Briefed;
+        std::string_view Named;
+        std::string_view FirstNamed;
+    };
+
+    for (const MCAllOf& one :
+         {MCAllOf{"mis0402", "brf0402.txt", 2, "Destroy all 12 Ordnance Trucks for additional Resource Points",
+                  "Destroy all 12 Ordnance Trucks", "Destroy 7 of 12 Ordnance Trucks"},
+          MCAllOf{"mcx0202", "xbrf0202.txt", 3, "Capture all 7 Salvage Rigs (secondary)", "Capture all 7 Salvage Rigs",
+                  "Capture 4 of 7 Salvage Rigs"}})
+    {
+        const MCTest::Scope scope{std::string(one.Mission)};
+        const auto at = static_cast<size_t>(one.Number - 1);
+        GlobalLog()->BriefingTextPath = GamePath(MissionPath, one.Briefing);
+        const MCCampaignMenu::MCMissionRead read = MCCampaignMenu::ReadMission();
+        REQUIRE(read.Briefing.Objectives.size() > at);
+        CHECK_EQ(read.Briefing.Objectives[at].Text, std::string(one.Briefed));
+        CHECK_EQ(read.Briefing.Objectives[0].Text, std::string(one.FirstNamed));
+
+        MCFitIniFile file;
+        REQUIRE_EQ(file.Open(GamePath(MissionPath, one.Mission, ".fit")), 0);
+        REQUIRE_EQ(file.SeekBlock("Objectives"), 0);
+        uint32_t count = 0;
+        REQUIRE_EQ(file.ReadIdULong("NumObjectives", count), 0);
+        MCObjectiveList objectives;
+        REQUIRE(objectives.Load(file, count).has_value());
+        objectives.NameAsMenus(one.Briefing);
+        REQUIRE(objectives.Count() > one.Number - 1);
+        CHECK_EQ(objectives[one.Number - 1].Name, std::string(one.Named));
+        CHECK_EQ(objectives[0].Name, std::string(one.FirstNamed));
     }
 }
 

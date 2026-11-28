@@ -186,6 +186,10 @@ TEST_CASE_ISOLATED(
     REQUIRE(island != choose.Maps().end());
     CHECK_EQ(island->Name, std::string("Capture Island"));
     CHECK_EQ(island->Written, std::string("CaptIsld"));
+    const auto lockedName = std::ranges::find(choose.Maps(), std::string("CPTRLOCK"), &MCMatchMap::File);
+    REQUIRE(lockedName != choose.Maps().end());
+    CHECK_EQ(lockedName->Name, std::string("Capture Base (Locked)"));
+    CHECK_EQ(lockedName->Written, std::string("Capture Base LOCKED"));
     CHECK(std::ranges::is_sorted(choose.Maps(), {},
                                  [](const MCMatchMap& map)
                                  {
@@ -195,20 +199,20 @@ TEST_CASE_ISOLATED(
                                      return name;
                                  }));
     CHECK_EQ(choose.Picked(), 0);
-    CheckMenusFrames("room choose map", {0xdc6dca17, 0xe5198470, 0x27d2802b});
+    CheckMenusFrames("room choose map", {0x76da234a, 0x8dd5485c, 0x6937dbd3});
     // The keys' focus is on the picked map: Down picks the next.
     MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
     Settle();
     CHECK_EQ(choose.Picked(), 1);
-    CheckMenusFrames("room choose map keys", {0xeedffdaa, 0x82a8df98, 0x3a609097});
+    CheckMenusFrames("room choose map keys", {0xf17f9c14, 0xf669ce36, 0xd56a78f1});
 
-    // Capture Base LOCKED: its description longer than its place, scrolling with its rail and fade, its banners the
+    // Capture Base (Locked): its description longer than its place, scrolling with its rail and fade, its banners the
     // menus' own.
     const auto locked = std::ranges::find(choose.Maps(), std::string("CPTRLOCK"), &MCMatchMap::File);
     REQUIRE(locked != choose.Maps().end());
     choose.Pick(static_cast<int>(locked - choose.Maps().begin()));
     Settle();
-    CheckMenusFrames("room choose map locked", {0xba08e6e5, 0x99147f68, 0x35166bfa});
+    CheckMenusFrames("room choose map locked", {0x63b32dd6, 0xecbcc147, 0x341e27ee});
 
     // Capture Base: its points and no time limit, CHOOSE loads it (the guest has the same file).
     const auto capture = std::ranges::find(choose.Maps(), std::string("CPTRBASE"), &MCMatchMap::File);
@@ -217,7 +221,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(MCChooseMapWindow::FactsOf(*capture), std::string("300,000 RP a team. No time limit."));
     choose.Pick(static_cast<int>(capture - choose.Maps().begin()));
     Settle();
-    CheckMenusFrames("room choose map picked", {0x67dcbf9a, 0x593ee86b, 0xaf73d205});
+    CheckMenusFrames("room choose map picked", {0xae73c443, 0xd780b9e2, 0x3610d372});
     guest.AnswerFiles(MCMissionDataHash(GamePath(SavePath, "CPTRBASE", ".mpk")));
     choose.PressChoose();
     REQUIRE(SettleUntil([&] { return guest.MissionsLoaded() == 1; }));
@@ -440,16 +444,17 @@ TEST_CASE_ISOLATED("game: a LAN guest's room shows the map its host loads, and w
     options.PressDone();
     Settle();
 
-    // A change of map: 3 is a Magic Number, its picture, points and time limit; the teams kept.
+    // A change of map: Three Is a Magic Number (its packet's "3 is a Magic Number"), its picture, points and time
+    // limit; the teams kept.
     HostLoads(bob, ann, "THREE");
     seen = RoomSeen();
-    CHECK_EQ(seen.Map, std::string("3 is a Magic Number"));
+    CHECK_EQ(seen.Map, std::string("Three Is a Magic Number"));
     CHECK_EQ(seen.MapPicture, std::format("{}mp0722", MCRmlArt::TerrainScheme));
     CHECK_EQ(seen.MapTime, std::string("Time limit 15:00."));
     CHECK(!seen.MapText.empty());
     CHECK_EQ(seen.Points1, std::string("600,000"));
     CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
-    CheckMenusFrames("room guest change map", {0xc3a3f7cc, 0x890e8cb4, 0x9cce00d7});
+    CheckMenusFrames("room guest change map", {0x55a5b660, 0x6369c59e, 0xec3c3482});
 
     // A 1998 map its packet names by its file's abbreviation (DValley): the room shows the app's name; the room keeps
     // the packet's own, which it sends (the service lists it, other builds read it).
@@ -471,7 +476,7 @@ TEST_CASE_ISOLATED("game: a LAN guest's room shows the map its host loads, and w
     CHECK_EQ(RoomSeen().Status, std::string("Waiting for Bob to choose a map."));
     HostLoads(bob, ann, "THREE");
     seen = RoomSeen();
-    CHECK_EQ(seen.Map, std::string("3 is a Magic Number"));
+    CHECK_EQ(seen.Map, std::string("Three Is a Magic Number"));
     CHECK(!seen.MapText.empty());
     CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
     bob.Close();
@@ -482,14 +487,14 @@ namespace
     /// <summary>The time limit test's host's address, and its guest's host's port, so it can run beside the others.</summary>
     constexpr std::string_view TimeLimitHostAddress = "127.0.0.1:29001";
     constexpr std::string_view TimeLimitGuestHostPort = "29003";
-    /// <summary>3 is a Magic Number, and its room packet's time limit (MissionTime 900).</summary>
+    /// <summary>Three Is a Magic Number, and its room packet's time limit (MissionTime 900).</summary>
     constexpr std::string_view TimedMission = "THREE";
     constexpr std::string_view TimedLimit = "15:00";
     /// <summary>Capture Base, whose room packet has no MissionTime.</summary>
     constexpr std::string_view UntimedMission = "CPTRBASE";
 
     /// <summary>
-    /// Loads 3 is a Magic Number, then Capture Base, with <paramref name="load"/>: the room's time limit the first's,
+    /// Loads Three Is a Magic Number, then Capture Base, with <paramref name="load"/>: the room's time limit the first's,
     /// then none, as the model keeps it (the 1998 session screen draws it) and as the remade room shows it.
     /// </summary>
     void CheckTimeLimitGoes(const std::function<void(std::string_view)>& load)
@@ -505,7 +510,7 @@ namespace
 }
 
 /// <summary>
-/// OB-195: a map whose room packet has no time limit shows none after a map with one (3 is a Magic Number's 15:00, then
+/// OB-195: a map whose room packet has no time limit shows none after a map with one (Three Is a Magic Number's 15:00, then
 /// Capture Base), in the host's room and in a LAN guest's. Fails with the room keeping the last map's time limit.
 /// </summary>
 TEST_CASE_ISOLATED("game: a map with no time limit shows none after one with a limit, for the host and a LAN guest")
@@ -837,7 +842,7 @@ namespace
     constexpr std::string_view LongHostAddress = "127.0.0.1:29007";
     /// <summary>
     /// A map whose description is longer than its room in CHOOSE MAP and the room, at every window, with banners
-    /// (Capture Base LOCKED); one that fits at every window (Arena).
+    /// (Capture Base (Locked)); one that fits at every window (Arena).
     /// </summary>
     constexpr std::string_view LongMap = "CPTRLOCK";
     constexpr std::string_view ShortMap = "ARENA";

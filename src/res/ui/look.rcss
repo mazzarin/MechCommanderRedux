@@ -442,6 +442,8 @@ input.range.slider sliderarrowdec, input.range.slider sliderarrowinc { width: 0;
 /* A text box: RmlUi's text input, its caret cyan. */
 input.text.field { display: block; width: 160dp; color: #fcfcfc; }
 input.text.field selection { background-color: #045454; color: #fcfcfc; }
+/* An empty box's placeholder, saying what goes in it, in dim. */
+input.text.field:placeholder-shown { color: #6c7a88; }
 
 /* A window's document: the screen under it veiled, the window centred. */
 .window-body { width: 100%; height: 100%; }

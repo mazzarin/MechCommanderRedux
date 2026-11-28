@@ -85,7 +85,7 @@
                     <div class="button" id="back" data-hint="Back" data-if="!in_room">Back</div>
                     <div class="grow"></div>
                     <div class="label" data-if="!in_room">Player name</div>
-                    <input type="text" class="field" id="name" data-value="player_name" maxlength="16" data-if="!in_room"/>
+                    <input type="text" class="field" id="name" data-value="player_name" maxlength="16" placeholder="Type your name" data-if="!in_room"/>
                     <div class="label" style="margin-left: 4dp;" data-if="!in_room">Code</div>
                     <input type="text" class="field" id="code" data-value="code" maxlength="4" data-if="!in_room"/>
                     <div class="button" id="host" data-class-off="!can_host" style="margin-left: 8dp;" data-hint="Host" data-if="!in_room">Host game</div>

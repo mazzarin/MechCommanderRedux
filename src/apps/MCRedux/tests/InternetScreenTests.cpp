@@ -414,6 +414,10 @@ TEST_CASE_ISOLATED("game: INTERNET starts with the name entered before, never th
     const Rml::Element* focused = screen.Layer().Context().GetFocusElement();
     REQUIRE(focused != nullptr);
     CHECK_EQ(focused->GetId(), std::string("name"));
+    // The empty box asks for the name, in dim, until one is typed.
+    CHECK_EQ(focused->GetAttribute<Rml::String>("placeholder", ""), std::string("Type your name"));
+    CHECK(focused->IsPseudoClassSet("placeholder-shown"));
+    SaveWindowShot("internet no name");
 
     // A code typed: JOIN GAME still waits for the name; spaces aren't one.
     screen.SetCode(std::string(MCFakeGames::GameCode));
@@ -425,6 +429,7 @@ TEST_CASE_ISOLATED("game: INTERNET starts with the name entered before, never th
     Settle();
     CHECK(screen.Seen().CanHost);
     CHECK(screen.Seen().CanJoin);
+    CHECK(!focused->IsPseudoClassSet("placeholder-shown"));
 
     // A name entered before: INTERNET starts with it.
     SaveUserName("Falcon");

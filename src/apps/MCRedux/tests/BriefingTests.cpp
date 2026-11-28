@@ -24,6 +24,7 @@
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
+#include "main/MCMissionGlobals.h"
 #include "logistics/MCUnitLimits.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
@@ -296,6 +297,12 @@ TEST_CASE_ISOLATED("game: the main menu offers LOAD MISSION while there are save
 
 namespace
 {
+    /// <summary>The part type of a mech (MCLogPart::PartType; a vehicle's is another).</summary>
+    constexpr int32_t MechPartType = 1;
+
+    /// <summary>The middle of the briefing screen's launch button.</summary>
+    constexpr POINT LaunchButtonMiddle{0x230, 0x152};
+
     /// <summary>The middle of drop slot <paramref name="slot"/>.</summary>
     POINT SlotMiddle(size_t slot)
     {
@@ -316,7 +323,7 @@ namespace
     /// <summary>The first unit the deploy pane lists, as a mech (null when it is a vehicle or the pane is empty).</summary>
     std::shared_ptr<MCLogMech> FirstDeployMech(const MCBriefingScreen& briefing)
     {
-        if (briefing.DeployUnits.empty() || briefing.DeployUnits.front()->PartType != 1)
+        if (briefing.DeployUnits.empty() || briefing.DeployUnits.front()->PartType != MechPartType)
         {
             return nullptr;
         }
@@ -422,7 +429,7 @@ TEST_CASE_ISOLATED("game: the launch button leaves logistics and starts the miss
     }
 
     // The launch button.
-    RealClick(0x230, 0x152);
+    RealClick(LaunchButtonMiddle.x, LaunchButtonMiddle.y);
 
     for (int32_t frame = 0; frame < 300 && Scenario() == nullptr; frame++)
     {
@@ -671,4 +678,172 @@ TEST_CASE_ISOLATED("game: the mission's start file puts the deployed mech and it
     CHECK_EQ((*mates)[0], static_cast<int32_t>(part));
     CHECK_EQ((*mates)[1], 0);
     CHECK_EQ(start.SeekBlock("Commander0Group:1"), BLOCK_NOT_FOUND);
+}
+
+namespace
+{
+    /// <summary>The game time a solo mission plays once started, in seconds, without <c>--solo-seconds</c>.</summary>
+    constexpr int32_t SoloSeconds = 5;
+
+    /// <summary>The frames a launched mission has to load and finish starting up.</summary>
+    constexpr int32_t ScenarioStartFrames = 3000;
+
+    /// <summary>The mech and pilot a solo mission's force gets when its save offers none to assign.</summary>
+    constexpr std::string_view SoloStandInMech = "PM206100";
+    constexpr std::string_view SoloStandInPilot = "PMW00074";
+
+    /// <summary>The solo mission LOAD MISSION lists as <paramref name="name"/> (any case, without .sol), or -1.</summary>
+    int32_t SoloFile(const MCFileScrollPane& pane, std::string_view name)
+    {
+        for (int32_t file = 0; file < pane.NumFiles(); file++)
+        {
+            if (MCPort::StrICmp(pane.Files[static_cast<size_t>(file)].Name, name) == 0)
+            {
+                return file;
+            }
+        }
+
+        return -1;
+    }
+}
+
+/// <summary>
+/// A solo mission starts as a player starts one: SOLO's LOAD MISSION loads its .sol (the first listed, or
+/// <c>--solo &lt;name&gt;</c>), each mech of its force that fits the drop tonnage is dragged into the next drop slot the
+/// player can fill, the launch button starts the mission, and it plays for <c>--solo-seconds</c> (5 by default). The
+/// fan maps' load test (the workspace's <c>tools/fan-maps/load_test.py</c>) starts solo missions through it: a
+/// mission's own parts for the player (PlayerPart) are dropped this way, and its force placed in their stead.
+/// </summary>
+TEST_CASE_ISOLATED("game: a solo mission starts from LOAD MISSION with its force in the drop slots and plays")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    int32_t seconds = SoloSeconds;
+
+    if (const std::optional<std::string_view> asked = MCTest::Option("solo-seconds"))
+    {
+        REQUIRE(std::from_chars(asked->data(), asked->data() + asked->size(), seconds).ec == std::errc());
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    std::string mission;
+    size_t deployed = 0;
+    size_t inSlots = 0;
+    {
+        // Pinned only for the set-up: the launch takes logistics down.
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+        SoloLoadScreen();
+        Settle();
+        const std::shared_ptr<MCFileScrollPane> pane = logistics->LoadScreen->FilePane.Lock();
+        REQUIRE(pane != nullptr);
+        REQUIRE(pane->NumFiles() > 0);
+        const std::optional<std::string_view> asked = MCTest::Option("solo");
+        const int32_t file = asked.has_value() ? SoloFile(*pane, *asked) : 0;
+        MCTest::Scope scope(std::format("solo mission {}", asked.value_or(pane->Files.front().Name)));
+        REQUIRE(file >= 0);
+        mission = pane->Files[static_cast<size_t>(file)].Name;
+        pane->SetSelectedFile(file);
+        LoadGame();
+        Settle();
+        REQUIRE(logistics->CurrentScreen() == logistics->BriefingScreen);
+        MCBriefingScreen& briefing = *logistics->BriefingScreen;
+
+        // A solo mission's save may leave the force to the player (mechs and pilots to assign from the inventory, or
+        // points to buy them with). One mech and its pilot go in, as a quick start puts them: the inventory's first
+        // when it has them, else a mech and pilot Gold ships.
+        if (logistics->ForceMechList->GetMechCount() == 0)
+        {
+            if (logistics->MechList->GetMechCount() > 0)
+            {
+                logistics->ForceMechList->AddMech(logistics->MechList->ExtractMech(0), false);
+            }
+            else
+            {
+                static_cast<void>(logistics->ForceMechList->AddMech(SoloStandInMech, false, false, true));
+            }
+
+            if (logistics->WarriorList->GetWarriorCount() > 0)
+            {
+                logistics->AssignedWarriorList->AddWarrior(logistics->WarriorList->ExtractWarrior(0), false);
+            }
+            else
+            {
+                static_cast<void>(logistics->AssignedWarriorList->AddWarrior(SoloStandInPilot, false));
+            }
+
+            REQUIRE(logistics->AssignedWarriorList->GetWarriorCount() > 0);
+
+            std::shared_ptr<MCLogMech> mech;
+            REQUIRE_EQ(logistics->ForceMechList->GetMechInfo(0, mech), 0);
+            mech->Assigned = true;
+            logistics->AssignedWarriorList->Warriors.front()->Assigned = true;
+            logistics->SetPilot(0, 0);
+            logistics->SetUpBriefingScreen(false);
+            Settle();
+        }
+
+        // The force's mechs that fit, each dragged into the next slot the player can fill.
+        const std::vector<std::shared_ptr<MCLogPart>> units = briefing.DeployUnits;
+        size_t slot = 0;
+
+        for (const std::shared_ptr<MCLogPart>& unit : units)
+        {
+            while (slot < MCLogistics::NumDropSlots && !logistics->LocalDropSlot[slot])
+            {
+                slot++;
+            }
+
+            if (slot == MCLogistics::NumDropSlots)
+            {
+                break;
+            }
+
+            if (unit->PartType != MechPartType || !MCBriefingScreen::FitsTonnage(*unit))
+            {
+                continue;
+            }
+
+            auto& mech = static_cast<MCLogMech&>(*unit);
+            DragMech(mech, SlotMiddle(slot).x, SlotMiddle(slot).y);
+            REQUIRE(mech.Deployed != 0);
+            deployed++;
+            slot++;
+        }
+
+        for (const auto& lance : logistics->DeploySlots)
+        {
+            inSlots += static_cast<size_t>(std::ranges::count_if(
+                lance, [](const auto& deploy) { return deploy.Unit != -1 || deploy.Vehicle != -1; }));
+        }
+
+        MCTest::Scope dropped(std::format("{} units in the deploy pane, {} in the slots, {} mechs in the force, "
+                                          "{} slots the player can fill, {} of {} tons",
+                                          units.size(), inSlots, logistics->ForceMechList->GetMechCount(),
+                                          std::ranges::count(logistics->LocalDropSlot, true), CurDeployTonnage,
+                                          MaxDeployTonnage));
+        REQUIRE(inSlots > 0);
+    }
+
+    RealClick(LaunchButtonMiddle.x, LaunchButtonMiddle.y);
+
+    for (int32_t frame = 0; frame < ScenarioStartFrames; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+
+        if (Mission()->State == MCMissionState::Scenario && Scenario() != nullptr && !Scenario()->StartingUp)
+        {
+            break;
+        }
+    }
+
+    REQUIRE(Scenario() != nullptr);
+    REQUIRE(!Scenario()->StartingUp);
+    RunFor(static_cast<float>(seconds));
+    CHECK(Scenario() != nullptr);
+    std::cout << std::format("  solo mission {}: units in the drop slots {} ({} dragged), played {} s to turn {}\n",
+                             mission, inSlots, deployed, seconds, Turn);
 }

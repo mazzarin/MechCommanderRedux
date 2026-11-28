@@ -610,6 +610,16 @@ void MCGamesScreen::ShowList()
     ShowButtons();
 }
 
+std::string MCGamesScreen::ShownMap(std::string_view written)
+{
+    if (!_Maps.has_value())
+    {
+        _Maps = MCMatchMaps();
+    }
+
+    return MCShownMapName(written, *_Maps);
+}
+
 void MCGamesScreen::ShowPick()
 {
     const std::optional<MCListedGame> game = Picked();
@@ -635,8 +645,9 @@ void MCGamesScreen::ShowPick()
 
         if (game->InBattle)
         {
-            lines.push_back({game->Mission.empty() ? game->NowText()
-                                                   : std::format(OnMissionFormat, game->NowText(), game->Mission)});
+            lines.push_back({game->Mission.empty()
+                                 ? game->NowText()
+                                 : std::format(OnMissionFormat, game->NowText(), ShownMap(game->Mission))});
         }
         else if (game->NeedsNewer)
         {

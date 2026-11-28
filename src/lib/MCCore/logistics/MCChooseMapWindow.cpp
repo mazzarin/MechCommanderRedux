@@ -114,7 +114,7 @@ void MCChooseMapWindow::MakeModels(Rml::Context& context)
                std::pair{"points", &MCRow::Points}, std::pair{"time", &MCRow::Time});
     model.Value("picked", _Picked);
     model.Value("pick_name", _PickName);
-    model.Value("pick_pic", _PickPic);
+    model.Value("pick_picture", _PickPicture);
     model.Value("pick_facts", _PickFacts);
     MCBindDescription(model, "pick_lines", _PickLines);
     const auto at = [](const Rml::VariantList& arguments) { return arguments.empty() ? -1 : arguments[0].Get<int>(); };
@@ -242,7 +242,7 @@ void MCChooseMapWindow::ShowPick()
 {
     const bool any = _Picked >= 0 && static_cast<size_t>(_Picked) < _Maps.size();
     _PickName.clear();
-    _PickPic.clear();
+    _PickPicture = MCRmlArt::TerrainPicture({});
     _PickFacts.clear();
     _PickLines.clear();
 
@@ -250,7 +250,7 @@ void MCChooseMapWindow::ShowPick()
     {
         const MCMatchMap& map = _Maps[static_cast<size_t>(_Picked)];
         _PickName = map.Name;
-        _PickPic = std::format("{}{}", MCRmlArt::TerrainScheme, map.MapFile);
+        _PickPicture = MCRmlArt::TerrainPicture(map.MapFile);
         _PickFacts = FactsOf(map);
 
         _PickLines = MCDescriptionLines(MCDescriptionRows(map.Description, false));
@@ -261,7 +261,7 @@ void MCChooseMapWindow::ShowPick()
 
     if (_Model != nullptr)
     {
-        for (const char* name : {"picked", "pick_name", "pick_pic", "pick_facts", "pick_lines"})
+        for (const char* name : {"picked", "pick_name", "pick_picture", "pick_facts", "pick_lines"})
         {
             _Model->Changed(name);
         }

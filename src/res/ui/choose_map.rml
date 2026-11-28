@@ -31,7 +31,7 @@
                 </div>
                 <div id="map-pick" class="column">
                     <div class="pick-side" data-if="picked >= 0">
-                        <div class="map-pic big"><img data-attr-src="pick_pic"/></div>
+                        <div class="map-pic big" data-style-decorator="pick_picture"></div>
                         <div class="map-title">{{pick_name}}</div>
                         <div class="data grey">{{pick_facts}}</div>
                         <div class="map-text scroll-box">

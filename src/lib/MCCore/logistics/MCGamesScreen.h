@@ -8,6 +8,7 @@
 // 1998 screens through the flow: MULTIPLAYER ACCESS under them, the room over them, the UPDATE page for a newer game.
 
 #include "gui/MCScreenFlow.h"
+#include "logistics/MCMatchMaps.h"
 #include "network/MCGamesList.h"
 #include "ui/MCRmlScreen.h"
 
@@ -160,6 +161,11 @@ private:
     std::optional<MCListedGame> Picked() const;
     /// <summary>The place's name, what the screen's dialogs belong to ("Internet", "LAN").</summary>
     std::string Place() const;
+    /// <summary>
+    /// A listed game's map, sent as its own name (<paramref name="written"/>, its LongMissionName), by the name this
+    /// game's menus show it by (MCShownMapName); this game's maps read the first time.
+    /// </summary>
+    std::string ShownMap(std::string_view written);
 
     /// <summary>Begins joining or hosting as <paramref name="ask"/> says, its wait shown or its end.</summary>
     void Begin(MCGameJoin::MCAsk ask);
@@ -186,6 +192,8 @@ private:
     /// <summary>The first rows have come: the focus moves to the first game once they're laid out.</summary>
     bool _FocusFirstRow = false;
     std::optional<std::string> _PickedKey;
+    /// <summary>This game's room packets, read once a listed game names its map (<see cref="ShownMap"/>).</summary>
+    std::optional<std::vector<MCMatchMap>> _Maps;
     MCGuiHandle<MCHostWindow> _HostWindow;
     MCHostWindow::MCHost _LastHost;
 

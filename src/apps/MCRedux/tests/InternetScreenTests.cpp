@@ -335,6 +335,18 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER offers INTERNET, with how many are online,
     CHECK(screen.Seen().CanJoin);
     CHECK((screen.Seen().PickLines == Rows{"Public, hosted in Oceania", "Needs version 0.7.0"}));
 
+    // A game in battle on a 1998 map its packet names by its file's abbreviation, as its host sends it ("CaptIsld"):
+    // the menus' name for it (Lost Outpost, which this game hasn't, as sent).
+    nlohmann::json onIsland = EveryKindOfGame(37, 12);
+    onIsland["games"][2]["mission"] = "CaptIsld";
+    list.Send(onIsland);
+    screen.PickKey("Q4RT");
+    REQUIRE(SettleUntil(
+        [&screen]
+        {
+            return screen.Seen().PickLines == Rows{"Public, hosted in Asia", "In battle for 12 min, on Capture Island"};
+        }));
+
     // A code typed (either case): JOIN GAME takes it, whatever is picked; JOIN GAME off without it.
     screen.PickKey("PXYL");
     Settle();

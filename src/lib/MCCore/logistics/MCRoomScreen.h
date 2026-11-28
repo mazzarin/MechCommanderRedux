@@ -155,7 +155,9 @@ private:
     std::vector<MCCard> _Pool;
     bool _HasMap = false;
     std::string _MapTitle;
+    /// <summary>The map's picture's source (<c>terrain:</c>'s, for Seen), and the decorator that draws it.</summary>
     std::string _MapPic;
+    std::string _MapPicture;
     std::string _MapTime;
     std::vector<MCDescriptionLine> _MapLines;
     std::string _OptionsWord;

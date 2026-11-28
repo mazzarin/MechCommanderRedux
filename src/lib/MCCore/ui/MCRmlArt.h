@@ -47,6 +47,13 @@ namespace MCRmlArt
     inline constexpr std::string_view TerrainScheme = "terrain:";
 
     /// <summary>
+    /// The decorator that draws map file <paramref name="map"/>'s briefing picture (<c>terrain:</c>'s) at its own shape in
+    /// its box, at the box's top left, as the briefing and LOAD GAME draw theirs (CHOOSE MAP's box is wider than the
+    /// square pictures); <c>none</c> for no map.
+    /// </summary>
+    std::string TerrainPicture(std::string_view map);
+
+    /// <summary>
     /// The picture <paramref name="source"/> names, with its HD copy when <paramref name="hd"/> and the pack has one;
     /// why not, for a source that isn't a picture's or one the game can't read.
     /// </summary>

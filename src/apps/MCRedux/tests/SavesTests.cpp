@@ -133,7 +133,8 @@ TEST_CASE("saves: the menus' names come from the data file, case ignored, and on
     const std::filesystem::path file = folder.Path() / "missions.json";
     {
         std::ofstream out(file);
-        out << R"({"operations": {"SKYHOOK": "Skyhook"}, "missions": {"brf0203.txt": "Destroy enemy convoy", "x": 3}})";
+        out << R"({"operations": {"SKYHOOK": "Skyhook"}, "missions": {"brf0203.txt": "Destroy enemy convoy", "x": 3},)"
+            << R"("maps": {"captisld.mpk": "Capture Island"}})";
     }
 
     // "x" has no name: left out.
@@ -142,6 +143,10 @@ TEST_CASE("saves: the menus' names come from the data file, case ignored, and on
     CHECK_EQ(MCMissionNames::Operation("HYDRA"), std::string("HYDRA"));
     CHECK_EQ(MCMissionNames::Mission("BRF0203.TXT", "DESTROY ENEMY CONVOY"), std::string("Destroy enemy convoy"));
     CHECK_EQ(MCMissionNames::Mission("brf0204.txt", "DESTROY ENEMY ASSETS"), std::string("DESTROY ENEMY ASSETS"));
+    // A match map by its room packet's file, with or without its extension; one not there (a player's) by its own name.
+    CHECK_EQ(MCMissionNames::Map("CAPTISLD", "CaptIsld"), std::string("Capture Island"));
+    CHECK_EQ(MCMissionNames::Map("CaptIsld.MPK", "CaptIsld"), std::string("Capture Island"));
+    CHECK_EQ(MCMissionNames::Map("MYISLAND", "CaptIsld"), std::string("CaptIsld"));
 
     // A file that isn't JSON leaves no names: every one as written.
     {
@@ -151,9 +156,27 @@ TEST_CASE("saves: the menus' names come from the data file, case ignored, and on
 
     CHECK(!MCMissionNames::Load(file).has_value());
     CHECK_EQ(MCMissionNames::Operation("SKYHOOK"), std::string("SKYHOOK"));
+    CHECK_EQ(MCMissionNames::Map("CAPTISLD", "CaptIsld"), std::string("CaptIsld"));
 
     // The app's own, read again for the tests after this one.
     REQUIRE(MCMissionNames::Load(MCMissionNames::AppFile()).has_value());
+}
+
+/// <summary>
+/// The app's names give 1998's match maps whose room packets name them by their files' abbreviations their names in
+/// words (the user's, 28 Nov; HvrDmmt's its own briefings' title, "***Hoover Dammit***").
+/// </summary>
+TEST_CASE("saves: the app's names give 1998's match maps named by their files' abbreviations their names in words")
+{
+    REQUIRE(MCMissionNames::Load(MCMissionNames::AppFile()).has_value());
+    CHECK_EQ(MCMissionNames::Map("CALDERA", "caldera"), std::string("Caldera"));
+    CHECK_EQ(MCMissionNames::Map("CAPTISLD", "CaptIsld"), std::string("Capture Island"));
+    CHECK_EQ(MCMissionNames::Map("DVALLEY", "DValley"), std::string("Death Valley"));
+    CHECK_EQ(MCMissionNames::Map("HVRDMMT", "HvrDmmt"), std::string("Hoover Dammit"));
+    CHECK_EQ(MCMissionNames::Map("KINGISLE", "KingIsle"), std::string("King of the Isle"));
+    CHECK_EQ(MCMissionNames::Map("MOUSETRP", "MouseTrp"), std::string("Mousetrap"));
+    // A 1998 map with a name in words keeps it.
+    CHECK_EQ(MCMissionNames::Map("CPTRBASE", "Capture Base"), std::string("Capture Base"));
 }
 
 TEST_CASE("saves: a name no file can have on Windows or the Mac is refused")

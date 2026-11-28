@@ -9,6 +9,7 @@
 #include "logistics/MCMatchOptionRows.h"
 #include "logistics/MCMatchOptionsWindow.h"
 #include "logistics/MCMenuScreens.h"
+#include "logistics/MCMissionNames.h"
 #include "logistics/MCUpdateModel.h"
 #include "logistics/MCUpdateScreen.h"
 #include "main/MCGameSession.h"
@@ -169,7 +170,7 @@ void MCRoomScreen::MakeModels(Rml::Context& context)
                std::pair{"colour", &MCCard::Colour}, std::pair{"host", &MCCard::Host}, std::pair{"me", &MCCard::Me});
     model.Value("has_map", _HasMap);
     model.Value("map_title", _MapTitle);
-    model.Value("map_pic", _MapPic);
+    model.Value("map_picture", _MapPicture);
     model.Value("map_time", _MapTime);
     MCBindDescription(model, "map_lines", _MapLines);
     model.Value("options_word", _OptionsWord);
@@ -419,9 +420,11 @@ void MCRoomScreen::ShowMatch()
     const MCRoomModel& room = Room();
     const bool hasMap = room.HasMission();
     Keep("has_map", _HasMap, hasMap);
-    Keep("map_title", _MapTitle, hasMap ? room.MissionName : std::string());
-    Keep("map_pic", _MapPic,
-         hasMap && !room.MapFile.empty() ? std::format("{}{}", MCRmlArt::TerrainScheme, room.MapFile) : std::string());
+    // Its name as the menus show it (the packet's own, which the room sends, for a map not in the app's names).
+    Keep("map_title", _MapTitle, hasMap ? MCMissionNames::Map(room.LoadedMission, room.MissionName) : std::string());
+    const std::string_view mapFile = hasMap ? std::string_view(room.MapFile) : std::string_view();
+    _MapPic = mapFile.empty() ? std::string() : std::format("{}{}", MCRmlArt::TerrainScheme, mapFile);
+    Keep("map_picture", _MapPicture, MCRmlArt::TerrainPicture(mapFile));
     Keep("map_time", _MapTime,
          hasMap && !room.MissionTime.empty() && room.MissionTime != NoTimeLimit
              ? std::format(TimeLimitFormat, room.MissionTime)

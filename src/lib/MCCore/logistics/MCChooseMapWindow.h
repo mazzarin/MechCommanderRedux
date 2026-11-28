@@ -101,7 +101,8 @@ private:
     std::vector<MCRow> _Rows;
     int _Picked = -1;
     std::string _PickName;
-    std::string _PickPic;
+    /// <summary>The picked map's picture, a decorator (MCRmlArt::TerrainPicture).</summary>
+    std::string _PickPicture;
     std::string _PickFacts;
     std::vector<MCDescriptionLine> _PickLines;
 };

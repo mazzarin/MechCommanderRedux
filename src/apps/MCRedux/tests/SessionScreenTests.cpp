@@ -180,6 +180,12 @@ TEST_CASE_ISOLATED(
 
     CHECK(std::ranges::none_of(choose.Maps(), &MCMatchMap::NoArtillery));
     CHECK(HasMap(choose.Maps(), "URBANA"));
+    // A 1998 map its packet names by its file's abbreviation, by the app's name (ui/missions.json), its own kept: the
+    // room sends that.
+    const auto island = std::ranges::find(choose.Maps(), std::string("CAPTISLD"), &MCMatchMap::File);
+    REQUIRE(island != choose.Maps().end());
+    CHECK_EQ(island->Name, std::string("Capture Island"));
+    CHECK_EQ(island->Written, std::string("CaptIsld"));
     CHECK(std::ranges::is_sorted(choose.Maps(), {},
                                  [](const MCMatchMap& map)
                                  {
@@ -189,12 +195,12 @@ TEST_CASE_ISOLATED(
                                      return name;
                                  }));
     CHECK_EQ(choose.Picked(), 0);
-    CheckMenusFrames("room choose map", {0xdf3df296, 0x5302f216, 0x2602111c});
+    CheckMenusFrames("room choose map", {0xdc6dca17, 0xe5198470, 0x27d2802b});
     // The keys' focus is on the picked map: Down picks the next.
     MCScreenInput::RealKey(SDL_SCANCODE_DOWN);
     Settle();
     CHECK_EQ(choose.Picked(), 1);
-    CheckMenusFrames("room choose map keys", {0xe40e0ba7, 0x000b1d7a, 0x99af7468});
+    CheckMenusFrames("room choose map keys", {0xeedffdaa, 0x82a8df98, 0x3a609097});
 
     // Capture Base LOCKED: its description longer than its place, scrolling with its rail and fade, its banners the
     // menus' own.
@@ -202,7 +208,7 @@ TEST_CASE_ISOLATED(
     REQUIRE(locked != choose.Maps().end());
     choose.Pick(static_cast<int>(locked - choose.Maps().begin()));
     Settle();
-    CheckMenusFrames("room choose map locked", {0x9d9ee7e4, 0xff88d356, 0x311edf70});
+    CheckMenusFrames("room choose map locked", {0xba08e6e5, 0x99147f68, 0x35166bfa});
 
     // Capture Base: its points and no time limit, CHOOSE loads it (the guest has the same file).
     const auto capture = std::ranges::find(choose.Maps(), std::string("CPTRBASE"), &MCMatchMap::File);
@@ -211,7 +217,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(MCChooseMapWindow::FactsOf(*capture), std::string("300,000 RP a team. No time limit."));
     choose.Pick(static_cast<int>(capture - choose.Maps().begin()));
     Settle();
-    CheckMenusFrames("room choose map picked", {0x29816296, 0xdd65d3b4, 0x1973cb30});
+    CheckMenusFrames("room choose map picked", {0x67dcbf9a, 0x593ee86b, 0xaf73d205});
     guest.AnswerFiles(MCMissionDataHash(GamePath(SavePath, "CPTRBASE", ".mpk")));
     choose.PressChoose();
     REQUIRE(SettleUntil([&] { return guest.MissionsLoaded() == 1; }));
@@ -443,7 +449,13 @@ TEST_CASE_ISOLATED("game: a LAN guest's room shows the map its host loads, and w
     CHECK(!seen.MapText.empty());
     CHECK_EQ(seen.Points1, std::string("600,000"));
     CHECK_EQ(seen.Status, std::string("Waiting for Bob to begin planning."));
-    CheckMenusFrames("room guest change map", {0x6b82b674, 0xd92d8408, 0x2b8f982b});
+    CheckMenusFrames("room guest change map", {0xc3a3f7cc, 0x890e8cb4, 0x9cce00d7});
+
+    // A 1998 map its packet names by its file's abbreviation (DValley): the room shows the app's name; the room keeps
+    // the packet's own, which it sends (the service lists it, other builds read it).
+    HostLoads(bob, ann, "DVALLEY");
+    CHECK_EQ(RoomSeen().Map, std::string("Death Valley"));
+    CHECK_EQ(GlobalLog()->Room.MissionName, std::string("DValley"));
 
     // The room shown again: afresh, no map and nobody placed. The teams first this time, then the map named again.
     bob.SendRoomAgain(ann);
@@ -728,6 +740,27 @@ TEST_CASE_ISOLATED("game: every room map's description lies inside its box in CH
 /// between two thin rules; a row of asterisks alone a thin rule; any other banner's row (asterisks at an end) one line,
 /// cut at the box's edge; any other row words. A banner ends the paragraph before it, with or without an empty line.
 /// </summary>
+/// <summary>
+/// A game on the service's list names its map by the room packet's own name, as its host sends it: it shows by the
+/// name the menus give this game's packets of that name, when they agree on one; else as sent.
+/// </summary>
+TEST_CASE("session screen: a listed game's map shows by the menus' name for this game's packets of that name")
+{
+    const std::vector<MCMatchMap> maps = {
+        MCMatchMap{.File = "CAPTISLD", .Name = "Capture Island", .Written = "CaptIsld"},
+        MCMatchMap{.File = "CPTRBASE", .Name = "Capture Base", .Written = "Capture Base"},
+        MCMatchMap{.File = "CPTBASNA", .Name = "Capture Base", .Written = "Capture Base"},
+        MCMatchMap{.File = "POWRSURG", .Name = "Power Surge", .Written = "Power Surge"},
+        MCMatchMap{.File = "POWRSRG2", .Name = "Power Surge 2", .Written = "Power Surge"}};
+    CHECK_EQ(MCShownMapName("CaptIsld", maps), std::string("Capture Island"));
+    // Two packets of one name that show by one name: that; two that show apart: as sent.
+    CHECK_EQ(MCShownMapName("Capture Base", maps), std::string("Capture Base"));
+    CHECK_EQ(MCShownMapName("Power Surge", maps), std::string("Power Surge"));
+    // A map this game hasn't, and a name in another case (a packet's name is matched as written): as sent.
+    CHECK_EQ(MCShownMapName("Lost Outpost", maps), std::string("Lost Outpost"));
+    CHECK_EQ(MCShownMapName("captisld", maps), std::string("captisld"));
+}
+
 TEST_CASE("session screen: a map's description shows 1998's asterisk banners as labels and rules")
 {
     using enum MCDescriptionKind;

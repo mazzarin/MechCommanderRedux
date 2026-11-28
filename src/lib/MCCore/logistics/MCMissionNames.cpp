@@ -8,11 +8,14 @@ namespace
 {
     using Json = nlohmann::json;
 
-    /// <summary>The data file's name in the app's ui folder, and its two tables' keys.</summary>
+    /// <summary>The data file's name in the app's ui folder, and its tables' keys.</summary>
     constexpr std::string_view UiFolder = "ui";
     constexpr std::string_view FileName = "missions.json";
     constexpr const char* OperationsKey = "operations";
     constexpr const char* MissionsKey = "missions";
+    constexpr const char* MapsKey = "maps";
+    /// <summary>A match map's file's extension, as the maps' table keys them ("caldera.mpk").</summary>
+    constexpr std::string_view MapExtension = ".mpk";
     /// <summary>
     /// The line a briefing names its operation on, before the word (its operation's, then a slash): the Inner Sphere's
     /// FEDCOM, or STARCOM in the single missions played against a Clan's aces (ACEHUNT's, PAREDUX's).
@@ -26,9 +29,13 @@ namespace
     struct MCNames
     {
         bool Read = false;
-        /// <summary>The operations by their written word; the missions by their briefing's file, lower case.</summary>
+        /// <summary>
+        /// The operations by their written word; the missions by their briefing's file, the match maps by their room
+        /// packet's, lower case.
+        /// </summary>
         std::unordered_map<std::string, std::string> Operations;
         std::unordered_map<std::string, std::string> Missions;
+        std::unordered_map<std::string, std::string> Maps;
     };
 
     /// <summary>What follows the operation's mark on a briefing's line; none when the line has none.</summary>
@@ -268,6 +275,7 @@ auto MCMissionNames::Load(const std::filesystem::path& file) -> std::expected<vo
     const auto table = [&parsed](const char* key) { return parsed.contains(key) ? parsed.at(key) : Json(); };
     Names().Operations = StringsOf(table(OperationsKey), [](std::string_view key) { return std::string(key); });
     Names().Missions = StringsOf(table(MissionsKey), MCMissionNames::Lowered);
+    Names().Maps = StringsOf(table(MapsKey), MCMissionNames::Lowered);
     return {};
 }
 
@@ -298,4 +306,18 @@ auto MCMissionNames::Operation(std::string_view written) -> std::string
     ReadAppFileOnce();
     const auto found = Names().Operations.find(std::string(written));
     return found != Names().Operations.end() ? found->second : std::string(written);
+}
+
+auto MCMissionNames::Map(std::string_view file, std::string_view written) -> std::string
+{
+    ReadAppFileOnce();
+    std::string key = Lowered(file);
+
+    if (!key.ends_with(MapExtension))
+    {
+        key += MapExtension;
+    }
+
+    const auto found = Names().Maps.find(key);
+    return found != Names().Maps.end() ? found->second : std::string(written);
 }

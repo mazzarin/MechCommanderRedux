@@ -26,6 +26,11 @@ namespace
     constexpr size_t PixelBytes = 4;
     constexpr uint8_t Opaque = 255;
 
+    /// <summary>A decorator that draws nothing (a box with no picture).</summary>
+    constexpr std::string_view NoPicture = "none";
+    /// <summary>A map's briefing picture in its box: at its own shape (fit, not fill), at the box's top left.</summary>
+    constexpr std::string_view TerrainPictureFormat = "image({}{} contain left top)";
+
     /// <summary>A TGA as the logistics screens read it, with its colour map.</summary>
     struct MCArtPicture
     {
@@ -500,6 +505,11 @@ namespace MCRmlArt
     {
         const std::string states(static_cast<size_t>(mech ? MechLocations : VehicleLocations), StateMark(-1));
         return std::format("{}{}/{}/{}", UnitScheme, mech ? MechKind : VehicleKind, nameIndex, states);
+    }
+
+    std::string TerrainPicture(std::string_view map)
+    {
+        return map.empty() ? std::string(NoPicture) : std::format(TerrainPictureFormat, TerrainScheme, map);
     }
 
     std::string HdPath(std::string_view path)

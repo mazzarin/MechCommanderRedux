@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCMatchMaps.h"
+#include "logistics/MCMissionNames.h"
 #include "MCPort.h"
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
@@ -74,7 +75,8 @@ std::optional<MCMatchMap> MCReadMatchMap(std::string_view file)
         return std::nullopt;
     }
 
-    map.Name = *name;
+    map.Written = *name;
+    map.Name = MCMissionNames::Map(file, map.Written);
     map.MapFile = *mapFile;
 
     if (uint32_t seconds = 0; facts.ReadIdULong("MissionTime", seconds) == 0)
@@ -125,7 +127,7 @@ std::vector<MCMatchMap> MCMatchMaps()
         }
     }
 
-    // By name as a player reads them, whatever their capitals ("Cache & Kill", "caldera", "CaptIsld").
+    // By the name they show by, whatever its capitals ("Cache & Kill", "Capture Island", a mod's "deathmatch").
     const auto folded = [](std::string text)
     {
         std::ranges::transform(text, text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -134,6 +136,28 @@ std::vector<MCMatchMap> MCMatchMaps()
 
     std::ranges::sort(maps, {}, [&folded](const MCMatchMap& map) { return std::pair(folded(map.Name), map.File); });
     return maps;
+}
+
+std::string MCShownMapName(std::string_view written, std::span<const MCMatchMap> maps)
+{
+    std::optional<std::string_view> shown;
+
+    for (const MCMatchMap& map : maps)
+    {
+        if (map.Written != written)
+        {
+            continue;
+        }
+
+        if (shown.has_value() && *shown != map.Name)
+        {
+            return std::string(written);
+        }
+
+        shown = map.Name;
+    }
+
+    return std::string(shown.value_or(written));
 }
 
 MCDescriptionRow MCDescriptionRowOf(std::string_view line)

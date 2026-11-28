@@ -5,6 +5,10 @@
 // "***DESTROY ENEMY CONVOY***"; STARCOM in two single missions); the app's data file (ui/missions.json) gives each the case the approved frames show
 // ("Skyhook", "Destroy enemy convoy"), keyed by the briefing's file and the operation's word. One not in it shows as the
 // briefing writes it. LOAD GAME and SAVE GAME name saves by them; the briefing and the loading screen will (stage 8).
+// The same file names the match maps (CHOOSE MAP's, the room's): 1998's own room packets name several by their files'
+// abbreviations ("CaptIsld", "HvrDmmt"), so the file gives each 1998 map a name to show by, keyed by its room packet's
+// file. Only what the menus show changes: the packet's own name (LongMissionName) is what the room sends and the games
+// service lists, and its file the match's identity. A map not in it (a player's, a mod's) shows by its own name.
 
 namespace MCMissionNames
 {
@@ -30,8 +34,8 @@ namespace MCMissionNames
     MCWritten FromBriefing(std::string_view text, bool marked);
 
     /// <summary>
-    /// The data file's names read from <paramref name="file"/> (a JSON object with "operations" and "missions"), in
-    /// place of any read before; why not when it can't be read (no names then: every name as written).
+    /// The data file's names read from <paramref name="file"/> (a JSON object with "operations", "missions" and
+    /// "maps"), in place of any read before; why not when it can't be read (no names then: every name as written).
     /// </summary>
     std::expected<void, std::string> Load(const std::filesystem::path& file);
 
@@ -46,6 +50,12 @@ namespace MCMissionNames
 
     /// <summary>The operation the briefings call <paramref name="written"/>, by the menus' name for it; else as written.</summary>
     std::string Operation(std::string_view written);
+
+    /// <summary>
+    /// The match map whose room packet is <paramref name="file"/> (its name, with or without its <c>.mpk</c>, case
+    /// ignored), by the menus' name for it; else by its own name, <paramref name="written"/> (its LongMissionName).
+    /// </summary>
+    std::string Map(std::string_view file, std::string_view written);
 
     /// <summary><paramref name="text"/> in lower case (ASCII), as files' names are matched, case ignored.</summary>
     std::string Lowered(std::string_view text);

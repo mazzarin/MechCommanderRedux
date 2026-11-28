@@ -79,7 +79,7 @@
                     </div>
                     <div class="map-chosen" data-if="has_map">
                         <div class="map-top">
-                            <div class="map-pic"><img data-attr-src="map_pic"/></div>
+                            <div class="map-pic" data-style-decorator="map_picture"></div>
                             <div class="map-names">
                                 <div class="map-title">{{map_title}}</div>
                                 <div class="data grey" data-if="map_time != ''">{{map_time}}</div>

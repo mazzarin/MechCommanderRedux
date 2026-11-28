@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,8 +16,13 @@ struct MCMatchMap
 {
     /// <summary>Its file's name without the extension, as the room loads it ("CPTRBASE").</summary>
     std::string File;
-    /// <summary>Its name (LongMissionName: "Capture Base").</summary>
+    /// <summary>
+    /// Its name as the menus show it: the app's for a 1998 map named by its file's abbreviation ("Capture Island" for
+    /// CAPTISLD), else its own (<see cref="Written"/>). MCMissionNames::Map.
+    /// </summary>
     std::string Name;
+    /// <summary>Its own name (LongMissionName: "Capture Base", "CaptIsld"), which a room sends and the service lists.</summary>
+    std::string Written;
     /// <summary>Its map's file (MapFileName), whose briefing picture is its picture.</summary>
     std::string MapFile;
     int32_t Team1Points = 0;
@@ -40,6 +46,13 @@ std::optional<MCMatchMap> MCReadMatchMap(std::string_view file);
 
 /// <summary>Every room packet the game finds that can be read (the NA maps too), by name, then file.</summary>
 std::vector<MCMatchMap> MCMatchMaps();
+
+/// <summary>
+/// The name a room's map shows by when all that came of it is its own name, <paramref name="written"/> (a game on the
+/// service's list: its host sends its map's LongMissionName): the name of <paramref name="maps"/>' maps that have that
+/// name, when they show by one; else as written (a map this game hasn't, or packets that show apart, Power Surge's).
+/// </summary>
+std::string MCShownMapName(std::string_view written, std::span<const MCMatchMap> maps);
 
 /// <summary>Points as the menus write them, grouped by thousands: "300,000".</summary>
 std::string MCGroupedPoints(int32_t points);

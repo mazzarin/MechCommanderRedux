@@ -1,5 +1,5 @@
 {
-  "about": "Port-only (SPEC-menus.md, stages 5 and 7): the campaigns' operations and missions, and the single missions, by the names the remade menus show them. The briefings write them in capitals (FEDCOM:SKYHOOK, ***DESTROY ENEMY CONVOY***); here each in its own case, as the approved frames have them. A mission is its briefing file's (the mission FIT's BriefingFile); an operation is the word its briefings' FEDCOM line gives it. One not here shows as its briefing writes it (logistics/MCMissionNames.h).",
+  "about": "Port-only (SPEC-menus.md, stages 5 and 7): the campaigns' operations and missions, and the single missions, by the names the remade menus show them. The briefings write them in capitals (FEDCOM:SKYHOOK, ***DESTROY ENEMY CONVOY***); here each in its own case, as the approved frames have them. A mission is its briefing file's (the mission FIT's BriefingFile); an operation is the word its briefings' FEDCOM line gives it. One not here shows as its briefing writes it (logistics/MCMissionNames.h). The match maps (CHOOSE MAP's, the room's), by their room packet's file (data/savegame/*.mpk): 1998's own packets name several by their files' abbreviations (\"CaptIsld\"); here each by its name in words. One not here (a player's, a mod's) shows by the name its packet holds; the packet's name is still what the room sends.",
   "operations": {
     "BEACHHEAD": "Beachhead",
     "SKYHOOK": "Skyhook",
@@ -58,5 +58,13 @@
     "xsbrf0401.txt": "Destroy All Aces",
     "xsbrf0402.txt": "Destroy Garrison",
     "xsbrf0404.txt": "Port Arthur Redux"
+  },
+  "maps": {
+    "caldera.mpk": "Caldera",
+    "captisld.mpk": "Capture Island",
+    "dvalley.mpk": "Death Valley",
+    "hvrdmmt.mpk": "Hoover Dammit",
+    "kingisle.mpk": "King of the Isle",
+    "mousetrp.mpk": "Mousetrap"
   }
 }

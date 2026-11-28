@@ -77,9 +77,9 @@
 .map-chosen > * { flex: 0 0 auto; }
 .map-top { display: flex; flex-direction: row; gap: 10dp; }
 .map-top > * { flex: 0 0 auto; }
-/* The map's picture: the map's own (its briefing map), an image the room's model names. */
+/* The map's picture: the map's own (its briefing map), a decorator the room's model names that draws it at its own shape
+   (fit, not fill) at its box's top left, as the briefing does: the pictures are square, CHOOSE MAP's box wider. */
 .map-pic { width: 80dp; height: 80dp; }
-.map-pic img { width: 100%; height: 100%; }
 .map-names { flex: 1 1 0; }
 .map-title { font-size: 11.63dp; line-height: 15dp; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
 .map-change { margin-top: 10dp; }

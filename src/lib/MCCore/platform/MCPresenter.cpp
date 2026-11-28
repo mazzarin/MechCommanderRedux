@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCPresenter.h"
+#include "platform/MCFrameLog.h"
 
 std::optional<MCRendererKind> MCRendererKindFromName(std::string_view name)
 {
@@ -25,6 +26,117 @@ std::optional<MCRendererKind> MCRendererKindFromName(std::string_view name)
 std::string_view MCRendererKindName(MCRendererKind kind)
 {
     return kind == MCRendererKind::Software ? "software" : "vulkan";
+}
+
+bool MCScreenPacing::Reaches(SDL_Window& window)
+{
+    _RefreshHz = RefreshOf(window);
+    return Reaches(SDL_GetWindowFlags(&window), SDL_GetTicksNS());
+}
+
+bool MCScreenPacing::Reaches(SDL_WindowFlags flags, uint64_t nowNs)
+{
+    const bool inFront = (flags & SDL_WINDOW_INPUT_FOCUS) != 0;
+
+    if (_InFront && !inFront)
+    {
+        _LeftFrontNs = nowNs;
+    }
+
+    _InFront = inFront;
+    // A hidden window (the tests') is drawn as ever, its frames read back, and never held.
+    _Hidden = (flags & SDL_WINDOW_HIDDEN) != 0;
+    bool reached = true;
+
+    if (_Hidden)
+    {
+        reached = true;
+    }
+    else if ((flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED)) != 0)
+    {
+        reached = false;
+    }
+#if defined(__APPLE__)
+    else if ((flags & SDL_WINDOW_FULLSCREEN) != 0 && !inFront && nowNs - _LeftFrontNs < SpaceSlideNs)
+    {
+        reached = false;
+    }
+#endif
+
+    if (reached != _Reached)
+    {
+        MCFrameLog::Note(reached ? "screen: the frames reach it again"
+                                 : std::format("screen: the frames can't reach it (the window {}); each held to a "
+                                               "refresh",
+                                               (flags & SDL_WINDOW_MINIMIZED) != 0  ? "minimized"
+                                               : (flags & SDL_WINDOW_OCCLUDED) != 0 ? "covered"
+                                                                                    : "sliding away"));
+        _Unheld = false;
+        _SoonShown = 0;
+        _LastShownNs = 0;
+    }
+
+    _Reached = reached;
+    return reached;
+}
+
+void MCScreenPacing::Shown(SDL_Window& window, double imageWaitMs, bool vsync)
+{
+    Shown(imageWaitMs, vsync, RefreshOf(window), SDL_GetTicksNS());
+}
+
+void MCScreenPacing::Shown(double imageWaitMs, bool vsync, double refreshHz, uint64_t nowNs)
+{
+    _RefreshHz = refreshHz;
+    const double refreshMs = 1000.0 / (refreshHz > 0.0 ? refreshHz : FallbackHz);
+    const bool soon = _LastShownNs != 0 && static_cast<double>(nowNs - _LastShownNs) / 1e6 < refreshMs / 2.0;
+    _LastShownNs = nowNs;
+    const bool wasUnheld = _Unheld;
+
+    if (!vsync || imageWaitMs >= UnheldImageWaitMs)
+    {
+        // Without vsync the frames aren't meant to be held; a wait for an image is the screen holding them.
+        _Unheld = false;
+        _SoonShown = 0;
+    }
+    else if (!_Unheld)
+    {
+        // With vsync the screen takes a frame a refresh: a few of the frames queued for it come at once, never this
+        // many in a row.
+        _SoonShown = soon ? _SoonShown + 1 : 0;
+        _Unheld = _SoonShown >= UnheldFrames;
+    }
+
+    if (_Unheld != wasUnheld)
+    {
+        MCFrameLog::Note(_Unheld ? std::format("screen: not holding the frames shown (vsync on, an image at once {} "
+                                               "times in a row); each held to {:.0f}% of a refresh at {:.0f} Hz",
+                                               UnheldFrames, UnheldShare * 100.0, 1000.0 / refreshMs)
+                                 : "screen: holding the frames shown again");
+    }
+}
+
+double MCScreenPacing::HoldMs() const
+{
+    const double refreshMs = 1000.0 / (_RefreshHz > 0.0 ? _RefreshHz : FallbackHz);
+
+    if (_Hidden)
+    {
+        return 0.0;
+    }
+
+    if (!_Reached)
+    {
+        return refreshMs;
+    }
+
+    return _Unheld ? refreshMs * UnheldShare : 0.0;
+}
+
+double MCScreenPacing::RefreshOf(SDL_Window& window)
+{
+    const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(&window));
+    return mode != nullptr ? static_cast<double>(mode->refresh_rate) : 0.0;
 }
 
 std::expected<std::vector<uint8_t>, std::string> MCPresenter::ReadScreen(const MCFrame& frame)

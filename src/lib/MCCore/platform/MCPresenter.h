@@ -194,12 +194,72 @@ struct MCWindowFrame
 };
 
 /// <summary>
+/// Port-only: whether a frame shown now can reach the screen, and how long the game's loop holds each frame while the
+/// screen doesn't (MCGuiSystem::Run). A frame can't reach it while its window is minimized or covered (another Space
+/// shown in its place), nor, on the Mac, while a full-screen window's Space slides away after another app took the
+/// front: the slide holds the window's images back, and a game that keeps running behind (a multiplayer game) waited
+/// the second macOS gives a wait for one, at every switch. Such a frame isn't shown (no image is taken for it) and is
+/// held to a refresh of the screen, so the game neither waits nor spins. With vsync on, a screen that stops taking the
+/// frames shown also stops holding them (a compositor that has stopped: the 27 Nov hang's last 48 s ran at 2,180 frames
+/// a second); each is then held to <see cref="UnheldShare"/> of a refresh, so a screen that holds them again shows by
+/// a wait for an image.
+/// </summary>
+class MCScreenPacing
+{
+public:
+    /// <summary>Whether a frame shown in <paramref name="window"/> now reaches the screen (see the class).</summary>
+    bool Reaches(SDL_Window& window);
+
+    /// <summary>The same for a window with <paramref name="flags"/> at <paramref name="nowNs"/> (the tests').</summary>
+    bool Reaches(SDL_WindowFlags flags, uint64_t nowNs);
+
+    /// <summary>A frame shown in <paramref name="window"/> now, its image waited for <paramref name="imageWaitMs"/>.</summary>
+    void Shown(SDL_Window& window, double imageWaitMs, bool vsync);
+
+    /// <summary>The same with the screen at <paramref name="refreshHz"/>, at <paramref name="nowNs"/> (the tests').</summary>
+    void Shown(double imageWaitMs, bool vsync, double refreshHz, uint64_t nowNs);
+
+    /// <summary>How long (ms) the game's loop holds each frame now: 0 while the screen holds them.</summary>
+    double HoldMs() const;
+
+    /// <summary>A frame shown with vsync on whose image came this soon (ms) wasn't held by the screen.</summary>
+    static constexpr double UnheldImageWaitMs = 0.25;
+    /// <summary>How many shown in a row, each this soon, before the loop holds them.</summary>
+    static constexpr int UnheldFrames = 30;
+    /// <summary>The share of a refresh each is then held to.</summary>
+    static constexpr double UnheldShare = 0.8;
+    /// <summary>How long (ns) after another app takes the front a full-screen window's Space may still be sliding.</summary>
+    static constexpr uint64_t SpaceSlideNs = 1'500'000'000;
+    /// <summary>The refresh taken where the screen's isn't known.</summary>
+    static constexpr double FallbackHz = 60.0;
+
+private:
+    /// <summary>The refresh of the screen <paramref name="window"/> is on.</summary>
+    static double RefreshOf(SDL_Window& window);
+
+    bool _InFront = true;
+    uint64_t _LeftFrontNs = 0;
+    bool _Hidden = false;
+    bool _Reached = true;
+    bool _Unheld = false;
+    int _SoonShown = 0;
+    uint64_t _LastShownNs = 0;
+    double _RefreshHz = 0.0;
+};
+
+/// <summary>
 /// Shows frames in the display's window. Every call is made from the thread that created the display.
 /// </summary>
 class MCPresenter
 {
 public:
     virtual ~MCPresenter() = default;
+
+    /// <summary>
+    /// Port-only: how long (ms) the game's loop holds each frame now, the screen not holding them (MCScreenPacing); 0
+    /// while it does.
+    /// </summary>
+    double HoldFrameMs() const { return _Pacing.HoldMs(); }
 
     /// <summary>
     /// Port-only: the frame being drawn as the display will show it (its view, output size and sharp screen; set by
@@ -311,6 +371,10 @@ public:
     /// False when this presenter can't.
     /// </summary>
     virtual bool RecordWindow(std::function<void(MCWindowFrame&&)> /*taken*/) { return false; }
+
+protected:
+    /// <summary>Port-only: whether the frames shown reach the screen, kept by each show (MCScreenPacing).</summary>
+    MCScreenPacing _Pacing;
 };
 
 /// <summary>

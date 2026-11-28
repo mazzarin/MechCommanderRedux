@@ -952,13 +952,14 @@ auto WindowProc(uint32_t message, uint32_t wParam, int32_t lParam) -> int32_t
                 TacticalInterface()->ReleaseScrollKeys();
             }
 
+            // A multiplayer game keeps running while another window has the front. Port-only: the original also left
+            // full screen for a window there, as DirectDraw's exclusive mode ended at the switch; the port's full screen
+            // is a window of its own that a switch leaves as it is (on the Mac, the game's own Space), so the game stays
+            // full screen, and a Cmd-Tab or a Space swipe doesn't start the window's way out of full screen in the
+            // middle of macOS's switch.
             if (MultiPlayer() == nullptr)
             {
                 ApplicationActive = wParam != 0;
-            }
-            else if (GFullScreen != 0 && ApplicationActive)
-            {
-                InitWindowMode();
             }
 
             if (ApplicationActive && gui.DisplayReady())

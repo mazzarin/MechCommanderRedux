@@ -4,16 +4,22 @@
 #include "TestGame.h"
 #include "ScreenInput.h"
 #include "camera/MCCamera.h"
+#include "gui/MCGuiGlobals.h"
+#include "gui/MCGuiInput.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCPrefsScreen.h"
 #include "logistics/MCSettingsModel.h"
+#include "main/MCGameContext.h"
 #include "main/MCLogistics.h"
 #include "main/MCPrefs.h"
 #include "main/MCSystemConfig.h"
+#include "network/MCMultiPlayer.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
+#include "platform/MCPresenter.h"
+#include "platform/MCWin32Defs.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
 
@@ -1019,4 +1025,164 @@ TEST_CASE_ISOLATED("game: the Vulkan renderer presents and maps the mouse")
     // The GPU's surfaces hold colours already resolved through the palette, so this is the fade the palette can't do.
     CheckFade(*display);
     CheckMouseRoundTrip(*display);
+}
+
+namespace
+{
+    /// <summary>A nanosecond clock reading, for MCScreenPacing's tests.</summary>
+    constexpr uint64_t MsToNs(double ms)
+    {
+        return static_cast<uint64_t>(ms * 1e6);
+    }
+
+    /// <summary>Whether <paramref name="actual"/> is <paramref name="expected"/> to within a microsecond (ms).</summary>
+    bool NearMs(double actual, double expected)
+    {
+        constexpr double ToleranceMs = 0.001;
+        return std::abs(actual - expected) < ToleranceMs;
+    }
+
+    /// <summary>A window full screen and in front, as MCScreenPacing's tests start it.</summary>
+    constexpr SDL_WindowFlags FullScreenInFront = SDL_WINDOW_FULLSCREEN | SDL_WINDOW_INPUT_FOCUS;
+}
+
+/// <summary>
+/// Port-only: a frame can't reach a minimized or covered window (another Space shown in its place), nor, on the Mac, a
+/// full-screen one in the moments after another app took the front (its Space sliding away, which held a game that
+/// kept running a second for an image at every switch); each such frame is held to a refresh, and frames reach it
+/// again once it's seen, or (on another screen) after the slide.
+/// </summary>
+TEST_CASE("presenter: frames don't reach a covered window or a full-screen one sliding away, each held to a refresh")
+{
+    MCScreenPacing pacing;
+    CHECK(pacing.Reaches(FullScreenInFront, MsToNs(1000)));
+    pacing.Shown(4.0, true, 120.0, MsToNs(1000));
+    CHECK_EQ(pacing.HoldMs(), 0.0);
+
+    CHECK(!pacing.Reaches(FullScreenInFront | SDL_WINDOW_MINIMIZED, MsToNs(1010)));
+    CHECK(NearMs(pacing.HoldMs(), 1000.0 / 120.0));
+    CHECK(!pacing.Reaches(FullScreenInFront | SDL_WINDOW_OCCLUDED, MsToNs(1020)));
+    CHECK(pacing.Reaches(FullScreenInFront, MsToNs(1030)));
+    CHECK_EQ(pacing.HoldMs(), 0.0);
+
+    // Another app takes the front: on the Mac the full-screen window's Space slides away, then it's covered.
+    const bool slides =
+#if defined(__APPLE__)
+        true;
+#else
+        false;
+#endif
+    CHECK_EQ(pacing.Reaches(SDL_WINDOW_FULLSCREEN, MsToNs(2000)), !slides);
+    CHECK_EQ(pacing.Reaches(SDL_WINDOW_FULLSCREEN, MsToNs(2000) + MCScreenPacing::SpaceSlideNs - 1), !slides);
+    CHECK(!pacing.Reaches(SDL_WINDOW_FULLSCREEN | SDL_WINDOW_OCCLUDED, MsToNs(3000)));
+    CHECK(NearMs(pacing.HoldMs(), 1000.0 / 120.0));
+
+    // Seen on a screen of its own, the slide over: frames reach it, front or not.
+    CHECK(pacing.Reaches(SDL_WINDOW_FULLSCREEN, MsToNs(2000) + MCScreenPacing::SpaceSlideNs));
+    CHECK(pacing.Reaches(FullScreenInFront, MsToNs(5000)));
+
+    // A window that isn't full screen is seen behind the app in front; the tests' hidden window is drawn as ever, and
+    // its frames, which no screen holds, aren't held either.
+    CHECK(pacing.Reaches(0, MsToNs(6000)));
+    CHECK(pacing.Reaches(SDL_WINDOW_HIDDEN | SDL_WINDOW_OCCLUDED, MsToNs(6010)));
+
+    for (int i = 0; i < MCScreenPacing::UnheldFrames * 2; i++)
+    {
+        const uint64_t atNs = MsToNs(6020.0 + i * 0.5);
+        REQUIRE(pacing.Reaches(SDL_WINDOW_HIDDEN, atNs));
+        pacing.Shown(0.0, true, 120.0, atNs);
+    }
+
+    CHECK_EQ(pacing.HoldMs(), 0.0);
+}
+
+/// <summary>
+/// Port-only: with vsync on, a screen holds the frames shown to its refresh; one that hands an image at once many times
+/// in a row isn't holding them (a compositor that has stopped: the 27 Nov hang's last 48 s at 2,180 frames a second),
+/// so each is held to just under a refresh until a wait for an image shows the screen holding them again. Without
+/// vsync nothing is held.
+/// </summary>
+TEST_CASE("presenter: frames shown at once with vsync on are held to most of a refresh until the screen holds them")
+{
+    MCScreenPacing pacing;
+    constexpr double RefreshHz = 120.0;
+    constexpr double QuickMs = 0.5;
+    double atMs = 0.0;
+    const auto show = [&](double imageWaitMs, bool vsync, double afterMs)
+    {
+        atMs += afterMs;
+        REQUIRE(pacing.Reaches(FullScreenInFront, MsToNs(atMs)));
+        pacing.Shown(imageWaitMs, vsync, RefreshHz, MsToNs(atMs));
+    };
+
+    // A few frames come at once from a queue for the screen; then it waits.
+    for (int i = 0; i < 3; i++)
+    {
+        show(0.0, true, QuickMs);
+    }
+
+    show(7.0, true, 8.3);
+    CHECK_EQ(pacing.HoldMs(), 0.0);
+
+    // Frames a refresh apart, each image at once (the game's own work taking the refresh), aren't the screen's doing.
+    for (int i = 0; i < MCScreenPacing::UnheldFrames * 2; i++)
+    {
+        show(0.0, true, 8.4);
+    }
+
+    CHECK_EQ(pacing.HoldMs(), 0.0);
+
+    for (int i = 0; i < MCScreenPacing::UnheldFrames - 1; i++)
+    {
+        show(0.0, true, QuickMs);
+    }
+
+    CHECK_EQ(pacing.HoldMs(), 0.0);
+    show(0.0, true, QuickMs);
+    CHECK(NearMs(pacing.HoldMs(), 1000.0 / RefreshHz * MCScreenPacing::UnheldShare));
+
+    // Held, the frames come a refresh apart with no wait for an image: still not the screen holding them.
+    show(0.1, true, 1000.0 / RefreshHz * MCScreenPacing::UnheldShare);
+    CHECK(pacing.HoldMs() > 0.0);
+
+    // A wait for an image: the screen holds them again.
+    show(1.5, true, 1000.0 / RefreshHz * MCScreenPacing::UnheldShare);
+    CHECK_EQ(pacing.HoldMs(), 0.0);
+
+    // Without vsync, frames at once are what was asked for.
+    for (int i = 0; i < MCScreenPacing::UnheldFrames * 2; i++)
+    {
+        show(0.0, false, QuickMs);
+    }
+
+    CHECK_EQ(pacing.HoldMs(), 0.0);
+}
+
+/// <summary>
+/// Port-only: a multiplayer game keeps running while another app has the front, and stays full screen: the original
+/// left full screen for a window there (DirectDraw's exclusive mode ended at the switch), which on the Mac started the
+/// window's way out of full screen in the middle of macOS's switch, and came back to a window.
+/// </summary>
+TEST_CASE_ISOLATED("game: a multiplayer game losing the front keeps running full screen")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    MCGameContext::Current().SetMultiPlayer(std::make_shared<MCMultiPlayer>());
+    GFullScreen = 1;
+    ApplicationActive = true;
+
+    WindowProc(WM_ACTIVATEAPP, 0, 0);
+    CHECK_EQ(GFullScreen, 1);
+    CHECK(ApplicationActive);
+
+    WindowProc(WM_ACTIVATEAPP, 1, 0);
+    CHECK_EQ(GFullScreen, 1);
+    CHECK(ApplicationActive);
+
+    GFullScreen = 0;
+    MCGameContext::Current().SetMultiPlayer(nullptr);
 }

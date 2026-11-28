@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCInput.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFrameLog.h"
 
 namespace
 {
@@ -692,6 +693,59 @@ namespace
 
         return codePoints;
     }
+
+    /// <summary>
+    /// Port-only: what a window event says of the window being in front or seen, for the frame log; empty for the
+    /// rest.
+    /// </summary>
+    std::string_view WindowChange(uint32_t type)
+    {
+        switch (type)
+        {
+            case SDL_EVENT_WINDOW_FOCUS_GAINED:
+                return "in front";
+            case SDL_EVENT_WINDOW_FOCUS_LOST:
+                return "no longer in front";
+            case SDL_EVENT_WINDOW_SHOWN:
+                return "shown";
+            case SDL_EVENT_WINDOW_HIDDEN:
+                return "hidden";
+            case SDL_EVENT_WINDOW_EXPOSED:
+                return "seen";
+            case SDL_EVENT_WINDOW_OCCLUDED:
+                return "covered";
+            case SDL_EVENT_WINDOW_MINIMIZED:
+                return "minimized";
+            case SDL_EVENT_WINDOW_RESTORED:
+                return "restored";
+            case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+                return "full screen";
+            case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+                return "out of full screen";
+            case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+                return "on another screen";
+            default:
+                return {};
+        }
+    }
+
+    /// <summary>
+    /// Port-only: the clock's time of day, to the millisecond (19:24:21.068), so a frame log's window changes line up
+    /// with the system's own log.
+    /// </summary>
+    std::string TimeOfDay()
+    {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t seconds = std::chrono::system_clock::to_time_t(now);
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
+        std::tm local{};
+#if defined(_WIN32)
+        localtime_s(&local, &seconds);
+#else
+        localtime_r(&seconds, &local);
+#endif
+        return std::format("{:02}:{:02}:{:02}.{:03}", local.tm_hour, local.tm_min, local.tm_sec, ms);
+    }
 }
 
 namespace MCInput
@@ -1075,6 +1129,12 @@ namespace MCInput
     void HandleEvent(const SDL_Event& event)
     {
         MCInputState& input = state();
+
+        // Port-only: the window coming in front or going, seen or covered, noted in the frame log at the time of day.
+        if (const std::string_view change = WindowChange(event.type); !change.empty() && MCFrameLog::Enabled())
+        {
+            MCFrameLog::Note(std::format("window: {} at {}", change, TimeOfDay()));
+        }
 
         // Port-only (Redux HD): held, the mouse and keys reach nothing but Escape's own (HoldInput).
         if (input.Held)

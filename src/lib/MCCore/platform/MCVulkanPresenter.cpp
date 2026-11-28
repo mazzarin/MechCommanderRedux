@@ -2302,6 +2302,9 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
     SDL_GPUTexture* swapchain = nullptr;
     uint32_t swapchainWidth = 0;
     uint32_t swapchainHeight = 0;
+    // Port-only: no image for a frame that can't reach the screen (MCScreenPacing): the window covered, or its Space
+    // sliding away, where a wait for one lasts a second.
+    const bool reaches = _Pacing.Reaches(*_Window);
 
     if (MCFrameLog::Scope part("present.acquire"); true)
     {
@@ -2325,15 +2328,21 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
             return held;
         }
 
-        if (!SDL_WaitAndAcquireGPUSwapchainTexture(&commands, _Window.get(), &swapchain, &swapchainWidth,
-                                                   &swapchainHeight))
+        if (reaches && !SDL_WaitAndAcquireGPUSwapchainTexture(&commands, _Window.get(), &swapchain, &swapchainWidth,
+                                                              &swapchainHeight))
         {
             SDL_SubmitGPUCommandBuffer(&commands);
             return std::unexpected(SdlError("SDL_WaitAndAcquireGPUSwapchainTexture"));
         }
     }
 
-    // No swapchain image (a minimised or hidden window): the frame is composited but not shown.
+    if (reaches)
+    {
+        _Pacing.Shown(*_Window, _LastImageWaitMs, _VSync);
+    }
+
+    // No swapchain image (a minimised or hidden window, or one the frame can't reach): the frame is composited but not
+    // shown.
     if (swapchain != nullptr)
     {
         BlitShown(commands, layout, *swapchain, swapchainWidth, swapchainHeight);
@@ -2414,7 +2423,11 @@ std::expected<void, std::string> MCVulkanPresenter::ShowFrame(SDL_GPUCommandBuff
     }
 
     // The frame handed to the screen: the frame log's time between these is the screen's (a benchmark's hitches).
-    MCFrameLog::Presented();
+    if (reaches)
+    {
+        MCFrameLog::Presented();
+    }
+
     return {};
 }
 

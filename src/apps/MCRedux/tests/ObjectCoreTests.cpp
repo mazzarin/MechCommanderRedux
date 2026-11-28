@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "main/MCGameContext.h"
+#include "mission/MCScenario.h"
+#include "object/MCBattleMech.h"
 #include "object/MCBigGameObject.h"
 #include "object/MCCollisionGrid.h"
 #include "object/MCContactSystem.h"
@@ -174,6 +176,34 @@ TEST_CASE("team contacts: getContacts keeps the enemies and sorts every contact 
     CHECK_EQ(found[0], 0x201);
     CHECK_EQ(found[3], 0x204);
     CHECK_EQ(found[4], 0x206);
+}
+
+/// <summary>
+/// A team's status count (the mission scripts' force checks, objectStatusCount) counts each roster part's mover by its
+/// state, and skips a part whose mover is gone, as a mission started without logistics leaves inactive player parts.
+/// </summary>
+TEST_CASE("team: a status count skips a roster part whose mover is gone")
+{
+    MCTestContextScope scope;
+    scope.Context().SetForces(std::make_unique<MCForces>(false));
+    const std::shared_ptr<MCTeam> team = InnerSphereTeam();
+    REQUIRE(team != nullptr);
+
+    // Part FirstPartId has an awake mover in play; the part after it has none.
+    const auto mover = std::make_shared<MCBattleMech>();
+    mover->SetExists(1);
+    mover->SetAwake(1);
+    constexpr size_t MoverSlot = 0;
+    MoverRoster[MoverSlot] = mover;
+    team->Roster = {MCMover::FirstPartId, MCMover::FirstPartId + 1};
+
+    constexpr size_t StatusSlots = 9; // as objectStatusCount's array
+    constexpr size_t InPlayStatus = 0;
+    std::array<int32_t, StatusSlots> counts{};
+    team->StatusCount(counts);
+    CHECK_EQ(counts[InPlayStatus], 1);
+    CHECK_EQ(std::accumulate(counts.begin(), counts.end(), 0), 1);
+    MoverRoster[MoverSlot].reset();
 }
 
 /// <summary>A sensor's contacts are ids with slots too; the original held 200 and missed the rest (OB-145).</summary>

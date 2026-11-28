@@ -553,7 +553,15 @@ auto MCTeam::StatusCount(std::span<int32_t> counts) -> void
     for (int32_t i = 0; i < RosterSize(); i++)
     {
         std::shared_ptr<MCMover> mover = GetMoverFromPartId(Roster[i]);
-        Assert(mover != nullptr, static_cast<uint32_t>(i), " Team.statusCount: NULL roster object ");
+
+        // A part on the roster can have no mover: a mission started without logistics (-mission) loads the parts placed
+        // for the player, and when all of them are inactive (fan missions BARMCOST, S_v9, T_v7) their movers are gone
+        // by the scripts' first force count. It's skipped, as the team's other roster loops skip it.
+        if (mover == nullptr)
+        {
+            continue;
+        }
+
         std::shared_ptr<const MCMechWarrior> pilot = mover->GetPilot();
 
         if (mover->GetExists() == 0)

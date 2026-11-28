@@ -539,6 +539,9 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     MCFakeGames::MCFakeGamesService service;
     const MCServicesScope scope(list, service);
     REQUIRE(MCTestGame::StartLogistics());
+    // A player who entered a name before, so the box doesn't open with the focus (the worker's user folder may hold
+    // none, or an earlier test's).
+    SaveUserName("Commander");
     MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
     Settle();
     MCTestGuest::PressInternet();

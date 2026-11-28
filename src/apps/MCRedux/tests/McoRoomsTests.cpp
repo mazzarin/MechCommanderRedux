@@ -593,7 +593,8 @@ TEST_CASE("mco rooms: an internet game hosted on both is a room there, locked wi
 
     host.Leave();
     REQUIRE(Within(HeardMs, [&] { return mco.RoomIds().empty(); }));
-    CHECK(!host.Seen().Room.has_value());
+    // The room goes on MCO as it's asked; the host's own copy goes once the answer is back.
+    REQUIRE(Within(HeardMs, [&] { return !host.Seen().Room.has_value(); }));
     CHECK(host.Seen().Left.empty());
 }
 

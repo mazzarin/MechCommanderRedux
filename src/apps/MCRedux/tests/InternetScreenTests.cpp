@@ -448,6 +448,8 @@ TEST_CASE_ISOLATED("game: INTERNET plays from the keys")
     const MCServicesScope scope(list, service);
     LinksOnLoopback(SlowOpen);
     REQUIRE(MCTestGame::StartLogistics());
+    // A player who entered a name before (the worker's user folder may hold none, or an earlier test's).
+    SaveUserName("Commander");
     MCGamesScreen& screen = OpenInternetScreen(list);
     list.Send(EveryKindOfGame(37, 12));
     REQUIRE(SettleUntil(CountsAre("37 online, 12 in games")));
@@ -627,6 +629,8 @@ TEST_CASE_ISOLATED("game: INTERNET says why it can't list games, and RETRY tries
     MCServiceScript::SetupScope scope(MCServiceScript::ListOpener(list),
                                       MCServiceScript::Answering(R"({"online":1})", asked), Service, Version);
     REQUIRE(MCTestGame::StartLogistics());
+    // A player who entered a name before (the worker's user folder may hold none, or an earlier test's).
+    SaveUserName("Commander");
     MCMainMenuScreens::ShowNow(MCMainPanel::Multiplayer);
     Settle();
     MCTestGuest::PressInternet();

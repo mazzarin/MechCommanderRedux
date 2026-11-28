@@ -34,6 +34,12 @@ namespace
     /// <summary>The chat's code character (its SMUTI colours): never in a line passed on, whose colour is the game's.</summary>
     constexpr char ChatCode = '%';
 
+    /// <summary>A player's line of MCO's room as the session words it ("Clanner: text"); a picture's, its sayer named in it.</summary>
+    std::string SaidAs(const MCMcoChatLine& line)
+    {
+        return line.Name.empty() ? line.Text : std::format(McoLineFormat, line.Name, line.Text);
+    }
+
     /// <summary>A host's MCO room for its internet game, as far as it has gone.</summary>
     struct MCHostSide
     {
@@ -829,7 +835,7 @@ std::vector<std::string> MCMcoSeats::SessionLinesOf(std::span<const MCMcoChatLin
             // A waiting player's line; a picture's is said as what it was, its sayer named in it.
             if (waitingIds.contains(line.SenderId))
             {
-                lines.push_back(line.Name.empty() ? line.Text : std::format(McoLineFormat, line.Name, line.Text));
+                lines.push_back(SaidAs(line));
             }
         }
         else if (line.Event == JoinedEvent)
@@ -844,6 +850,18 @@ std::vector<std::string> MCMcoSeats::SessionLinesOf(std::span<const MCMcoChatLin
         {
             lines.push_back(std::format(LeftFormat, line.About));
         }
+    }
+
+    return lines;
+}
+
+std::vector<std::string> MCMcoSeats::RoomLinesOf(std::span<const MCMcoChatLine> chat)
+{
+    std::vector<std::string> lines;
+
+    for (const MCMcoChatLine& line : chat)
+    {
+        lines.push_back(SaidAs(line));
     }
 
     return lines;

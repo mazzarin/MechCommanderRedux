@@ -229,6 +229,12 @@ namespace MCMcoSeats
                                             const std::set<std::string>& waitingNames,
                                             const std::set<std::string>& waited);
 
+    /// <summary>
+    /// MCO's room lines (<paramref name="chat"/>) as INTERNET's room showed them, for the chat of the match a guest's game
+    /// joins from it: a player's as "Clanner: text", MCO's own sentences as said.
+    /// </summary>
+    std::vector<std::string> RoomLinesOf(std::span<const MCMcoChatLine> chat);
+
     /// <summary>The McoChat for <paramref name="line"/> (cut to its field), and what one says (none: it isn't one).</summary>
     MCMPMcoChatMessage ChatMessage(std::string_view line);
     std::optional<std::string> ChatSaidIn(std::span<const uint8_t> bytes);

@@ -2,8 +2,10 @@
 #include "logistics/MCGamesScreen.h"
 #include "gui/MCScreenChange.h"
 #include "linkup/MCSessionManager.h"
+#include "logistics/MCChatView.h"
 #include "logistics/MCIdleCheck.h"
 #include "logistics/MCInternetMenu.h"
+#include "logistics/MCLogChat.h"
 #include "logistics/MCMainMenuModel.h"
 #include "logistics/MCMenuScreens.h"
 #include "logistics/MCRegistrySettings.h"
@@ -11,6 +13,7 @@
 #include "network/MCInternetGame.h"
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMcoRooms.h"
+#include "network/MCMcoSeats.h"
 #include "network/MCMultiPlayer.h"
 #include "ui/MCRmlDialog.h"
 #include "ui/MCRmlFlow.h"
@@ -158,6 +161,25 @@ namespace
     MCScreenFlow::MCScreenId IdOf(MCGamesWhere where)
     {
         return where == MCGamesWhere::Internet ? MCMenuScreens::Internet() : MCMenuScreens::Lan();
+    }
+
+    /// <summary>The chat of the MCO match joined given its room's lines (<paramref name="seen"/>'s), as INTERNET showed them.</summary>
+    void CarryRoomChat(const MCMcoSeen& seen)
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+        if (!seen.Room.has_value() || logistics == nullptr || logistics->Chat == nullptr)
+        {
+            return;
+        }
+
+        for (const std::string& line : MCMcoSeats::RoomLinesOf(seen.Room->Chat))
+        {
+            if (const std::string bytes = MCChatView::AsChatBytes(line); !bytes.empty())
+            {
+                logistics->Chat->AddLine(bytes);
+            }
+        }
     }
 }
 
@@ -1179,10 +1201,12 @@ void MCGamesScreen::Ended(MCGameJoin::MCEnd end)
             return;
         case MCGameJoin::MCEnd::Joined:
         {
-            // MCO's match: the game is in it (its room polled saying so, as MCO's launcher's).
+            // MCO's match: the game is in it (its room polled saying so, as MCO's launcher's), and what was said in MCO's
+            // room carries on in the match's chat, which its room and briefing show, as a Redux HD room's does.
             if (_Join.Asked()->Where == MCGamesWhere::Mco && MCMcoRooms::Available())
             {
                 MCMcoRooms::Now().GameInMatch();
+                CarryRoomChat(MCMcoRooms::Now().Seen());
             }
 
             // The room set up at once (what the host says next lands in it); shown once the list is dark, by the join's

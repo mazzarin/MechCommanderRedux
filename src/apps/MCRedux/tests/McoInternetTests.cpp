@@ -13,6 +13,7 @@
 #include "logistics/MCLogChat.h"
 #include "logistics/MCGamesScreen.h"
 #include "logistics/MCMenuScreens.h"
+#include "logistics/MCRegistrySettings.h"
 #include "logistics/MCRoomScreen.h"
 #include "network/MCMcoBridge.h"
 #include "network/MCMcoRooms.h"
@@ -225,6 +226,8 @@ TEST_CASE_ISOLATED("game: INTERNET lists MechCommander Online's rooms with the s
     const auto keys = std::make_shared<MCFakeMcoService::MCMemoryKeys>();
     const MCMcoScope mcoScope(MCFakeMcoService::Setup(mco, keys, {}, MCFakeMcoService::Content, PollLeast, PollMost));
     REQUIRE(MCTestGame::StartLogistics());
+    // A player who entered a name before (the worker's user folder may hold none, or an earlier test's).
+    SaveUserName("Commander");
 
     // One list: the service's game and MCO's rooms, open ones first, a locked one so, the one in battle last. No
     // sign-in: the player is MCO's guest under INTERNET's name, kept for the next start.
@@ -359,7 +362,8 @@ TEST_CASE_ISOLATED("game: a locked MechCommander Online room asks for its passwo
 }
 
 TEST_CASE_ISOLATED("game: the host's START in a MechCommander Online room takes the game through the relay into the "
-                   "match's session screen, and its host's game leaving comes back to the room")
+                   "match's session screen, its chat carrying on from the room's, and its host's game leaving comes "
+                   "back to the room")
 {
     if (!MCTestGame::Available())
     {
@@ -382,12 +386,24 @@ TEST_CASE_ISOLATED("game: the host's START in a MechCommander Online room takes 
     PickNamed(screen, "Solaris Night");
     screen.PressJoin();
     REQUIRE(SettleUntil([&] { return screen.Seen().InRoom; }));
+    mco.Say(SolarisId, "BOB", "gl hf");
+    REQUIRE(SettleUntil([&] { return Has(screen.Seen().RoomChat, "BOB: gl hf"); }));
     MCBobsGame bobs(relay);
 
     // BOB's START: the game connects through the relay and opens the match's session screen, in the match as BOB's
     // room's players see it (its polls say its game is running).
     mco.StartMatch(SolarisId);
     REQUIRE(SettleUntil([] { return InRoom(); }));
+
+    // The room's chat goes on in the match's (the session screen's and the briefing's), as INTERNET showed it.
+    Rows carried;
+
+    for (const MCChatView::MCLine& line : MCChatView::Read(*GlobalLog()->Chat))
+    {
+        carried.push_back(line.Text);
+    }
+
+    CHECK((carried == Rows{"Hawkeye joined the room.", "BOB: gl hf"}));
     REQUIRE(MultiPlayer() != nullptr);
     CHECK(MultiPlayer()->SessionManager->CurrentSession() != nullptr);
     CHECK_EQ(MCMcoRooms::Now().Seen().Match, MCMcoMatchStage::Playing);

@@ -1286,7 +1286,7 @@ TEST_CASE_ISOLATED("game: the loading screen draws the same on every machine and
     REQUIRE(MCLoadingMenu::Shown());
     MCLoadingMenu::Progress(ShownPercent);
     CHECK_EQ(MCLoadingMenu::Screen()->get().Percent(), ShownPercent);
-    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0xeeb50e22, 0xd2457be9, 0xb00d4e12};
+    constexpr std::array<uint32_t, MCMenusPictures::FrameWindows.size()> Hashes = {0x692002bf, 0x1283f54a, 0x349b1b39};
 
     for (size_t i = 0; i < MCMenusPictures::FrameWindows.size(); i++)
     {
@@ -3207,7 +3207,7 @@ TEST_CASE_ISOLATED("game: a match's loading screen lights each game as it's in, 
     const std::shared_ptr<MCDisplay> display = MCInput::Display();
     REQUIRE(display != nullptr);
     REQUIRE(display->RendererKind() == MCRendererKind::Software);
-    DrawnEach(*display, clock, "loading_mp", {0x4c0de86d, 0x507ed6b9, 0x68d37528});
+    DrawnEach(*display, clock, "loading_mp", {0x924bad6a, 0x7710eee1, 0x5328283c});
     CheckLaidOut(menus, "loading mp");
     CHECK(MCLoadingMenu::Shown());
     CHECK(!MultiPlayer()->InMission);

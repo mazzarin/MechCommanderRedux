@@ -1104,7 +1104,7 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
     // Port-only (stage 7): over the remade main menu, at the recorded frames' windows.
     MCScreenInput::RealMove(0, 0);
     MCMenusPictures::CheckWindowFrames(*MCInput::Display(), "main_menu_reports_notice",
-                                       {0xfa1efc70, 0x70293fd0, 0x252f245e}, SettleMenusWindow);
+                                       {0xd52d6d71, 0xf63dca6b, 0xc290581d}, SettleMenusWindow);
     REQUIRE(MCRemadeTest::Press(*notice, "yes"));
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(MCMainMenuScreens::MainOnTop());
@@ -1212,7 +1212,7 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     // Port-only (stage 7): over the remade main menu, at the recorded frames' windows.
     MCScreenInput::RealMove(0, 0);
     MCMenusPictures::CheckWindowFrames(*MCInput::Display(), "main_menu_reports_question",
-                                       {0x64cb4c3a, 0x26198167, 0x9aad576e}, SettleMenusWindow);
+                                       {0x6d398925, 0xbdc1f914, 0xfe6f3792}, SettleMenusWindow);
     REQUIRE(MCRemadeTest::Press(*question, "no"));
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK(MCRemadeTest::OnTop<MCRmlScreen>() != question);

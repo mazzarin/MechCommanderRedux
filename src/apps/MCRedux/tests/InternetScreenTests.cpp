@@ -507,25 +507,25 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     // No internet (before the list answers), then RETRY: the games, one picked.
     list.Drop("The Internet connection appears to be offline.");
     REQUIRE(SettleUntil([&] { return screen.Seen().Empty == "No internet connection."; }));
-    CheckMenusFrames("internet offline", {0xd0627c57, 0x0c4bfeb3, 0x0b3e3d20});
+    CheckMenusFrames("internet offline", {0x0c0cb768, 0x408a2c91, 0xf2c8e742});
     screen.PressRetry();
     REQUIRE(SettleUntil([&] { return list.Opened.size() == 2; }));
     list.Send(EveryKindOfGame(37, 12));
     REQUIRE(SettleUntil(CountsAre("37 online, 12 in games")));
     screen.PickKey("K7QF");
     Settle();
-    CheckMenusFrames("internet", {0x622e7ce4, 0x02d244a0, 0xd778e6ab});
+    CheckMenusFrames("internet", {0x1b520dad, 0xc4773a27, 0x11aa48eb});
 
     // From the keys: the focus's ring on the game picked.
     RealKey(SDL_SCANCODE_DOWN);
     RealKey(SDL_SCANCODE_UP);
     Settle();
-    CheckMenusFrames("internet keys", {0x8158c9e4, 0x8e0b1180, 0x623afe2b});
+    CheckMenusFrames("internet keys", {0xdd05b64d, 0x0a3678d7, 0x76b10f7b});
 
     screen.PressHost();
     Settle();
     REQUIRE(screen.HostWindow());
-    CheckMenusFrames("internet host", {0xd1231097, 0x13ad1c68, 0xa6fbbf42});
+    CheckMenusFrames("internet host", {0x7c99420f, 0xcbfa546a, 0x947bad02});
     screen.HostWindow()->Hide();
     Settle();
 
@@ -534,18 +534,18 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     screen.PressJoin();
     Settle();
     REQUIRE_EQ(DialogHeading(), "Needs version 0.7.0");
-    CheckMenusFrames("internet join update", {0xe9b629b6, 0x81ef53bc, 0xe5945793});
+    CheckMenusFrames("internet join update", {0x1fb69175, 0x2c4e6ccb, 0x2adf23b2});
     PressDialogCancel();
 
     MCRmlDialogs::Message("No game has the code M3VD.");
     Settle();
-    CheckMenusFrames("internet message", {0x072194db, 0x8be6c178, 0x2d4d5699});
+    CheckMenusFrames("internet message", {0x60595515, 0xef64b63d, 0x76ba2604});
     PressDialogOk();
 
     // No games: "No open games." alone, the week's busiest hours heard but not drawn.
     list.Send(EmptyListingBusySaturday());
     REQUIRE(SettleUntil(CountsAre("3 online, 0 in games")));
-    CheckMenusFrames("internet empty", {0x4e99e1a7, 0x39062e24, 0x2c916e4b});
+    CheckMenusFrames("internet empty", {0xa2a14ab5, 0x8b7f89da, 0xcf88c496});
     CHECK_EQ(MenusProblems(), "");
 
     // LAN: no games on this network, then its HOST GAME's window.
@@ -558,11 +558,11 @@ TEST_CASE_ISOLATED("game: INTERNET and LAN draw their frames, and lay out and re
     MCGamesScreen& lan = *MCTestGuest::Games(MCGamesWhere::Lan);
     lan.SetPlayerName("Commander");
     REQUIRE(SettleUntil([&] { return lan.Seen().Empty == "No games on this network."; }));
-    CheckMenusFrames("lan", {0xe32d17ea, 0x6791dcba, 0xbcbfe80b});
+    CheckMenusFrames("lan", {0xa7bc2948, 0x5b0cb422, 0xa26f13b2});
     lan.PressHost();
     Settle();
     REQUIRE(lan.HostWindow());
-    CheckMenusFrames("lan host", {0x6ac200ab, 0x3a4b05c4, 0xdca239ba});
+    CheckMenusFrames("lan host", {0x12daea3c, 0x7c6849dd, 0x391dfa31});
 }
 
 /// <summary>

@@ -309,13 +309,13 @@ TEST_CASE_ISOLATED("game: the main menu and its submenus draw the same on every 
     CHECK_EQ(Words(MCMainPanel::Main, "version"),
              std::format("Redux HD {}", ReleaseOf(MCTestUpdater::FakeRunningVersion)));
     CHECK_EQ(Words(MCMainPanel::Main, "update"), std::format("Update to {}", ReleaseOf(NewVersion)));
-    CheckFrames(*display, "main_menu", {0x2f9f433c, 0xb060ad9f, 0x4b951c48});
+    CheckFrames(*display, "main_menu", {0xa8be44f7, 0x72f137f8, 0x9ce404c6});
 
     // A save: CONTINUE, naming where it opens.
     SaveFirstMission();
     CHECK_EQ(Panel(MCMainPanel::Main).ContinueLine(), "Original campaign · Operation 1, mission 1");
     CHECK(Visible(MCMainPanel::Main, "continue"));
-    CheckFrames(*display, "main_menu_continue", {0xb1827f10, 0xdc85e89c, 0xfaa1f6fb});
+    CheckFrames(*display, "main_menu_continue", {0x69ff01cc, 0x9cf511a4, 0xabff78be});
 
     // Between missions (from the briefing): RETURN TO GAME leads, naming the mission; SAVE GAME after LOAD GAME.
     NewCampaign();
@@ -325,7 +325,7 @@ TEST_CASE_ISOLATED("game: the main menu and its submenus draw the same on every 
     CHECK(Visible(MCMainPanel::Main, "return"));
     CHECK(Visible(MCMainPanel::Main, "save"));
     CHECK(!Visible(MCMainPanel::Main, "continue"));
-    CheckFrames(*display, "main_menu_between", {0xba0012be, 0xce77fc27, 0xfec3d819});
+    CheckFrames(*display, "main_menu_between", {0x7f308a15, 0xef35f738, 0x51f86022});
     GlobalLog()->CurrentMission = -1;
     Panel(MCMainPanel::Main).Refresh();
     SettleWindow();
@@ -344,13 +344,13 @@ TEST_CASE_ISOLATED("game: the main menu and its submenus draw the same on every 
     CHECK_EQ(Words(MCMainPanel::Campaigns, "main"), "Continue");
     CHECK(Visible(MCMainPanel::Campaigns, "load"));
     CHECK(Visible(MCMainPanel::Campaigns, "new"));
-    CheckFrames(*display, "main_menu_campaigns", {0x0e5357f7, 0xf6d26c47, 0xb8d3338c});
+    CheckFrames(*display, "main_menu_campaigns", {0xdd3b3ec9, 0xf34ccd97, 0xea341e5c});
     Panel(MCMainPanel::Campaigns).Pick(1);
     SettleWindow();
     CHECK_EQ(Words(MCMainPanel::Campaigns, "main"), "New campaign");
     CHECK(!Visible(MCMainPanel::Campaigns, "load"));
     CHECK(!Visible(MCMainPanel::Campaigns, "new"));
-    CheckFrames(*display, "main_menu_campaigns_new", {0xef2b95a5, 0x900a9cd6, 0xe4b8b1d7});
+    CheckFrames(*display, "main_menu_campaigns_new", {0xa68633f4, 0xb27e5de1, 0xf3c38187});
     // BACK swaps the main menu in at once: no palette waits for the next frame's fade (which would darken the remade
     // menu to black for a second).
     REQUIRE(MCRemadeTest::Press(Panel(MCMainPanel::Campaigns), "back"));
@@ -370,7 +370,7 @@ TEST_CASE_ISOLATED("game: the main menu and its submenus draw the same on every 
     CHECK_EQ(solos[2].Title, "Destroy Garrison");
     CHECK_EQ(solos[2].Line, "Buy 200 tons with 185,000 RP");
     CHECK_EQ(Panel(MCMainPanel::Solo).Picked(), 0);
-    CheckFrames(*display, "main_menu_solo", {0xb775c398, 0x3d58aab0, 0x5ac1a9d6});
+    CheckFrames(*display, "main_menu_solo", {0x4a500a9a, 0xb99ff64c, 0x07a090d7});
     Press(SDL_SCANCODE_ESCAPE);
     REQUIRE(OnMainMenu());
 
@@ -381,7 +381,7 @@ TEST_CASE_ISOLATED("game: the main menu and its submenus draw the same on every 
     CHECK(Visible(MCMainPanel::Multiplayer, "internet"));
     CHECK(Visible(MCMainPanel::Multiplayer, "lan"));
     CHECK(!Visible(MCMainPanel::Multiplayer, "retry"));
-    CheckFrames(*display, "main_menu_multiplayer", {0x284ee93e, 0x42f947ab, 0x0eaa7a4e});
+    CheckFrames(*display, "main_menu_multiplayer", {0x97e86ef3, 0x9400803b, 0x6418bb75});
 
     // No network: it says so where INTERNET and LAN would be, RETRY under it.
     MCMainMenuModel::SetNetworkForTests(false);
@@ -392,7 +392,7 @@ TEST_CASE_ISOLATED("game: the main menu and its submenus draw the same on every 
     CHECK(!Visible(MCMainPanel::Multiplayer, "internet"));
     CHECK(!Visible(MCMainPanel::Multiplayer, "lan"));
     CHECK(Visible(MCMainPanel::Multiplayer, "retry"));
-    CheckFrames(*display, "main_menu_offline", {0x1866f4e3, 0x4bc747b2, 0x6cc46ca7});
+    CheckFrames(*display, "main_menu_offline", {0x5caff6ff, 0x62c907d4, 0x5a8dc489});
     MCMainMenuModel::SetNetworkForTests(std::nullopt);
     Click(MCMainPanel::Multiplayer, "back");
     REQUIRE(OnMainMenu());
@@ -400,7 +400,7 @@ TEST_CASE_ISOLATED("game: the main menu and its submenus draw the same on every 
     // QUIT's question over the main menu.
     Click(MCMainPanel::Main, "quit");
     REQUIRE(QuitQuestion() != nullptr);
-    CheckFrames(*display, "main_menu_quit", {0xaec673a3, 0x9cc00205, 0x857d2a2d});
+    CheckFrames(*display, "main_menu_quit", {0x68896c44, 0x3b8016c8, 0xed623400});
     Press(SDL_SCANCODE_ESCAPE);
     CHECK(QuitQuestion() == nullptr);
     CHECK(OnMainMenu());

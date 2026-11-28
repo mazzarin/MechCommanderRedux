@@ -336,9 +336,10 @@ bool MCRmlLayer::HandleEvent(const SDL_Event& event)
                 return true;
             }
 
-            // A held Escape or Enter goes back or presses once, not once a repeat (a held arrow keeps moving).
-            if (event.key.repeat &&
-                (key == Rml::Input::KI_ESCAPE || key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER))
+            // A held Escape, Enter or Space goes back or presses once, not once a repeat (a held arrow keeps moving):
+            // Space still held from Space + click never presses the OK of the notice it brought up.
+            if (event.key.repeat && (key == Rml::Input::KI_ESCAPE || key == Rml::Input::KI_RETURN ||
+                                     key == Rml::Input::KI_NUMPADENTER || key == Rml::Input::KI_SPACE))
             {
                 return true;
             }

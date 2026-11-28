@@ -55,6 +55,8 @@ namespace
     constexpr int32_t MostFrames = 300;
     /// <summary>Frames a change takes to show (the menus' layout, then the presenter's frame).</summary>
     constexpr int32_t SettleFrames = 3;
+    /// <summary>A held key's repeats in a test: a second's worth at Windows' default rate.</summary>
+    constexpr int32_t HeldKeyRepeats = 30;
 
     /// <summary>The look's classes (ui/look.rcss, ui/prefs.rcss).</summary>
     constexpr const char* HeldClass = "held";
@@ -910,6 +912,19 @@ TEST_CASE_ISOLATED("game: a click the touchpad dropped shows its notice once ove
     const int32_t turn = Turn;
     RunFrames(SettleFrames);
     CHECK_EQ(Turn, turn);
+
+    // Space still held from Space + click: its repeats never press OK, which has the focus (RmlUi presses the focused
+    // button on Space as on Enter).
+    for (int repeat = 0; repeat < HeldKeyRepeats; ++repeat)
+    {
+        MCScreenInput::SendKeyEvent(SDL_SCANCODE_SPACE, true, SDL_KMOD_NONE, true);
+        RunFrames(1);
+    }
+
+    MCScreenInput::RealKeyEvent(SDL_SCANCODE_SPACE, false, SDL_KMOD_NONE);
+    RunFrames(SettleFrames);
+    CHECK(MCRmlDialogs::Shown());
+    CHECK(MCTouchpadNotice::Shows());
 
     // Laid out with nothing spilling or cut at the recorded frames' windows (saved with --shots).
     for (const MCWindowSize& window : FrameWindows)

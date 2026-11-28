@@ -228,7 +228,7 @@ namespace MCScreenInput
         MCTestGame::RunFrame(1.0f / 15.0f);
     }
 
-    void SendKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod)
+    void SendKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod, bool repeat)
     {
         SDL_Event key{};
         key.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
@@ -237,6 +237,7 @@ namespace MCScreenInput
         key.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
         key.key.mod = mod;
         key.key.down = down;
+        key.key.repeat = repeat;
         MCInput::HandleEvent(key);
     }
 

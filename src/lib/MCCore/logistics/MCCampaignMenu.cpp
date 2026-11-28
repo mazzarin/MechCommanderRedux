@@ -181,6 +181,24 @@ namespace
         return static_cast<int32_t>(std::lround(tons));
     }
 
+    /// <summary>
+    /// The match's player another player's <paramref name="part"/> is (its CommanderID their number), as the room lists
+    /// them; none once they've gone, or outside a match.
+    /// </summary>
+    std::optional<MCRoomModel::MCPlayer> OwnerOf(const MCLogPart& part)
+    {
+        const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+        if (logistics == nullptr || MultiPlayer() == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        const std::vector<MCRoomModel::MCPlayer> players = logistics->Room.Players();
+        const auto found = std::ranges::find(players, part.CommanderID, &MCRoomModel::MCPlayer::Number);
+        return found != players.end() ? std::optional(*found) : std::nullopt;
+    }
+
     /// <summary>How many of the ramp's segments <paramref name="tons"/> of the drop's limit light.</summary>
     float SegmentsOf(float tons)
     {
@@ -341,7 +359,8 @@ void MCCampaignScreen::MakeModels(Rml::Context& context)
                std::pair{"picked", &MCCard::Picked}, std::pair{"target", &MCCard::Target},
                std::pair{"refuse", &MCCard::Refuse}, std::pair{"why", &MCCard::Why}, std::pair{"slot", &MCCard::Slot},
                std::pair{"long", &MCCard::Long}, std::pair{"longer", &MCCard::Longer},
-               std::pair{"vehicle", &MCCard::Vehicle});
+               std::pair{"vehicle", &MCCard::Vehicle}, std::pair{"mate", &MCCard::Mate},
+               std::pair{"owner", &MCCard::Owner}, std::pair{"ownerColour", &MCCard::OwnerColour});
     model.List("carried", _Carried, std::pair{"kind", &MCCard::Kind});
     model.List("groups", _Groups, std::pair{"name", &MCGroup::Name}, std::pair{"tons", &MCGroup::Tons},
                std::pair{"closed", &MCGroup::Closed}, std::pair{"cards", &MCGroup::Cards});
@@ -783,6 +802,21 @@ MCCampaignScreen::MCCard MCCampaignScreen::UnitCard(const MCLogPart& part, int s
     card.Tons = MCCampaignMenu::TonsText(Tons(part.CurTonnage));
     card.Outline = Pictured(MCRmlArt::UnitSource(part));
 
+    if (part.LocalPart == 0)
+    {
+        // A match's teammate's unit (MCDeploy::SlotUnit): dim as a card out of reach, their name after its tons in
+        // their colour, as the bar and the chat name them (its CommanderID their number:
+        // MCLogistics::HandleDeployForceMessage).
+        card.Mate = true;
+        card.Off = true;
+
+        if (const std::optional<MCRoomModel::MCPlayer> owner = OwnerOf(part); owner.has_value())
+        {
+            card.Owner = owner->Name;
+            card.OwnerColour = MCChatView::ColourOf(owner->Number);
+        }
+    }
+
     if (part.PartType != 1)
     {
         // A vehicle: its name, as 1998's tile writes it, in its own case over VEHICLE, as a 'Mech without a MechWarrior's
@@ -891,7 +925,6 @@ void MCCampaignScreen::FillCards()
             const std::shared_ptr<MCLogPart> unit = MCDeploy::SlotUnit(slot);
             MCCard card{.Kind = static_cast<int>(MCCardKind::Closed), .Slot = static_cast<int>(slot)};
 
-            // A slot the player can't fill (the mission's closed, a teammate's) striped, saying nothing of who fills it.
             if (MCDeploy::Open(slot))
             {
                 open = true;
@@ -900,6 +933,13 @@ void MCCampaignScreen::FillCards()
                            : MCCard{.Kind = static_cast<int>(MCCardKind::Empty), .Slot = static_cast<int>(slot)};
                 card.Target = over == slot;
                 card.Refuse = over == slot && weight.Refused;
+            }
+            else if (unit != nullptr)
+            {
+                // A slot the player can't fill holding a match's teammate's unit: its card, marked theirs (UnitCard),
+                // as 1998's screen showed their block there. One without (the mission's closed, a teammate's empty)
+                // striped.
+                card = UnitCard(*unit, static_cast<int>(slot));
             }
 
             shown.Cards.push_back(std::move(card));

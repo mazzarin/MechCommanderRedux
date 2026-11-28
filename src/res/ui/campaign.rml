@@ -107,9 +107,9 @@
                         <div class="group" data-for="g : groups">
                             <div class="group-head"><div class="eyebrow" data-class-closed="g.closed">{{g.name}}</div><div class="tons" data-if="g.tons != ''">{{g.tons}}</div></div>
                             <div class="card" data-for="c : g.cards" data-attr-id="'slot' + c.slot"
-                                 data-class-unit="c.kind == 0" data-class-empty="c.kind == 1" data-class-closed="c.kind == 2"
+                                 data-class-unit="c.kind == 0" data-class-empty="c.kind == 1" data-class-closed="c.kind == 2" data-class-mate="c.kind == 0 &amp;&amp; c.mate" data-class-off="c.kind == 0 &amp;&amp; c.off"
                                  data-class-target="c.target" data-class-refuse="c.refuse" data-class-vehicle="c.kind == 0 &amp;&amp; c.vehicle" data-class-pilotless="c.kind == 0 &amp;&amp; c.unpiloted"
-                                 data-attr-data-hint="c.kind == 0 ? 'Drag into a slot' : ''" data-attr-data-hint-right="c.kind == 0 ? 'Back to the ready area' : ''">
+                                 data-attr-data-hint="c.kind == 0 &amp;&amp; !c.mate ? 'Drag into a slot' : ''" data-attr-data-hint-right="c.kind == 0 &amp;&amp; !c.mate ? 'Back to the ready area' : ''">
                                 <div class="pics" data-if="c.kind == 0">
                                     <div class="gauges" data-visible="c.piloted">
                                         <div class="condition"><div data-attr-class="c.shade" data-style-width="c.condition + '%'"></div></div>
@@ -117,7 +117,7 @@
                                     </div>
                                     <div class="imgs"><div class="pic" data-style-decorator="c.outline"></div><div class="pic" data-if="c.piloted" data-style-decorator="c.pilot"></div><div class="pic seat" data-if="c.unpiloted"></div></div>
                                 </div>
-                                <div class="facts" data-if="c.kind == 0"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}<span class="vchip" data-if="c.unpiloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="what" data-class-long="c.piloted &amp;&amp; c.long">{{c.what}}<span class="vchip" data-if="c.piloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="t">{{c.tons}}</div></div>
+                                <div class="facts" data-if="c.kind == 0"><div class="who" data-class-long="c.long" data-class-longer="c.longer">{{c.who}}<span class="vchip" data-if="c.unpiloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="what" data-class-long="c.piloted &amp;&amp; c.long">{{c.what}}<span class="vchip" data-if="c.piloted &amp;&amp; c.letter != ''">{{c.letter}}</span></div><div class="t" data-if="!c.mate">{{c.tons}}</div><div class="t owned" data-if="c.mate"><div class="tons">{{c.tons}}</div><div data-if="c.owner != ''" data-attr-class="'owner cut ' + c.ownerColour">{{c.owner}}</div></div></div>
                             </div>
                         </div>
                     </div>

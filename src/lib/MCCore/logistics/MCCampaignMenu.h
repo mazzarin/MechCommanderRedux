@@ -160,6 +160,16 @@ public:
         bool Longer = false;
         /// <summary>A vehicle: its name in its own case over VEHICLE, as a 'Mech without a MechWarrior's card.</summary>
         bool Vehicle = false;
+        /// <summary>
+        /// A match's teammate's unit in their share of the drop: its card dim, not the player's to move (no hint, no
+        /// focus); <see cref="Owner"/> names them.
+        /// </summary>
+        bool Mate = false;
+        /// <summary>
+        /// The teammate's name, as the room shows it, and its colour class (the chat's); empty once they've gone.
+        /// </summary>
+        std::string Owner;
+        std::string OwnerColour;
     };
 
     /// <summary>A drop group: its head, and its four slots.</summary>

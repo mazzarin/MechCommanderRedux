@@ -95,6 +95,8 @@ namespace
     constexpr std::string_view OptionsHostAddress = "127.0.0.1:28879";
     /// <summary>The game data check's test's, so it can run beside the others (--jobs).</summary>
     constexpr std::string_view DataHostAddress = "127.0.0.1:28881";
+    /// <summary>The newcomers' test's (seated in place, or shown the room with everyone).</summary>
+    constexpr std::string_view NewcomersHostAddress = "127.0.0.1:29015";
     /// <summary>The room's chat test's, so it can run beside the others (--jobs).</summary>
     constexpr std::string_view ChatHostAddress = "127.0.0.1:28884";
 
@@ -1770,6 +1772,164 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     ClickOk();
     Settle();
     CHECK_EQ(guest.MissionsLoaded(), 2);
+}
+
+/// <summary>
+/// Port-only (Redux HD): a newcomer whose game seats in place (MCMPMessageType::SeatsInPlace), in a room whose every
+/// guest's does, is given the room as it stands alone: the placed players' teams, the tech bases, the mission (its file
+/// asked of it alone, START waiting for its answer) and the points; nobody's room opens again. A newcomer without the
+/// word, an earlier build's, is shown the room again with everyone, as the 1998 game's messages allow.
+/// </summary>
+TEST_CASE_ISOLATED("game: a newcomer whose game seats in place is given the room alone, nobody's room opening again")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    REQUIRE(MultiPlayer() != nullptr);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.ConnectTcp(NewcomersHostAddress);
+    MCTestGuest::HostOnLan("Commander", "Newcomers' game", 6);
+    Settle();
+    REQUIRE(manager.DirectPlay != nullptr);
+    MCRoomModel& room = GlobalLog()->Room;
+    const uint32_t hostId = manager.MyPlayer()->Id;
+
+    // Each guest's game opens its room, says it seats in place, then pings (its room up).
+    const auto joinSeating = [&](Guest& guest)
+    {
+        for (const MCMPMessageType type :
+             {MCMPMessageType::SwitchScreen, MCMPMessageType::JoinTeam, MCMPMessageType::LoadMission})
+        {
+            guest.Watch(type);
+        }
+
+        REQUIRE(guest.Join(*manager.DirectPlay, NewcomersHostAddress, false));
+        // A game's guaranteed words wait until the host has numbered it (MCSessionManager's PreIDServerMessages), its
+        // rules before its word, as its room opens; this peer's plain ones wait until the host knows it.
+        REQUIRE(SettleUntil([&] { return manager.GetPlayer(guest.Id()) != nullptr; }));
+        guest.SendRules(hostId, MCMatchRule::Supported);
+        guest.SendSeatsInPlace(hostId);
+        REQUIRE(SettleUntil([&] { return room.SeatingGuests.contains(guest.Id()); }));
+        guest.Ping();
+        REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(guest.Id()); }));
+        Settle();
+    };
+
+    Guest ann("Ann");
+    joinSeating(ann);
+    CHECK(ann.Watched(MCMPMessageType::SwitchScreen).empty());
+    REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
+
+    // Ann on team 1 with the Clan's mechs, a mission loaded: her file asked, as every load asks.
+    ann.AnswerFiles(MCMissionDataHash(GamePath(SavePath, "ARENA", ".mpk")));
+    room.Assign(hostId, MCRoomModel::Team2, 0);
+    room.Assign(ann.Id(), MCRoomModel::Team1, 0);
+    room.SetTeamTechBase(MCRoomModel::Team1, MCRoomModel::Clan);
+    room.LoadMission("ARENA");
+    REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && room.CanStart; }));
+    const size_t annsTeams = ann.Watched(MCMPMessageType::JoinTeam).size();
+
+    // Cal joins: given the room alone, the two placed players' teams, his file asked and the mission loaded alone, no
+    // dialog over the host's room. Ann's room doesn't open again, nor does she load the mission again. START waits for
+    // Cal's place on a team.
+    Guest cal("Cal");
+    cal.AnswerFiles(MCMissionDataHash(GamePath(SavePath, "ARENA", ".mpk")));
+    joinSeating(cal);
+    REQUIRE(SettleUntil([&] { return cal.MissionsLoaded() == 1; }));
+    CHECK_EQ(cal.Watched(MCMPMessageType::JoinTeam).size(), size_t{2});
+    CHECK(cal.Watched(MCMPMessageType::SwitchScreen).empty());
+    CHECK(ann.Watched(MCMPMessageType::SwitchScreen).empty());
+    CHECK_EQ(ann.MissionsLoaded(), 1);
+    CHECK_EQ(ann.Watched(MCMPMessageType::JoinTeam).size(), annsTeams);
+    CHECK(!GlobalLog()->Message->IsShowing());
+    CHECK(!room.CanStart);
+    room.Assign(cal.Id(), MCRoomModel::Team2, 1);
+    CHECK(SettleUntil([&] { return room.CanStart; }));
+
+    // Dan's game never says it seats in place (an earlier build): once it pings, everyone is shown the room again.
+    Guest dan("Dan");
+    dan.Watch(MCMPMessageType::SwitchScreen);
+    REQUIRE(dan.Join(*manager.DirectPlay, NewcomersHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()); }));
+    CHECK(SettleUntil([&] { return !ann.Watched(MCMPMessageType::SwitchScreen).empty(); }));
+    CHECK(!dan.Watched(MCMPMessageType::SwitchScreen).empty());
+
+    dan.Leave();
+    cal.Leave();
+    ann.Leave();
+    Settle();
+}
+
+namespace
+{
+    /// <summary>The seating guest's test's host's port.</summary>
+    constexpr std::string_view SeatingGuestHostPort = "29017";
+}
+
+/// <summary>
+/// Port-only (Redux HD): a guest's game tells its host, as its room opens, that it seats a player who joins after it
+/// (MCMPMessageType::SeatsInPlace), and does (MCRoomModel::WatchRoom): the newcomer shows in its room on no team with no
+/// word from the host, nor its room opened again; the host's team for the newcomer is taken, and the newcomer's leaving
+/// empties its seat.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN guest seats a player who joins after it, its own room not opened again")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    MCTestGuest::OpenLan();
+    Host bob;
+    REQUIRE(bob.Open(SeatingGuestHostPort, "Bob", "Open Seats"));
+    MCTestGuest::JoinFromLan(SeatingGuestHostPort, "Ann");
+    const uint32_t ann = MultiPlayer()->SessionManager->MyPlayerID;
+    bob.SendNumbers(ann, {bob.Id(), ann});
+    REQUIRE(SettleUntil([&bob] { return MultiPlayer()->SessionManager->ServerID == bob.Id(); }));
+    CHECK(SettleUntil([&] { return bob.SeatingGuests().contains(ann); }));
+
+    const auto inPool = [](const std::string& name)
+    {
+        return RoomShowsThat([&name](const MCRoomScreen::MCSeen& now)
+                             { return std::ranges::find(now.Pool, name) != now.Pool.end(); });
+    };
+
+    // Cal joins Bob's room: Ann's game seats him itself, on no team, once Bob numbers him.
+    Guest cal("Cal");
+    REQUIRE(
+        cal.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", SeatingGuestHostPort), false));
+    bob.SendNumbers(ann, {bob.Id(), ann, cal.Id()});
+    REQUIRE(SettleUntil([&] { return inPool("Cal"); }));
+
+    // Bob puts Cal on team 1: Ann's room shows him there.
+    bob.SendJoinTeam(ann, cal.Id(), MCRoomModel::Team1, 0);
+    CHECK(SettleUntil(
+        []
+        {
+            return RoomShowsThat([](const MCRoomScreen::MCSeen& now)
+                                 { return !now.Team1.empty() && now.Team1[0] == "Cal"; });
+        }));
+
+    // Cal leaves: his seat empties.
+    cal.Leave();
+    CHECK(SettleUntil(
+        []
+        {
+            return RoomShowsThat(
+                [](const MCRoomScreen::MCSeen& now)
+                {
+                    return std::ranges::find(now.Team1, std::string("Cal")) == now.Team1.end() &&
+                           std::ranges::find(now.Pool, std::string("Cal")) == now.Pool.end();
+                });
+        }));
+
+    bob.Close();
+    Settle();
 }
 
 namespace

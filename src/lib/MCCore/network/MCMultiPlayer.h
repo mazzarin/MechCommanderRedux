@@ -713,10 +713,11 @@ public:
     int32_t SendWorldStateUpdate();
 
     /// <summary>
-    /// Asks every player whether it has mission file <paramref name="fileName"/>. Port: first works out this game's own
-    /// hash of it (<see cref="AskedFileHash"/>), for the answers to be checked against.
+    /// Asks every player (port-only, Redux HD: or player <paramref name="to"/> alone, a newcomer given the room) whether it
+    /// has mission file <paramref name="fileName"/>. Port: first works out this game's own hash of it
+    /// (<see cref="AskedFileHash"/>), for the answers to be checked against.
     /// </summary>
-    int32_t SendFileInquiry(std::string_view fileName);
+    int32_t SendFileInquiry(std::string_view fileName, std::optional<uint32_t> to = std::nullopt);
 
     /// <summary>
     /// Port, the host: what player <paramref name="playerId"/>'s file report (<paramref name="value"/>) says of the file

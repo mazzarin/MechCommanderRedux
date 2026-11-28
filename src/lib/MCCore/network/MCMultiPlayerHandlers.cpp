@@ -1916,6 +1916,18 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
             break;
         }
 
+        case MCMPMessageType::SeatsInPlace:
+        {
+            // Port-only (Redux HD): the guest seats a newcomer itself (MCRoomModel::WatchRoom). Kept by its id: the word
+            // can come before the host has taken in the guest's arrival.
+            if (Game().SessionManager->IsHost && GlobalLog() != nullptr)
+            {
+                GlobalLog()->Room.GuestSeatsInPlace(fromID);
+            }
+
+            break;
+        }
+
         case MCMPMessageType::SessionCheckIn:
         {
             // A sender without a number (gone, or not yet numbered) is ignored; the original read through the null

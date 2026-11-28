@@ -782,15 +782,23 @@ int32_t MCMultiPlayer::SendWorldStateUpdate()
     return 0;
 }
 
-int32_t MCMultiPlayer::SendFileInquiry(std::string_view fileName)
+int32_t MCMultiPlayer::SendFileInquiry(std::string_view fileName, std::optional<uint32_t> to)
 {
     AskedFileHash = MCMissionDataHash(fileName);
     StartGuaranteedMessage(MCMPMessageType::FileInquiry);
     fileName = fileName.substr(0, MsgBufferSize - sizeof(MCFIGuaranteedMessageHeader) - 1);
     std::memcpy(MsgBuffer.data() + sizeof(MCFIGuaranteedMessageHeader), fileName.data(), fileName.size());
     MsgBuffer[sizeof(MCFIGuaranteedMessageHeader) + fileName.size()] = 0;
-    SessionManager->SendMessageToGroup(
-        AllPlayerGroupID, Outgoing(static_cast<uint32_t>(fileName.size() + sizeof(MCFIGuaranteedMessageHeader) + 1)));
+    const auto size = static_cast<uint32_t>(fileName.size() + sizeof(MCFIGuaranteedMessageHeader) + 1);
+
+    // Port-only (Redux HD): a newcomer given the room alone is asked alone (MCRoomModel::GiveNewcomerTheRoom).
+    if (to.has_value())
+    {
+        SessionManager->SendMessageToPlayerGuaranteed(*to, Outgoing(size), true);
+        return 0;
+    }
+
+    SessionManager->SendMessageToGroup(AllPlayerGroupID, Outgoing(size));
     return 0;
 }
 

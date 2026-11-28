@@ -24,6 +24,8 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 
+#include <set>
+
 // The tests' side of a multiplayer session the game hosts: a second player joining over the loopback with DirectPlay's
 // stand-in (platform/MCDirectPlay.h), on a thread of its own, answering as a game's build would as far as a test asks.
 
@@ -93,6 +95,12 @@ namespace MCTestGuest
 
         /// <summary>Says to player <paramref name="to"/> that this player's restart into an update is off.</summary>
         void SendRestartOff(uint32_t to) { SendNotice(to, MCMPMessageType::RestartOff); }
+
+        /// <summary>
+        /// Says to host <paramref name="to"/> that this player's game seats a player who joins after it, as this build's
+        /// guest does as its room opens.
+        /// </summary>
+        void SendSeatsInPlace(uint32_t to) { SendNotice(to, MCMPMessageType::SeatsInPlace); }
 
         /// <summary>The messages saying another game restarts into an update, so far.</summary>
         int32_t Updatings() const { return _Updatings; }
@@ -782,6 +790,16 @@ namespace MCTestGuest
             return _Joined;
         }
 
+        /// <summary>
+        /// The guests whose games said, as their rooms opened, that they seat a player who joins after them
+        /// (MCMPMessageType::SeatsInPlace), by id, each once.
+        /// </summary>
+        std::set<uint32_t> SeatingGuests()
+        {
+            const std::lock_guard lock(_Mutex);
+            return _SeatingGuests;
+        }
+
         /// <summary>Ends the session once what waits to be sent is out, as the host's game quitting does.</summary>
         void Close() { Disconnect(); }
 
@@ -884,7 +902,10 @@ namespace MCTestGuest
             Send(to, message);
         }
 
-        /// <summary>Counts <paramref name="message"/> from <paramref name="from"/> if it is a guest's Updating or a player joining.</summary>
+        /// <summary>
+        /// Counts <paramref name="message"/> from <paramref name="from"/> if it is a guest's Updating or a player joining,
+        /// and keeps a guest's word that it seats in place.
+        /// </summary>
         void Take(uint32_t from, std::span<const uint8_t> message) override
         {
             if (from == DPID_SYSMSG && message.size() >= sizeof(DPMSG_CREATEPLAYERORGROUP))
@@ -902,7 +923,16 @@ namespace MCTestGuest
 
             if (message.size() >= sizeof(MCFIGuaranteedMessageHeader))
             {
-                Counted(ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type(), message);
+                const uint16_t type = ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type();
+
+                if (type == static_cast<uint16_t>(MCMPMessageType::SeatsInPlace))
+                {
+                    const std::lock_guard lock(_Mutex);
+                    _SeatingGuests.insert(from);
+                    return;
+                }
+
+                Counted(type, message);
             }
         }
 
@@ -937,6 +967,7 @@ namespace MCTestGuest
         };
 
         std::vector<uint32_t> _Joined;
+        std::set<uint32_t> _SeatingGuests;
         /// <summary>The joiners' cards' rules, and the refusal every joiner gets (none: each is let in).</summary>
         std::vector<std::optional<uint32_t>> _Cards;
         std::optional<std::string> _RefuseWith;

@@ -122,7 +122,14 @@ enum class MCMPMessageType : uint16_t
     /// Port-only (Redux HD): a line of the host's MCO room in its session's chat (<c>MCMPMcoChatMessage</c>), to each
     /// Redux HD guest: a waiting player's line, or MCO's own about one (SPEC-mco-hosting.md's "The chat").
     /// </summary>
-    McoChat = 59
+    McoChat = 59,
+    /// <summary>
+    /// Port-only (Redux HD): a guest's word to its host, as its room opens (<c>MCFIGuaranteedMessageHeader</c> alone),
+    /// that it seats a player who joins after itself: the host then gives a newcomer the room as it stands, and nobody
+    /// else's room opens again (MCRoomModel::WatchRoom). A host without it ignores it; a guest without it is shown the
+    /// room again with everyone, by the 1998 game's messages.
+    /// </summary>
+    SeatsInPlace = 60
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>

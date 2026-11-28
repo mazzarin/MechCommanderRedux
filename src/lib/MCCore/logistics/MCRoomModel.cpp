@@ -60,6 +60,12 @@ namespace
     /// game up) before it shows that player the room anyway, its pings lost on the way.
     /// </summary>
     constexpr uint32_t ShowAnywayMs = 5000;
+    /// <summary>
+    /// Port-only (Redux HD): how long (the game clock) the host waits, once a newcomer's game has pinged, for its word that
+    /// it seats in place (MCMPMessageType::SeatsInPlace, sent before its first ping) before everyone is shown the room
+    /// again, as a game without the word is.
+    /// </summary>
+    constexpr uint32_t SeatsInPlaceGraceMs = 1000;
     /// <summary>The characters the 1998 room's points' box holds (its 8-byte buffer, the last a NUL).</summary>
     constexpr size_t PointsBoxChars = 7;
     /// <summary>The description box's fonts: the mission's, and the check-in's wait.</summary>
@@ -110,10 +116,27 @@ namespace
     }
 
     /// <summary>
-    /// Sends a guaranteed message carrying a file name (<paramref name="type"/> load mission or start) to every
-    /// player.
+    /// Sends the guaranteed <paramref name="message"/> to every player, or (port-only, Redux HD) to player
+    /// <paramref name="to"/> alone.
     /// </summary>
-    void SendFileName(uint16_t type, std::string_view fileName)
+    void SendToRoom(std::span<uint8_t> message, std::optional<uint32_t> to)
+    {
+        MCSessionManager& manager = *MultiPlayer()->SessionManager;
+
+        if (to.has_value())
+        {
+            manager.SendMessageToPlayerGuaranteed(*to, message, true);
+            return;
+        }
+
+        manager.SendMessageToGroup(0, message);
+    }
+
+    /// <summary>
+    /// Sends a guaranteed message carrying a file name (<paramref name="type"/> load mission or start) to every
+    /// player, or to player <paramref name="to"/> alone.
+    /// </summary>
+    void SendFileName(uint16_t type, std::string_view fileName, std::optional<uint32_t> to = std::nullopt)
     {
         // The header, then the name and its NUL.
         constexpr size_t headerSize = sizeof(MCMPFileNameMessage);
@@ -123,17 +146,17 @@ namespace
         std::vector<uint8_t> buffer(headerSize + fileName.size() + 1, 0);
         std::memcpy(buffer.data(), &header, headerSize);
         std::ranges::copy(fileName, buffer.begin() + headerSize);
-        MultiPlayer()->SessionManager->SendMessageToGroup(0, buffer);
+        SendToRoom(buffer, to);
     }
 
-    /// <summary>Sends a two-long guaranteed message to every player.</summary>
-    void SendTwoLongs(uint16_t type, int32_t value1, int32_t value2)
+    /// <summary>Sends a two-long guaranteed message to every player, or to player <paramref name="to"/> alone.</summary>
+    void SendTwoLongs(uint16_t type, int32_t value1, int32_t value2, std::optional<uint32_t> to = std::nullopt)
     {
         MCMPTwoLongMessage message{};
         message.Header = type;
         message.Value1 = value1;
         message.Value2 = value2;
-        MultiPlayer()->SessionManager->SendMessageToGroup(0, LinkupBytes(message));
+        SendToRoom(LinkupBytes(message), to);
     }
 
     /// <summary>The file name part of <paramref name="path"/> without folder or extension (<c>_splitpath</c>'s fname).</summary>
@@ -665,6 +688,12 @@ auto MCRoomModel::Activate(bool refresh) -> void
     const auto& players = MultiPlayer()->SessionManager->GetPlayers(nullptr);
     NumPlayers = static_cast<int32_t>(players.size());
 
+    // Port-only (Redux HD): a host's room opened alone (hosting) has heard no guest's word yet.
+    if (isHost && !refresh && players.size() == 1)
+    {
+        SeatingGuests.clear();
+    }
+
     for (const auto& player : players)
     {
         sessionIds.push_back(player->Id);
@@ -700,6 +729,15 @@ auto MCRoomModel::Activate(bool refresh) -> void
         lights.SetPlayerStatus(ids[index], refresh ? LightCheckingIn : LightIdle);
         ++index;
     } while (index < MaxPlayers && ids[index] != NoPlayer);
+
+    // Port-only (Redux HD): a guest tells its host it seats a player who joins after it (WatchRoom), before its first
+    // ping says its room is up.
+    if (!isHost)
+    {
+        MCFIGuaranteedMessageHeader seatsInPlace{};
+        seatsInPlace.Header = GuaranteedHeader(MCMPMessageType::SeatsInPlace);
+        MultiPlayer()->SessionManager->SendMessageToServerGuaranteed(LinkupBytes(seatsInPlace));
+    }
 
     if (!isHost || refresh)
     {
@@ -951,13 +989,31 @@ auto MCRoomModel::WatchRoom() -> void
 {
     MCMultiPlayer& game = *MultiPlayer();
 
-    if (game.IsHost == 0 || !RoomCurrent())
+    if (!RoomCurrent())
     {
         return;
     }
 
     MCSessionManager& manager = *game.SessionManager;
     const auto& players = manager.GetPlayers(nullptr);
+
+    // Port-only (Redux HD): a guest seats a player who joined after it, as its host does (MCMPMessageType::SeatsInPlace);
+    // the host's picks for it come as they're made. Its host shows the room again instead where that's its way.
+    if (game.IsHost == 0)
+    {
+        if (!Locked && !CheckingIn && !game.InLogistics && !game.InMission)
+        {
+            for (const auto& player : players)
+            {
+                if (player != nullptr && player->HasPlayerNumber && !SeatIndexOf(player->Id).has_value())
+                {
+                    SeatNewcomer(player->Id);
+                }
+            }
+        }
+
+        return;
+    }
 
     // Port-only (Redux HD): a room rolled over to this game (TakeOverRoom). The host's choices were what the room played,
     // as far as every game in it plays them; this game's own (its command line's) are no longer the room's.
@@ -1002,8 +1058,20 @@ auto MCRoomModel::WatchRoom() -> void
 
     // Who joined, and whether each game is up. A player gone is forgotten.
     const uint32_t now = MCPort::Milliseconds();
-    std::erase_if(SeenSince, [&manager](const auto& seen) { return manager.GetPlayer(seen.first) == nullptr; });
+    const auto gone = [&manager](const auto& seen) { return manager.GetPlayer(seen.first) == nullptr; };
+    std::erase_if(SeenSince, gone);
+    std::erase_if(PingedSince, gone);
     bool showAgain = false;
+    // Port-only (Redux HD): whether every guest seated seats a newcomer itself, so a newcomer whose game does too is
+    // given the room alone.
+    const bool guestsSeat = std::ranges::all_of(players,
+                                                [&](const auto& player)
+                                                {
+                                                    return player == nullptr || player->Id == manager.MyPlayerID ||
+                                                           !SeatIndexOf(player->Id).has_value() ||
+                                                           SeatingGuests.contains(player->Id);
+                                                });
+    std::vector<uint32_t> newcomers;
 
     for (const auto& player : players)
     {
@@ -1016,7 +1084,16 @@ auto MCRoomModel::WatchRoom() -> void
 
         if (!SeatIndexOf(player->Id).has_value())
         {
-            showAgain = showAgain || player->HeardPing || now - since >= ShowAnywayMs;
+            if (guestsSeat && SeatingGuests.contains(player->Id))
+            {
+                newcomers.push_back(player->Id);
+                continue;
+            }
+
+            // Its game up without the word yet (it comes before the first ping): a moment for it, where it matters.
+            const uint32_t pinged = player->HeardPing ? PingedSince.try_emplace(player->Id, now).first->second : now;
+            const bool wordDue = guestsSeat && now - pinged < SeatsInPlaceGraceMs;
+            showAgain = showAgain || (player->HeardPing && !wordDue) || now - since >= ShowAnywayMs;
         }
         else if (player->HeardPing && !ShownReady.contains(player->Id))
         {
@@ -1035,13 +1112,117 @@ auto MCRoomModel::WatchRoom() -> void
     // wait for the players' files, a dialog.
     const bool asking = AskingFiles();
 
-    if (!showAgain || game.InLogistics || game.InMission || asking || MPConfiguredMatchWaiting() ||
-        GlobalLog()->Message->IsShowing() || GlobalLog()->Question->IsShowing())
+    if ((!showAgain && newcomers.empty()) || game.InLogistics || game.InMission || asking ||
+        MPConfiguredMatchWaiting() || GlobalLog()->Message->IsShowing() || GlobalLog()->Question->IsShowing())
     {
         return;
     }
 
-    ShowRoomAgain();
+    if (showAgain)
+    {
+        ShowRoomAgain();
+        return;
+    }
+
+    for (const uint32_t newcomer : newcomers)
+    {
+        GiveNewcomerTheRoom(newcomer);
+    }
+}
+
+auto MCRoomModel::SeatNewcomer(uint32_t playerId) -> bool
+{
+    const auto free = std::ranges::find(Seats, NoPlayer, &MCSeat::Id);
+
+    if (playerId == NoPlayer || SeatIndexOf(playerId).has_value() || free == Seats.end() ||
+        GlobalLog()->PlayerLights == nullptr)
+    {
+        return false;
+    }
+
+    // As the room's opening seats each player (Activate): its seat, shown, on no team, and its light.
+    const auto seat = static_cast<size_t>(free - Seats.begin());
+    MCMPPlayerLights& lights = *GlobalLog()->PlayerLights;
+    NumPlayers++;
+    lights.SetNumPlayers(NumPlayers);
+    Seat(seat, playerId);
+    ShowSeat(seat, true);
+    AssignPlayer(playerId, NoTeam, 0, true);
+    lights.SetPlayerID(static_cast<int32_t>(seat), playerId);
+    lights.SetPlayerStatus(playerId, LightIdle);
+    return true;
+}
+
+auto MCRoomModel::GuestSeatsInPlace(uint32_t playerId) -> void
+{
+    if (SeatingGuests.insert(playerId).second)
+    {
+        const MCOptionalRef<MCSessionManager> manager = Manager();
+        const std::shared_ptr<MCFidpPlayer> guest = manager.has_value() ? manager->get().GetPlayer(playerId) : nullptr;
+        SDL_Log("MultiPlayer: %s seats a player who joins after it",
+                guest != nullptr ? guest->Name.c_str() : std::format("player {}", playerId).c_str());
+    }
+}
+
+auto MCRoomModel::SendPointsTo(uint32_t playerId) const -> void
+{
+    SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), Team1Points, 1, playerId);
+    SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), Team2Points, 2, playerId);
+}
+
+auto MCRoomModel::GiveNewcomerTheRoom(uint32_t playerId) -> void
+{
+    if (!SeatNewcomer(playerId))
+    {
+        return;
+    }
+
+    const MCOptionalRef<MCSeat> seat = SeatOf(playerId);
+    SDL_Log("Session screen: %s seated in place, given the room as it stands",
+            seat.has_value() ? seat->get().Name.c_str() : "a newcomer");
+    ShownReady.insert(playerId);
+
+    // Each placed player's team and slot.
+    for (const int8_t team : {Team1, Team2})
+    {
+        const std::array<uint32_t, TeamSlots>& placed = team == Team1 ? Team1Players : Team2Players;
+
+        for (size_t slot = 0; slot < TeamSlots; ++slot)
+        {
+            if (placed[slot] == NoPlayer)
+            {
+                continue;
+            }
+
+            MCMPJoinTeamMessage joined{};
+            joined.Header = GuaranteedHeader(MCMPMessageType::JoinTeam);
+            joined.PlayerID = placed[slot];
+            joined.Team = team;
+            joined.Slot = static_cast<int8_t>(slot);
+            SendToRoom(LinkupBytes(joined), playerId);
+        }
+
+        SendTwoLongs(GuaranteedHeader(MCMPMessageType::TechbaseChange), team,
+                     team == Team1 ? Team1TechBase : Team2TechBase, playerId);
+    }
+
+    // The mission's file asked of the newcomer alone, START waiting for its answer (then it's told to load it alone,
+    // FilesAnswered); without a mission, the points.
+    if (!MissionFile.empty() && seat.has_value())
+    {
+        seat->get().Files = MCFileStatus::Waiting;
+        NewcomersAsked.insert(playerId);
+        MultiPlayer()->SendFileInquiry(MissionFile, playerId);
+    }
+    else
+    {
+        SendPointsTo(playerId);
+    }
+
+    // Every player's rules and the match's options, as at any opening (every build takes them again).
+    MultiPlayer()->SendPlayerRules();
+    MultiPlayer()->SendMatchOptions();
+    CheckGoodToGo();
 }
 
 auto MCRoomModel::LayOutUnassigned(uint32_t skipId, size_t names, bool skipEmpty) -> void
@@ -1207,6 +1388,9 @@ auto MCRoomModel::RemovePlayer(uint32_t playerId) -> void
     LayOutUnassigned(NoPlayer, MaxPlayers, true);
     ShownReady.erase(playerId);
     SeenSince.erase(playerId);
+    PingedSince.erase(playerId);
+    NewcomersAsked.erase(playerId);
+    SeatingGuests.erase(playerId);
     CheckGoodToGo();
 
     // The mission's file asked of it: the answers go on without it (it may have been the last one waited for).
@@ -1382,6 +1566,25 @@ auto MCRoomModel::FilesAnswered() -> void
             return;
         }
 
+        // Port-only (Redux HD): newcomers asked alone (GiveNewcomerTheRoom) are told alone to load it, the points after;
+        // nobody else's room loads it again.
+        if (!NewcomersAsked.empty())
+        {
+            for (const uint32_t newcomer : std::exchange(NewcomersAsked, {}))
+            {
+                SendFileName(GuaranteedHeader(MCMPMessageType::LoadMission), MissionFile, newcomer);
+                SendPointsTo(newcomer);
+            }
+
+            for (MCSeat& seat : Seats)
+            {
+                seat.Files = Status::NotAsked;
+            }
+
+            CheckGoodToGo();
+            return;
+        }
+
         // Everyone has it: the waiting dialog closes itself (at once when none was said: the host alone).
         MCMenuDialog& dialog = *GlobalLog()->Message;
         dialog.CloseIn(dialog.IsShowing() ? FilesCheckedCloseMs : 0);
@@ -1427,6 +1630,7 @@ auto MCRoomModel::FilesAnswered() -> void
         }
     }
 
+    NewcomersAsked.clear();
     ShowDialog(text, MPCancel, "bh_okay.tga", "bg_okay.tga", nullptr);
 }
 
@@ -1725,7 +1929,7 @@ auto MCRoomModel::CheckGoodToGo() -> void
 
     const bool goodToGo = NumUnassigned == awayUnpicked && !MissionFile.empty() && homeTeam.has_value() &&
                           filled(*homeTeam) && enemyTeam.has_value() && filled(*enemyTeam) && filled(Team1Players) &&
-                          filled(Team2Players) && AllShown();
+                          filled(Team2Players) && AllShown() && !AskingFiles();
 
     // Port-only: while a guest away updating has its place kept, its line is in the update's line's place, and START
     // asks before it starts without it.

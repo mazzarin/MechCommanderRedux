@@ -190,6 +190,23 @@ public:
     std::set<uint32_t> ShownReady;
     /// <summary>Port-only (the personal build): when (the game clock) the host first saw each player in the session.</summary>
     std::map<uint32_t, uint32_t> SeenSince;
+    /// <summary>
+    /// Port-only (Redux HD): when (the game clock) the host first heard each newcomer ping, the wait for its word that it
+    /// seats in place (MCMPMessageType::SeatsInPlace) timed from there.
+    /// </summary>
+    std::map<uint32_t, uint32_t> PingedSince;
+    /// <summary>
+    /// Port-only (Redux HD): the newcomers asked alone for the mission's file (GiveNewcomerTheRoom): each told alone to
+    /// load it once every answer is in.
+    /// </summary>
+    std::set<uint32_t> NewcomersAsked;
+    /// <summary>
+    /// Port-only (Redux HD): on the host, the guests whose games said they seat a newcomer themselves
+    /// (MCMPMessageType::SeatsInPlace), so a player joining after them need not have the room opened again for everyone.
+    /// </summary>
+    std::set<uint32_t> SeatingGuests;
+    /// <summary>Port-only (Redux HD): the host told guest <paramref name="playerId"/>'s game seats a newcomer itself.</summary>
+    void GuestSeatsInPlace(uint32_t playerId);
 
     /// <summary>
     /// Player <paramref name="playerId"/> put in seat <paramref name="seat"/> (<see cref="NoPlayer"/> empties it), with
@@ -475,11 +492,31 @@ private:
 
     /// <summary>
     /// Port-only (the personal build): the host's watch on its room, each tick: a configured match's start, and a player
-    /// who joined (or a guest whose game was not yet up when it was shown the room) shown the room
-    /// (<see cref="ShowRoomAgain"/>) once its game is up (it pinged, <c>MCFidpPlayer::HeardPing</c>), or after
-    /// <c>ShowAnywayMs</c>, as long as nothing is under way in the room.
+    /// who joined (or a guest whose game was not yet up when it was shown the room) given the room, as long as nothing is
+    /// under way in it. Port-only (Redux HD): a newcomer whose game seats in place, in a room whose every guest does
+    /// (<see cref="SeatingGuests"/>), is given the room alone (<see cref="GiveNewcomerTheRoom"/>); otherwise
+    /// everyone is shown the room again (<see cref="ShowRoomAgain"/>) once the newcomer's game is up (it pinged,
+    /// <c>MCFidpPlayer::HeardPing</c>), or after <c>ShowAnywayMs</c>. A guest's own watch seats a newcomer itself
+    /// (<see cref="SeatNewcomer"/>).
     /// </summary>
     void WatchRoom();
+
+    /// <summary>
+    /// Port-only (Redux HD): player <paramref name="playerId"/>, who joined after the room opened, seated in its first
+    /// free seat, on no team, with its light, as the room's opening seats each player; whether it was (not seated
+    /// already, a seat free).
+    /// </summary>
+    bool SeatNewcomer(uint32_t playerId);
+
+    /// <summary>
+    /// Port-only (Redux HD): the host seats newcomer <paramref name="playerId"/> and sends it alone the room as it stands:
+    /// each placed player's team and slot, the tech bases, the mission (its file asked of the newcomer only) and the
+    /// points; the players' rules and the match options go to everyone, as at any opening. Nobody's room opens again.
+    /// </summary>
+    void GiveNewcomerTheRoom(uint32_t playerId);
+
+    /// <summary>Port-only (Redux HD): each team's points as the host has them, to player <paramref name="playerId"/> alone.</summary>
+    void SendPointsTo(uint32_t playerId) const;
 
     /// <summary>
     /// The answers to the mission file's inquiry so far: when every player has the file, the load goes on (port: once

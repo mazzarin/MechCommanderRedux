@@ -29,13 +29,26 @@ struct MCMcoSwitchSaid
     bool operator==(const MCMcoSwitchSaid&) const = default;
 };
 
-/// <summary>The service's list of public games and its counts, as the INTERNET screen shows them.</summary>
+/// <summary>The service's list of games and its counts, as the INTERNET screen shows them.</summary>
 struct MCInternetListing
 {
-    /// <summary>A public game: open ones come first, then those in battle.</summary>
+    /// <summary>
+    /// The hex digits of a private game's key on the list (the service's game.js, LIST_KEY_DIGITS).
+    /// </summary>
+    static constexpr size_t PrivateKeyDigits = 16;
+
+    /// <summary>A game, public or private: open ones come first, then those in battle.</summary>
     struct Game
     {
+        /// <summary>A public game's code; empty for a private one (the list never carries it).</summary>
         std::string Code;
+        /// <summary>
+        /// Port-only (Redux HD; SPEC-in-game-lobby.md's "A private game on the list"): a private game, joined by the
+        /// code its player types; listed by <see cref="Key"/>, which joins nothing.
+        /// </summary>
+        bool Private = false;
+        /// <summary>A private game's key on the list (lowercase hex, <see cref="PrivateKeyDigits"/>); empty for a public one.</summary>
+        std::string Key;
         std::string Name;
         /// <summary>Its players' names, the host first.</summary>
         std::vector<std::string> Players;

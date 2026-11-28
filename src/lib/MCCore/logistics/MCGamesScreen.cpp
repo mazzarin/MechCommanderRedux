@@ -32,6 +32,11 @@ namespace
     constexpr const char* LanDocument = "lan.rml";
     constexpr const char* HostDocument = "host_game.rml";
     constexpr const char* PasswordDocument = "join_password.rml";
+    /// <summary>Port-only (Redux HD): a private game's code's window (SPEC-in-game-lobby.md), the password's shape.</summary>
+    constexpr const char* CodeDocument = "join_code.rml";
+    /// <summary>The locked game's windows' box: the password's, or the code's.</summary>
+    constexpr const char* PasswordBoxId = "password";
+    constexpr const char* CodeBoxId = "code";
     constexpr const char* InternetName = "internet";
     constexpr const char* LanName = "lan";
     constexpr const char* InternetPlace = "Internet";
@@ -51,6 +56,9 @@ namespace
     constexpr std::string_view NoLanGamesText = "No games on this network.";
     constexpr std::string_view PublicLine = "Public";
     constexpr std::string_view PublicHostedFormat = "Public, hosted in {}";
+    /// <summary>Port-only (Redux HD; SPEC-in-game-lobby.md): a private game's line, as a public one's.</summary>
+    constexpr std::string_view PrivateLine = "Private";
+    constexpr std::string_view PrivateHostedFormat = "Private, hosted in {}";
     /// <summary>MCO's rooms (SPEC-mco-rooms.md): a locked one's line, its players' column, and whom the room waits for.</summary>
     constexpr std::string_view LockedLine = "Needs a password";
     constexpr std::string_view ReadyText = "Ready";
@@ -103,6 +111,14 @@ namespace
         std::ranges::transform(upper, upper.begin(),
                                [](char c) { return static_cast<char>(std::toupper(static_cast<unsigned char>(c))); });
         return upper;
+    }
+
+    /// <summary>A code as typed (the CODE box's, a private game's window's): upper-cased, its spaces gone.</summary>
+    std::string CodeAsTyped(std::string_view typed)
+    {
+        std::string code = Upper(typed);
+        std::erase(code, ' ');
+        return code;
     }
 
     /// <summary>
@@ -298,16 +314,16 @@ void MCHostWindow::PressHost()
     }
 }
 
-// ---- a locked room's password ----
+// ---- a locked game's password or code ----
 
-MCPasswordWindow::MCPasswordWindow()
+MCPasswordWindow::MCPasswordWindow(MCAsks asks) : _Asks(asks)
 {
-    SetDocument(PasswordDocument);
+    SetDocument(asks == MCAsks::Code ? CodeDocument : PasswordDocument);
     Modal = true;
     Keys = {{"ENTER", "Join game"}, {"ESC", "Cancel"}};
     Back = [this]
     {
-        SetPassword({});
+        SetTyped({});
         Hide();
     };
 }
@@ -316,6 +332,9 @@ void MCPasswordWindow::OnLoaded(Rml::ElementDocument& /*document*/)
 {
     OnClick("cancel", [this] { Back(); });
     OnClick("join", [this] { PressJoin(); });
+    // A code's JOIN GAME follows what's typed, a letter at a time.
+    Listen(_Asks == MCAsks::Code ? CodeBoxId : PasswordBoxId, Rml::EventId::Change,
+           [this](Rml::Event&) { ShowJoin(); });
 }
 
 void MCPasswordWindow::OpenFor(std::string roomName)
@@ -326,7 +345,8 @@ void MCPasswordWindow::OpenFor(std::string roomName)
     {
         if (const auto opened = Open(); !opened)
         {
-            MCRmlFlow::Broken(std::format("the password's window can't open: {}", opened.error()));
+            MCRmlFlow::Broken(std::format("the {}'s window can't open: {}",
+                                          _Asks == MCAsks::Code ? CodeBoxId : PasswordBoxId, opened.error()));
             return;
         }
     }
@@ -340,38 +360,67 @@ void MCPasswordWindow::OpenFor(std::string roomName)
         room->SetInnerRML(MCRmlDialog::Escape(_RoomName));
     }
 
-    SetPassword({});
+    SetTyped({});
 }
 
-void MCPasswordWindow::SetPassword(std::string_view password)
+std::string MCPasswordWindow::Typed() const
 {
     if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
     {
-        if (Rml::Element* box = document->get().GetElementById("password"); box != nullptr)
+        if (Rml::Element* box = document->get().GetElementById(_Asks == MCAsks::Code ? CodeBoxId : PasswordBoxId);
+            box != nullptr)
         {
-            box->SetAttribute(ValueAttribute, std::string(password));
+            return ValueOf(*box);
         }
     }
+
+    return {};
+}
+
+bool MCPasswordWindow::CanJoin() const
+{
+    return _Asks == MCAsks::Password || CodeAsTyped(Typed()).size() == CodeLength;
+}
+
+void MCPasswordWindow::ShowJoin()
+{
+    if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
+    {
+        if (Rml::Element* join = document->get().GetElementById("join"); join != nullptr)
+        {
+            join->SetClass(OffClass, !CanJoin());
+        }
+    }
+}
+
+void MCPasswordWindow::SetTyped(std::string_view typed)
+{
+    if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
+    {
+        if (Rml::Element* box = document->get().GetElementById(_Asks == MCAsks::Code ? CodeBoxId : PasswordBoxId);
+            box != nullptr)
+        {
+            box->SetAttribute(ValueAttribute, std::string(typed));
+        }
+    }
+
+    ShowJoin();
 }
 
 void MCPasswordWindow::PressJoin()
 {
-    std::string password;
-
-    if (const MCOptionalRef<Rml::ElementDocument> document = Document(); document.has_value())
+    if (!CanJoin())
     {
-        if (Rml::Element* box = document->get().GetElementById("password"); box != nullptr)
-        {
-            password = ValueOf(*box);
-        }
+        return;
     }
 
-    SetPassword({});
+    std::string typed = Typed();
+    SetTyped({});
     Hide();
 
     if (Joining)
     {
-        Joining(std::move(password));
+        Joining(std::move(typed));
     }
 }
 
@@ -843,8 +892,17 @@ void MCGamesScreen::ShowPick()
         }
         else
         {
-            const std::string_view open = game->Locked ? LockedLine : PublicLine;
-            lines.push_back({game->Region.empty() ? std::string(open) : std::format(PublicHostedFormat, game->Region)});
+            if (game->Private)
+            {
+                lines.push_back(
+                    {game->Region.empty() ? std::string(PrivateLine) : std::format(PrivateHostedFormat, game->Region)});
+            }
+            else
+            {
+                const std::string_view open = game->Locked ? LockedLine : PublicLine;
+                lines.push_back(
+                    {game->Region.empty() ? std::string(open) : std::format(PublicHostedFormat, game->Region)});
+            }
         }
 
         if (game->InBattle)
@@ -884,8 +942,7 @@ std::optional<std::string> MCGamesScreen::TypedCode() const
         return std::nullopt;
     }
 
-    std::string code = Upper(_Code);
-    std::erase(code, ' ');
+    std::string code = CodeAsTyped(_Code);
     return code.size() == CodeLength ? std::optional(code) : std::nullopt;
 }
 
@@ -1039,6 +1096,17 @@ void MCGamesScreen::PressJoin()
     }
     else if (const std::optional<MCListedGame> picked = Picked(); picked.has_value())
     {
+        // A private game: its code asked first (the list doesn't carry it), a newer one's update after.
+        if (picked->Private)
+        {
+            if (!picked->InBattle && !picked->Full())
+            {
+                AskCode(*picked);
+            }
+
+            return;
+        }
+
         if (picked->NeedsNewer && !picked->InBattle)
         {
             SayNeedsNewer(*picked);
@@ -1308,8 +1376,11 @@ void MCGamesScreen::OpenUpdate(std::optional<MCListedGame> joinAfter)
 
     if (joinAfter.has_value())
     {
-        after = MCLobbyUpdate::MCJoinAfter{
-            .Code = joinAfter->Key, .Name = joinAfter->Name, .PlayerName = _PlayerName, .RelayOnly = true};
+        // A listed public game takes relays only; a private one (its code typed) as the service says.
+        after = MCLobbyUpdate::MCJoinAfter{.Code = joinAfter->Key,
+                                           .Name = joinAfter->Name,
+                                           .PlayerName = _PlayerName,
+                                           .RelayOnly = !joinAfter->Private};
     }
 
     if (!MCScreenFlow::Open(MCMenuScreens::Update()))
@@ -1350,17 +1421,19 @@ void MCGamesScreen::CallOff()
 
 // ---- MechCommander Online's rooms ----
 
-void MCGamesScreen::AskPassword(const MCListedGame& game)
+void MCGamesScreen::AskFor(const MCListedGame& game, MCPasswordWindow::MCAsks asks,
+                           MCGuiHandle<MCPasswordWindow>& window,
+                           void (MCGamesScreen::*join)(const MCListedGame&, std::string))
 {
     _Locked = game;
 
-    if (!_PasswordWindow)
+    if (!window)
     {
         const std::weak_ptr<MCRmlScreen> self = weak_from_this();
-        _PasswordWindow = Layer().CreateChild<MCPasswordWindow>(
-            [self](MCPasswordWindow& made)
+        window = Layer().CreateChild<MCPasswordWindow>(
+            [self, join](MCPasswordWindow& made)
             {
-                made.Joining = [self](std::string password)
+                made.Joining = [self, join](std::string typed)
                 {
                     const std::shared_ptr<MCRmlScreen> screen = self.lock();
 
@@ -1373,13 +1446,56 @@ void MCGamesScreen::AskPassword(const MCListedGame& game)
 
                     if (const std::optional<MCListedGame> locked = std::exchange(games._Locked, std::nullopt))
                     {
-                        games.JoinMco(*locked, std::move(password));
+                        (games.*join)(*locked, std::move(typed));
                     }
                 };
-            });
+            },
+            asks);
     }
 
-    _PasswordWindow->OpenFor(game.Name);
+    window->OpenFor(game.Name);
+}
+
+void MCGamesScreen::AskPassword(const MCListedGame& game)
+{
+    AskFor(game, MCPasswordWindow::MCAsks::Password, _PasswordWindow, &MCGamesScreen::JoinMco);
+}
+
+void MCGamesScreen::AskCode(const MCListedGame& game)
+{
+    AskFor(game, MCPasswordWindow::MCAsks::Code, _CodeWindow, &MCGamesScreen::JoinPrivate);
+}
+
+void MCGamesScreen::JoinPrivate(const MCListedGame& game, std::string typed)
+{
+    if (_Join.Pending())
+    {
+        return;
+    }
+
+    const std::string code = CodeAsTyped(typed);
+
+    // The window's JOIN GAME waits for a code's length: anything else is no code to try.
+    if (code.size() != CodeLength)
+    {
+        SDL_Log("%s: the private game %s's code isn't a code's length (%zu characters); not joined", Place().c_str(),
+                game.Name.c_str(), code.size());
+        return;
+    }
+
+    // A newer game: the update first, its restart joining it by the code typed.
+    if (game.NeedsNewer)
+    {
+        MCListedGame byCode = game;
+        byCode.Key = code;
+        SayNeedsNewer(byCode);
+        return;
+    }
+
+    SDL_Log("%s: joining the private game %s by the code typed", Place().c_str(), game.Name.c_str());
+    // The code typed, as the CODE box's: a private game's links go direct where they can (the service says if not).
+    Begin(
+        MCGameJoin::MCAsk{.Where = _Where, .Shown = game.Name, .Key = code, .Typed = true, .PlayerName = _PlayerName});
 }
 
 void MCGamesScreen::JoinMco(const MCListedGame& game, std::string password)

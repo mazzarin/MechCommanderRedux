@@ -20,6 +20,11 @@ namespace
     using Clock = std::chrono::steady_clock;
 
     constexpr std::string_view ListPath = "/list";
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-in-game-lobby.md's "A private game on the list"): the list's private games asked for
+    /// too, each by its key (older builds' lists hold the public games alone).
+    /// </summary>
+    constexpr std::string_view PrivateAsk = "&private=1";
     constexpr std::string_view CountPath = "/count";
     /// <summary>The service's sockets' scheme and the plain requests' that go with it.</summary>
     constexpr std::array<std::pair<std::string_view, std::string_view>, 2> Schemes{{
@@ -115,7 +120,40 @@ namespace
         return found != message.end() ? CountIn(*found) : std::nullopt;
     }
 
-    /// <summary>A listed game as the service sends it; none when it isn't one.</summary>
+    /// <summary>
+    /// Port-only (Redux HD): whether a listed game is a private one (<c>"private": true</c>); none when the field isn't
+    /// the service's.
+    /// </summary>
+    std::optional<bool> PrivateIn(const Json& entry)
+    {
+        const auto found = entry.find("private");
+
+        if (found == entry.end())
+        {
+            return false;
+        }
+
+        return found->is_boolean() ? std::optional(found->get<bool>()) : std::nullopt;
+    }
+
+    /// <summary>A private game's key as the service sends it: lowercase hex of its length; none otherwise.</summary>
+    std::optional<std::string> PrivateKeyIn(const Json& entry)
+    {
+        const std::optional<std::string> key = ShownField(entry, "key", MCInternetListing::PrivateKeyDigits);
+
+        if (!key || !MCMcoApi::IsHex(*key, MCInternetListing::PrivateKeyDigits) ||
+            std::ranges::any_of(*key, [](char c) { return std::isupper(static_cast<unsigned char>(c)) != 0; }))
+        {
+            return std::nullopt;
+        }
+
+        return key;
+    }
+
+    /// <summary>
+    /// A listed game as the service sends it: a public one by its code, a private one by its key (any code it carried
+    /// left unread); none when it isn't one.
+    /// </summary>
     std::optional<MCInternetListing::Game> GameIn(const Json& entry)
     {
         if (!entry.is_object())
@@ -124,7 +162,10 @@ namespace
         }
 
         MCInternetListing::Game game;
-        const std::optional<std::string> code = ShownField(entry, "code", MostType);
+        const std::optional<bool> isPrivate = PrivateIn(entry);
+        const std::optional<std::string> code =
+            isPrivate == false ? ShownField(entry, "code", MostType) : std::optional<std::string>();
+        const std::optional<std::string> key = isPrivate == true ? PrivateKeyIn(entry) : std::optional<std::string>();
         const std::optional<std::string> name = ShownField(entry, "name", MostGameName);
         const std::optional<int64_t> max = CountField(entry, "max");
         const std::optional<std::string> region = ShownField(entry, "region", MostRegion);
@@ -133,9 +174,11 @@ namespace
         const auto mission = entry.find("mission");
         const auto battle = entry.find("battleSeconds");
 
-        if (!code || !MCIsGameCode(*code) || !name || !max || *max < FewestPlayers ||
-            *max > static_cast<int64_t>(MostPlayers) || !region || !version || players == entry.end() ||
-            !players->is_array() || players->size() > MostPlayers || mission == entry.end() || battle == entry.end())
+        const bool named = isPrivate == true ? key.has_value() : isPrivate == false && code && MCIsGameCode(*code);
+
+        if (!named || !name || !max || *max < FewestPlayers || *max > static_cast<int64_t>(MostPlayers) || !region ||
+            !version || players == entry.end() || !players->is_array() || players->size() > MostPlayers ||
+            mission == entry.end() || battle == entry.end())
         {
             return std::nullopt;
         }
@@ -175,7 +218,9 @@ namespace
             }
         }
 
-        game.Code = *code;
+        game.Private = *isPrivate;
+        game.Code = game.Private ? std::string() : *code;
+        game.Key = game.Private ? *key : std::string();
         game.Name = *name;
         game.Max = static_cast<int32_t>(*max);
         game.Region = *region;
@@ -516,8 +561,8 @@ std::unique_ptr<MCInternetList> MCInternetList::Open()
         return nullptr;
     }
 
-    return std::unique_ptr<MCInternetList>(
-        new MCInternetList(setup.Open, std::format("{}{}?proto={}", setup.Service, ListPath, MCServiceProtocol)));
+    return std::unique_ptr<MCInternetList>(new MCInternetList(
+        setup.Open, std::format("{}{}?proto={}{}", setup.Service, ListPath, MCServiceProtocol, PrivateAsk)));
 }
 
 MCInternetList::MCInternetList(MCWebSocketOpener open, std::string url) : _Open(std::move(open)), _Url(std::move(url))

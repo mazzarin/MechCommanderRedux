@@ -56,29 +56,49 @@ private:
 };
 
 /// <summary>
-/// JOIN GAME on a locked room in INTERNET's list (MechCommander Online's: SPEC-mco-rooms.md), a window over the list:
-/// the room's name over PASSWORD, CANCEL and JOIN GAME.
+/// JOIN GAME on a locked game in INTERNET's list, a window over the list in HOST GAME's shape: the game's name over
+/// PASSWORD (MechCommander Online's locked room: SPEC-mco-rooms.md) or CODE (a private game: SPEC-in-game-lobby.md),
+/// CANCEL and JOIN GAME. A code's JOIN GAME is off until a code's length is typed.
 /// </summary>
 class MCPasswordWindow final : public MCRmlScreen
 {
 public:
-    MCPasswordWindow();
+    /// <summary>What the window asks for.</summary>
+    enum class MCAsks
+    {
+        /// <summary>MCO's locked room's password.</summary>
+        Password,
+        /// <summary>Port-only (Redux HD): a private game's code.</summary>
+        Code
+    };
 
-    /// <summary>Opens over the list for the room named <paramref name="roomName"/>, its box empty.</summary>
+    explicit MCPasswordWindow(MCAsks asks = MCAsks::Password);
+
+    MCAsks Asks() const { return _Asks; }
+
+    /// <summary>Opens over the list for the game named <paramref name="roomName"/>, its box empty.</summary>
     void OpenFor(std::string roomName);
 
-    /// <summary>What JOIN GAME does with the password typed.</summary>
-    std::function<void(std::string password)> Joining;
+    /// <summary>What JOIN GAME does with what was typed (a code as typed: <see cref="MCGamesScreen"/> reads it).</summary>
+    std::function<void(std::string typed)> Joining;
 
-    /// <summary>The password, as a player would type it (the tests').</summary>
-    void SetPassword(std::string_view password);
-    /// <summary>JOIN GAME, as a click would: the box emptied as the password goes.</summary>
+    /// <summary>The password or code, as a player would type it (the tests').</summary>
+    void SetTyped(std::string_view typed);
+    /// <summary>JOIN GAME, as a click would (nothing while it's off): the box emptied as what was typed goes.</summary>
     void PressJoin();
+    /// <summary>Whether JOIN GAME is on: always for a password, once a code's length is typed for a code.</summary>
+    bool CanJoin() const;
 
 protected:
     void OnLoaded(Rml::ElementDocument& document) override;
 
 private:
+    /// <summary>What's typed in the box as it stands.</summary>
+    std::string Typed() const;
+    /// <summary>JOIN GAME on or off as what's typed stands.</summary>
+    void ShowJoin();
+
+    MCAsks _Asks;
     std::string _RoomName;
 };
 
@@ -141,6 +161,8 @@ public:
 
     /// <summary>The locked room's password window (none before a locked room was first joined).</summary>
     MCGuiHandle<MCPasswordWindow> PasswordWindow() const { return _PasswordWindow; }
+    /// <summary>A private game's code window (none before a private game was first joined).</summary>
+    MCGuiHandle<MCPasswordWindow> CodeWindow() const { return _CodeWindow; }
 
     /// <summary>HOST GAME's window (none before HOST GAME first opened it).</summary>
     MCGuiHandle<MCHostWindow> HostWindow() const { return _HostWindow; }
@@ -218,8 +240,24 @@ private:
 
     // MechCommander Online's rooms (SPEC-mco-rooms.md), in the list like any other game.
 
+    /// <summary>
+    /// The window that asks <paramref name="asks"/> for the locked game <paramref name="game"/> (made at its first use,
+    /// kept in <paramref name="window"/>), its JOIN GAME joining it as <paramref name="join"/> says with what was typed.
+    /// </summary>
+    void AskFor(const MCListedGame& game, MCPasswordWindow::MCAsks asks, MCGuiHandle<MCPasswordWindow>& window,
+                void (MCGamesScreen::*join)(const MCListedGame&, std::string));
     /// <summary>The password's window for MCO's locked room <paramref name="game"/>, its JOIN GAME joining it.</summary>
     void AskPassword(const MCListedGame& game);
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-in-game-lobby.md): the code's window for the private game <paramref name="game"/>, its
+    /// JOIN GAME joining by the code typed.
+    /// </summary>
+    void AskCode(const MCListedGame& game);
+    /// <summary>
+    /// A private game <paramref name="game"/> joined by the code <paramref name="typed"/> as the CODE box joins (a
+    /// newer game's update first); a wrong code is said as the CODE box's is ("No game has the code K7QX.").
+    /// </summary>
+    void JoinPrivate(const MCListedGame& game, std::string typed);
     /// <summary>JOIN GAME on MCO's room <paramref name="game"/>, with its password when it's locked.</summary>
     void JoinMco(const MCListedGame& game, std::string password);
     /// <summary>Each frame: what MCO says, as it changes: the room, its waits, its match, its refusals.</summary>
@@ -243,7 +281,8 @@ private:
     MCGuiHandle<MCHostWindow> _HostWindow;
     MCHostWindow::MCHost _LastHost;
     MCGuiHandle<MCPasswordWindow> _PasswordWindow;
-    /// <summary>The MCO room picked for the password window's JOIN GAME.</summary>
+    MCGuiHandle<MCPasswordWindow> _CodeWindow;
+    /// <summary>The locked game picked for the password's or the code's window's JOIN GAME.</summary>
     std::optional<MCListedGame> _Locked;
 
     /// <summary>A room of the list in MCO's game.</summary>

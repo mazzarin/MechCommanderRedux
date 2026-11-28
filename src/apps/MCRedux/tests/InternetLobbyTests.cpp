@@ -21,7 +21,7 @@ namespace
     using Clock = std::chrono::steady_clock;
 
     constexpr std::string_view Service = "wss://games.test";
-    constexpr std::string_view ListUrl = "wss://games.test/list?proto=1";
+    constexpr std::string_view ListUrl = "wss://games.test/list?proto=1&private=1";
     constexpr std::string_view CountUrl = "https://games.test/count";
     constexpr std::string_view Version = "0.6.0 (812)";
     /// <summary>A dropped list is back within its first try's spread (MCServiceComebackTries).</summary>
@@ -114,6 +114,52 @@ TEST_CASE("internet lobby: the busiest hours are said in the player's own time, 
     CHECK(MCBusiestText(MCBusiestHours(MCWeekHours), UtcAlone).empty());
     CHECK(MCBusiestText(MCBusiestHours(MCWeekHours, 0.0), UtcAlone).empty());
     CHECK(MCBusiestText(MCBusiestHours(DayHours, 3.0), UtcAlone).empty());
+}
+
+/// <summary>
+/// Port-only (Redux HD; SPEC-in-game-lobby.md's "A private game on the list"): a private game listed by its key, never a
+/// code (one it carries anyway left unread); one whose key or private mark isn't the service's left out.
+/// </summary>
+TEST_CASE("internet lobby: a private game in the list by its key alone, one that isn't the service's left out")
+{
+    ListScript script;
+    LobbySetupScope scope(script, nullptr);
+    std::unique_ptr<MCInternetList> list = MCInternetList::Open();
+    REQUIRE(list != nullptr);
+
+    constexpr std::string_view Key = "0123456789abcdef";
+    const Json friends = MCServiceScript::PrivateGame(Key, "FRIENDS", {"BOB"}, 4, nullptr, Version);
+    Json withCode = MCServiceScript::PrivateGame("fedcba9876543210", "WITH A CODE", {"ANN"}, 4, nullptr, Version);
+    withCode["code"] = "K7QF";
+    Json upperKey = friends;
+    upperKey["key"] = "0123456789ABCDEF";
+    Json shortKey = friends;
+    shortKey["key"] = "0123";
+    Json noKey = friends;
+    noKey.erase("key");
+    Json notABool = ListedGame("PXYL", "NOT A MARK", nullptr);
+    notABool["private"] = "yes";
+    Json publicOne = ListedGame("Q4RT", "PUBLIC", nullptr);
+    publicOne["private"] = false;
+    script.Send(Json{{"t", "list"},
+                     {"online", 9},
+                     {"inGames", 5},
+                     {"games", {friends, withCode, upperKey, shortKey, noKey, notABool, publicOne}}});
+    CHECK(list->Update());
+    REQUIRE(list->Listing().has_value());
+    const std::vector<MCInternetListing::Game>& games = list->Listing()->Games;
+    REQUIRE(games.size() == 3);
+    CHECK(games[0].Private);
+    CHECK(games[0].Key == Key);
+    CHECK(games[0].Code.empty());
+    CHECK(games[0].Name == "FRIENDS");
+    CHECK(games[0].Max == 4);
+    CHECK(games[1].Private);
+    CHECK(games[1].Code.empty());
+    CHECK(games[1].Key == "fedcba9876543210");
+    CHECK(!games[2].Private);
+    CHECK(games[2].Code == "Q4RT");
+    CHECK(games[2].Key.empty());
 }
 
 TEST_CASE("internet lobby: the list as the service sends it, a game that isn't one left out, and back after a drop")

@@ -336,7 +336,7 @@ TEST_CASE_ISOLATED("game: a locked MechCommander Online room asks for its passwo
     Shot("mco internet 4 password");
 
     // A wrong password: MCO's refusal said over the list, the player not in the room.
-    screen.PasswordWindow()->SetPassword("knight");
+    screen.PasswordWindow()->SetTyped("knight");
     screen.PasswordWindow()->PressJoin();
     REQUIRE(SettleUntil([] { return DialogText() == "Wrong room password."; }));
     CHECK(!screen.Seen().InRoom);
@@ -346,7 +346,7 @@ TEST_CASE_ISOLATED("game: a locked MechCommander Online room asks for its passwo
     // The right one: in the room.
     screen.PressJoin();
     Settle();
-    screen.PasswordWindow()->SetPassword(BunkerPassword);
+    screen.PasswordWindow()->SetTyped(BunkerPassword);
     screen.PasswordWindow()->PressJoin();
     REQUIRE(SettleUntil([&] { return screen.Seen().InRoom; }));
     CHECK_EQ(screen.Seen().RoomLine, "Waiting for ANN to start.");

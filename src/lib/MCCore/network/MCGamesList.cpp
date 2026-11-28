@@ -62,6 +62,8 @@ namespace
     constexpr std::string_view LockedText = "Locked";
     /// <summary>MCO's rooms' keys, kept apart from the service's codes.</summary>
     constexpr std::string_view McoKeyPrefix = "mco:";
+    /// <summary>A private game's key in the list, never a code (which joins it): its key on the service's list.</summary>
+    constexpr std::string_view PrivateKeyPrefix = "private:";
     constexpr std::string_view InBattleText = "In battle";
     constexpr std::string_view InBattleForFormat = "In battle for {} min";
     constexpr std::string_view NeedsFormat = "Needs version {}";
@@ -71,7 +73,6 @@ namespace
     constexpr std::string_view FullFormat = "{} is full.";
     constexpr std::string_view StartedFormat = "{} has started.";
     constexpr std::string_view ClosedFormat = "{} has closed.";
-    constexpr std::string_view NoCodeFormat = "No game has the code {}.";
     constexpr std::string_view UnreachableFormat = "Couldn't connect to {}.";
     constexpr std::string_view NotHostedText = "Couldn't set up your game.";
     constexpr std::string_view UpdateText = "Update to play online.";
@@ -422,16 +423,19 @@ bool MCGamesList::ReadInternetGames()
 
         for (const MCInternetListing::Game& listed : _List->Listing()->Games)
         {
-            games.push_back(MCListedGame{.Key = listed.Code,
-                                         .Name = listed.Name,
-                                         .Players = listed.Players,
-                                         .Max = listed.Max,
-                                         .Region = std::string(MCRegionName(listed.Region)),
-                                         .Mission = listed.Mission,
-                                         .Version = listed.Version,
-                                         .InBattle = listed.BattleSeconds.has_value(),
-                                         .BattleSeconds = listed.BattleSeconds,
-                                         .NeedsNewer = NewerThan(listed.Version, ours)});
+            games.push_back(
+                MCListedGame{.Key = listed.Private ? std::format("{}{}", PrivateKeyPrefix, listed.Key) : listed.Code,
+                             .Name = listed.Name,
+                             .Players = listed.Players,
+                             .Max = listed.Max,
+                             .Region = std::string(MCRegionName(listed.Region)),
+                             .Mission = listed.Mission,
+                             .Version = listed.Version,
+                             .InBattle = listed.BattleSeconds.has_value(),
+                             .BattleSeconds = listed.BattleSeconds,
+                             .NeedsNewer = NewerThan(listed.Version, ours),
+                             .Locked = listed.Private,
+                             .Private = listed.Private});
         }
     }
 

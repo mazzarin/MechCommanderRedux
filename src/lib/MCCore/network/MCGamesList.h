@@ -23,7 +23,10 @@ class MCSessionManager;
 /// <summary>A game in the list, as LAN and INTERNET show it.</summary>
 struct MCListedGame
 {
-    /// <summary>The service's code for an internet game; a LAN session's instance, as text.</summary>
+    /// <summary>
+    /// The service's code for a public internet game (a private one's key on the list, which joins nothing); a LAN
+    /// session's instance, as text.
+    /// </summary>
     std::string Key;
     /// <summary>Its name as its host typed it.</summary>
     std::string Name;
@@ -48,8 +51,13 @@ struct MCListedGame
     /// joined through MCO (network/MCMcoRooms); empty for the service's games and this network's.
     /// </summary>
     std::string McoRoom;
-    /// <summary>MCO's room has a password: JOIN GAME asks for it.</summary>
+    /// <summary>JOIN GAME asks for something first: MCO's room's password, or a private game's code.</summary>
     bool Locked = false;
+    /// <summary>
+    /// Port-only (Redux HD; SPEC-in-game-lobby.md): a private internet game, listed without its code (locked): JOIN GAME
+    /// asks for it and joins by it.
+    /// </summary>
+    bool Private = false;
     /// <summary>How many play, when only that is known (MCO's rooms name their host alone until joined).</summary>
     std::optional<int32_t> Count;
 
@@ -77,7 +85,7 @@ enum class MCGamesWhere
 {
     /// <summary>On this network (DirectPlay's sessions, over TCP/IP).</summary>
     Lan,
-    /// <summary>The service's public games.</summary>
+    /// <summary>The service's games, public and private.</summary>
     Internet,
     /// <summary>
     /// MechCommander Online's match (SPEC-mco-rooms.md): its game on this computer as a launcher's, the bridge
@@ -273,6 +281,8 @@ public:
     static constexpr std::string_view JoiningFormat = "Joining {}...";
     static constexpr std::string_view HostingText = "Setting up your game...";
     static constexpr std::string_view CodeGameFormat = "the game {}";
+    /// <summary>A code typed that no game has ("No game has the code K7QX."), the CODE box's and a private game's.</summary>
+    static constexpr std::string_view NoCodeFormat = "No game has the code {}.";
 
 private:
     void Refuse(std::string text, bool canRetry = false, bool needsUpdate = false);

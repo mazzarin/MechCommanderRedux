@@ -4,6 +4,8 @@
 #hostwin .hints { margin-top: 8dp; }
 #hostwin .set-control { width: 164dp; }
 #hostwin .set-control input.text.field { width: 150dp; }
+/* Port-only (SPEC-in-game-lobby.md): a private game's code's window: its box as narrow as INTERNET's CODE box. */
+#codewin .set-control input.text.field { width: 48dp; }
 .set-row { box-sizing: border-box; display: flex; flex-direction: row; align-items: center; gap: 12dp; height: 32dp; padding: 0 6dp; border-bottom: 1dp #141e26; }
 .set-row > * { flex: 0 0 auto; }
 .set-row > .set-words { flex: 1 1 0; }

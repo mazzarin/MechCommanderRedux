@@ -182,6 +182,18 @@ namespace
         Settle();
     }
 
+    /// <summary>The window the private game's shots are drawn at, as a player's 16:9 one.</summary>
+    constexpr MCWindowSize ShotWindow{1280, 720};
+
+    /// <summary>What the menus show now, drawn on the software path; --shots saves it as <paramref name="name"/>.</summary>
+    void DrawnShot(std::string_view name)
+    {
+        // The hash isn't checked: these frames are for the eye. The game's next frames lay the menus out at its window
+        // again, where the clicks after go.
+        static_cast<void>(MenusDrawnAt(ShotWindow, name));
+        Settle();
+    }
+
     /// <summary>How long a link on the loopback gets to open: one that can't (relays only, and none) fails soon.</summary>
     constexpr auto LoopbackOpen = std::chrono::milliseconds(1500);
     /// <summary>A link's open long enough for a test to call its join off first.</summary>
@@ -1263,6 +1275,121 @@ TEST_CASE_ISOLATED("game: a game joined from INTERNET's list takes relays only, 
     PressDialogCancel();
     CHECK(manager.Internet == nullptr);
     CHECK(OnInternet());
+}
+
+/// <summary>
+/// Port-only (Redux HD; SPEC-in-game-lobby.md): a private game in INTERNET's list, without its code: "Locked", picked
+/// "Private, hosted in Europe"; JOIN GAME asks for its code in a window (JOIN GAME off until a code's four characters),
+/// a wrong code is said as the CODE box says it, and the right one, typed in either case, joins by it, its link direct.
+/// From the keys too: Enter on the row asks, Enter in the box joins.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a private game in INTERNET's list is locked, and its JOIN GAME asks for its code and joins by it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCServiceScript::ListScript list;
+    MCFakeGames::MCFakeGamesService service;
+    service.JoinedPublic = false;
+    const MCServicesScope scope(list, service);
+    LinksOnLoopback(SlowOpen);
+    REQUIRE(MCTestGame::StartLogistics());
+    MCGamesScreen& screen = OpenInternetScreen(list);
+    MCBobsGame bob;
+    constexpr std::string_view Key = "0123456789abcdef";
+    const std::string picked = std::format("private:{}", Key);
+    list.Send(
+        Listing(Json::array({MCServiceScript::ListedGame("PXYL", "Steel rain", {"Ann"}, 6, nullptr, Version),
+                             MCServiceScript::PrivateGame(Key, "Friends only", {"Bob", "Cat"}, 4, nullptr, Version)}),
+                5, 3));
+    REQUIRE(SettleUntil(CountsAre("5 online, 3 in games")));
+    CHECK((screen.Seen().Rows == Rows{"Steel rain | 1/6 | Europe | Open", "Friends only | 2/4 | Europe | Locked"}));
+
+    // Picked: its line says it's private, and JOIN GAME is on.
+    screen.PickKey(picked);
+    Settle();
+    CHECK_EQ(screen.Seen().PickName, "Friends only");
+    CHECK((screen.Seen().PickLines == Rows{"Private, hosted in Europe"}));
+    CHECK((screen.Seen().PickPlayers == Rows{"Bob", "Cat"}));
+    REQUIRE(screen.Seen().CanJoin);
+    DrawnShot("internet private 0 listed");
+
+    // JOIN GAME: the code's window, its JOIN GAME off until a code's length is in.
+    RealClickOn(*ElementOf(screen, "join"));
+    Settle();
+    REQUIRE(screen.CodeWindow());
+    MCPasswordWindow& window = *screen.CodeWindow();
+    CHECK(window.Shown());
+    CHECK(window.Asks() == MCPasswordWindow::MCAsks::Code);
+    CHECK(!window.CanJoin());
+    window.PressJoin();
+    Settle();
+    CHECK(window.Shown());
+    CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
+    DrawnShot("internet private 1 code asked");
+    window.SetTyped("k7");
+    CHECK(!window.CanJoin());
+
+    // A wrong code: said as the CODE box says it, over the list.
+    window.SetTyped("m3vd");
+    REQUIRE(window.CanJoin());
+    DrawnShot("internet private 2 code typed");
+    window.PressJoin();
+    REQUIRE(SettleUntil([] { return DialogText() == "No game has the code M3VD."; }));
+    CHECK(!window.Shown());
+    CHECK(service.Paths.back().starts_with("/join/M3VD"));
+    CHECK(MultiPlayer()->SessionManager->Internet == nullptr);
+    DrawnShot("internet private 3 wrong code");
+    PressDialogOk();
+    CHECK(DialogText().empty());
+    CHECK(OnInternet());
+
+    // From the keys: Enter on its row asks again, the box empty and the focus in it; the right code typed in small
+    // letters, then Enter, joins by it, the link direct (a private game's).
+    Rml::Context& context = screen.Layer().Context();
+    std::vector<Rml::Element*> rows = RowsOf(screen);
+    REQUIRE(rows.size() == 2);
+    rows[1]->Focus();
+    RealKey(SDL_SCANCODE_RETURN);
+    Settle();
+    REQUIRE(window.Shown());
+    CHECK(!window.CanJoin());
+    REQUIRE(window.Document().has_value());
+    CHECK(context.GetFocusElement() == window.Document()->get().GetElementById("code"));
+    RealType("k7qf");
+    Settle();
+    CHECK(window.CanJoin());
+    RealKey(SDL_SCANCODE_RETURN);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            bob.Game->Update();
+            return manager.Internet != nullptr && manager.Internet->Update() == MCInternetGame::Stage::Ready;
+        }));
+    CHECK(!window.Shown());
+    CHECK(service.Paths.back().starts_with(std::format("/join/{}?", MCFakeGames::GameCode)));
+    CHECK(!manager.Internet->Public());
+    CHECK(service.GuestOfferedOwnAddress());
+    CHECK_EQ(DialogText(), "Joining Friends only...");
+    PressDialogCancel();
+    CHECK(manager.Internet == nullptr);
+    CHECK(OnInternet());
+
+    // In battle or full, JOIN GAME is off and asks nothing.
+    list.Send(Listing(Json::array({MCServiceScript::PrivateGame(Key, "Friends only", {"Bob", "Cat"}, 4, 600, Version)}),
+                      5, 3));
+    REQUIRE(
+        SettleUntil([&] { return screen.Seen().Rows == Rows{"Friends only | 2/4 | Europe | In battle for 10 min"}; }));
+    screen.PickKey(picked);
+    Settle();
+    CHECK(!screen.Seen().CanJoin);
+    screen.PressJoin();
+    Settle();
+    CHECK(!window.Shown());
 }
 
 /// <summary>

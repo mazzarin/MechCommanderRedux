@@ -1,0 +1,28 @@
+<rml>
+<head>
+    <title>Code</title>
+    <link type="text/rcss" href="look.rcss"/>
+    <link type="text/rcss" href="dialog.rcss"/>
+    <link type="text/rcss" href="host.rcss"/>
+</head>
+<!-- Port-only (SPEC-in-game-lobby.md): JOIN GAME on a private game in INTERNET's list, a window over the list in the
+     password's shape: the game's name over CODE, CANCEL and JOIN GAME (off until a code's four characters are in). -->
+<body class="window-body">
+    <div class="veil"></div>
+    <div class="window-place">
+        <div id="codewin" class="dialog panel glass">
+            <div class="titlebar row bottom"><div class="grow"><div class="eyebrow" id="room"></div><div class="title caps">Join game</div></div></div>
+            <div class="set-row">
+                <div class="set-words"><div class="set-name">Code</div></div>
+                <div class="set-control"><input type="text" class="field" id="code" maxlength="4" data-enter="join" data-first/></div>
+            </div>
+            <div class="foot row">
+                <div class="button" id="cancel" data-hint="Cancel">Cancel</div>
+                <div class="grow"></div>
+                <div class="button main off" id="join" data-hint="Join">Join game</div>
+            </div>
+            <div class="hints row"><div class="mouse-hints grow"></div><div class="keys"></div></div>
+        </div>
+    </div>
+</body>
+</rml>

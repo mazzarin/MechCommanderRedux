@@ -186,4 +186,19 @@ namespace MCServiceScript
             {"code", code},       {"name", name},     {"players", players}, {"max", max},
             {"mission", mission}, {"region", region}, {"version", version}, {"battleSeconds", battleSeconds}};
     }
+
+    /// <summary>
+    /// Port-only (Redux HD): a private game as the service lists it to a build that asks (SPEC-in-game-lobby.md's "A
+    /// private game on the list"): its key, never its code.
+    /// </summary>
+    inline nlohmann::json PrivateGame(std::string_view key, std::string_view name, std::vector<std::string> players,
+                                      int max, nlohmann::json battleSeconds, std::string_view version,
+                                      std::string_view region = "EU")
+    {
+        nlohmann::json game = ListedGame("", name, std::move(players), max, std::move(battleSeconds), version, region);
+        game.erase("code");
+        game["private"] = true;
+        game["key"] = key;
+        return game;
+    }
 }

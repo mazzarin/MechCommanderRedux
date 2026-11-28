@@ -75,6 +75,8 @@ private:
     /// <summary>The view the logical presentation was set for.</summary>
     SDL_Rect _View{};
     MCPresentation _Presentation;
+    /// <summary>Port-only: whether vsync is on (SetVSync), for MCScreenPacing.</summary>
+    bool _VSync = true;
     /// <summary>The screen fade the palette was last set with (<see cref="MCFrame::Fade"/>).</summary>
     int _Fade = 0;
     /// <summary>Port-only: whether that fade scaled the colours (<see cref="MCFrame::FadeScales"/>).</summary>

@@ -25,6 +25,7 @@ std::expected<std::unique_ptr<MCSdlPresenter>, std::string> MCSdlPresenter::Crea
     }
 
     SDL_SetRenderVSync(presenter->_Renderer.get(), vsync ? 1 : 0);
+    presenter->_VSync = vsync;
     presenter->_Palette.reset(SDL_CreatePalette(256));
 
     if (presenter->_Palette == nullptr)
@@ -65,6 +66,7 @@ void MCSdlPresenter::SetPresentation(const MCPresentation& presentation)
 void MCSdlPresenter::SetVSync(bool on)
 {
     SDL_SetRenderVSync(_Renderer.get(), on ? 1 : 0);
+    _VSync = on;
 }
 
 std::expected<void, std::string> MCSdlPresenter::EnsureTextures(int width, int height)
@@ -202,6 +204,16 @@ std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
         return uploaded;
     }
 
+    // Port-only: a frame that can't reach the screen isn't drawn (MCScreenPacing): the window covered, or its Space
+    // sliding away, where the renderer's wait for an image lasts a second.
+    if (!_Pacing.Reaches(*_Window))
+    {
+        return {};
+    }
+
+    // Its drawing and show, timed: the renderer waits for the screen's image as it starts drawing into it.
+    const uint64_t drawStart = SDL_GetPerformanceCounter();
+
     // Port-only: the window around the view in the frame's surround (the menus' stone colour), faded with the picture.
     const SDL_Color surround = MCFadedSurround(frame);
     SDL_SetRenderDrawColor(_Renderer.get(), surround.r, surround.g, surround.b, surround.a);
@@ -248,6 +260,10 @@ std::expected<void, std::string> MCSdlPresenter::Present(const MCFrame& frame)
     }
 
     part.reset();
+    _Pacing.Shown(*_Window,
+                  static_cast<double>(SDL_GetPerformanceCounter() - drawStart) * 1000.0 /
+                      static_cast<double>(SDL_GetPerformanceFrequency()),
+                  _VSync);
 
     // The frame handed to the screen: the frame log's time between these is the screen's (a benchmark's hitches).
     MCFrameLog::Presented();

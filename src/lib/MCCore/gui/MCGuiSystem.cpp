@@ -88,6 +88,34 @@ namespace
 
         return RefreshOf(display);
     }
+
+    /// <summary>
+    /// Port-only: while the screen isn't holding the frames (MCScreenPacing), holds the frame started at PerfStartTime
+    /// to the share of a refresh <paramref name="display"/>'s presenter asks, showing the frame presented ahead first;
+    /// nothing while it is, or once the frame has taken that long.
+    /// </summary>
+    void HoldUnheldFrame(MCDisplay& display)
+    {
+        const double holdMs = display.Presenter().HoldFrameMs();
+        const auto spentMs = []
+        {
+            return static_cast<double>(MCPort::PerformanceCounter() - PerfStartTime) * 1000.0 /
+                   static_cast<double>(CountsPerSecond);
+        };
+
+        if (holdMs <= 0.0 || CountsPerSecond <= 0 || spentMs() >= holdMs)
+        {
+            return;
+        }
+
+        MCFrameLog::Scope part("hold");
+        display.ShowPresented();
+
+        if (const double leftMs = holdMs - spentMs(); leftMs > 0.0)
+        {
+            SDL_DelayPrecise(static_cast<uint64_t>(leftMs * 1e6));
+        }
+    }
 }
 
 auto DisplayDescription() -> std::string
@@ -655,6 +683,15 @@ auto MCGuiSystem::Run() -> void
             CloseMovie();
             CloseGuiObject(FeatureScreen);
             FeatureScreen.reset();
+        }
+
+        // Port-only: a frame the screen isn't holding (MCScreenPacing: the window covered or its Space sliding away
+        // behind a game that keeps running, a screen that stopped taking the frames shown) is held here, to its share
+        // of a refresh from the frame's start, so the game neither spins nor waits on the screen; the frame presented
+        // ahead is shown first, as before the 15 fps lock's sleep.
+        if (ApplicationActive && !quit && _Display != nullptr)
+        {
+            HoldUnheldFrame(*_Display);
         }
 
         PerfStopTime = MCPort::PerformanceCounter();

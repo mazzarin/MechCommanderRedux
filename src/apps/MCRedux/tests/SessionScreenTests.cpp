@@ -756,7 +756,7 @@ TEST_CASE("session screen: a listed game's map shows by the menus' name for this
         MCMatchMap{.File = "CPTRBASE", .Name = "Capture Base", .Written = "Capture Base"},
         MCMatchMap{.File = "CPTBASNA", .Name = "Capture Base", .Written = "Capture Base"},
         MCMatchMap{.File = "POWRSURG", .Name = "Power Surge", .Written = "Power Surge"},
-        MCMatchMap{.File = "POWRSRG2", .Name = "Power Surge 2", .Written = "Power Surge"}};
+        MCMatchMap{.File = "POWRSRG2", .Name = "Power Surge (30 min)", .Written = "Power Surge"}};
     CHECK_EQ(MCShownMapName("CaptIsld", maps), std::string("Capture Island"));
     // Two packets of one name that show by one name: that; two that show apart: as sent.
     CHECK_EQ(MCShownMapName("Capture Base", maps), std::string("Capture Base"));

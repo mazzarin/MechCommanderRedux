@@ -195,13 +195,15 @@ TEST_CASE("saves: the app's names give 1998's match maps named by their files' a
     CHECK_EQ(MCMissionNames::Map("KINGLOCK", "King of the Hill LOCKED"), std::string("King of the Hill (Locked)"));
     CHECK_EQ(MCMissionNames::Map("MANYLOCK", "Many Bases LOCKED"), std::string("Many Bases (Locked)"));
     CHECK_EQ(MCMissionNames::Map("POWRLOCK", "Power Surge"), std::string("Power Surge (Locked)"));
+    // The second Power Surge, the same map but for its time limit (30 min against 25): by its time.
+    CHECK_EQ(MCMissionNames::Map("POWRSRG2", "Power Surge"), std::string("Power Surge (30 min)"));
+    CHECK_EQ(MCMissionNames::Map("POWRSURG", "Power Surge"), std::string("Power Surge"));
     CHECK_EQ(MCMissionNames::Map("BRCLINNA", "Breach the Line NA"), std::string("Breach the Line"));
     CHECK_EQ(MCMissionNames::Map("FORTNA", "Fortress Assault NA"), std::string("Fortress Assault"));
     // A 1998 map with a name in words keeps it; BLOODGRW's one word too (spaced, "Blood Makes the Grass Grow" spills from
-    // CHOOSE MAP's list at 1280x960); and the second Power Surge waits on you.
+    // CHOOSE MAP's list at 1280x960).
     CHECK_EQ(MCMissionNames::Map("CPTRBASE", "Capture Base"), std::string("Capture Base"));
     CHECK_EQ(MCMissionNames::Map("BLOODGRW", "BloodMakesTheGrassGrow"), std::string("BloodMakesTheGrassGrow"));
-    CHECK_EQ(MCMissionNames::Map("POWRSRG2", "Power Surge"), std::string("Power Surge"));
     // Linchpin 2's and Gorgon 2's every-one objectives (the game test reads them from 1998's files).
     CHECK_EQ(MCMissionNames::Objective("brf0402.txt", 2, "Destroy 12 of 12 Ordnance Trucks"),
              std::string("Destroy all 12 Ordnance Trucks"));

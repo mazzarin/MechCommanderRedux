@@ -183,7 +183,7 @@
                                         <div class="pic picture" data-style-decorator="g.picture"></div>
                                     </div>
                                     <div class="pic picture" data-if="!g.warrior" data-class-part="g.part" data-style-decorator="g.picture"></div>
-                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.price != ''"><div class="cream">{{g.price}}</div><div class="grey note" data-if="g.why == ''">{{g.note}}</div><div class="note why-note" data-if="g.why != ''">{{g.why}}</div></div><div class="row-t" data-if="g.why != '' &amp;&amp; g.price == ''"><div>{{g.why}}</div></div></div>
+                                    <div class="facts"><div class="who" data-class-long="g.long">{{g.who}}</div><div class="what">{{g.what}}</div><div class="row-t" data-if="g.price != ''"><div class="cream">{{g.price}}</div><div class="grey note">{{g.note}}</div><div class="note why-note" data-if="g.why != ''">· {{g.why}}</div></div><div class="row-t" data-if="g.why != '' &amp;&amp; g.price == ''"><div>{{g.why}}</div></div></div>
                                     <div class="wskills" data-if="g.skills.size &gt; 0"><div class="skill" data-for="s : g.skills"><div class="repair-line"><div class="label">{{s.label}}</div><div class="grow"></div><div>{{s.value}}</div></div><div class="meter"><div class="meter-fill" data-style-width="s.value + '%'"></div></div></div></div>
                                 </div></div>
                             </div>

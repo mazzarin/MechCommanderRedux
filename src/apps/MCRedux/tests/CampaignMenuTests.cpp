@@ -4606,8 +4606,8 @@ TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY share the INVENTORY's choi
 }
 
 /// <summary>
-/// A part in the 'MECH BAY's INVENTORY that can't go into the lab's 'Mech keeps its count, the reason in OWNED's place
-/// (the user's, 27 Nov: "I have no way of seeing how many of a component I have if it's overweight").
+/// A part in the 'MECH BAY's INVENTORY that can't go into the lab's 'Mech keeps its count, the reason after it ("2 OWNED
+/// · TOO HEAVY"; the user's, 27 Nov: "I have no way of seeing how many of a component I have if it's overweight").
 /// </summary>
 TEST_CASE_ISOLATED("game: a MECH BAY INVENTORY part that can't go in still shows how many there are")
 {
@@ -4632,18 +4632,22 @@ TEST_CASE_ISOLATED("game: a MECH BAY INVENTORY part that can't go in still shows
     REQUIRE(off != tabs.StockGoods().end());
     CHECK(!off->Price.empty());
 
-    // Drawn: the count and the reason on the card's row, OWNED gone.
+    // Drawn: the count, OWNED and the reason after them on the card's row.
     Rml::ElementList whys;
     ElementOf(screen, "inventory").QuerySelectorAll(whys, ".why-note");
     const auto shown = std::ranges::find_if(whys, [](Rml::Element* why) { return why->IsVisible(true); });
     REQUIRE(shown != whys.end());
     Rml::Element* row = (*shown)->GetParentNode();
     REQUIRE(row != nullptr);
-    CHECK_EQ((*shown)->GetInnerRML(), off->Why);
+    CHECK_EQ((*shown)->GetInnerRML(), std::format("· {}", off->Why));
     Rml::Element* count = row->QuerySelector(".cream");
     REQUIRE(count != nullptr);
     CHECK(count->IsVisible(true));
     CHECK_EQ(count->GetInnerRML(), off->Price);
+    Rml::Element* owned = row->QuerySelector(".grey");
+    REQUIRE(owned != nullptr);
+    CHECK(owned->IsVisible(true));
+    CHECK_EQ(owned->GetInnerRML(), off->Note);
 }
 
 /// <summary>
@@ -5344,11 +5348,11 @@ TEST_CASE_ISOLATED("game: PURCHASING and the MECH BAY draw the same on every mac
     tabs.DealCancel();
 
     screen.ChooseTab(MCCampaignScreen::MCTab::MechBay);
-    DrawnEach(*display, clock, "mechbay", {0x1a7e369f, 0x15f059c0, 0x00a0a997});
+    DrawnEach(*display, clock, "mechbay", {0xbbfb515f, 0x2689ad50, 0x195e72cf});
     ArriveDamaged(*GlobalLog()->ForceMechList->Mechs.front());
     tabs.Pick(MCLogisticsTabs::MCPlace::Force, 0);
     KeyOn(ElementOf(screen, "armor"), SDL_SCANCODE_RIGHT, RepairSteps);
-    DrawnEach(*display, clock, "mechbay_repair", {0x8abf4d90, 0x2be4015c, 0xb329752e});
+    DrawnEach(*display, clock, "mechbay_repair", {0x428f651c, 0x47a357bc, 0xd129eda6});
 }
 
 /// <summary>
@@ -6247,16 +6251,16 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
              ClickChoice(screen, "tabs", static_cast<int>(MCCampaignScreen::MCTab::MechBay));
              ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::Components));
          },
-         0xf7488a02},
-        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0x5017ab3a},
-        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0xbf1de05a},
-        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xfd67da27},
-        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0x13b56a1c},
-        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x38b6048e},
-        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0xd4aeeefd},
+         0x68b9e081},
+        {"repair_payload", [&] { ClickOn(ElementOf(screen, "fit0")); }, 0xaa332b21},
+        {"repair_second_mech", [&] { ClickOn(ElementOf(screen, "force1")); }, 0x7ab032e5},
+        {"repair_component_info", [&] { Hover(InventoryCard(screen, 0)); }, 0x41b76500},
+        {"repair_weapon_info", [&] { Hover(ElementOf(screen, "fit0")); }, 0x6d845d8b},
+        {"repair_mech_info", [&] { Hover(ElementOf(screen, "force1")); }, 0x1031a939},
+        {"repair_weapon_off", [&] { DragTo(ElementOf(screen, "fit0"), ElementOf(screen, "inventory")); }, 0x701ca40f},
         {"repair_mount_laser",
          [&] { DragTo(InventoryCard(screen, GoodNamed(tabs.StockGoods(), "Laser")), ElementOf(screen, "lab")); },
-         0xda6ff53f},
+         0x8d8ea8f5},
         {"repair_pilots_tab", [&]
          { ClickChoice(screen, "stock-kinds", static_cast<int>(MCLogisticsTabs::MCStock::MechWarriors)); }, 0x4a668bbf},
         {"repair_pilot_info", [&] { Hover(InventoryCard(screen, 0)); }, 0xa14eb5bb},
@@ -6308,7 +6312,7 @@ TEST_CASE_ISOLATED("game: the remade PURCHASING and MECH BAY record the logistic
                  std::format("{} {}x{}: {:#010x}", name, RecordedWindow.Width, RecordedWindow.Height, step.Expected));
     }
 
-    CHECK_EQ(frames, 0x49b2a02cu);
+    CHECK_EQ(frames, 0x92692584u);
 }
 
 /// <summary>

@@ -178,8 +178,9 @@
 }
 /* A good's count and what it is (LEFT, OWNED) in the cards' capitals. */
 #logistics .card .row-t > .grey, #logistics .card .row-t .note { text-transform: uppercase; letter-spacing: 0.06em; }
-/* An INVENTORY part that can't go in keeps its count, the reason in OWNED's place (the user's, 27 Nov: "I have no way
-   of seeing how many of a component I have if it's overweight"). */
+/* An INVENTORY part that can't go in keeps its count, the reason after it ("2 OWNED · TOO HEAVY"; the user's, 27 Nov:
+   "I have no way of seeing how many of a component I have if it's overweight", then "Just the number next to too heavy
+   doesn't seem right"). */
 #logistics .card .row-t .why-note { color: #6c7a88; }
 /* The lab's repairs: the sliders the repair line's width; its parts scroll under its repairs, its foot kept in view. */
 #logistics .repair input.range.slider { width: 100%; }

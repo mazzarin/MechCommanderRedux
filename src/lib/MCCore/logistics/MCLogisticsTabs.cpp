@@ -163,14 +163,6 @@ namespace
     constexpr std::string_view PartWord = "part";
     constexpr std::string_view PartsWord = "parts";
     constexpr std::string_view PointsFormat = "{} RP";
-    constexpr std::string_view RepairAllFormat = "Repair all · {} RP";
-    constexpr std::string_view RepairAllWord = "Repair all";
-    constexpr std::string_view RepairForceFormat = "Repair force · {} RP";
-    constexpr std::string_view RepairForceLabel = "Repair force";
-    constexpr std::string_view RefitAllFormat = "Refit all · {} RP";
-    constexpr std::string_view RefitAllLabel = "Refit all";
-    constexpr std::string_view RefitForceFormat = "Refit force · {} RP";
-    constexpr std::string_view RefitForceLabel = "Refit force";
     /// <summary>The refit window's title (REFIT ALL's names its 'Mech), its price line and the head of what comes off.</summary>
     constexpr std::string_view RefitMechHeadingFormat = "Refit {}";
     constexpr std::string_view RefitForceHeading = "Refit the force";
@@ -199,18 +191,6 @@ namespace
     std::string CountText(size_t count, std::string_view one, std::string_view many)
     {
         return std::format(CountFormat, count, count == 1 ? one : many);
-    }
-
-    /// <summary>A button's label with what it costs ("Repair all · 1,200 RP"), or its word alone when it costs nothing.</summary>
-    std::string Priced(std::string_view format, std::string_view label, int32_t cost)
-    {
-        if (cost <= 0)
-        {
-            return std::string(label);
-        }
-
-        const std::string points = MCGroupedPoints(cost);
-        return std::vformat(format, std::make_format_args(points));
     }
 
     /// <summary><paramref name="lines"/> joined by <paramref name="between"/>.</summary>
@@ -337,6 +317,12 @@ namespace
     std::string Points(int32_t points)
     {
         return std::format(PointsFormat, MCGroupedPoints(points));
+    }
+
+    /// <summary>A repair or refit button's price, the line under its word ("1,200 RP"), or none when it costs nothing.</summary>
+    std::string PriceLine(int32_t cost)
+    {
+        return cost > 0 ? Points(cost) : std::string();
     }
 
     std::string GameWord(uint32_t id)
@@ -751,14 +737,14 @@ void MCLogisticsTabs::Bind(MCRmlModel& model)
     model.List("fits", _Fits, std::pair{"range", &MCFitRow::Range}, std::pair{"name", &MCFitRow::Name},
                std::pair{"tons", &MCFitRow::Tons}, std::pair{"state", &MCFitRow::State});
     model.Value("free", _Free);
-    model.Value("repairAllWord", _RepairAllWord);
+    model.Value("repairAllPrice", _RepairAllPrice);
     model.Value("canRepairAll", _CanRepairAll);
     model.Value("canRefit", _CanRefit);
-    model.Value("refitAllWord", _RefitAllWord);
-    model.Value("refitForceWord", _RefitForceWord);
+    model.Value("refitAllPrice", _RefitAllPrice);
+    model.Value("refitForcePrice", _RefitForcePrice);
     model.Value("canRefitForce", _CanRefitForce);
     model.Value("forceRepairs", _ForceRepairs);
-    model.Value("repairForceWord", _RepairForceWord);
+    model.Value("repairForcePrice", _RepairForcePrice);
     model.Value("canRepairForce", _CanRepairForce);
 }
 
@@ -1492,7 +1478,7 @@ void MCLogisticsTabs::FillLab()
     _LabPicture = MCCampaignScreen::NoPicture;
     _LabStored = false;
     _Repairs = false;
-    _RefitAllWord = std::string(RefitAllLabel);
+    _RefitAllPrice.clear();
     _HasPilot = false;
     _Seat = false;
     _Fits.clear();
@@ -1559,7 +1545,7 @@ void MCLogisticsTabs::FillLab()
     const int32_t allCost = MCMechBay::RestCost(mech, MCMechBay::MCKnob::Armor) +
                             MCMechBay::RestCost(mech, MCMechBay::MCKnob::Internal) +
                             MCMechBay::RestCost(mech, MCMechBay::MCKnob::Engine);
-    _RepairAllWord = Priced(RepairAllFormat, RepairAllWord, allCost);
+    _RepairAllPrice = PriceLine(allCost);
     _CanRepairAll = MCMechBay::StructureDamaged(mech);
 
     // The MechWarrior aboard.
@@ -1616,10 +1602,10 @@ void MCLogisticsTabs::FillLab()
 
     _CanRefit = MCMechBay::ItemsDamaged(mech);
 
-    // What the store's parts for REFIT ALL cost (the user's, 27 Nov), as REPAIR ALL's label says its price.
+    // What the store's parts for REFIT ALL cost (the user's, 27 Nov), as REPAIR ALL says its price.
     if (_Repairs && _CanRefit)
     {
-        _RefitAllWord = Priced(RefitAllFormat, RefitAllLabel, MCMechBay::PlanRefit({worked}).Cost);
+        _RefitAllPrice = PriceLine(MCMechBay::PlanRefit({worked}).Cost);
     }
 }
 
@@ -2630,8 +2616,8 @@ void MCLogisticsTabs::FillForceRepair()
         refitCost = _CanRefitForce ? MCMechBay::PlanRefit(refitted).Cost : 0;
     }
 
-    _RepairForceWord = Priced(RepairForceFormat, RepairForceLabel, cost);
-    _RefitForceWord = Priced(RefitForceFormat, RefitForceLabel, refitCost);
+    _RepairForcePrice = PriceLine(cost);
+    _RefitForcePrice = PriceLine(refitCost);
 }
 
 void MCLogisticsTabs::RepairForce()

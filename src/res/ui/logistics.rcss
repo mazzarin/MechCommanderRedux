@@ -85,14 +85,14 @@
 #logistics .lab-top { display: flex; flex-direction: row; align-items: flex-start; }
 #logistics .lab-top > * { flex: 0 0 auto; }
 #logistics .lab-top > .repairs { flex: 1 1 0; margin-left: 12dp; }
-#logistics .lab .schematic { width: 66dp; height: 102dp; }
-#logistics .repair { margin-bottom: 8dp; }
-#logistics .repair-line { display: flex; flex-direction: row; font-size: 9.51dp; line-height: 13dp; white-space: nowrap; margin-bottom: 3dp; }
+#logistics .lab .schematic { width: 52dp; height: 80dp; }
+#logistics .repair { margin-bottom: 5dp; }
+#logistics .repair-line { display: flex; flex-direction: row; font-size: 8.75dp; line-height: 11dp; white-space: nowrap; margin-bottom: 1dp; }
 #logistics .repair-line > * { flex: 0 0 auto; }
 #logistics .repair-line > .grow { flex: 1 1 0; }
-#logistics .repair-line .label { font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7cd4ec; margin-right: 8dp; }
+#logistics .repair-line .label { font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: #7cd4ec; margin-right: 6dp; }
 #logistics .repair-line .cost { font-weight: 600; color: #fcfcb8; }
-#logistics .pilot { display: flex; flex-direction: row; align-items: flex-start; margin-top: 12dp; padding-top: 8dp; border-top: 1dp #2a3742; }
+#logistics .pilot { display: flex; flex-direction: row; align-items: flex-start; margin-top: 6dp; padding-top: 6dp; border-top: 1dp #2a3742; }
 #logistics .pilot > * { flex: 0 0 auto; }
 #logistics .pilot > .skills { flex: 1 1 0; margin-left: 12dp; }
 #logistics .pilot .pics { display: flex; flex-direction: column; }
@@ -104,7 +104,8 @@
 #logistics .pilot .name { margin-left: 8dp; width: 64dp; }
 #logistics .skills { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4dp 12dp; }
 #logistics .skill { flex: 0 0 76dp; }
-#logistics .skill .repair-line { margin-bottom: 2dp; }
+#logistics .skill .repair-line { margin-bottom: 1dp; }
+#logistics .skills .meter { height: 2dp; }
 #logistics .payload { margin-top: 12dp; }
 #logistics .fit-row { box-sizing: border-box; display: flex; flex-direction: row; align-items: center; height: 18dp; padding: 0dp 4dp; border-bottom: 1dp #141e26; font-size: 11.63dp; line-height: 17dp; white-space: nowrap; }
 #logistics .fit-row > * { flex: 0 0 auto; }
@@ -162,7 +163,7 @@
 #logistics .pilot-name { font-weight: 600; }
 #deal-window .deal-name-line { font-weight: 600; }
 #logistics .payload-head { margin-bottom: 4dp; }
-#logistics .repair .slider { margin-top: 2dp; }
+#logistics .repair .slider { margin-top: 1dp; }
 /* A button that can't act yet dark, as DEPLOY's BEGIN MISSION. */
 #logistics .button.dark, #logistics .button.dark:hover, #logistics .button.dark:active { background-color: #1e2a34; border-color: #1e2a34; color: #a4b0bc; }
 #logistics .fit-row { tab-index: auto; nav: auto; focus: auto; }
@@ -183,7 +184,10 @@
    doesn't seem right"). */
 #logistics .card .row-t .why-note { color: #6c7a88; }
 /* The lab's repairs: the sliders the repair line's width; its parts scroll under its repairs, its foot kept in view. */
-#logistics .repair input.range.slider { width: 100%; }
+#logistics .repair input.range.slider { width: 100%; height: 8dp; }
+#logistics .repair input.range.slider slidertrack, #logistics .repair input.range.slider sliderprogress { margin-top: 3dp; height: 2dp; }
+#logistics .repair input.range.slider sliderbar { width: 2dp; height: 8dp; }
+#logistics .repair .meter { height: 2dp; }
 #logistics #lab > .lab-body { flex: 1 1 0; overflow-y: auto; }
 /* While its parts scroll, its rail 12 units clear of the bars and rows (the look's 4), as a panel's inside; with no rail
    they run the column's width. */
@@ -275,13 +279,9 @@
 /* REPAIR FORCE and REFIT FORCE at the FORCE's foot (the user's, 26 and 27 Nov), as REPAIR ALL and REFIT ALL at the
    lab's: at the right, each price in its word, wrapping onto two rows where they don't fit one, as the lab's foot; 4:3's
    one-card column holds them at the small buttons' size. */
-#logistics .force-foot { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6dp 8dp; margin-top: 10dp; }
+#logistics .force-foot { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4dp 6dp; margin-top: 10dp; }
 #logistics .force-foot > * { flex: 0 0 auto; }
 #logistics .force-foot > .grow { flex: 1 1 0; }
-#logistics .force-foot .button { padding: 0dp 10dp; }
-@media (max-aspect-ratio: 3/2) {
-    #logistics .force-foot > .button { height: 16dp; line-height: 14dp; padding: 0dp 8dp; font-size: 9.51dp; }
-}
 
 /* An owned 'Mech's damaged parts in PURCHASING's payload (the user's, 26 Nov): DAMAGED in red at the row's right, as
    the 'MECH BAY's rows. */
@@ -351,10 +351,10 @@
    them (one row at 21:9, as before). */
 #logistics .pilot > .pbody { flex: 1 1 0; margin-left: 10dp; display: flex; flex-direction: column; }
 #logistics .pilot > .pbody > * { flex: 0 0 auto; }
-#logistics .pilot .pname { display: flex; flex-direction: row; align-items: flex-end; margin-bottom: 4dp; white-space: nowrap; }
+#logistics .pilot .pname { display: flex; flex-direction: row; align-items: flex-end; margin-bottom: 2dp; white-space: nowrap; }
 #logistics .pilot .pname > * { flex: 0 0 auto; }
 #logistics .pilot .pname > .data { margin-left: 8dp; line-height: 14dp; }
-#logistics .pilot .skills { gap: 4dp 12dp; }
+#logistics .pilot .skills { gap: 3dp 12dp; }
 #logistics .pilot .skill { flex: 1 1 40%; }
 @media (min-aspect-ratio: 2/1) {
     #logistics .pilot .skill { flex: 1 1 0; }
@@ -366,7 +366,7 @@
 #logistics .fit-row .t { width: 48dp; }
 #logistics .fit-row > .grow { padding-right: 3dp; }
 /* The foot's buttons tighter; where they don't fit one row (16:10) they wrap onto two, at the right. */
-#logistics .lab-foot { flex-wrap: wrap; justify-content: flex-end; gap: 6dp 8dp; }
+#logistics .lab-foot { flex-wrap: wrap; justify-content: flex-end; gap: 4dp 6dp; }
 #logistics .lab-foot .button { padding: 0dp 10dp; }
 /* The details' description keeps the pixel at its right a wrapped line may take (RmlUi rounds its room up), as the
    room's map text. */
@@ -411,19 +411,22 @@
 
 /* ---- The user's MechWarrior skills A (26 Nov mocks): the INVENTORY's MechWarriors' four skills ---- */
 
-/* A MechWarrior's card shows their four skills in its free room, two a row, as the lab's pilot box draws them; at 16:10
-   and narrower (the INVENTORY one card wide at 220 units) under the face and the name, the card taller. */
-#logistics .card.good.warrior.skilled .facts { flex: 0 0 62dp; }
-#logistics .card.good.warrior.skilled .wskills { flex: 1 1 0; display: flex; flex-direction: row; flex-wrap: wrap; gap: 2dp 10dp; margin-top: 1dp; }
+/* A MechWarrior's card shows their four skills in its free room, two a row, as the lab's pilot box draws them, at the
+   lab's small size so they fit beside the face down to 16:10 (the user's WIP 11 note, 28 Nov: "we really should
+   compress this it just takes up way too much space"); at 4:3 and 5:4 (the INVENTORY 148 units) under the face, the
+   card taller. */
+#logistics .card.good.warrior.skilled .facts { flex: 0 0 58dp; }
+#logistics .card.good.warrior.skilled .wskills { flex: 1 1 0; display: flex; flex-direction: row; flex-wrap: wrap; gap: 2dp 8dp; margin-top: 1dp; }
 #logistics .wskills > .skill { flex: 1 1 40%; }
-#logistics .wskills .repair-line { margin-bottom: 1dp; line-height: 12dp; }
-#logistics .wskills .meter { height: 3dp; }
+#logistics .wskills .repair-line { margin-bottom: 1dp; font-size: 8.75dp; line-height: 10dp; }
+#logistics .wskills .repair-line .label { letter-spacing: 0.03em; margin-right: 4dp; }
+#logistics .wskills .meter { height: 2dp; }
 #logistics .card.picked .wskills .meter { background-color: #0b3a3a; }
 #logistics .card.picked .wskills .meter-fill { background-color: #c4ccd4; }
-@media (max-aspect-ratio: 17/10) {
+@media (max-aspect-ratio: 3/2) {
     #logistics .card.good.warrior.skilled { height: auto; flex-wrap: wrap; }
     #logistics .card.good.warrior.skilled .facts { flex: 1 1 0; }
-    #logistics .card.good.warrior.skilled .wskills { flex: 0 0 100%; margin-top: 2dp; }
+    #logistics .card.good.warrior.skilled .wskills { flex: 0 0 100%; margin-top: 3dp; }
 }
 
 /* ---- The user's combat effectiveness B (26 Nov mocks): SPEED, COMBAT EFFECTIVENESS, the force's tons ---- */
@@ -438,3 +441,11 @@
 @media (max-aspect-ratio: 3/2) {
     #logistics #units .head .force-weight { display: none; }
 }
+
+/* ---- The user's compact MECH BAY (WIP 11 note, 28 Nov): REPAIR and REFIT their price under their word ---- */
+
+/* REPAIR FORCE, REFIT FORCE, REPAIR ALL and REFIT ALL two lines, the word over the price, so each pair keeps one row at
+   every window size, five-figure prices too ("I'd really like this to fit in one line where possible"). */
+#logistics .button.priced { display: flex; flex-direction: column; justify-content: center; height: 28dp; padding: 0dp 8dp; font-size: 9.51dp; line-height: 10dp; letter-spacing: 0.04em; }
+#logistics .button.priced > * { flex: 0 0 auto; }
+#logistics .button.priced > .price { font-weight: 500; letter-spacing: 0.02em; }

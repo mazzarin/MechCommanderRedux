@@ -264,14 +264,15 @@ public:
     std::shared_ptr<MCLogPart> UnitAt(MCPlace place, size_t index) const;
     /// <summary>Whether the lab's 'Mech can be repaired here (a force 'Mech's, outside a match): sliders, not meters.</summary>
     bool Repairs() const { return _Repairs; }
-    /// <summary>REPAIR FORCE: whether anything in the force needs it, and its label (with what it costs).</summary>
+    /// <summary>REPAIR FORCE: whether anything in the force needs it, and its price ("" when it costs nothing).</summary>
     bool CanRepairForce() const { return _CanRepairForce; }
-    const std::string& RepairForceWord() const { return _RepairForceWord; }
-    /// <summary>REFIT FORCE: whether a force 'Mech has a part damaged, and its label (with what the store's parts cost).</summary>
+    const std::string& RepairForcePrice() const { return _RepairForcePrice; }
+    /// <summary>REFIT FORCE: whether a force 'Mech has a part damaged, and what the store's parts cost, under its word.</summary>
     bool CanRefitForce() const { return _CanRefitForce; }
-    const std::string& RefitForceWord() const { return _RefitForceWord; }
-    /// <summary>REFIT ALL's label (with what the store's parts cost).</summary>
-    const std::string& RefitAllWord() const { return _RefitAllWord; }
+    const std::string& RefitForcePrice() const { return _RefitForcePrice; }
+    /// <summary>REPAIR ALL's and REFIT ALL's prices under their words (the lab's 'Mech; "" when it costs nothing).</summary>
+    const std::string& RepairAllPrice() const { return _RepairAllPrice; }
+    const std::string& RefitAllPrice() const { return _RefitAllPrice; }
     /// <summary>The details' payload (PURCHASING): its rows.</summary>
     const std::vector<MCKitRow>& KitRows() const { return _Kit; }
 
@@ -478,15 +479,15 @@ private:
     std::string _PayloadOf;
     std::vector<MCFitRow> _Fits;
     std::string _Free;
-    std::string _RepairAllWord;
+    std::string _RepairAllPrice;
     bool _CanRepairAll = false;
     bool _CanRefit = false;
-    std::string _RefitAllWord;
-    /// <summary>REPAIR FORCE and REFIT FORCE at the FORCE's foot: shown outside a match, their labels, whether they act.</summary>
+    std::string _RefitAllPrice;
+    /// <summary>REPAIR FORCE and REFIT FORCE at the FORCE's foot: shown outside a match, their prices, whether they act.</summary>
     bool _ForceRepairs = false;
-    std::string _RepairForceWord;
+    std::string _RepairForcePrice;
     bool _CanRepairForce = false;
-    std::string _RefitForceWord;
+    std::string _RefitForcePrice;
     bool _CanRefitForce = false;
 
     /// <summary>A force 'Mech's or a stored one's first line, as its card's: a callsign, or its chassis.</summary>

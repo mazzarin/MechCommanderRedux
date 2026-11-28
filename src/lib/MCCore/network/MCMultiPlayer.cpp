@@ -6,6 +6,7 @@
 #include "network/MCLobbyUpdate.h"
 #include "network/MCMechHandover.h"
 #include "network/MCMultiPlayerHandlers.h"
+#include "network/MCMcoSeats.h"
 #include "network/MCRemove.h"
 #include "gui/MCUpdateDisplay.h"
 #include "gui/MCGuiGlobals.h"
@@ -171,6 +172,9 @@ int32_t MCMultiPlayer::Start()
         const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
         return game != nullptr ? game->AdmitJoiner(name, data) : std::nullopt;
     };
+
+    // Port-only (Redux HD; SPEC-mco-hosting.md's "LET IN and the match"): MCO's players join under MCO's match's name.
+    SessionManager->JoinName = MCMcoSeats::JoinName;
 
     MsgBuffer.fill(0);
     return 0;

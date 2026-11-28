@@ -164,7 +164,10 @@ struct MCMcoSeen
     MCMcoMatchStage Match = MCMcoMatchStage::None;
     /// <summary>The match's port on this computer (<see cref="MCMcoMatchStage::HostGame"/>, JoinGame and on).</summary>
     uint16_t GamePort = 0;
-    /// <summary>The host's game's session name ("MCO " and the match's first 12 hex digits) and its players.</summary>
+    /// <summary>
+    /// The host's game's session name ("MCO " and the match's first 12 hex digits) and its players; for an internet
+    /// game hosted on both, the name MCO's players are told as they join it (MCMcoSeats::JoinName). Empty with no match.
+    /// </summary>
     std::string SessionName;
     int32_t Capacity = 0;
     /// <summary>The player's name in the match, as MCO's launcher passes it to the game.</summary>

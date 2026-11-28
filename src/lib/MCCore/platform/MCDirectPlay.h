@@ -443,6 +443,13 @@ public:
         std::function<std::optional<std::string>(std::string_view name, std::span<const uint8_t> data, uint32_t ip)>;
     void SetAdmission(Admission admission);
     /// <summary>
+    /// Port-only (Redux HD; SPEC-mco-hosting.md's "LET IN and the match"), a host: the session's name a joiner from the
+    /// IPv4 address (host order) <paramref name="ip"/> is told as it joins; none: the session's own. MCO's relay helper
+    /// takes a stock game's join only under its match's name ("MCO " and 12 hex digits).
+    /// </summary>
+    using JoinName = std::function<std::optional<std::string>(uint32_t ip)>;
+    void SetJoinName(JoinName name);
+    /// <summary>
     /// Port-only (Redux HD), a host: <paramref name="places"/> held for players coming another way (an internet game's
     /// MCO players waiting: network/MCMcoSeats.h), taken at its door: a join past the most is refused as full.
     /// </summary>

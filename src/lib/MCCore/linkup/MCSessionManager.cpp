@@ -1158,8 +1158,9 @@ int32_t MCSessionManager::HostSession(const MCFidpSession& session, std::string_
         return -1;
     }
 
-    // Port: the game's say on each player who joins, at the door.
+    // Port: the game's say on each player who joins, at the door, and (Port-only, Redux HD) the name it's told.
     DirectPlay->SetAdmission(Admission);
+    DirectPlay->SetJoinName(JoinName);
 
     _CurrentSession = Sessions.emplace_back(std::make_shared<MCFidpSession>(session));
 
@@ -1189,6 +1190,7 @@ int32_t MCSessionManager::JoinSession(const _GUID& sessionGUID, std::string_view
     _CurrentSession = session;
     // Port-only (Redux HD): the game's say at the door too, should the session roll over to this machine.
     DirectPlay->SetAdmission(Admission);
+    DirectPlay->SetJoinName(JoinName);
     int32_t result = static_cast<int32_t>(DirectPlay->Open(session->SessionDesc, DPOPEN_JOIN | DPOPEN_RETURNSTATUS));
 
     if (result == 0)

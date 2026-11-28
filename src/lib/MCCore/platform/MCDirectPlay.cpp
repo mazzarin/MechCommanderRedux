@@ -266,7 +266,11 @@ namespace
         std::string Name;
         std::string Password;
 
-        void Write(Writer& out, bool withPassword) const
+        /// <summary>
+        /// The description, its name <paramref name="shownName"/> when one is given (Port-only, Redux HD: a joiner
+        /// told another name, MCDirectPlay::SetJoinName).
+        /// </summary>
+        void Write(Writer& out, bool withPassword, std::optional<std::string_view> shownName = std::nullopt) const
         {
             out.U32(Desc.dwFlags);
             out.Guid(Desc.guidInstance);
@@ -279,7 +283,7 @@ namespace
             out.U32(Desc.dwUser2);
             out.U32(Desc.dwUser3);
             out.U32(Desc.dwUser4);
-            out.String(Name);
+            out.String(shownName.value_or(std::string_view(Name)));
             out.String(withPassword ? Password : std::string());
         }
 
@@ -620,6 +624,8 @@ struct MCDirectPlay::Impl
     uint32_t NextToken = 1;
     /// <summary>Host: its say on a joiner's players (MCDirectPlay::SetAdmission).</summary>
     MCDirectPlay::Admission Admit;
+    /// <summary>Port-only (Redux HD), a host: the session's name a joiner is told, by its address (SetJoinName).</summary>
+    MCDirectPlay::JoinName NameForJoiner;
     /// <summary>Port-only (Redux HD), a host: places held for players coming another way (SetReserved).</summary>
     uint32_t Reserved = 0;
     /// <summary>Joiner: why the host refused its last player (MCDirectPlay::LastRefusal).</summary>
@@ -988,10 +994,10 @@ struct MCDirectPlay::Impl
     /// group, then (Port-only, Redux HD: after what an older joiner reads) the rollover this hub plays, the joiner's
     /// machine <paramref name="machine"/>, and each player's and group's machine in the same order.
     /// </summary>
-    void WriteSessionState(Writer& out, uint32_t machine)
+    void WriteSessionState(Writer& out, uint32_t machine, std::optional<std::string_view> shownName = std::nullopt)
     {
         Session.Desc.dwCurrentPlayers = PlayerCount();
-        Session.Write(out, false);
+        Session.Write(out, false, shownName);
         out.U32(static_cast<uint32_t>(Entities.size()));
 
         for (const auto& [id, entity] : Entities)
@@ -1420,7 +1426,10 @@ struct MCDirectPlay::Impl
                 link.Machine = NextMachine++;
                 joiner.Id = link.Machine;
                 Machines.push_back(joiner);
-                WriteSessionState(reply, link.Machine);
+                // Port-only (Redux HD): a joiner may be told the session under another name (SetJoinName).
+                const std::optional<std::string> shownName =
+                    NameForJoiner ? NameForJoiner(link.From.Ip) : std::optional<std::string>();
+                WriteSessionState(reply, link.Machine, shownName);
                 link.Joined = true;
             }
             else
@@ -2926,6 +2935,11 @@ std::string MCDirectPlay::LastRefusal() const
 void MCDirectPlay::SetAdmission(Admission admission)
 {
     _Impl->Admit = std::move(admission);
+}
+
+void MCDirectPlay::SetJoinName(JoinName name)
+{
+    _Impl->NameForJoiner = std::move(name);
 }
 
 void MCDirectPlay::SetReserved(uint32_t places)

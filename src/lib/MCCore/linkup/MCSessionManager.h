@@ -443,6 +443,11 @@ public:
     /// </summary>
     std::function<std::optional<std::string>(std::string_view name, std::span<const uint8_t> data, uint32_t ip)>
         Admission;
+    /// <summary>
+    /// Port-only (Redux HD), the host: the session's name a joiner from an IPv4 address is told (an
+    /// MCDirectPlay::JoinName), set on the stand-in with <see cref="Admission"/>; none: the session's own.
+    /// </summary>
+    std::function<std::optional<std::string>(uint32_t ip)> JoinName;
     /// <summary>Whether this machine's player has a player number (set at once on the host).</summary>
     bool HasPlayerNumber = false;
     /// <summary>Guards the player list and the outgoing queues.</summary>

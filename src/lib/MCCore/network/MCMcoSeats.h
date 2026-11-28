@@ -104,6 +104,13 @@ namespace MCMcoSeats
     /// </summary>
     bool LetInFailed();
     /// <summary>
+    /// The host (SPEC-mco-hosting.md's "LET IN and the match"; an MCDirectPlay::JoinName): the session's name the
+    /// joiner from <paramref name="ip"/> is told. A game MCO's relay carries (MCIceTransport::GuestAt's empty name) is
+    /// told MCO's match's ("MCO " and 12 hex digits), as MCO's relay helper wants before its launcher's game counts as
+    /// in; none for any other joiner, or while no match is on MCO.
+    /// </summary>
+    std::optional<std::string> JoinName(uint32_t ip);
+    /// <summary>
     /// The match starts (MCRoomModel::PublishMatchState): a host's room starts on MCO, if LET IN hasn't, so MCO shows it
     /// in game; where MCO won't, the room is off MCO for the battle and hosted again after it.
     /// </summary>

@@ -12,6 +12,7 @@
 #include "platform/MCDirectPlay.h"
 #include "platform/MCIceTransport.h"
 #include "platform/MCSocket.h"
+#include <cstring>
 
 // The port's DirectPlay stand-in, driven the way linkup drives DirectPlay 3, with a host and a joiner in one process
 // talking over the loopback. The expected behaviour is DirectPlay's: a session is found by enumerating, joined with
@@ -1095,6 +1096,84 @@ TEST_CASE("directplay: an older build's joiner loses the session as its host goe
 /// so such a copy joins over the loopback, and its hub shares it as 127.0.0.1: a third computer reaching for it there
 /// reached for itself (8 Nov's playtest: the laptop's game lost the session).
 /// </summary>
+TEST_CASE("directplay: a joiner the host names the session for is told it under that name, as MCO's relay helper "
+          "reads a stock game's join, and the session keeps its own")
+{
+    constexpr uint16_t port = 28986;
+    const std::string address = std::format("127.0.0.1:{}", port);
+    MCDirectPlay host;
+    MCDirectPlay finder;
+    REQUIRE_EQ(Connect(host, address), DP_OK);
+    REQUIRE_EQ(Host(host, "Falcon's game", 6), DP_OK);
+    uint32_t hostPlayer = 0;
+    REQUIRE_EQ(NewPlayer(host, "Falcon", hostPlayer), DP_OK);
+    constexpr std::string_view matchName = "MCO 0123456789ab";
+    std::vector<uint32_t> asked;
+    host.SetJoinName(
+        [&asked, matchName](uint32_t ip) -> std::optional<std::string>
+        {
+            asked.push_back(ip);
+            return std::string(matchName);
+        });
+    REQUIRE_EQ(Connect(finder, address), DP_OK);
+    const std::vector<DPSESSIONDESC2> sessions = Enumerate(finder, host, 0);
+    REQUIRE_EQ(sessions.size(), size_t{1});
+
+    // A stock game's join, as upstream's 0.2.1.61 sends it.
+    const MCSocket::Handle stock = MCSocket::ConnectTcp({MCSocket::LoopbackIp, port}, 1000);
+    REQUIRE(stock != MCSocket::InvalidHandle);
+    std::vector<uint8_t> join;
+    PutU32(join, RawMagic);
+    PutGuid(join, TestApplication);
+    PutGuid(join, sessions[0].guidInstance);
+    PutBlob(join, {});
+    MCSocket::Send(stock, RawFrame(JoinRequestFrame, join));
+    const auto joined = RawRead(stock, {host});
+    REQUIRE(joined.has_value());
+    CHECK(asked == std::vector<uint32_t>{MCSocket::LoopbackIp});
+
+    // The helper's check of the join reply: the result, the session's and the application's GUIDs, and the name's
+    // length and bytes where it reads them.
+    constexpr size_t instanceAt = 0x8;
+    constexpr size_t applicationAt = 0x18;
+    constexpr size_t nameSizeAt = 0x48;
+    constexpr size_t nameAt = 0x4c;
+    const std::vector<uint8_t>& reply = joined->second;
+    CHECK_EQ(int{joined->first}, int{JoinReplyFrame});
+    REQUIRE(reply.size() >= nameAt + matchName.size());
+    CHECK_EQ(ReplyResult(reply), uint32_t{DP_OK});
+    CHECK_EQ(std::memcmp(reply.data() + instanceAt, join.data() + sizeof(uint32_t) + sizeof(_GUID), sizeof(_GUID)), 0);
+    CHECK_EQ(std::memcmp(reply.data() + applicationAt, join.data() + sizeof(uint32_t), sizeof(_GUID)), 0);
+    CHECK_EQ(ReplyResult(reply, nameSizeAt), uint32_t(matchName.size()));
+    CHECK_EQ(std::string_view(reinterpret_cast<const char*>(reply.data() + nameAt), matchName.size()), matchName);
+
+    // Its player: the reply the helper waits on, its token back, no error, an id.
+    constexpr uint32_t token = 7;
+    std::vector<uint8_t> create;
+    PutU32(create, token);
+    PutU32(create, 0);
+    PutU32(create, DPPLAYERTYPE_PLAYER);
+    PutU32(create, 0);
+    PutU32(create, 0);
+    PutBlob(create, Bytes("Hitman"));
+    PutBlob(create, {});
+    PutBlob(create, {});
+    PutU32(create, 0);
+    MCSocket::Send(stock, RawFrame(CreatePlayerFrame, create));
+    const auto created = RawRead(stock, {host});
+    REQUIRE(created.has_value());
+    CHECK_EQ(int{created->first}, int{CreateReplyFrame});
+    CHECK_EQ(ReplyResult(created->second), token);
+    CHECK_EQ(ReplyResult(created->second, 4), uint32_t{DP_OK});
+    CHECK(ReplyResult(created->second, 8) != 0);
+
+    // The session is found under its own name still.
+    const std::vector<DPSESSIONDESC2> again = Enumerate(finder, host, 0);
+    REQUIRE_EQ(again.size(), size_t{1});
+    CHECK(again[0].SessionName == std::optional<std::string>("Falcon's game"));
+    MCSocket::Close(stock);
+}
+
 TEST_CASE("directplay: a rollover reaches the machine taking over where its host was, for one the host saw on its own "
           "computer or over an internet link")
 {

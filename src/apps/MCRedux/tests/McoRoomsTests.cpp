@@ -823,8 +823,9 @@ TEST_CASE("mco rooms: an internet game's lines are said in its MCO room from the
     CHECK(guest.Seen().Seated);
 }
 
-TEST_CASE("mco rooms: an internet game's room starts on MCO at LET IN, its bridge open on the game's own port, closes "
-          "played at the match's end, and leaves MCO quietly for a battle MCO won't start")
+TEST_CASE("mco rooms: an internet game's room starts on MCO at LET IN, its bridge open on the game's own port and its "
+          "match's name for MCO's players, closes played at the match's end, and leaves MCO quietly for a battle MCO "
+          "won't start")
 {
     MCService mco;
     MCFakeMcoRelay::MCRelay relay;
@@ -866,6 +867,9 @@ TEST_CASE("mco rooms: an internet game's room starts on MCO at LET IN, its bridg
     CHECK_EQ(host.Seen().GamePort, uint16_t{0});
     CHECK_EQ(mco.Asked("create_session"), size_t{1});
     CHECK_EQ(mco.Asked("publish_ready"), size_t{1});
+    // MCO's players join the internet game under the match's name, as MCO's relay helper wants (MCMcoSeats::JoinName).
+    CHECK(host.Seen().SessionName.starts_with("MCO "));
+    CHECK_EQ(host.Seen().SessionName.size(), std::string_view("MCO 0123456789ab").size());
     // Started already: the battle's start asks nothing more; the quiet seat plays none of it.
     host.StartBoth(true);
     std::this_thread::sleep_for(PollMost * 2);
@@ -879,6 +883,7 @@ TEST_CASE("mco rooms: an internet game's room starts on MCO at LET IN, its bridg
     CHECK_EQ(mco.Closed()[0].second, std::string(MCFakeMcoService::StockBuild));
     REQUIRE(Within(HeardMs, [&] { return host.Seen().Match == MCMcoMatchStage::None; }));
     CHECK(host.Seen().Room.has_value());
+    CHECK(host.Seen().SessionName.empty());
 
     // The guest gone, the battle's start finds MCO's room alone: it leaves MCO for the battle, without a word.
     guest.Unsit();

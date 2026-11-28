@@ -891,6 +891,27 @@ void MCMcoSeats::LetIn()
     }
 }
 
+std::optional<std::string> MCMcoSeats::JoinName(uint32_t ip)
+{
+    const std::shared_ptr<MCMultiPlayer> game = InternetGame();
+
+    if (game == nullptr || !game->SessionManager->IsHost)
+    {
+        return std::nullopt;
+    }
+
+    // MCO's relay brings a game our service doesn't know: its link names no guest.
+    const std::optional<std::string> guest = game->SessionManager->Internet->GuestAt(ip);
+
+    if (!guest.has_value() || !guest->empty())
+    {
+        return std::nullopt;
+    }
+
+    std::string name = MCMcoRooms::Now().Seen().SessionName;
+    return name.empty() ? std::nullopt : std::optional(std::move(name));
+}
+
 bool MCMcoSeats::LetInFailed()
 {
     if (TestsMco.has_value())

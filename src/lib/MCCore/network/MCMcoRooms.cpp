@@ -1907,6 +1907,7 @@ void MCMcoRooms::HostMatch(const MCMcoApi::MCMatch& match)
             {
                 seen.Match = MCMcoMatchStage::None;
                 seen.GamePort = 0;
+                seen.SessionName.clear();
                 seen.Refusal = std::string(both ? LetInFailedText : NoMatchText);
             });
     };
@@ -1942,6 +1943,12 @@ void MCMcoRooms::HostMatch(const MCMcoApi::MCMatch& match)
                 seen.Capacity = MCMcoApi::MatchCapacity(match.Capacity);
                 seen.MatchName = MCMcoApi::MatchName(_Peer.Username);
             });
+    }
+    else
+    {
+        // Port-only (Redux HD): MCO's players join the internet game under the match's name, as MCO's relay helper
+        // wants (MCMcoSeats::JoinName); its own players keep the game's.
+        Show([&](MCMcoSeen& seen) { seen.SessionName = MCMcoApi::MatchSession(match.SessionHex); });
     }
 
     // The game hosts on the port (the screens do it): its answer to the session query is awaited, as the launcher's.
@@ -1980,6 +1987,8 @@ void MCMcoRooms::HostMatch(const MCMcoApi::MCMatch& match)
     }
 
     _GameIn = true;
+    SDL_Log("MechCommander Online: match %s started, hosted from this game%s", match.SessionHex.c_str(),
+            both ? " (the internet game's)" : "");
     Show([](MCMcoSeen& seen) { seen.Match = MCMcoMatchStage::Playing; });
 }
 
@@ -2126,6 +2135,11 @@ void MCMcoRooms::EndMatch(bool played)
         {
             SDL_Log("MechCommander Online: closing the match: %s", MCMcoApi::Describe(closed.error()).c_str());
         }
+        else
+        {
+            SDL_Log("MechCommander Online: match %s closed%s", _Match->SessionHex.c_str(),
+                    played ? " after its battle" : ", called off");
+        }
     }
 
     _Match.reset();
@@ -2135,6 +2149,7 @@ void MCMcoRooms::EndMatch(bool played)
         {
             seen.Match = MCMcoMatchStage::None;
             seen.GamePort = 0;
+            seen.SessionName.clear();
         });
 }
 
